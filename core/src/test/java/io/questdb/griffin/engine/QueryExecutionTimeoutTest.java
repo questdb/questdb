@@ -487,26 +487,13 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                 if (dml != null || query != null) {
                     unsetTimeout();
                 }
-                compiler.compile(ddl, context);
+                compile(ddl, context);
                 if (dml != null) {
                     if (query == null) {
                         resetTimeout();
                     }
 
-                    CompiledQuery cc = compiler.compile(dml, context);
-                    if (cc.getType() == CompiledQuery.UPDATE) {
-                        try (UpdateOperation op = cc.getUpdateOperation()) {
-                            try (OperationFuture future = cc.getDispatcher().execute(op, sqlExecutionContext, null)) {
-                                future.await();
-                            }
-                        }
-                    } else {
-                        try (OperationFuture future = cc.execute(null)) {
-                            future.await();
-                        }
-                    }
-
-
+                    compile(dml, context);
                 }
 
                 if (query != null) {
