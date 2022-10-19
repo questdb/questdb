@@ -48,7 +48,9 @@ QuestDB release and sample datasets:
 - live trading data from a cryptocurrency exchange
 - geolocations of 250k unique ships over time
 
-## Install QuestDB
+## Get started
+
+### Install QuestDB
 
 To run QuestDB, Docker can be used to get started quickly:
 
@@ -82,11 +84,23 @@ You can interact with QuestDB using the following interfaces:
 - [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
   high-throughput ingestion on port `9009`
 
+### Ingest data
+
+We offer official InfluxDB line protocol client libraries for several programming languages:
+
+- [.NET](https://github.com/questdb/net-questdb-client)
+- [C/C++](https://github.com/questdb/c-questdb-client)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
+- [Rust](https://docs.rs/crate/questdb-rs/latest)
+
 ## How QuestDB compares to other open source TSDBs
 
 You can refer to
 [our comparison article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-to have an overview of QuestDB and other open source timesereis databases on  
+to have an overview of QuestDB and other open source timesereis databases on
 functionality, maturity, and performance.
 
 Here are high-cardinality
