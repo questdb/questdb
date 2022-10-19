@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -95,7 +96,14 @@ public class LPadStrFunctionFactory implements FunctionFactory {
 
         @Override
         public int getStrLen(Record rec) {
-            return strFunc.getStrLen(rec);
+            final CharSequence str = strFunc.getStr(rec);
+            final int len = lenFunc.getInt(rec);
+            final CharSequence fillText = fillTextFunc.getStr(rec);
+            if (str != null && len != Numbers.INT_NaN && len >= 0 && fillText != null && fillText.length() > 0) {
+                return len;
+            } else {
+                return TableUtils.NULL_LEN;
+            }
         }
 
         @Nullable

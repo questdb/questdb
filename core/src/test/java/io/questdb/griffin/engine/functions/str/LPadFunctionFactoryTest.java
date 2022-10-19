@@ -27,14 +27,39 @@ package io.questdb.griffin.engine.functions.str;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+
 import org.junit.Test;
 
 public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLPad() throws SqlException {
-        call("abc", 5).andAssert("     abc");
-        call("xyz", 10).andAssert("          xyz");
-        call("pqrs",1).andAssert(" pqrs");
+        call("abc", 6).andAssert("   abc");
+        call("xyz", 10).andAssert("       xyz");
+        call("pqrs", 7).andAssert("   pqrs");
+    }
+
+    @Test
+    public void testTrimRight() throws SqlException {
+        call("abcdefgh", 5).andAssert("abcde");
+        call("photosynthesis", 10).andAssert("photosynth");
+    }
+
+    @Test
+    public void testZeroLength() throws SqlException {
+        call("abc", 0).andAssert("");
+        call("pqrs", 0).andAssert("");
+    }
+
+    @Test
+    public void testNegativeLength() throws SqlException {
+        call("abc", -1).andAssert(null);
+        call("pqrs", -4).andAssert(null);
+    }
+
+    @Test
+    public void testNullStr() throws SqlException {
+        call(null, 3).andAssert(null);
+        call(null, 4).andAssert(null);
     }
 
     @Override

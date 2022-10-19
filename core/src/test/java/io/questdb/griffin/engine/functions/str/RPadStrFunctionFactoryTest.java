@@ -30,40 +30,52 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 
 import org.junit.Test;
 
-public class RPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testRPad() throws SqlException {
-        call("abc", 5).andAssert("abc  ");
-        call("xyz", 10).andAssert("xyz       ");
-        call("pqrs", 7).andAssert("pqrs   ");
+    public void testRPadStr() throws SqlException {
+        call("abc", 5, "x").andAssert("abcxx");
+        call("xyz", 10, "hello").andAssert("xyzhellohe");
+        call("pqrs", 10, "abc").andAssert("pqrsabcabc");
     }
 
     @Test
     public void testTrimLeft() throws SqlException {
-        call("abcdefgh", 5).andAssert("defgh");
-        call("photosynthesis", 10).andAssert("osynthesis");
+        call("abcdefgh", 5, "abc").andAssert("defgh");
+        call("photosynthesis", 10, "light").andAssert("osynthesis");
     }
 
     @Test
     public void testZeroLength() throws SqlException {
-        call("abc", 0).andAssert("");
-        call("pqrs", 0).andAssert("");
+        call("abc", 0, "hello").andAssert("");
+        call("pqrs", 0, "hello").andAssert("");
     }
 
     @Test
     public void testNegativeLength() throws SqlException {
-        call("abc", -1).andAssert(null);
-        call("pqrs", -4).andAssert(null);
+        call("abc", -1, "hello").andAssert(null);
+        call("pqrs", -4, "hello").andAssert(null);
     }
 
     @Test
     public void testNullStr() throws SqlException {
-        call(null, 3).andAssert(null);
-        call(null, 4).andAssert(null);
+        call(null, 3, "hello").andAssert(null);
+        call(null, 4, "hello").andAssert(null);
+    }
+
+    @Test
+    public void testNullFillText() throws SqlException {
+        call("abc", 4, null).andAssert(null);
+        call("pqrs", 10, null).andAssert(null);
+    }
+
+    @Test
+    public void testEmptyFillText() throws SqlException {
+        call("abc", 4, "").andAssert(null);
+        call("pqrs", 10, "").andAssert(null);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RPadFunctionFactory();
+        return new RPadStrFunctionFactory();
     }
 }
