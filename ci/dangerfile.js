@@ -47,7 +47,7 @@ perf(sql): improve pattern matching performance for SELECT sub-queries
 
 function validatePrTitle() {
   const prTitleRegex = new RegExp(
-    `^((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join("|")})\\) | "build"): .*`
+    `^(((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join("|")})\\))|build): .*`
   );
 
   const { title } = danger.github.pr;
