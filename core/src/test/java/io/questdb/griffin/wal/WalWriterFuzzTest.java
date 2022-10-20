@@ -118,9 +118,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteFullRandom() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage)); // MAX page size 512Kb
-        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+        setRandomAppendPageSize(rnd);
         fullRandomFuzz(rnd);
     }
 
@@ -128,10 +126,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int tableCount = Math.max(2, rnd.nextInt(10));
-        int minPage = (int) Math.round(Math.log(Files.PAGE_SIZE) / Math.log(2));
+        setRandomAppendPageSize(rnd);
+        fullRandomFuzz(rnd, tableCount);
+    }
+
+    private void setRandomAppendPageSize(Rnd rnd) {
+        int minPage = 18;
         dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage)); // MAX page size 512Kb
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
-        fullRandomFuzz(rnd, tableCount);
     }
 
     @Test
