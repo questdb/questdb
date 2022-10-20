@@ -127,8 +127,7 @@ questdb stop  // To stop questdb
 Ми завжди раді будь-якому внеску у проєкт, незалежно від того, чи це програмний код, 
 документація, звіти про помилки, запити щодо функцій або відгуки:
 
-- Ознайомтеся з проблемами на GitHub позначеними  
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Ознайомтеся з проблемами на GitHub позначеними "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Прочитайте
   [посібник для співавторів](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
 - Подивіться детальні
@@ -139,8 +138,7 @@ questdb stop  // To stop questdb
 ✨ На знак подяки ми також надсилаємо **QuestDB swag** нашим помічникам.
 [Заявіть про свій тут.](https://questdb.io/community)
 
-Велика подяка цим чудовим людям, які зробили свій внесок у проєкт QuestDB
-QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+Велика подяка цим чудовим людям, які зробили свій внесок у проєкт QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
