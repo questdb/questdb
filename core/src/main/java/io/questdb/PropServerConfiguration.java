@@ -262,7 +262,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final int cairoPageFrameReduceShardCount;
-    private final int replaceFunctionBufferMaxSize;
+    private final int sqlStrFunctionBufferMaxSize;
     private final int cairoSqlCopyQueueCapacity;
     private final int columnPurgeTaskPoolCapacity;
     private final int maxFileNameLength;
@@ -848,7 +848,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3QuickSortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, false);
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
-            this.replaceFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, 1024));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE, 512 * 1024));
@@ -2226,8 +2226,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getReplaceFunctionMaxBufferLength() {
-            return replaceFunctionBufferMaxSize;
+        public int getStrFunctionMaxBufferLength() {
+            return sqlStrFunctionBufferMaxSize;
         }
 
         @Override
@@ -3534,6 +3534,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerDeprecated(
                 PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
                 PropertyKey.LINE_DEFAULT_PARTITION_BY);
+        registerDeprecated(
+                PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE,
+                PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE);
     }
 }
 
