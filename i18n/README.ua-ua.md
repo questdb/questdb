@@ -131,15 +131,15 @@ questdb stop  // To stop questdb
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Прочитайте
   [посібник для співавторів](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Докладніше про створення QuestDB подивіться
-  [інструкції зі складання](https://github.com/questdb/questdb/blob/master/core/README.md).
+- Подивіться детальні
+  [інструкції із збірки](https://github.com/questdb/questdb/blob/master/core/README.md).
 - [Створіть форк](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
   QuestDB і надішліть pull request із запропонованими вами змінами.
 
 ✨ На знак подяки ми також надсилаємо **QuestDB swag** нашим помічникам.
 [Заявіть про свій тут.](https://questdb.io/community)
 
-Велика подяка наступним чудовим людям, які долучилися до
+Велика подяка цим чудовим людям, які зробили свій внесок у проект QuestDB
 QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
