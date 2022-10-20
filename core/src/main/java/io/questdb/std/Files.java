@@ -201,12 +201,6 @@ public final class Files {
         return hardLink(src.address(), hardLink.address());
     }
 
-    public static native boolean isSoftLink(long lpszSoftLink);
-
-    public static boolean isSoftLink(LPSZ softLink) {
-        return isSoftLink(softLink.address());
-    }
-
     public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
         if (type == DT_DIR) {
             nameSink.clear();

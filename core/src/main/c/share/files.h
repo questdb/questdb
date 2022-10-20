@@ -250,14 +250,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    isSoftLink
- * Signature: (J)Z
- */
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_std_Files
  * Method:    mkdir
  * Signature: (JI)I
  */
