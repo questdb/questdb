@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -346,6 +347,23 @@ public final class Chars {
             return value.hashCode();
         }
 
+        int len = value.length();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = 0; p < len; p++) {
+            h = 31 * h + value.charAt(p);
+        }
+        return h;
+    }
+
+    public static int hashCode(String value) {
+        return value.hashCode();
+    }
+
+    public static int hashCode(DirectByteCharSequence value) {
         int len = value.length();
         if (len == 0) {
             return 0;

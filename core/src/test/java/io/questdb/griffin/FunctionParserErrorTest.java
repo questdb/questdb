@@ -52,11 +52,11 @@ public class FunctionParserErrorTest extends AbstractGriffinTest {
     public void testFunctionParserErrorIsNotPersistent2() throws Exception {
         try {
             assertQuery("",
-                    "select abs(log(1,2), 4) + 10+'asdf' from long_sequence(1);",
+                    "select abs(ln(1,2), 4) + 10+'asdf' from long_sequence(1);",
                     null, null, true, false, true);
             Assert.fail();
         } catch (SqlException e) {
-            MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: log"));
+            MatcherAssert.assertThat(e.getMessage(), containsString("unexpected argument for function: ln"));
         }
 
         runTestQuery();
