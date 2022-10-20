@@ -19,18 +19,18 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 
 # QuestDB
 
-QuestDB is a high-performance, open-source SQL database for applications in
-financial services, IoT, machine learning, DevOps and observability. It includes
-endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
-ingestion using InfluxDB Line Protocol, and a REST API for queries and exports.
+QuestDB is a high-performance, open-source time-series database for applications
+where timely data ingestion and querying is critical. It is widely used with
+financial market data, application metrics, sensor data, realtime analytics and
+dashboards, and infrastructure monitoring.
 
-QuestDB implements ANSI SQL with native extensions for time-oriented language
-features. These extensions make it simple to correlate data from multiple
-sources using relational and time series joins. QuestDB achieves high
-performance from a column-oriented storage model, massively-parallelized vector
-execution, SIMD instructions, and various low-latency techniques. The entire
-codebase was built from the ground up in Java and C++, with no dependencies, and
-is 100% free from garbage collection.
+QuestDB uses ANSI SQL with native extensions for time-series SQL semantics.
+These extensions make it simple to correlate data from multiple sources using
+relational and time-series joins. QuestDB achieves high performance from a
+column-oriented storage model, parallelized vector execution, SIMD instructions,
+and various low-latency techniques. The entire codebase was built from the
+ground up in Java and C++, with no dependencies, and is 100% free from garbage
+collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -78,14 +78,15 @@ You can interact with QuestDB using the following interfaces:
 - [Web Console](https://questdb.io/docs/develop/web-console/) listening on port
   `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on
   port `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
   high-throughput ingestion on port `9009`
 
 ### Insert data
 
-We offer official InfluxDB line protocol client libraries for several programming languages:
+Below are our official InfluxDB line protocol clients for popular programming
+languages:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
@@ -97,10 +98,9 @@ We offer official InfluxDB line protocol client libraries for several programmin
 
 ## How QuestDB compares to other open source TSDBs
 
-You can refer to
-[our comparison article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-to have an overview of QuestDB and other open source time series databases on
-functionality, maturity, and performance.
+[This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
+compares QuestDB to other open source time series databases spanning
+functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
