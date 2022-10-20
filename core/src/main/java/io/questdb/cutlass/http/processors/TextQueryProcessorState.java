@@ -53,6 +53,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     int columnIndex;
     private boolean queryCacheable = false;
     String fileName;
+    char delimiter = ',';
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;

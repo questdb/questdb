@@ -240,7 +240,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
                         }
@@ -283,7 +283,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                         }
@@ -434,6 +434,34 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (fileName != null && fileName.length() > 0) {
             state.fileName = fileName.toString();
         }
+
+        DirectByteCharSequence delimiter = request.getUrlParam("delimiter");
+        state.delimiter = ',';
+        int pos = 0;
+
+        if (delimiter != null) {
+            if (delimiter.charAt(pos) == '\\') {
+                switch (delimiter.charAt(++pos)) {
+                    case 'r':
+                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\r');
+                        break;
+                    case 'n':
+                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\n');
+                        break;
+                    case 't':
+                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\t');
+                        break;
+                    default:
+                        pos--;
+                        break;
+                }
+            }
+
+            if (delimiter.length() - pos == 1) {
+                state.delimiter = delimiter.charAt(pos);
+            }
+        }
+
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
