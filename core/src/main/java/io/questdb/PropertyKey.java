@@ -366,6 +366,7 @@ public enum PropertyKey {
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
     CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
     CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
+    CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),

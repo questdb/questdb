@@ -64,7 +64,7 @@ public abstract class AbstractCairoTest {
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
-    private static final MicrosecondClock defaultMicrosecondClock = new X();
+    private static final MicrosecondClock defaultMicrosecondClock = new ClockMock();
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
@@ -124,6 +124,7 @@ public abstract class AbstractCairoTest {
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static TelemetryConfiguration telemetryConfiguration;
     private static long memoryUsage = -1;
+    protected static long walSegmentRolloverRowCount = -1;
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -496,6 +497,11 @@ public abstract class AbstractCairoTest {
             public boolean isWalSupported() {
                 return true;
             }
+
+            @Override
+            public long getWalSegmentRolloverRowCount() {
+                return walSegmentRolloverRowCount < 0 ? super.getWalSegmentRolloverRowCount() : walSegmentRolloverRowCount;
+            }
         };
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics, 2);
@@ -584,6 +590,7 @@ public abstract class AbstractCairoTest {
         memoryUsage = -1;
         dataAppendPageSize = -1;
         isO3QuickSortEnabled = 0;
+        walSegmentRolloverRowCount = -1;
     }
 
     protected static void assertFactoryMemoryUsage() {
@@ -669,7 +676,7 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
     }
 
-    private static class X implements MicrosecondClock {
+    private static class ClockMock implements MicrosecondClock {
         @Override
         public long getTicks() {
             return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();

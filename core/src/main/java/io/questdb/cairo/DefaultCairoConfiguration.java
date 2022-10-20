@@ -279,6 +279,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalSegmentRolloverRowCount() { return 200000; }
+
+    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
     }

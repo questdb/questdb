@@ -412,7 +412,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
-        long t = clock.getTicks();
+        final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
             broadSweep();

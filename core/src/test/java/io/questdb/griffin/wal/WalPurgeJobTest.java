@@ -43,66 +43,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WalPurgeJobTest  extends AbstractGriffinTest {
-
-    private void assertWalExistence(boolean expectExists, String tableName, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    private void assertWalLockExistence(boolean expectExists, String tableName, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    private void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    private void assertSegmentLockExistence(boolean expectExists, String tableName, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
-        }
-    }
-
-    private static boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(FilesFacadeImpl.INSTANCE, path, false);
-        if (lockFd != -1L) {
-            FilesFacadeImpl.INSTANCE.close(lockFd);
-            return true;  // Could lock/unlock.
-        }
-        return false;  // Could not obtain lock.
-    }
-
-    private void assertWalLockEngagement(boolean expectLocked, String tableName, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
-        }
-    }
-
-    private void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
-        try (Path path = new Path()) {
-            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            final boolean could = couldObtainLock(path);
-            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
-        }
-    }
-
     @Test
     public void testOneSegment() throws Exception {
         assertMemoryLeak(() -> {
