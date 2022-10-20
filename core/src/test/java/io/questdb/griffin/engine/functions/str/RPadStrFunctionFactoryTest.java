@@ -24,11 +24,14 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
-
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -79,6 +82,16 @@ public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testNaNLength() throws SqlException {
         call("abc", Numbers.INT_NaN, "xyz").andAssert(null);
         call("pqrs", Numbers.INT_NaN, "xyz").andAssert(null);
+    }
+
+    @Test
+    public void testFailsOnBufferLengthAboveLimit() throws SqlException {
+        try {
+            call("foo", Integer.MAX_VALUE, "bar").andAssert(null);
+            Assert.fail();
+        } catch (CairoException e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for rpad(SIS)"));
+        }
     }
 
     @Override

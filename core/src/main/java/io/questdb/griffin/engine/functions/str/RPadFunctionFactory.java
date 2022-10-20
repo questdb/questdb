@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -34,35 +35,45 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class RPadFunctionFactory implements FunctionFactory {
+
+    private static final String SIGNATURE = "rpad(SI)";
+
     @Override
     public String getSignature() {
-        return "rpad(SI)";
+        return SIGNATURE;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
-        return new RPadFunc(strFunc, lenFunc);
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
+        return new RPadFunc(strFunc, lenFunc, maxLength);
     }
 
     public static class RPadFunc extends StrFunction implements BinaryFunction {
+
         private final Function strFunc;
         private final Function lenFunc;
-
+        private final int maxLength;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public RPadFunc(Function strFunc, Function lenFunc) {
+        public RPadFunc(Function strFunc, Function lenFunc, int maxLength) {
             this.strFunc = strFunc;
             this.lenFunc = lenFunc;
+            this.maxLength = maxLength;
         }
 
         @Override
@@ -79,7 +90,7 @@ public class RPadFunctionFactory implements FunctionFactory {
         public int getStrLen(Record rec) {
             final CharSequence str = strFunc.getStr(rec);
             final int len = lenFunc.getInt(rec);
-            if (str != null && len != Numbers.INT_NaN && len >= 0) {
+            if (str != null && len >= 0) {
                 return len;
             } else {
                 return TableUtils.NULL_LEN;
@@ -97,8 +108,14 @@ public class RPadFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private static StringSink rPad(CharSequence str, int len, StringSink sink) {
-            if (str != null && len != Numbers.INT_NaN && len >= 0) {
+        private StringSink rPad(CharSequence str, int len, StringSink sink) {
+            if (str != null && len >= 0) {
+                if (len > maxLength) {
+                    throw CairoException.nonCritical()
+                            .put("breached memory limit set for ").put(SIGNATURE)
+                            .put(" [maxLength=").put(maxLength)
+                            .put(", requiredLength=").put(len).put(']');
+                }
                 sink.clear();
                 if (len > str.length()) {
                     sink.put(str);

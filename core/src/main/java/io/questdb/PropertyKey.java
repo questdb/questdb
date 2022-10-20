@@ -151,6 +151,7 @@ public enum PropertyKey {
     CAIRO_RND_MEMORY_PAGE_SIZE("cairo.rnd.memory.page.size"),
     CAIRO_RND_MEMORY_MAX_PAGES("cairo.rnd.memory.max.pages"),
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
+    CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
