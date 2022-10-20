@@ -32,18 +32,6 @@ import org.junit.Test;
 public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testFloatPositive() throws SqlException {
-        assertQuery(
-                "ceil\n" +
-                        "14.0000\n",
-                "select ceil(13.1f)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testBelowRange() throws SqlException {
         call(0.235, 0.893, 0.926, 4).andAssert(0);
     }
