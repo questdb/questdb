@@ -24,11 +24,35 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 
-public interface MemorySerializer {
-    void toSink(Object obj, MemoryA sink);
+import java.io.Closeable;
 
-    void fromSink(Object instance, MemoryCR memory, long offset);
+public interface TableWriterAPI extends Closeable {
+    long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
+
+    long apply(UpdateOperation operation)  throws SqlException;
+
+    long truncate();
+
+    @Override
+    void close();
+
+    long commit();
+
+    long commitWithLag(long commitLag);
+
+    BaseRecordMetadata getMetadata();
+
+    long getStructureVersion();
+
+    CharSequence getTableName();
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
 }

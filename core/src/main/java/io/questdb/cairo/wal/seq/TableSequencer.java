@@ -22,13 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.std.QuietCloseable;
 
-public interface MemorySerializer {
-    void toSink(Object obj, MemoryA sink);
+public interface TableSequencer extends QuietCloseable {
+    long NO_TXN = Long.MIN_VALUE;
 
-    void fromSink(Object instance, MemoryCR memory, long offset);
+    void copyMetadataTo(SequencerMetadata metadata);
+
+    TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
+
+    // return txn cursor to apply transaction from given point
+    TransactionLogCursor getTransactionLogCursor(long lastCommittedTxn);
+
+    int getNextWalId();
+
+    int getTableId();
+
+    long nextStructureTxn(long structureVersion, TableMetadataChange change);
+
+    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
+    long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
 }

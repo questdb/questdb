@@ -42,8 +42,8 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperator extends PurgingOperator implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
+public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseable, UpdateOperator {
+    private static final Log LOG = LogFactory.getLog(UpdateOperatorImpl.class);
 
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
@@ -51,7 +51,7 @@ public class UpdateOperator extends PurgingOperator implements QuietCloseable {
     private final long fileOpenOpts;
     private IndexBuilder indexBuilder;
 
-    public UpdateOperator(
+    public UpdateOperatorImpl(
             CairoConfiguration configuration,
             MessageBus messageBus,
             TableWriter tableWriter,

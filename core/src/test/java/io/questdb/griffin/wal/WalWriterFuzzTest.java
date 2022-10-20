@@ -27,7 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
@@ -171,7 +171,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     private static void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName) {
-        try (TableWriterFrontend writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test")) {
+        try (TableWriterAPI writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test")) {
             IntList tempList = new IntList();
             TestRecord.ArrayBinarySequence tempBinarySequence = new TestRecord.ArrayBinarySequence();
             int transactionSize = transactions.size();
@@ -207,7 +207,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             String tableName = tableNameBase + "_" + i + "_wal_parallel";
             AtomicLong structureVersion = new AtomicLong();
             AtomicInteger nextOperation = new AtomicInteger(-1);
-            final WalWriter walWriter = (WalWriter) engine.getTableWriterFrontEnd(
+            final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(
                     sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
             writers.add(walWriter);
             ObjList<FuzzTransaction> transactions = fuzzTransactions.get(i);
@@ -299,7 +299,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     private void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
-            writers.add((WalWriter) engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test"));
+            writers.add((WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test"));
         }
 
         IntList tempList = new IntList();
@@ -337,7 +337,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         AtomicInteger done = new AtomicInteger();
 
         for (int i = 0; i < walWriterCount; i++) {
-            final WalWriter walWriter = (WalWriter) engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
+            final WalWriter walWriter = (WalWriter) engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply trans test");
             writers.add(walWriter);
 
             Thread thread = new Thread(() -> {

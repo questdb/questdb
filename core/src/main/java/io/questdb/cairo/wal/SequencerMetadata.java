@@ -107,7 +107,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         if (metaMem.getFd() > -1) {
             metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
         }
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile();
     }
 
@@ -164,7 +164,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     public void open(String tableName, Path path, int pathLen) {
         reset();
         this.tableName = tableName;
-        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
 
         // get written data size
         if (!readonly) {

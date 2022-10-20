@@ -36,9 +36,10 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.UpdateOperator;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -65,13 +66,13 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
-import static io.questdb.cairo.wal.Sequencer.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterFrontend, TableWriterBackend, Closeable {
+public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
@@ -212,7 +213,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     private double commitIntervalFraction;
     private long commitIntervalDefault;
     private long commitInterval;
-    private UpdateOperator updateOperator;
+    private UpdateOperatorImpl updateOperatorImpl;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
     public TableWriter(
@@ -759,12 +760,12 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
     }
 
     @Override
-    public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
+    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
         return operation.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
-    public long applyUpdate(UpdateOperation operation) throws SqlException {
+    public long apply(UpdateOperation operation) throws SqlException {
         return operation.apply(this, false);
     }
 
@@ -1133,10 +1134,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
     @Override
     public UpdateOperator getUpdateOperator() {
-        if (updateOperator == null) {
-            updateOperator = new UpdateOperator(configuration, messageBus, this, path, rootLen);
+        if (updateOperatorImpl == null) {
+            updateOperatorImpl = new UpdateOperatorImpl(configuration, messageBus, this, path, rootLen);
         }
-        return updateOperator;
+        return updateOperatorImpl;
     }
 
     public boolean inTransaction() {
@@ -1356,10 +1357,10 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         try {
             switch(cmdType) {
                 case CMD_ALTER_TABLE:
-                    applyAlter(sqlToOperation.toAlterOperation(sql), false);
+                    apply(sqlToOperation.toAlterOperation(sql), false);
                     break;
                 case CMD_UPDATE_TABLE:
-                    applyUpdate(sqlToOperation.toUpdateOperation(sql));
+                    apply(sqlToOperation.toUpdateOperation(sql));
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
@@ -2521,7 +2522,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
         if (o3InError) {
             rollback();
-            return Sequencer.NO_TXN;
+            return TableSequencer.NO_TXN;
         }
 
         if ((masterRef & 1) != 0) {
@@ -2561,7 +2562,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
 
             return getTxn();
         }
-        return Sequencer.NO_TXN;
+        return TableSequencer.NO_TXN;
     }
 
     private void configureAppendPosition() {
@@ -2867,7 +2868,7 @@ public class TableWriter implements TableWriterFrontend, TableWriterBackend, Clo
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(walEventReader);
-        updateOperator = Misc.free(updateOperator);
+        updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         freeColumns(truncate & !distressed);
         try {

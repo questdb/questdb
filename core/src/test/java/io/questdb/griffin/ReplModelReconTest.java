@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.wal.TableWriterBackend;
+import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
@@ -1445,7 +1445,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         public boolean publishSyncCmd(String tableName, long tableId, TableWriter slave, long slaveIP, long sequence) {
             AsyncWriterCommand cmd = new AbstractOperation() {
                 @Override
-                public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) {
+                public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
                     throw new RuntimeException("Should not be called for SYNC command");
                 }
 

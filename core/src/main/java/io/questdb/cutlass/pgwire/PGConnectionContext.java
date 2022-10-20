@@ -30,7 +30,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -126,7 +126,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
-    private final CharSequenceObjHashMap<TableWriterFrontend> pendingWriters;
+    private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
@@ -361,12 +361,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     @Override
-    public TableWriterFrontend getTableWriterFrontEnd(CairoSecurityContext context, CharSequence name, String lockReason) {
+    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getTableWriterFrontEnd(context, name, lockReason);
+        return engine.getTableWriterAPI(context, name, lockReason);
     }
 
     public void handleClientOperation(
@@ -1269,7 +1269,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void executeInsert() throws SqlException {
-        final TableWriterFrontend writer;
+        final TableWriterAPI writer;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
@@ -1315,7 +1315,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case COMMIT_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriterFrontend m = pendingWriters.valueQuick(i);
+                        final TableWriterAPI m = pendingWriters.valueQuick(i);
                         m.commit();
                         Misc.free(m);
                     }
@@ -1327,7 +1327,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case ROLLING_BACK_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriterFrontend m = pendingWriters.valueQuick(i);
+                        final TableWriterAPI m = pendingWriters.valueQuick(i);
                         m.rollback();
                         Misc.free(m);
                     }
@@ -1381,7 +1381,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             op.withContext(sqlExecutionContext);
-            pendingWriters.valueAt(index).applyUpdate(op);
+            pendingWriters.valueAt(index).apply(op);
         } else {
             if (statementTimeout > 0) {
                 circuitBreaker.setTimeout(statementTimeout);

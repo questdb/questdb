@@ -24,11 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 
-public interface MemorySerializer {
-    void toSink(Object obj, MemoryA sink);
-
-    void fromSink(Object instance, MemoryCR memory, long offset);
+public interface UpdateOperator {
+    long executeUpdate(SqlExecutionContext executionContext, UpdateOperation op) throws SqlException, ReaderOutOfDateException;
 }
