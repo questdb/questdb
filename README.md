@@ -22,8 +22,7 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 QuestDB is a high-performance, open-source SQL database for applications in
 financial services, IoT, machine learning, DevOps and observability. It includes
 endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
-ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
-imports, and exports.
+ingestion using InfluxDB Line Protocol, and a REST API for queries and exports.
 
 QuestDB implements ANSI SQL with native extensions for time-oriented language
 features. These extensions make it simple to correlate data from multiple
