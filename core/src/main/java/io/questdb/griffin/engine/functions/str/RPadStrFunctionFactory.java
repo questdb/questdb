@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -34,24 +35,32 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class RPadStrFunctionFactory implements FunctionFactory {
+
+    private static final String SIGNATURE = "rpad(SIS)";
+
     @Override
     public String getSignature() {
-        return "rpad(SIS)";
+        return SIGNATURE;
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
         final Function fillTextFunc = args.getQuick(2);
-        return new RPadStrFunc(strFunc, lenFunc, fillTextFunc);
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
+        return new RPadStrFunc(strFunc, lenFunc, fillTextFunc, maxLength);
     }
 
     public static class RPadStrFunc extends StrFunction implements TernaryFunction {
@@ -59,14 +68,15 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         private final Function strFunc;
         private final Function lenFunc;
         private final Function fillTextFunc;
-
+        private final int maxLength;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public RPadStrFunc(Function strFunc, Function lenFunc, Function fillTexFunc) {
+        public RPadStrFunc(Function strFunc, Function lenFunc, Function fillTexFunc, int maxLength) {
             this.strFunc = strFunc;
             this.lenFunc = lenFunc;
             this.fillTextFunc = fillTexFunc;
+            this.maxLength = maxLength;
         }
 
         @Override
@@ -99,7 +109,7 @@ public class RPadStrFunctionFactory implements FunctionFactory {
             final CharSequence str = strFunc.getStr(rec);
             final int len = lenFunc.getInt(rec);
             final CharSequence fillText = fillTextFunc.getStr(rec);
-            if (str != null && len != Numbers.INT_NaN && len >= 0 && fillText != null && fillText.length() > 0) {
+            if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {
                 return len;
             } else {
                 return TableUtils.NULL_LEN;
@@ -107,8 +117,14 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private static StringSink rPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
-            if (str != null && len != Numbers.INT_NaN && len >= 0 && fillText != null && fillText.length() > 0) {
+        private StringSink rPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
+            if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {
+                if (len > maxLength) {
+                    throw CairoException.nonCritical()
+                            .put("breached memory limit set for ").put(SIGNATURE)
+                            .put(" [maxLength=").put(maxLength)
+                            .put(", requiredLength=").put(len).put(']');
+                }
                 sink.clear();
                 if (len > str.length()) {
                     sink.put(str);
