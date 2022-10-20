@@ -46,44 +46,44 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
     }
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-        private final Function leftEnd;
-        private final Function centerLeft;
-        private final Function centerRight;
-        private final Function rightEnd;
+        private final Function operand_func;
+        private final Function low_func;
+        private final Function high_func;
+        private final Function count_func;
 
-        public WidthBucketFunction(Function leftEnd, Function centerLeft, Function centerRight, Function rightEnd) {
-            this.leftEnd = leftEnd;
-            this.centerLeft = centerLeft;
-            this.centerRight = centerRight;
-            this.rightEnd = rightEnd;
+        public WidthBucketFunction(Function operand_func, Function low_func, Function high_func, Function count_func) {
+            this.operand_func = operand_func;
+            this.low_func = low_func;
+            this.high_func = high_func;
+            this.count_func = count_func;
         }
 
         @Override
         public Function getLeftEnd() {
-            return leftEnd;
+            return operand_func;
         }
 
         @Override
         public Function getCenterLeft() {
-            return centerLeft;
+            return low_func;
         }
 
         @Override
         public Function getCenterRight() {
-            return centerRight;
+            return high_func;
         }
 
         @Override
         public Function getRightEnd() {
-            return rightEnd;
+            return count_func;
         }
 
         @Override
         public int getInt(Record rec) {
-            double operand = leftEnd.getDouble(rec);
-            double low = centerLeft.getDouble(rec);
-            double high = centerRight.getDouble(rec);
-            int count = rightEnd.getInt(rec);
+            double operand = operand_func.getDouble(rec);
+            double low = low_func.getDouble(rec);
+            double high = high_func.getDouble(rec);
+            int count = count_func.getInt(rec);
             if (operand < low) {
                 return 0;
             } else if (operand > high) {
