@@ -72,7 +72,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             throw SqlException.$(patternPos, "not implemented: dynamic replacement would be slow to execute");
         }
 
-        final int maxLength = configuration.getReplaceFunctionMaxBufferLength();
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
         return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength);
     }
 
