@@ -4500,7 +4500,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -4535,6 +4535,7 @@ nodejs code:
                         assertResultSet(expected, sink, rs);
                     }
                     statement.execute("drop table tab");
+                    mayDrainWalQueue();
                 }
             }
         });
@@ -7099,6 +7100,7 @@ create table tab as (
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
+        maySkipOnWalRun(); // Handle updates which don't change data.
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);

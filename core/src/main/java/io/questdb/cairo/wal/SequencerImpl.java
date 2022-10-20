@@ -104,6 +104,7 @@ public class SequencerImpl implements Sequencer {
             checkDropped();
             catalog.addEntry(WalUtils.DROP_TABLE_WALID, 0, 0);
             metadata.dropTable();
+            engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, Integer.MAX_VALUE);
         } finally {
             schemaLock.readLock().unlock();
         }

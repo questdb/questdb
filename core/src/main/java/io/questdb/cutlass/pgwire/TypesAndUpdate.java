@@ -47,6 +47,7 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     public void of(UpdateOperation updateOperation, CharSequence sqlStatement, BindVariableService bindVariableService) {
         // Compiled query from SqlCompiler cannot be used
         // to store compiled statements because the instance re-used for every new compilation
+        updateOperation.withSqlStatement(sqlStatement);
         compiledQuery.ofUpdate(updateOperation);
         compiledQuery.withSqlStatement(sqlStatement);
         copyTypesFrom(bindVariableService);

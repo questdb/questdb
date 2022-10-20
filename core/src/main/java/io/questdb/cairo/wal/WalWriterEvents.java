@@ -122,6 +122,7 @@ class WalWriterEvents implements Closeable {
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
+        assert sql != null && sql.length() > 0;
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);

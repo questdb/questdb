@@ -543,7 +543,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
+        LOG.info().$(">> [table=`").utf8(e.writer.getSystemTableName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getSystemTableName(), event);
         return e.writer;
     }

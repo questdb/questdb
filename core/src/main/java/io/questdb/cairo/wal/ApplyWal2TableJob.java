@@ -142,7 +142,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 long nextTableTxn = sequencerCursor.getTxn();
 
                 if (nextTableTxn != writer.getTxn() + 1) {
-                    throw CairoException.critical(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
+                    throw CairoException.critical(0).put("Unexpected WAL segment transaction [nextWalTxn=").put(nextTableTxn).put(", nextTableTxn=").put((writer.getTxn() + 1)).put(']');
                 }
 
                 // Always set full path when using thread static path

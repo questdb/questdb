@@ -382,10 +382,10 @@ public class WalEventCursor {
     private CharSequence readStr() {
         checkMemSize(Integer.BYTES);
         final int strLength = eventMem.getStrLen(offset);
-        final long storageLength = Vm.getStorageLength(strLength);
+        final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
 
         checkMemSize(storageLength);
-        final CharSequence value = eventMem.getStr(offset);
+        final CharSequence value = strLength >= 0 ? eventMem.getStr(offset) : null;
         offset += storageLength;
         return value;
     }
