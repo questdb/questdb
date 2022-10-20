@@ -24,8 +24,8 @@ where timely data ingestion and querying is critical. It is widely used with
 financial market data, application metrics, sensor data, realtime analytics and
 dashboards, and infrastructure monitoring.
 
-QuestDB uses ANSI SQL with native extensions for time-series SQL semantics.
-These extensions make it simple to correlate data from multiple sources using
+QuestDB uses ANSI SQL and benefits from time-series SQL semantics. These SQL
+semantics make it simple to correlate data from multiple sources using
 relational and time-series joins. QuestDB achieves high performance from a
 column-oriented storage model, parallelized vector execution, SIMD instructions,
 and various low-latency techniques. The entire codebase was built from the
@@ -75,13 +75,13 @@ methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) listening on port
-  `9000`
+- [Web Console](https://questdb.io/docs/develop/web-console/) for interactive
+  SQL editor on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
+  high-throughput ingestion on port `9009`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on
   port `8812`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
-  high-throughput ingestion on port `9009`
 
 ### Insert data
 
