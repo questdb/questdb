@@ -855,7 +855,7 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            // copy _meta and _cv to partition.detached _meta and _cv
+            // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
             other.of(path).trimTo(rootLen).concat(META_FILE_NAME).$(); // exists already checked
             detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
 

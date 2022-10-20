@@ -1123,31 +1123,38 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // different location, another volume potentially
             final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
+
+            // copy .detached folder to the different location
             final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
-            // copy .detached folder to a different location
-            // then remove the original .detached partition folder
+            copyPartition(
+                    configuration.getRoot(),
+                    tableName,
+                    detachedPartitionName,
+                    s3Buckets,
+                    tableName,
+                    detachedPartitionName,
+                    null
+            );
+
+            // then remove the original .detached folder
             path.of(configuration.getRoot())
                     .concat(tableName)
                     .concat(detachedPartitionName)
                     .$();
+            Assert.assertEquals(0, Files.rmdir(path));
+
+            // create the .attachable link in the table's data folder
+            // with target the .detached folder in the different location
             other.of(s3Buckets)
                     .concat(tableName)
                     .concat(detachedPartitionName)
                     .$();
-            final int pathLen = path.length();
-            final int otherLen = other.length();
-            TestUtils.copyDirectory(path, other, DIR_MODE);
-            Assert.assertEquals(0, Files.rmdir(path.trimTo(pathLen).$()));
-
-            // create the .attachable link in the table's data folder with target the .detached folder in the different location
-            Assert.assertEquals(0, ff.softLink(
-                    other.trimTo(otherLen).slash$(), // <--- this seems important, otherwise the link is not recognised as a folder
-                    path.of(configuration.getRoot())
-                            .concat(tableName)
-                            .concat(partitionName)
-                            .put(configuration.getAttachPartitionSuffix())
-                            .$()
-            ));
+            path.of(configuration.getRoot()) // <-- soft link path
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(configuration.getAttachPartitionSuffix())
+                    .$();
+            Assert.assertEquals(0, ff.softLink(other, path));
             Assert.assertTrue(new File(path.toString()).exists());
 
             // attach the partition via soft links
@@ -1308,15 +1315,38 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String dstTableName,
             String dstPartitionName
     ) {
-        path.of(configuration.getRoot())
+        copyPartition(
+                configuration.getRoot(),
+                srcTableName,
+                srcPartitionName,
+                configuration.getRoot(),
+                dstTableName,
+                dstPartitionName,
+                configuration.getAttachPartitionSuffix()
+        );
+    }
+
+    private void copyPartition(
+            CharSequence srcRoot,
+            String srcTableName,
+            String srcPartitionName,
+            CharSequence dstRoot,
+            String dstTableName,
+            String dstPartitionName,
+            String dstPartitionNameSuffix
+    ) {
+        path.of(srcRoot)
                 .concat(srcTableName)
                 .concat(srcPartitionName)
                 .slash$();
-        other.of(configuration.getRoot())
+        other.of(dstRoot)
                 .concat(dstTableName)
-                .concat(dstPartitionName)
-                .put(configuration.getAttachPartitionSuffix())
-                .slash$();
+                .concat(dstPartitionName);
+
+        if (!Chars.isBlank(dstPartitionNameSuffix)) {
+            other.put(dstPartitionNameSuffix);
+        }
+        other.slash$();
 
         TestUtils.copyDirectory(path, other, DIR_MODE);
 
@@ -1329,6 +1359,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         Files.copy(
                 path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
                 other.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+        );
+        // copy _txn
+        Files.copy(
+                path.parent().concat(TableUtils.TXN_FILE_NAME).$(),
+                other.parent().concat(TableUtils.TXN_FILE_NAME).$()
         );
     }
 
