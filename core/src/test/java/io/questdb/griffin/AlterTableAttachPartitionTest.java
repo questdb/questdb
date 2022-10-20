@@ -38,7 +38,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.AttachDetachStatus.*;
@@ -1126,7 +1125,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // copy .detached folder to the different location
             final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
-            copyPartition(
+            copyPartitionAndMetadata(
                     configuration.getRoot(),
                     tableName,
                     detachedPartitionName,
@@ -1142,10 +1141,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .concat(detachedPartitionName)
                     .$();
             Assert.assertEquals(0, Files.rmdir(path));
+            Assert.assertFalse(ff.exists(path));
 
             // create the .attachable link in the table's data folder
             // with target the .detached folder in the different location
-            other.of(s3Buckets)
+            other.of(s3Buckets) // <-- the copy of the now lost .detached folder
                     .concat(tableName)
                     .concat(detachedPartitionName)
                     .$();
@@ -1158,7 +1158,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             Assert.assertTrue(ff.isSoftLink(path));
             Assert.assertFalse(ff.isSoftLink(other));
 
-            // attach the partition via soft links
+            // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
 
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -1316,7 +1316,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String dstTableName,
             String dstPartitionName
     ) {
-        copyPartition(
+        copyPartitionAndMetadata(
                 configuration.getRoot(),
                 srcTableName,
                 srcPartitionName,
@@ -1327,7 +1327,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void copyPartition(
+    private void copyPartitionAndMetadata(
             CharSequence srcRoot,
             String srcTableName,
             String srcPartitionName,

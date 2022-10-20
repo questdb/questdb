@@ -616,7 +616,7 @@ public class TableWriter implements Closeable {
         // final name of partition folder after attach
         setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
         TableUtils.txnPartitionConditionally(path, getTxn());
-        path.slash$();
+        path.$();
 
         if (ff.exists(path)) {
             // Very unlikely since txn is part of the folder name
@@ -625,7 +625,7 @@ public class TableWriter implements Closeable {
 
         Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableName);
         setPathForPartition(detachedPath, partitionBy, timestamp, false);
-        detachedPath.put(configuration.getAttachPartitionSuffix()).slash$();
+        detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.length();
         boolean validateDataFiles = partitionSize < 0;
 
@@ -662,13 +662,13 @@ public class TableWriter implements Closeable {
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
                 } else {
-                    if (ff.rename(detachedPath.trimTo(detachedRootLen).slash$(), path) == Files.FILES_RENAME_OK) {
+                    if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
                         LOG.error().$("could not rename [errno=").$(ff.errno())
                                 .$(", from=").$(detachedPath)
                                 .$(", to=").$(path)
-                                .$(", soft-link=").$(ff.isSoftLink(detachedPath))
+                                .$(", isSoftLink=").$(ff.isSoftLink(detachedPath))
                                 .I$();
                         return AttachDetachStatus.ATTACH_ERR_RENAME;
                     }
@@ -1477,8 +1477,7 @@ public class TableWriter implements Closeable {
                 setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
                 TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
                 readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
-            }
-            finally {
+            } finally {
                 path.trimTo(rootLen);
             }
 
