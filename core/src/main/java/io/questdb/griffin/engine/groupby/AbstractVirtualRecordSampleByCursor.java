@@ -39,6 +39,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -49,6 +50,7 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,

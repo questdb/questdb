@@ -1227,7 +1227,8 @@ class SqlOptimiser {
             if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
                 QueryColumn column = translatingModel.getAliasToColumnMap().get(alias);
                 assert column != null;
-                innerModel.addBottomUpColumn(column);
+                // but equally, column may already be referenced by translating model
+                innerModel.addBottomUpColumn(column, true);
             }
         }
         return nextLiteral(alias, node.position);
