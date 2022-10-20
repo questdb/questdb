@@ -74,7 +74,7 @@ public interface FilesFacade {
 
     int hardLinkDirRecursive(Path src, Path dst, int dirMode);
 
-    int softLink(LPSZ src, LPSZ softLink);
+    boolean isSoftLink(LPSZ softLink);
 
     boolean isCrossDeviceCopyError(int errno);
 
@@ -117,6 +117,8 @@ public interface FilesFacade {
     int rename(LPSZ from, LPSZ to);
 
     int rmdir(Path name);
+
+    int softLink(LPSZ src, LPSZ softLink);
 
     int sync();
 

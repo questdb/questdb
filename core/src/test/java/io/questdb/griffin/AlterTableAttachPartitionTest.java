@@ -1155,7 +1155,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .put(configuration.getAttachPartitionSuffix())
                     .$();
             Assert.assertEquals(0, ff.softLink(other, path));
-            Assert.assertTrue(new File(path.toString()).exists());
+            Assert.assertTrue(ff.isSoftLink(path));
+            Assert.assertFalse(ff.isSoftLink(other));
 
             // attach the partition via soft links
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);

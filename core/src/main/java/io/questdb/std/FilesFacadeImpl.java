@@ -169,8 +169,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int softLink(LPSZ src, LPSZ softLink) {
-        return Files.softLink(src, softLink);
+    public boolean isSoftLink(LPSZ softLink) {
+        return Files.isSoftLink(softLink);
     }
 
     @Override
@@ -293,6 +293,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int rmdir(Path name) {
         return Files.rmdir(name);
+    }
+
+    @Override
+    public int softLink(LPSZ src, LPSZ softLink) {
+        return Files.softLink(src, softLink);
     }
 
     @Override

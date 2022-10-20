@@ -665,7 +665,11 @@ public class TableWriter implements Closeable {
                     if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path.$()) == Files.FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
-                        LOG.error().$("could not rename [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
+                        LOG.error().$("could not rename [errno=").$(ff.errno())
+                                .$(", from=").$(detachedPath)
+                                .$(", to=").$(path)
+                                .$(", soft-link=").$(ff.isSoftLink(detachedPath))
+                                .I$();
                         return AttachDetachStatus.ATTACH_ERR_RENAME;
                     }
                 }

@@ -240,7 +240,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
         (JNIEnv *, jclass, jlong, jlong);
 
-
 /*
  * Class:     com_questdb_std_Files
  * Method:    softLink
@@ -248,6 +247,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
         (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    isSoftLink
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_std_Files
