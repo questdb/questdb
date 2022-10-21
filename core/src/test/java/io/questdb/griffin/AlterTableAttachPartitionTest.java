@@ -1095,11 +1095,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
-            int txn = 0;
-
             final String tableName = "src48";
             final String partitionName = "2022-10-17";
 
+            int txn = 0; // keep track of the transaction
+
+            // create table
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
                         1,
@@ -1112,14 +1113,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 );
             }
             txn++;
-
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
+            // detach a partition
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
-
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
@@ -1188,11 +1188,21 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '2022-10-17T23:59:59.500001Z')");
             txn++;
 
+            // update a row toward the end of the partition
+            executeOperation(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T23:59:42.220100Z'",
+                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+            );
+            txn++;
+
             // insert a row at the beginning of the partition, this will result in the original folder being
-            // copied across to table data space (hot), with a new txn, the original folder is deleted, the
-            // link remains dangling AND this is acceptable as cold partitions are supposed to be read-only,
-            // but if you insist in using them as if they where the norm, then you will need to be aware of
-            // the dangling link.
+            // copied across to table data space (hot), with a new txn, the original folder's content are deleted,
+            // however the link remains dangling AND this is acceptable as cold partitions are supposed to be
+            // read-only, but if you insist in using them as if they where the norm, then you will need to be aware
+            // of the dangling link.
+            // TODO: implement isSoftLink via lstat, compatible with windows
+            //  implement unlink for soft links, and then ensure cold storage is COPY-ON-WRITE
+            //  rather than COPY/DELETE-ON-WRITE, plus the link can be disposed of.
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '2022-10-17T00:00:00.100005Z')");
             txn++;
 
@@ -1214,12 +1224,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             });
             Assert.assertEquals(0, fileCount.get());
 
+            // update a row toward the beginning of the partition
+            executeOperation(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
+                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+            );
+
             // verify content
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                     "l\ti\tts\n" +
                             "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
                             "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
-                            "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                            "13\t4999\t2022-10-17T23:59:42.220100Z\n" +
                             "5000\t5000\t2022-10-17T23:59:59.500000Z\n" +
                             "0\t0\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
             );
@@ -1227,7 +1243,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "l\ti\tts\n" +
                             "-1\t-1\t2022-10-17T00:00:00.100005Z\n" + // <-- the new row at the beginning
                             "1\t1\t2022-10-17T00:00:17.279900Z\n" +
-                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                            "13\t2\t2022-10-17T00:00:34.559800Z\n" +
                             "3\t3\t2022-10-17T00:00:51.839700Z\n" +
                             "4\t4\t2022-10-17T00:01:09.119600Z\n"
             );
