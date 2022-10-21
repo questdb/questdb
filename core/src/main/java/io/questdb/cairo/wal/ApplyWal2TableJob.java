@@ -82,7 +82,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 break;
             } catch (CairoException ex) {
                 LOG.critical().$("failed to apply WAL transaction to table, will be moved to SUSPENDED state [table=").$(tableName)
-                        .$(", error=").$(ex.getMessage())
+                        .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 return WAL_APPLY_FAILED;
