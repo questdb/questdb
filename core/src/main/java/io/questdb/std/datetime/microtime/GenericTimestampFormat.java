@@ -262,11 +262,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_DAY_OF_YEAR:
                     sink.put(Timestamps.getDayOfYear(micros));
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
-                    sink.put(Timestamps.getWeekOfMonth(micros));
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                    TimestampFormatUtils.append0(sink, Timestamps.getWeek(micros));
                     break;
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
-                    sink.put(Timestamps.getWeek(micros));
+                    sink.put(Timestamps.getWeekOfYear(micros));
                     break;
                 // MONTH
 
@@ -385,6 +385,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     @Override
     public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
         int day = 1;
+        int week = 0;
         int month = 1;
         int year = 1970;
         int hour = 0;
@@ -605,8 +606,11 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     l = Numbers.parseIntSafely(in, pos, hi);
                     pos += Numbers.decodeHighInt(l);
                     break;
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                    TimestampFormatUtils.assertRemaining(pos+1, hi);
+                    week = Numbers.parseInt(in, pos, pos+=2);
+                    break;
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
-                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
                     TimestampFormatUtils.assertRemaining(pos, hi);
                     // ignore weekday
                     Numbers.parseInt(in, pos, ++pos);
@@ -706,6 +710,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
         TimestampFormatUtils.assertNoTail(pos, hi);
 
-        return TimestampFormatUtils.compute(locale, era, year, month, day, hour, minute, second, millis, micros, timezone, offset, hourType);
+        return TimestampFormatUtils.compute(locale, era, year, month, week, day, hour, minute, second, millis, micros, timezone, offset, hourType);
     }
 }

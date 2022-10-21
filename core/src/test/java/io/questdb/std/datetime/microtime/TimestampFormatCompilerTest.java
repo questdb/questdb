@@ -105,8 +105,8 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testWeekOfMonth() throws Exception {
-        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    public void testIsoWeekOfYear() throws Exception {
+        assertThat("ww, YYYY", "2010-01-01T00:00:00.000Z", "06, 2010");
     }
 
     @Test
@@ -170,16 +170,16 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatWeekOfYear() throws Exception {
-        assertFormat("53", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
         assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
         assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
-    public void testFormatWeekOfMonth() throws Exception {
-        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
-        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
-        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
+    public void testFormatIsoWeekOfYear() throws Exception {
+        assertFormat("53", "ww", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "ww", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "ww", "2020-03-10T00:00:00.000Z");
     }
 
     @Test

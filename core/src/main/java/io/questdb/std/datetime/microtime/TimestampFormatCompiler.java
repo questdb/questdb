@@ -49,7 +49,7 @@ public class TimestampFormatCompiler {
     static final int OP_DAY_OF_WEEK = 13;
     static final int OP_DAY_OF_YEAR = 36;
     static final int OP_WEEK_OF_YEAR = 37;
-    static final int OP_WEEK_OF_MONTH = 38;
+    static final int OP_ISO_WEEK_OF_YEAR = 38;
     static final int OP_AM_PM = 14;
     static final int OP_HOUR_24_ONE_DIGIT = 15;
     static final int OP_HOUR_24_TWO_DIGITS = 32;
@@ -106,7 +106,7 @@ public class TimestampFormatCompiler {
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_DAY_OF_YEAR = 14;
     private static final int FA_WEEK_OF_YEAR = 12;
-    private static final int FA_WEEK_OF_MONTH = 13;
+    private static final int FA_ISO_WEEK_OF_YEAR = 13;
     private static final int FA_MILLIS_MICROS = 11;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
@@ -126,6 +126,7 @@ public class TimestampFormatCompiler {
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
     private static final int LOCAL_MICROS = 20;
+    private static final int LOCAL_WEEK = 21;
     private static final int FORMAT_METHOD_STACK_START = 6;
 
     static {
@@ -149,7 +150,7 @@ public class TimestampFormatCompiler {
         addOp("u", OP_DAY_OF_WEEK);
         addOp("D", OP_DAY_OF_YEAR);
         addOp("w", OP_WEEK_OF_YEAR);
-        addOp("W", OP_WEEK_OF_MONTH);
+        addOp("ww", OP_ISO_WEEK_OF_YEAR);
         addOp("a", OP_AM_PM);
         addOp("H", OP_HOUR_24_ONE_DIGIT);
         addOp("HH", OP_HOUR_24_TWO_DIGITS);
@@ -288,7 +289,7 @@ public class TimestampFormatCompiler {
             int formatNameIndex,
             int formatSigIndex,
             int getDayOfYearIndex,
-            int getWeekOfMonthIndex,
+            int getWeekOfYearIndex,
             int getWeekIndex
     ) {
         int formatAttributes = computeFormatAttributes(ops);
@@ -308,7 +309,7 @@ public class TimestampFormatCompiler {
                 getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
                 getDayOfYearIndex,
-                getWeekOfMonthIndex,
+                getWeekOfYearIndex,
                 getWeekIndex
         );
 
@@ -487,11 +488,10 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     asm.aload(FA_LOCAL_SINK);
-                    asm.iload(fmtAttributeIndex[FA_WEEK_OF_MONTH]);
-                    asm.invokeInterface(sinkPutIntIndex, 1);
-                    asm.pop();
+                    asm.iload(fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR]);
+                    asm.invokeStatic(append0Index);
                     break;
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
                     asm.aload(FA_LOCAL_SINK);
@@ -623,7 +623,7 @@ public class TimestampFormatCompiler {
             int getMicrosOfSecondIndex,
             int getDayOfWeekIndex,
             int getDayOfYearIndex,
-            int getWeekOfMonthIndex,
+            int getWeekOfYearIndex,
             int getWeekIndex) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
@@ -688,11 +688,11 @@ public class TimestampFormatCompiler {
             fmtAttributeIndex[FA_DAY_OF_YEAR] = index;
         }
 
-        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_MONTH, getWeekOfMonthIndex, index)) {
-            fmtAttributeIndex[FA_WEEK_OF_MONTH] = index;
+        if (invokeConvertMillis(formatAttributes, FA_ISO_WEEK_OF_YEAR, getWeekIndex, index)) {
+            fmtAttributeIndex[FA_ISO_WEEK_OF_YEAR] = index;
         }
 
-        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekIndex, index)) {
+        if (invokeConvertMillis(formatAttributes, FA_WEEK_OF_YEAR, getWeekOfYearIndex, index)) {
             fmtAttributeIndex[FA_WEEK_OF_YEAR] = index;
         }
 
@@ -734,7 +734,7 @@ public class TimestampFormatCompiler {
         int stackState = computeParseMethodStack(ops);
 
         // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
-        asm.startMethod(parseNameIndex, parseSigIndex, 14, 21);
+        asm.startMethod(parseNameIndex, parseSigIndex, 15, 22);
 
         // define stack variables
         // when pattern is not used a default value must be assigned
@@ -743,6 +743,12 @@ public class TimestampFormatCompiler {
             // int day = 1
             asm.iconst(1);
             asm.istore(LOCAL_DAY);
+        }
+
+        if ((stackState & (1 << LOCAL_WEEK)) == 0) {
+            // int week = 0
+            asm.iconst(0);
+            asm.istore(LOCAL_WEEK);
         }
 
         if ((stackState & (1 << LOCAL_MONTH)) == 0) {
@@ -1075,6 +1081,12 @@ public class TimestampFormatCompiler {
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
+                case OP_ISO_WEEK_OF_YEAR:
+                    // assertRemaining(pos + 1, hi);
+                    // week = Numbers.parseInt(in, pos, pos += 2);
+                    stackState &= ~(1 << LOCAL_WEEK);
+                    parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_WEEK);
+                    break;
                 case OP_WEEK_OF_YEAR:
                 case OP_DAY_OF_YEAR:
                     // l = Numbers.parseIntSafely(in, pos, hi);
@@ -1087,7 +1099,6 @@ public class TimestampFormatCompiler {
                     asm.lstore(LOCAL_TEMP_LONG);
                     addTempToPos(decodeLenIndex);
                     break;
-                case OP_WEEK_OF_MONTH:
                 case OP_DAY_OF_WEEK:
                     // assertRemaining(pos, hi);
                     // // ignore weekday
@@ -1362,6 +1373,7 @@ public class TimestampFormatCompiler {
         asm.iload(LOCAL_ERA);
         asm.iload(LOCAL_YEAR);
         asm.iload(LOCAL_MONTH);
+        asm.iload(LOCAL_WEEK);
         asm.iload(LOCAL_DAY);
         asm.iload(LOCAL_HOUR);
         asm.iload(LOCAL_MINUTE);
@@ -1393,9 +1405,9 @@ public class TimestampFormatCompiler {
 
                 if (i == 0 || prevStackState != ss) {
                     asm.full_frame(offset - start);
-                    // 18 local variables
+                    // 19 local variables
                     int countPos = asm.position();
-                    int count = 19; // TOTAL COUNT of local variables
+                    int count = 20; // TOTAL COUNT of local variables
                     asm.putShort(0);
 
                     asm.putITEM_Object(thisClassIndex);
@@ -1479,6 +1491,12 @@ public class TimestampFormatCompiler {
                         asm.putITEM_Top();
                     }
 
+                    if ((ss & (1 << LOCAL_WEEK)) == 0) {
+                        asm.putITEM_Integer();
+                    } else{
+                        asm.putITEM_Top();
+                    }
+
                     asm.putShort(countPos, count);
 
                     // 0 stack
@@ -1533,7 +1551,7 @@ public class TimestampFormatCompiler {
         int assertNoTailIndex = asm.poolMethod(TimestampFormatUtils.class, "assertNoTail", "(II)V");
         int assertStringIndex = asm.poolMethod(TimestampFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(TimestampFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIJI)J");
+        int computeMillisIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
         int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
@@ -1563,7 +1581,7 @@ public class TimestampFormatCompiler {
         int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, "getDayOfWeekSundayFirst", "(J)I");
         int getDayOfYearIndex = asm.poolMethod(Timestamps.class, "getDayOfYear", "(J)I");
         int getWeekIndex = asm.poolMethod(Timestamps.class, "getWeek", "(J)I");
-        int getWeekOfMonthIndex = asm.poolMethod(Timestamps.class, "getWeekOfMonth", "(J)I");
+        int getWeekOfYearIndex = asm.poolMethod(Timestamps.class, "getWeekOfYear", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lio/questdb/std/str/CharSink;");
         int sinkPutStrIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(Ljava/lang/CharSequence;)Lio/questdb/std/str/CharSink;");
@@ -1667,7 +1685,7 @@ public class TimestampFormatCompiler {
                 formatNameIndex,
                 formatSigIndex,
                 getDayOfYearIndex,
-                getWeekOfMonthIndex,
+                getWeekOfYearIndex,
                 getWeekIndex
         );
 
@@ -1750,8 +1768,8 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_WEEK_OF_YEAR:
                     attributes |= (1 << FA_WEEK_OF_YEAR);
                     break;
-                case TimestampFormatCompiler.OP_WEEK_OF_MONTH:
-                    attributes |= (1 << FA_WEEK_OF_MONTH);
+                case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
+                    attributes |= (1 << FA_ISO_WEEK_OF_YEAR);
                     break;
                 // MONTH
                 case TimestampFormatCompiler.OP_MONTH_ONE_DIGIT:
