@@ -170,8 +170,8 @@ public class PGJobContextTest extends BasePGTest {
         }
     }
 
-    private boolean isDisabledForWalRun() {
-        return SKIP_FAILING_WAL_TESTS && walEnabled;
+    private boolean notDisabledForWalRun() {
+        return !SKIP_FAILING_WAL_TESTS || !walEnabled;
     }
 
     /**
@@ -4782,7 +4782,7 @@ nodejs code:
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
 
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                             statement.execute();
                         }
@@ -4821,7 +4821,7 @@ nodejs code:
                     }
                 }
 
-                if (!isDisabledForWalRun()) {
+                if (notDisabledForWalRun()) {
                     try (final Connection connection = getConnection(server.getPort(), false, false);
                          PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
@@ -4848,7 +4848,7 @@ nodejs code:
 
             queryTimestampsInRange(connection);
 
-            if (!isDisabledForWalRun()) {
+            if (notDisabledForWalRun()) {
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
@@ -6140,7 +6140,7 @@ create table tab as (
                 }
             }
 
-            if (!isDisabledForWalRun()) {
+            if (notDisabledForWalRun()) {
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
@@ -6674,7 +6674,7 @@ create table tab as (
                         }
                     }
 
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         connection.prepareStatement("drop table ts").execute();
                     }
                 }
@@ -6725,7 +6725,7 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         conn.prepareStatement("drop table ts").execute();
                     }
                 }

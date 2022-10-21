@@ -26,7 +26,7 @@ package io.questdb.griffin.wal.fuzz;
 
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -43,12 +43,12 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
+    public boolean apply(Rnd tempRnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
         try {
             AlterOperationBuilder builder = new AlterOperationBuilder().ofRenameColumn(0, tableName, tableId);
             builder.ofRenameColumn(columName, newColName);
             AlterOperation alter = builder.build();
-            tableWriter.applyAlter(alter, true);
+            tableWriter.apply(alter, true);
             return true;
         } catch (SqlException e) {
             throw new RuntimeException(e);

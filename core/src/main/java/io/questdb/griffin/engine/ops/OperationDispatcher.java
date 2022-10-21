@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -59,7 +59,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         try (
-                TableWriterFrontend writer = engine.getTableWriterFrontEnd(
+                TableWriterAPI writer = engine.getTableWriterAPI(
                         sqlExecutionContext.getCairoSecurityContext(),
                         operation.getTableName(),
                         lockReason
@@ -88,5 +88,5 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         }
     }
 
-    protected abstract long apply(T operation, TableWriterFrontend writerFronted) throws SqlException;
+    protected abstract long apply(T operation, TableWriterAPI writerFronted) throws SqlException;
 }

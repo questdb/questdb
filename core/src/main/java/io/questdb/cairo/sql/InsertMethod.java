@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.SqlException;
 
 import java.io.Closeable;
@@ -40,7 +40,7 @@ public interface InsertMethod extends Closeable {
     /**
      * @return sets writer to null
      */
-    TableWriterFrontend popWriter();
+    TableWriterAPI popWriter();
 
     @Override
     void close();

@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
@@ -37,6 +38,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final TxReader txReader;
     private final CharSequence dbRoot;
     private long lastProcessedCount = 0;
+    private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
@@ -45,10 +47,11 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     public void checkMissingWalTransactions() {
-        engine.getTableRegistry().forAllWalTables(this::checkNotifyOutstandingTxnInWal);
+        engine.getTableRegistry().forAllWalTables(callback);
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
+        // todo: too much GC
         Path rootPath = Path.PATH.get().of(dbRoot);
         rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {

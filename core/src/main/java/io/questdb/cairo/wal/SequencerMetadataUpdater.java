@@ -36,7 +36,15 @@ public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend 
     }
 
     @Override
-    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+    public void addColumn(
+            CharSequence name,
+            int type,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential
+    ) {
         metadata.addColumn(name, type);
     }
 

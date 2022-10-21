@@ -22,16 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.wal.seq;
 
-import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.griffin.SqlException;
 
-public interface SequencerStructureChangeCursor {
-    SequencerStructureChangeCursor empty();
-
-    boolean hasNext();
-
-    AlterOperation next();
-
-    void reset();
+@FunctionalInterface
+public interface TableMetadataChange {
+    // todo: should not be SqlException
+    long apply(TableWriterSPI tableWriterSPI, boolean flag) throws SqlException;
 }

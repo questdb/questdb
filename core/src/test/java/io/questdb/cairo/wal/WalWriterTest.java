@@ -297,7 +297,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TxnCatalog$SequencerStructureChangeCursorImpl") && stackTrace[1].getMethodName().equals("of")) {
+                    if (stackTrace[1].getClassName().endsWith("TableTransactionLog$TableMetadataChangeLogImpl") && stackTrace[1].getMethodName().equals("of")) {
                         return -1;
                     }
                 }
@@ -316,7 +316,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Exception expected");
                 } catch(Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [fromStructureVersion=0]", e.getMessage());
+                    assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
                 }
             }
         });
@@ -360,7 +360,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TxnCatalog") && stackTrace[1].getMethodName().equals("openFileRO")) {
+                    if (stackTrace[1].getClassName().endsWith("TableUtils") && stackTrace[1].getMethodName().equals("openRO")) {
                         return -1;
                     }
                 }
@@ -1243,7 +1243,6 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final int numOfRows = 11;
             final int numOfThreads = 10;
-            final int numOfTxn = numOfThreads;
             final CountDownLatch alterFinished = new CountDownLatch(numOfThreads);
             final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
             final AtomicInteger columnNumber = new AtomicInteger();
@@ -1289,7 +1288,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             writeFinished.await();
 
-            final LongHashSet txnSet = new LongHashSet(numOfTxn);
+            final LongHashSet txnSet = new LongHashSet(numOfThreads);
             final IntList symbolCounts = new IntList();
             symbolCounts.add(numOfRows);
             try (TableModel model = defaultModel(tableName)) {
@@ -1359,7 +1358,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
 
-            assertEquals(numOfTxn, txnSet.size());
+            assertEquals(numOfThreads, txnSet.size());
             for (int i = 0; i < numOfThreads; i++) {
                 txnSet.remove(Numbers.encodeLowHighInts(i, 0));
             }
@@ -1570,7 +1569,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
         assertMemoryLeak(() -> {
-            stackFailureClass = "SequencerImpl";
+            stackFailureClass = "TableSequencerImpl";
             stackFailureMethod = "<init>";
 
             final String tableName = testName.getMethodName();
@@ -1596,7 +1595,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[4].getClassName().endsWith("SequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
+                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
                         throw e;
                     }
                 }
@@ -1625,7 +1624,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("SequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
                         return 1;
                     }
                 }
@@ -1676,7 +1675,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putByte(0, (byte) 100);
                     row.append();
 
-                    renameColumn(walWriter1, "b", "c");
+                    renameColumn(walWriter1);
 
                     walWriter2.commit();
 
@@ -2881,22 +2880,22 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
+    static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.applyAlter(addColumnC.build(), true);
+        writer.apply(addColumnC.build(), true);
     }
 
-    static void removeColumn(TableWriterFrontend writer, String columnName) throws SqlException {
+    static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
         AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
         removeColumnOperation.ofDropColumn(columnName);
-        writer.applyAlter(removeColumnOperation.build(), true);
+        writer.apply(removeColumnOperation.build(), true);
     }
 
-    static void renameColumn(TableWriterFrontend writer, String columnName, String newColumnName) throws SqlException {
+    static void renameColumn(TableWriterAPI writer) throws SqlException {
         AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
-        renameColumnC.ofRenameColumn(columnName, newColumnName);
-        writer.applyAlter(renameColumnC.build(), true);
+        renameColumnC.ofRenameColumn("b", "c");
+        writer.apply(renameColumnC.build(), true);
     }
 
     static void prepareBinPayload(long pointer, int limit) {
@@ -2998,8 +2997,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    static void createTable(String tableName, boolean withTimestamp) {
-        try (TableModel model = defaultModel(tableName, withTimestamp)) {
+    static void createTable() {
+        try (TableModel model = defaultModel("testTable", true)) {
             createTable(model);
         }
     }
@@ -3034,7 +3033,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
-            createTable(tableName, true);
+            createTable();
 
             final String walName;
             final long ts = Os.currentTimeMicros();

@@ -35,4 +35,5 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = SEQ_META_OFFSET_COLUMN_COUNT + Integer.BYTES;
     public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_TABLE_ID + Integer.BYTES;
+    public static final String SEQ_DIR = "txn_seq";
 }

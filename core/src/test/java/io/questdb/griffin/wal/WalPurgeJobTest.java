@@ -27,7 +27,7 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -154,7 +154,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI ignored = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 // No-op. We just want to create a WAL.
             }
 
@@ -241,28 +241,28 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 path.of(root).concat(tableName).$();
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
                 path.of(root).concat(tableName).concat("waldo").$();
                 ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
 
                 // Purging will not delete waldo: Wal name not matched.
                 runWalPurgeJob();
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
 
                 // idempotency check.
                 for (int count = 0; count < 1000; ++count) {
                     runWalPurgeJob();
-                    Assert.assertEquals(path.toString(), true, ff.exists(path));
+                    Assert.assertTrue(path.toString(), ff.exists(path));
                 }
 
                 path.of(root).concat(tableName).concat("wal1000").$();
                 ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
 
                 // Purging will delete wal1000: Wal name matched and the WAL has no lock.
                 runWalPurgeJob();
-                Assert.assertEquals(path.toString(), false, ff.exists(path));
+                Assert.assertFalse(path.toString(), ff.exists(path));
             }
         });
     }
@@ -300,29 +300,29 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 path.of(root).concat(tableName).concat("wal1").concat("stuff").$();
                 ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
 
                 runWalPurgeJob();
                 assertSegmentLockExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
-                Assert.assertEquals(path.toString(), true, ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path));
 
                 // After draining, releasing and purging, it's all deleted.
                 drainWalQueue();
                 engine.releaseInactive();
                 runWalPurgeJob();
 
-                Assert.assertEquals(path.toString(), false, ff.exists(path));
+                Assert.assertFalse(path.toString(), ff.exists(path));
                 assertWalExistence(false, tableName, 1);
             }
         });
     }
 
-    static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
+    static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.applyAlter(addColumnC.build(), true);
+        writer.apply(addColumnC.build(), true);
     }
 
     @Test
@@ -514,21 +514,21 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
         try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, clock)) {
             walPurgeJob.delayByHalfInterval();
             walPurgeJob.run(0);
-            Assert.assertEquals(0, ff.iterateDirCount);
+            Assert.assertEquals(0, TracingFilesFacade.iterateDirCount);
             clock.timestamp += interval / 2 + 1;
             walPurgeJob.run(0);
-            Assert.assertEquals(1, ff.iterateDirCount);
+            Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
             clock.timestamp += interval / 2 + 1;
             walPurgeJob.run(0);
             walPurgeJob.run(0);
             walPurgeJob.run(0);
-            Assert.assertEquals(1, ff.iterateDirCount);
+            Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
             clock.timestamp += interval;
             walPurgeJob.run(0);
-            Assert.assertEquals(2, ff.iterateDirCount);
+            Assert.assertEquals(2, TracingFilesFacade.iterateDirCount);
             clock.timestamp += 10 * interval;
             walPurgeJob.run(0);
-            Assert.assertEquals(3, ff.iterateDirCount);
+            Assert.assertEquals(3, TracingFilesFacade.iterateDirCount);
         }
     }
 

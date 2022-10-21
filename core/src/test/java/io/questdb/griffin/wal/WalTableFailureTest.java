@@ -28,8 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.TableWriterBackend;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -61,11 +61,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             creatStandardWalTable(tableName);
 
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         if (counter.decrementAndGet() == 0) {
                             throw new IndexOutOfBoundsException();
                         }
@@ -80,7 +80,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    twf.applyAlter(dodgyAlter, true);
+                    twf.apply(dodgyAlter, true);
                     Assert.fail("Expected exception is missing");
                 } catch (IndexOutOfBoundsException ex) {
                     //expected
@@ -103,10 +103,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             creatStandardWalTable(tableName);
 
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
                         return 0;
                     }
@@ -123,7 +123,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    twf.applyAlter(dodgyAlter, true);
+                    twf.apply(dodgyAlter, true);
                     Assert.fail("Expected exception is missing");
                 } catch (IndexOutOfBoundsException ex) {
                     //expected
@@ -180,10 +180,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             creatStandardWalTable(tableName);
 
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
                         return 0;
                     }
@@ -198,7 +198,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
                 };
 
-                twf.applyAlter(dodgyAlter, true);
+                twf.apply(dodgyAlter, true);
             }
 
             drainWalQueue();
@@ -231,14 +231,14 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
             AlterOperation alterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
 
-            try (TableWriterFrontend alterWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                 TableWriterFrontend insertWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                 TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to other WAL writers
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.removeColumn("x");
                         return 0;
                     }
@@ -253,7 +253,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         alterOperation.serializeBody(sink);
                     }
                 };
-                alterWriter.applyAlter(dodgyAlter, true);
+                alterWriter.apply(dodgyAlter, true);
 
                 TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
                 row.putLong(0, 123L);
@@ -323,13 +323,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             AlterOperation alterOperation = null;
-            try (TableWriterFrontend alterWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                 TableWriterFrontend insertWriter = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                 TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
 
                 AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableName, 0);
                 alterBuilder.ofRenameColumn("x", "x2");
                 alterOperation = alterBuilder.build();
-                alterWriter.applyAlter(alterOperation, true);
+                alterWriter.apply(alterOperation, true);
 
                 TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
                 row.putLong(0, 123L);
@@ -371,11 +371,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             creatStandardWalTable(tableName);
 
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         if (counter.decrementAndGet() == 0) {
                             return 0;
                         }
@@ -390,7 +390,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    twf.applyAlter(dodgyAlter, true);
+                    twf.apply(dodgyAlter, true);
                     Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
@@ -433,10 +433,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             String tableName = testName.getMethodName();
             creatStandardWalTable(tableName);
 
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         return 0;
                     }
 
@@ -447,7 +447,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    twf.applyAlter(dodgyAlter, true);
+                    twf.apply(dodgyAlter, true);
                     Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "failed to commit ALTER SQL to WAL, sql context is empty ");
@@ -475,7 +475,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         return 0;
                     }
 
@@ -495,7 +495,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 };
 
                 try {
-                    walWriter.applyAlter(dodgyAlter, true);
+                    walWriter.apply(dodgyAlter, true);
                     Assert.fail("Expected exception is missing");
                 } catch (IndexOutOfBoundsException ex) {
                     //expected
@@ -765,12 +765,12 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 creatStandardWalTable(tableName);
                 drainWalQueue();
 
-                try (TableWriterFrontend alterWriter1 = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                     TableWriterFrontend alterWriter2 = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                try (TableWriterAPI alterWriter1 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                     TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
 
-                    alterWriter1.applyAlter(alterOperation, true);
+                    alterWriter1.apply(alterOperation, true);
                     try {
-                        alterWriter2.applyAlter(alterOperation, true);
+                        alterWriter2.apply(alterOperation, true);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
@@ -789,10 +789,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 creatStandardWalTable(tableName);
                 drainWalQueue();
 
-                try (TableWriterFrontend alterWriter2 = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+                try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
 
                     try {
-                        alterWriter2.applyAlter(alterOperation, true);
+                        alterWriter2.apply(alterOperation, true);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), error);

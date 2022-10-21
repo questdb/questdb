@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
@@ -82,8 +82,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, TableWriterFrontend tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
-        rnd.reset(this.s0, this.s1);
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
+        rnd.reset(this.s1, this.s0);
         TableWriter.Row row = tableWriter.newRow(timestamp);
 
         int columnCount = metadata.getColumnCount();
