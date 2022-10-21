@@ -32,11 +32,12 @@
 
 # QuestDB
 
-QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习
-、DevOps 和可观测性应用等场景。它兼容 PostgreSQL 的 wire 协议，也兼容 InfluxDB
-Line 协议以提供不受数据库模式影响的高吞吐数据获取能力，并提供用于查询、批量导入
-和导出的 REST API。QuestDB 使用了 ANSI SQL ，其包含时间导向的原生扩展语言功能。
-这些扩展能更简单的连接（JOIN）多个来源的关联数据以及时间序列数据。QuestDB 通过列导向的存储模型、大规模并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和 C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+QuestDB 是一个开源的時序数据库，支持高吞吐数据获取及快速 SQL 查询。应用场景包括
+金融市场数据、传感器数据、实时分析、数据仪表板和基础设施监控。QuestDB 使用了
+ANSI SQL ，並包含时间导向的 SQL 语句。这些 SQL 语句能更简单的连接（JOIN）多个来
+源的关联数据以及时间序列数据。QuestDB 通过列导向的存储模型、大规模并行的矢量执行
+、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和 C++从头开始构建
+的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -57,7 +58,9 @@ Line 协议以提供不受数据库模式影响的高吞吐数据获取能力，
 - 一个即時的加密货币（比特币、以太坊）交易数据集。
 - 一个包括 25 万艘船的时序地理数据集。
 
-## 安裝 QuestDB
+## 如何開始
+
+### 安裝 QuestDB
 
 你可以使用 Docker 来快速启动一个 QuestDB 实例：
 
@@ -82,14 +85,33 @@ questdb stop  // To stop questdb
 
 你可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): QuestDB将会启动一个web控制台，默认运行在 `9000` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : QuestDB也支持使用REST API 来进行交互，默认需要使用 `9000` 端口进行访问
-- [PostgreSQL wire Protocol](https://questdb.io/docs/reference/api/postgres/): QuestDB也支持PostgreSQL wire protocol协议，默认运行在 `8812` 端口
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/): QuestDB 实现了[InfluxDB Line Protocol](https://docs.influxdata.com/influxdb/v1.8/write_protocols/line_protocol_tutorial/) 协议来支持高性能，高吞吐量单向数据插入。默认运行在 `9009` 端口
+- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
+  控制台，默认运行在 `9000` 端口
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
+  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
+- [REST API](https://questdb.io/docs/reference/api/rest/) : 使用 REST API 来进行
+  交互，默认需要使用 `9000` 端口进行访问
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
+  默认运行在 `8812` 端口
+
+### 获取数据
+
+以下是我們官方開發的 InfluxDB line protocol 客户端，支持多种编程语言：
+
+- [.NET](https://github.com/questdb/net-questdb-client)
+- [C/C++](https://github.com/questdb/c-questdb-client)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
+- [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ## QuestDB 与其他开源 TSDB 的对比情况
 
-下面是 [时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
+参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
+其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序资料库。
+
+以下是 [时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
 用例的测试结果，基于 6 个 worker 的 AMD Ryzen 3970X 上测试对比得到：
 
 <div align="center">
@@ -126,9 +148,7 @@ questdb stop  // To stop questdb
 - [Community Slack:](https://slack.questdb.io) 是一个进行技术讨论和认识其他用户
   的好地方。👋
 - [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB 缺陷
-  或是反馈问题。
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) 提案新的
-  特性以及查看已经构建的功能。
+  、功能建议或是反馈问题。
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
   问题的解决方法。
 
