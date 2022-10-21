@@ -214,25 +214,18 @@ public class TableTransactionLog implements Closeable {
 
         @Override
         public boolean hasNext() {
-            if (this.txnOffset + 2 * RECORD_SIZE <= getMappedLen()) {
-                this.txnOffset += RECORD_SIZE;
-                this.txn++;
+            if (hasNext(getMappedLen())) {
                 return true;
             }
 
-            long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
-                long oldSize = getMappedLen();
-                this.txnCount = newTxnCount;
-                long newSize = getMappedLen();
-                this.address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
+                final long oldSize = getMappedLen();
+                txnCount = newTxnCount;
+                final long newSize = getMappedLen();
+                address = ff.mremap(fd, address, oldSize, newSize, 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
 
-                if (this.txnOffset + 2 * RECORD_SIZE <= newSize) {
-                    this.txnOffset += RECORD_SIZE;
-                    this.txn++;
-                    return true;
-                }
-                return false;
+                return hasNext(newSize);
             }
             return false;
         }
@@ -255,6 +248,15 @@ public class TableTransactionLog implements Closeable {
         @Override
         public int getWalId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + WAL_ID_OFFSET);
+        }
+
+        private boolean hasNext(long mappedLen) {
+            if (txnOffset + 2 * RECORD_SIZE <= mappedLen) {
+                txnOffset += RECORD_SIZE;
+                txn++;
+                return true;
+            }
+            return false;
         }
 
         private long getMappedLen() {

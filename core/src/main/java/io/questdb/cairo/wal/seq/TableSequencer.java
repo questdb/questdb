@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.wal.SequencerMetadata;
-import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.QuietCloseable;
 
 public interface TableSequencer extends QuietCloseable {
@@ -36,7 +34,7 @@ public interface TableSequencer extends QuietCloseable {
     TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo);
 
     // return txn cursor to apply transaction from given point
-    TransactionLogCursor getTransactionLogCursor(long lastCommittedTxn);
+    TransactionLogCursor getTransactionLogCursor(long seqTxn);
 
     int getNextWalId();
 
@@ -46,4 +44,10 @@ public interface TableSequencer extends QuietCloseable {
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
+
+    long lastTxn();
+
+    void suspendTable();
+
+    boolean isSuspended();
 }

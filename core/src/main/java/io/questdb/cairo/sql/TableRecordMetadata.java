@@ -28,6 +28,7 @@ import io.questdb.std.QuietCloseable;
 
 public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
     int getId();
+
     long getStructureVersion();
 
     int getTableId();

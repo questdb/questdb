@@ -31,7 +31,6 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.pool.AbstractPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.cairo.wal.SequencerMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -77,7 +76,7 @@ public class TableSequencerAPI extends AbstractPool {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
-                        try (TableSequencerImpl sequencer = openSequencer(nameSink)) {
+                        try (TableSequencer sequencer = openSequencer(nameSink)) {
                             callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
                         }
                     }
@@ -86,9 +85,9 @@ public class TableSequencerAPI extends AbstractPool {
         }
     }
 
-    public @NotNull TransactionLogCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
+    public @NotNull TransactionLogCursor getCursor(final CharSequence tableName, long seqTxn) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.getTransactionLogCursor(lastCommittedTxn);
+            return tableSequencer.getTransactionLogCursor(seqTxn);
         }
     }
 
@@ -117,8 +116,20 @@ public class TableSequencerAPI extends AbstractPool {
     }
 
     public long lastTxn(final CharSequence tableName) {
-        try (TableSequencerImpl sequencer = openSequencer(tableName)) {
+        try (TableSequencer sequencer = openSequencer(tableName)) {
             return sequencer.lastTxn();
+        }
+    }
+
+    public boolean isSuspended(final CharSequence tableName) {
+        try (TableSequencer sequencer = openSequencer(tableName)) {
+            return sequencer.isSuspended();
+        }
+    }
+
+    public void suspendTable(final CharSequence tableName) {
+        try (TableSequencer sequencer = openSequencer(tableName)) {
+            sequencer.suspendTable();
         }
     }
 

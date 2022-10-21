@@ -130,4 +130,6 @@ public interface MessageBus extends Closeable {
     Sequence getWalTxnNotificationPubSequence();
 
     Sequence getWalTxnNotificationSubSequence();
+
+    void reset();
 }

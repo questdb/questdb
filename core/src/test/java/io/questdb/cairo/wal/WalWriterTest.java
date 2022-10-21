@@ -358,8 +358,13 @@ public class WalWriterTest extends AbstractGriffinTest {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, "_catalog.txn")) {
-                    return -1;
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
+                        return -1;
+                    }
                 }
                 return Files.openRO(name);
             }

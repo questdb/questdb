@@ -210,6 +210,18 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public void reset() {
+        clearQueue(walTxnNotificationSubSequence);
+    }
+
+    private void clearQueue(Sequence subSequence) {
+        long cursor;
+        while ((cursor = subSequence.next()) > -1) {
+            subSequence.done(cursor);
+        }
+    }
+
+    @Override
     public Sequence getColumnPurgePubSeq() {
         return columnPurgePubSeq;
     }

@@ -40,6 +40,7 @@ class TxFileStruct {
     public long TX_OFFSET_STRUCT_VERSION;
     public long TX_OFFSET_PARTITION_TABLE_VERSION;
     public long TX_OFFSET_TRUNCATE_VERSION;
+    public long TX_OFFSET_SEQ_TXN;
     public int TX_OFFSET_MAP_WRITER_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
     public int ATTACHED_PARTITION_SIZE;

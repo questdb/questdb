@@ -28,8 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -59,7 +60,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -101,7 +102,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testAddColumnFailToSerialiseToSequencerTransactionLog() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
@@ -156,7 +157,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         assertMemoryLeak(dodgyFacade, () -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'ef')");
@@ -178,7 +179,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testApplyJobFailsToApplyStructureChange() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
@@ -205,7 +206,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef', null)");
 
             drainWalQueue();
-            // WAL table is not affected, cannot process dodgy alter.
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
         });
@@ -215,7 +215,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testDataTxnFailToCommitInWalWriter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
 
@@ -318,7 +318,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         assertMemoryLeak(dodgyFf, () -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
 
@@ -369,7 +369,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testDodgyAddColumDoesNotChangeMetadata() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -431,7 +431,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testInvalidNonStructureAlter() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (TableWriterAPI twf = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
@@ -468,7 +468,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testInvalidNonStructureChangeMakeWalWriterDistressed() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 MatcherAssert.assertThat(walWriter.getWalId(), is(1));
@@ -520,7 +520,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testMainAddDuplicateColumnSequentiallyFailsWithSqlException() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             compile("alter table " + tableName + " add column new_column int");
 
@@ -549,7 +549,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         assertMemoryLeak(ffOverride, () -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             compile("alter table " + tableName + " add column new_column int");
 
@@ -569,12 +569,43 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             fail.set(false);
             executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+                    " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
+                    "102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
         });
+    }
+
+    @Test
+    public void testMainAndWalTableDropPartitionFailed() throws Exception {
+        stackFailureClass = "TableWriter";
+        stackFailureMethod = "truncate";
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            executeOperation(
+                    "alter table " + tableName + " drop partition list '2022-02-24'",
+                    CompiledQuery.ALTER
+            );
+
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
+
+            drainWalQueue();
+
+            // because truncate failed in the middle we are in an inconsistent state!
+            // symbol tables have been cleared but the data files have not
+            // there is still data in the table but no symbols
+            // we will need a proper rollback for all alter operations which should be run in case of a failure to avoid inconsistency
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\t\t2022-02-24T00:00:00.000000Z\t\n");
+        });
+
+        stackFailureClass = null;
+        stackFailureMethod = null;
     }
 
     @Test
@@ -592,25 +623,24 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(ffOverride, () -> {
-            String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                String tableName = testName.getMethodName();
+                createStandardWalTable(tableName);
 
-            compile("alter table " + tableName + " add column new_column int");
+                compile("alter table " + tableName + " add column new_column int");
 
-            executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n");
+                executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            fail.set(false);
+                fail.set(false);
 
-            executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
+                executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            }
         });
     }
 
@@ -668,10 +698,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableWriterDirectAddColumnStopsWall() throws Exception {
+    public void testTableWriterDirectAddColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
             try (TableWriter writer = engine.getWriter(
@@ -693,10 +723,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableWriterDirectDropColumnStopsWall() throws Exception {
+    public void testTableWriterDirectDropColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
             try (TableWriter writer = engine.getWriter(
@@ -708,16 +738,18 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 writer.removeColumn("sym");
             }
 
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcd')");
-            compile("insert into " + tableName + " values (2, 'ab', '2022-02-25', 'abcd')");
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcde')");
+            compile("insert into " + tableName + " values (2, 'ab', '2022-02-25', 'abcdr')");
+            // inserts do not check structure version
+            // it fails only when structure is changing through the WAL
             compile("alter table " + tableName + " add column dddd2 long");
-            compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcd', 123L)");
+            compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
 
             drainWalQueue();
-
-            // No SQL applied
             assertSql(tableName, "ts\tsym2\n" +
-                    "2022-02-24T00:00:00.000000Z\tEF\n");
+                    "2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2022-02-25T00:00:00.000000Z\tabcde\n" +
+                    "2022-02-25T00:00:00.000000Z\tabcdr\n");
         });
     }
 
@@ -725,7 +757,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testWalTableMultiColumnAddNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             executeInsert("insert into " + tableName +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
@@ -748,7 +780,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         });
     }
 
-    private void creatStandardWalTable(String tableName) throws SqlException {
+    private void createStandardWalTable(String tableName) throws SqlException {
         compile("create table " + tableName + " as (" +
                 "select x, " +
                 " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -762,7 +794,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         try {
             assertMemoryLeak(() -> {
                 String tableName = testName.getMethodName();
-                creatStandardWalTable(tableName);
+                createStandardWalTable(tableName);
                 drainWalQueue();
 
                 try (TableWriterAPI alterWriter1 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
@@ -786,7 +818,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         try {
             assertMemoryLeak(() -> {
                 String tableName = testName.getMethodName();
-                creatStandardWalTable(tableName);
+                createStandardWalTable(tableName);
                 drainWalQueue();
 
                 try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
@@ -879,7 +911,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
         assertMemoryLeak(dodgyFf, () -> {
             String tableName = testName.getMethodName();
-            creatStandardWalTable(tableName);
+            createStandardWalTable(tableName);
 
             drainWalQueue();
 

@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.std.*;
 
 public class PooledMetadataFactory implements MetadataFactory {

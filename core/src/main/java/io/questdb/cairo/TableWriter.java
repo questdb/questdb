@@ -1124,6 +1124,14 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getTxn();
     }
 
+    public long getSeqTxn() {
+        return txWriter.getSeqTxn();
+    }
+
+    public void setSeqTxn(long seqTxn) {
+        txWriter.setSeqTxn(seqTxn);
+    }
+
     public TxnScoreboard getTxnScoreboard() {
         return txnScoreboard;
     }
@@ -1355,7 +1363,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         final CharSequence sql = sqlInfo.getSql();
         sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
         try {
-            switch(cmdType) {
+            switch (cmdType) {
                 case CMD_ALTER_TABLE:
                     apply(sqlToOperation.toAlterOperation(sql), false);
                     break;
@@ -1366,8 +1374,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException e) {
-            throw CairoException.critical(0)
-                    .put("cannot apply UPDATE from WAL to table. ").put(e.getFlyweightMessage());
+            throw CairoException.critical(0).put("cannot apply SQL txn from WAL to table. ").put(e.getFlyweightMessage());
         }
     }
 
