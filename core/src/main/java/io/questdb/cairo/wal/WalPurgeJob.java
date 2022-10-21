@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -83,14 +85,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private final StringSink debugBuffer = new StringSink();
 
-    public WalPurgeJob(CairoEngine engine, FilesFacade ff) {
+    public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
         this.ff = ff;
-        this.clock = engine.getConfiguration().getMicrosecondClock();
+        this.clock = clock;
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
         this.txReader = new TxReader(ff);
 
         assert WalUtils.WAL_NAME_BASE.equals("wal");
+    }
+
+    public WalPurgeJob(CairoEngine engine) {
+        this(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock());
     }
 
     /**
@@ -100,10 +106,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
-    }
-
-    public WalPurgeJob(CairoEngine engine) {
-        this(engine, engine.getConfiguration().getFilesFacade());
     }
 
     /** Validate equivalent of "^wal\d+$" regex. */
@@ -146,7 +148,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private Path setSeqTxnPath(CharSequence tableName) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName)
-                .concat(Sequencer.SEQ_DIR).$();
+                .concat(WalUtils.SEQ_DIR).$();
     }
 
     private Path setTxnPath(CharSequence tableName) {
@@ -195,7 +197,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private void discoverWalDirectoriesIter(long pUtf8NameZ, int type) {
         if ((type == Files.DT_DIR) && matchesWalNamePattern(walName.of(pUtf8NameZ))) {
             // We just record the name for now in a set which we'll remove items to know when we're done.
-            int walId = 0;
+            int walId;
             try {
                 walId = Numbers.parseInt(walName, 3, walName.length());
             } catch (NumericException ne) {
@@ -218,12 +220,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         try {
             final long lastAppliedTxn = txReader.unsafeReadVersion();
 
-            TableRegistry tableRegistry = engine.getTableRegistry();
-            try (SequencerCursor sequencerCursor = tableRegistry.getCursor(tableName, lastAppliedTxn)) {
-                while (sequencerCursor.hasNext() && (discoveredWalIds.size() > 0)) {
-                    final int walId = sequencerCursor.getWalId();
+            TableSequencerAPI tableSequencerAPI = engine.getTableRegistry();
+            try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableName, lastAppliedTxn)) {
+                while (transactionLogCursor.hasNext() && (discoveredWalIds.size() > 0)) {
+                    final int walId = transactionLogCursor.getWalId();
                     if (discoveredWalIds.contains(walId)) {
-                        walInfoDataFrame.add(walId, sequencerCursor.getSegmentId());
+                        walInfoDataFrame.add(walId, transactionLogCursor.getSegmentId());
                         discoveredWalIds.remove(walId);
                     }
                 }
@@ -242,14 +244,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteFile(Path path) {
+    private boolean deleteFile(Path path) {
         if (!ff.remove(path)) {
             final int errno = ff.errno();
             if (errno != 2) {
                 LOG.error().$("Could not delete file [path=").$(path)
                         .$(", errno=").$(errno).$(']').$();
+                return false;
             }
         }
+        return true;
     }
 
     private void mayLogDebugInfo() {
@@ -263,8 +267,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         mayLogDebugInfo();
         LOG.info().$("deleting WAL directory [table=").$(tableName)
                 .$(", walId=").$(walId).$(']').$();
-        recursiveDelete(setWalPath(tableName, walId));
-        deleteFile(setWalLockPath(tableName, walId));
+        if (deleteFile(setWalLockPath(tableName, walId))) {
+            recursiveDelete(setWalPath(tableName, walId));
+        }
     }
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
@@ -272,13 +277,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         LOG.info().$("deleting WAL segment directory [table=").$(tableName)
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
-        recursiveDelete(setSegmentPath(tableName, walId, segmentId));
-        deleteFile(setSegmentLockPath(tableName, walId, segmentId));
+        if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
+            recursiveDelete(setSegmentPath(tableName, walId, segmentId));
+        }
     }
 
     private void deleteClosedSegmentsIter(long pUtf8NameZ, int type) {
         if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
-            int segmentId = 0;
+            int segmentId;
             try {
                 segmentId = Numbers.parseInt(segmentName);
             } catch (NumericException _ne) {
@@ -313,7 +319,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteUnreachableSegmentsIter(long pUtf8NameZ, int type) {
         if ((type == Files.DT_DIR) && matchesSegmentName(segmentName.of(pUtf8NameZ))) {
-            int segmentId = 0;
+            int segmentId;
             try {
                 segmentId = Numbers.parseInt(segmentName);
             }

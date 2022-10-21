@@ -25,9 +25,9 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 
 @FunctionalInterface
 public interface WriterSource {
-    TableWriterFrontend getTableWriterFrontEnd(CairoSecurityContext context, CharSequence name, String lockReason);
+    TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason);
 }

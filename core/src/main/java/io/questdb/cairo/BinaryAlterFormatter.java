@@ -35,8 +35,7 @@ public class BinaryAlterFormatter implements MemorySerializer {
     }
 
     @Override
-    public Object fromSink(Object instance, MemoryCR memory, long offset) {
+    public void fromSink(Object instance, MemoryCR memory, long offset) {
         ((AlterOperation) instance).deserializeBody(memory, offset);
-        return instance;
     }
 }

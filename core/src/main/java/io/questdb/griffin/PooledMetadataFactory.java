@@ -36,7 +36,6 @@ public class PooledMetadataFactory implements MetadataFactory {
     private final CairoConfiguration configuration;
     private final WeakClosableObjectPool<ReusableTableReaderMetadata> readerMetadataPool;
     private final WeakClosableObjectPool<ReusableSequencerMetadata> sequencerMetadataPool;
-    CharSequenceObjHashMap<String> tableNamePool = new CharSequenceObjHashMap<>();
     private boolean isClosed = false;
 
     public PooledMetadataFactory(CairoConfiguration configuration) {
@@ -56,11 +55,10 @@ public class PooledMetadataFactory implements MetadataFactory {
     }
 
     @Override
-    public TableRecordMetadata openTableReaderMetadata(CharSequence tableName) {
+    public TableRecordMetadata openTableReaderMetadata(String tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
-        String tableNameStr = resolveString(tableNamePool, tableName);
         try {
-            tableReaderMetadata.readSafe(dbRoot, tableNameStr, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            tableReaderMetadata.readSafe(dbRoot, tableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return tableReaderMetadata;
         } catch (CairoException e) {
             Misc.free(tableReaderMetadata);
@@ -78,16 +76,6 @@ public class PooledMetadataFactory implements MetadataFactory {
     @Override
     public SequencerMetadata getSequencerMetadata() {
         return sequencerMetadataPool.pop();
-    }
-
-    private String resolveString(CharSequenceObjHashMap<String> tableNamePool, CharSequence tableName) {
-        String tableNameStr = tableNamePool.get(tableName);
-        if (tableNameStr != null) {
-            return tableNameStr;
-        }
-        tableNameStr = Chars.toString(tableName);
-        tableNamePool.put(tableNameStr, tableNameStr);
-        return tableNameStr;
     }
 
     private class ReusableTableReaderMetadata extends TableReaderMetadata {

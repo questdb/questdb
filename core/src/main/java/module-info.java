@@ -98,6 +98,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.griffin.engine.functions.long128;
     exports io.questdb.cairo.wal;
+    exports io.questdb.cairo.wal.seq;
 
     provides FunctionFactory with
             // test functions
@@ -648,6 +649,7 @@ open module io.questdb {
 
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
+            io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,

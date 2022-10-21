@@ -46,7 +46,7 @@ final class LineTcpUtils {
         return utf8CharSeq;
     }
 
-    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+    static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
             tempSink.put(utf8CharSeq.charAt(i));

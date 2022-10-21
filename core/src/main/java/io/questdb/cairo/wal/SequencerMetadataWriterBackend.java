@@ -26,9 +26,9 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.UpdateOperator;
+import io.questdb.cairo.UpdateOperator;
 
-public interface SequencerMetadataWriterBackend extends TableWriterBackend {
+public interface SequencerMetadataWriterBackend extends TableWriterSPI {
 
     @Override
     default void addIndex(CharSequence columnName, int indexValueBlockSize) {

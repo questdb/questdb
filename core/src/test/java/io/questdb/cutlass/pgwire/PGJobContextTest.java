@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
@@ -169,8 +170,8 @@ public class PGJobContextTest extends BasePGTest {
         }
     }
 
-    private boolean isDisabledForWalRun() {
-        return SKIP_FAILING_WAL_TESTS && walEnabled;
+    private boolean notDisabledForWalRun() {
+        return !SKIP_FAILING_WAL_TESTS || !walEnabled;
     }
 
     /**
@@ -4781,7 +4782,7 @@ nodejs code:
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     queryTimestampsInRange(connection);
 
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                             statement.execute();
                         }
@@ -4820,7 +4821,7 @@ nodejs code:
                     }
                 }
 
-                if (!isDisabledForWalRun()) {
+                if (notDisabledForWalRun()) {
                     try (final Connection connection = getConnection(server.getPort(), false, false);
                          PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
@@ -4847,7 +4848,7 @@ nodejs code:
 
             queryTimestampsInRange(connection);
 
-            if (!isDisabledForWalRun()) {
+            if (notDisabledForWalRun()) {
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
@@ -5000,6 +5001,114 @@ nodejs code:
                         TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            compiler.compile("create table tab (d double)", sqlExecutionContext);
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "insert into tab select rnd_double() from long_sequence(1000);")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
+    public void testSqlBatchTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final Statement statement = connection.createStatement()) {
+                statement.execute("create table tab (d double);" +
+                        "select count(*) from tab;" +
+                        "insert into tab select count(*) from tab;");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleGroupByQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select s, count(*) from t1 group by s ");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleCountQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select count(*) from t1 where s = 's10'");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testExtendedQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testTimeoutIsPerPreparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+            Os.sleep(1000);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testTimeoutIsPerSimpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+            }
+            Os.sleep(1000);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
             }
         });
     }
@@ -6031,7 +6140,7 @@ create table tab as (
                 }
             }
 
-            if (!isDisabledForWalRun()) {
+            if (notDisabledForWalRun()) {
                 try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                     statement.execute();
                 }
@@ -6565,7 +6674,7 @@ create table tab as (
                         }
                     }
 
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         connection.prepareStatement("drop table ts").execute();
                     }
                 }
@@ -6616,7 +6725,7 @@ create table tab as (
                     assertEquals(expectedTs, tsBack);
 
                     // cleanup
-                    if (!isDisabledForWalRun()) {
+                    if (notDisabledForWalRun()) {
                         conn.prepareStatement("drop table ts").execute();
                     }
                 }
@@ -7106,48 +7215,52 @@ create table tab as (
     }
 
     private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
+    }
+
+    private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.Simple, true, runnable, -2);
-            assertWithPgServer(Mode.Simple, true, runnable, -1);
+            assertWithPgServer(Mode.Simple, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Simple, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.Simple, false, runnable, -2);
-            assertWithPgServer(Mode.Simple, false, runnable, -1);
+            assertWithPgServer(Mode.Simple, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Simple, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.Extended, true, runnable, -2);
-            assertWithPgServer(Mode.Extended, true, runnable, -1);
+            assertWithPgServer(Mode.Extended, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Extended, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.Extended, false, runnable, -2);
-            assertWithPgServer(Mode.Extended, false, runnable, -1);
+            assertWithPgServer(Mode.Extended, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.Extended, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedForPrepared, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedForPrepared, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedCacheEverything, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2);
-            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.ExtendedCacheEverything, false, runnable, -1, queryTimeout);
         }
     }
 
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold) throws Exception {
+    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold, long queryTimeout) throws Exception {
         LOG.info().$("asserting PG Wire server [mode=").$(mode)
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
@@ -7156,7 +7269,7 @@ create table tab as (
         try {
             assertMemoryLeak(() -> {
                 try (
-                        final PGWireServer server = createPGServer(2);
+                        final PGWireServer server = createPGServer(2, queryTimeout);
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);

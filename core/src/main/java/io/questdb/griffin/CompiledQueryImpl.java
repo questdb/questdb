@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
@@ -59,15 +59,15 @@ public class CompiledQueryImpl implements CompiledQuery {
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
-            protected long apply(UpdateOperation operation, TableWriterFrontend writerFronted) throws SqlException {
-                return writerFronted.applyUpdate(operation);
+            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) throws SqlException {
+                return writerAPI.apply(operation);
             }
         };
 
         alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
-            protected long apply(AlterOperation operation, TableWriterFrontend writerFronted) throws SqlException {
-                return writerFronted.applyAlter(operation, true);
+            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) throws SqlException {
+                return writerAPI.apply(operation, true);
             }
         };
     }

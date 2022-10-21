@@ -36,6 +36,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
     public SampleByFillValueNotKeyedRecordCursor(
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             SimpleMapValuePeeker peeker,
@@ -52,6 +53,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 placeholderFunctions,
                 timezoneNameFunc,
                 timezoneNameFuncPos,

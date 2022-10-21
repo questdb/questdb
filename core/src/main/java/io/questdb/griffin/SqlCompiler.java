@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -97,7 +97,7 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
-    private final ObjList<TableWriterFrontend> tableWriters = new ObjList<>();
+    private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final FunctionParser functionParser;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
@@ -1135,6 +1135,10 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext, CharSequence query) throws SqlException {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             throw SqlException.$(0, "empty query");
@@ -1236,29 +1240,34 @@ public class SqlCompiler implements Closeable {
     }
 
     private long copyOrdered(
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordMetadata metadata,
             RecordCursor cursor,
             RecordToRowCopier copier,
-            int cursorTimestampIndex
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
 
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex);
+            rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
         } else {
-            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex);
+            rowCount = copyOrdered0(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
         }
         writer.commit();
 
         return rowCount;
     }
 
-    private long copyOrdered0(TableWriterFrontend writer, RecordCursor cursor, RecordToRowCopier copier,
-                              int cursorTimestampIndex) {
+    private long copyOrdered0(TableWriterAPI writer,
+                              RecordCursor cursor,
+                              RecordToRowCopier copier,
+                              int cursorTimestampIndex,
+                              SqlExecutionCircuitBreaker circuitBreaker) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
@@ -1269,19 +1278,20 @@ public class SqlCompiler implements Closeable {
     }
 
     private long copyOrderedBatched(
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordMetadata metadata,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag
+            long commitLag,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag, circuitBreaker);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag, circuitBreaker);
         }
         writer.commit();
 
@@ -1290,17 +1300,19 @@ public class SqlCompiler implements Closeable {
 
     //returns number of copied rows
     private long copyOrderedBatched0(
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag
+            long commitLag,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
@@ -1315,17 +1327,19 @@ public class SqlCompiler implements Closeable {
 
     //returns number of copied rows
     private long copyOrderedBatchedStrTimestamp(
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag
+            long commitLag,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.TIMESTAMP));
@@ -1342,14 +1356,16 @@ public class SqlCompiler implements Closeable {
 
     //returns number of copied rows
     private long copyOrderedStrTimestamp(
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
-            int cursorTimestampIndex
+            int cursorTimestampIndex,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final CharSequence str = record.getStr(cursorTimestampIndex);
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(SqlUtil.implicitCastStrAsTimestamp(str));
@@ -1366,12 +1382,13 @@ public class SqlCompiler implements Closeable {
      */
     private TableWriter copyTableData(
             CairoSecurityContext securityContext, CharSequence tableName, boolean isWalEnabled, RecordCursor cursor,
-            RecordMetadata cursorMetadata
+            RecordMetadata cursorMetadata,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) throws SqlException {
         TableWriter writer = null;
-        final TableWriterFrontend writerFrontend;
+        final TableWriterAPI writerAPI;
         if (!isWalEnabled) {
-            writerFrontend = writer = new TableWriter(
+            writerAPI = writer = new TableWriter(
                     configuration,
                     tableName,
                     messageBus,
@@ -1381,22 +1398,23 @@ public class SqlCompiler implements Closeable {
                     configuration.getRoot(),
                     engine.getMetrics());
         } else {
-            writerFrontend = engine.getWalWriter(securityContext, tableName);
+            writerAPI = engine.getWalWriter(securityContext, tableName);
         }
         try {
-            RecordMetadata writerMetadata = writerFrontend.getMetadata();
+            RecordMetadata writerMetadata = writerAPI.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             this.insertCount = copyTableData(
                     cursor,
                     cursorMetadata,
-                    writerFrontend,
+                    writerAPI,
                     writerMetadata,
                     RecordToRowCopierUtils.generateCopier(
                             asm,
                             cursorMetadata,
                             writerMetadata,
                             entityColumnFilter
-                    )
+                    ),
+                    circuitBreaker
             );
             return writer;
         } catch (Throwable e) {
@@ -1404,7 +1422,7 @@ public class SqlCompiler implements Closeable {
             throw e;
         } finally {
             if (isWalEnabled) {
-                writerFrontend.close();
+                writerAPI.close();
             }
         }
     }
@@ -1415,26 +1433,28 @@ public class SqlCompiler implements Closeable {
     private long copyTableData(
             RecordCursor cursor,
             RecordMetadata metadata,
-            TableWriterFrontend writer,
+            TableWriterAPI writer,
             RecordMetadata
                     writerMetadata,
-            RecordToRowCopier recordToRowCopier
+            RecordToRowCopier recordToRowCopier,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) throws SqlException {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
-            return copyUnordered(cursor, writer, recordToRowCopier);
+            return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
         } else {
-            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex);
+            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
         }
     }
 
     /**
      * Returns number of copied rows.
      */
-    private long copyUnordered(RecordCursor cursor, TableWriterFrontend writer, RecordToRowCopier copier) {
+    private long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             TableWriter.Row row = writer.newRow();
             copier.copy(record, row);
             row.append();
@@ -1485,6 +1505,10 @@ public class SqlCompiler implements Closeable {
                     }
                 } catch (CairoException e) {
                     LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+                    if (e.isInterruption()) {
+                        throw e;
+                    }
+
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
@@ -1523,7 +1547,7 @@ public class SqlCompiler implements Closeable {
             if (rdrMetadata.getTimestampIndex() != -1) {
                 model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
             }
-            model.setWalEnabled(rdrMetadata.isWalEnabled());
+            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
         }
         model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
@@ -1545,11 +1569,12 @@ public class SqlCompiler implements Closeable {
                     tableStructureAdapter.of(model, metadata, typeCast)
             );
 
+            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             final boolean walEnabled = model.isWalEnabled();
             // TODO: if it's WAL enabled, table unlock can happen here, before the data is written
 
             try {
-                return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, walEnabled, cursor, metadata);
+                return copyTableData(executionContext.getCairoSecurityContext(), model.getName().token, walEnabled, cursor, metadata, circuitBreaker);
             } catch (CairoException e) {
                 LOG.error().$(e.getFlyweightMessage()).$(" [errno=").$(e.getErrno()).$(']').$();
                 if (removeTableDirectory(model)) {
@@ -1855,7 +1880,7 @@ public class SqlCompiler implements Closeable {
         long insertCount;
 
         try (
-                TableWriterFrontend writer = engine.getTableWriterFrontEnd(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
+                TableWriterAPI writer = engine.getTableWriterAPI(executionContext.getCairoSecurityContext(), name.token, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
         ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
@@ -1967,10 +1992,12 @@ public class SqlCompiler implements Closeable {
                 );
             }
 
+            SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (writerTimestampIndex == -1) {
-                        insertCount = copyUnordered(cursor, writer, copier);
+                        insertCount = copyUnordered(cursor, writer, copier, circuitBreaker);
                     } else {
                         if (model.getBatchSize() != -1) {
                             insertCount = copyOrderedBatched(
@@ -1980,10 +2007,11 @@ public class SqlCompiler implements Closeable {
                                     copier,
                                     writerTimestampIndex,
                                     model.getBatchSize(),
-                                    model.getCommitLag()
+                                    model.getCommitLag(),
+                                    circuitBreaker
                             );
                         } else {
-                            insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound);
+                            insertCount = copyOrdered(writer, factory.getMetadata(), cursor, copier, timestampIndexFound, circuitBreaker);
                         }
                     }
                 } catch (Throwable e) {
@@ -2376,7 +2404,7 @@ public class SqlCompiler implements Closeable {
                     tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
-                        tableWriters.add(engine.getTableWriterFrontEnd(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
+                        tableWriters.add(engine.getTableWriterAPI(executionContext.getCairoSecurityContext(), tok, "truncateTables"));
                     } catch (CairoException e) {
                         LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).$(']').$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
@@ -2398,7 +2426,7 @@ public class SqlCompiler implements Closeable {
             }
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                try (TableWriterFrontend writer = tableWriters.getQuick(i)) {
+                try (TableWriterAPI writer = tableWriters.getQuick(i)) {
                     try {
                         if (writer.getMetadata().isWalEnabled()) {
                             writer.truncate();
@@ -2744,7 +2772,8 @@ public class SqlCompiler implements Closeable {
                         }
 
                         RecordCursor cursor = reader.getCursor();
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier);
+                        //statement/query timeout value  is most likely too small for backup operation
+                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                         backupWriter.commit();
                     }
                 }

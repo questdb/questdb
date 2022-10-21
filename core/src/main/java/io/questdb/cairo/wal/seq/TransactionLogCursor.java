@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.wal.seq;
 
 import java.io.Closeable;
 
-public interface SequencerCursor extends Closeable {
+public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
 
