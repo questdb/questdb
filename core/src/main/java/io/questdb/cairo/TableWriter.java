@@ -1486,7 +1486,7 @@ public class TableWriter implements Closeable {
             columnVersionWriter.removePartition(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
-            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), nextMaxTimestamp);
+            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
