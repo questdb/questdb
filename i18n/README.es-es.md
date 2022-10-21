@@ -88,7 +88,7 @@ En este link se puede ver los resultados para un caso de uso de alta cardinalida
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+    <img alt="Una gráfica que compara el rendimiento máximo de QuestDB, ClickHouse, TimescaleDB e InfluxDB" src=".github/tsbs-results.png"/>
   </a>
 </div>
 
