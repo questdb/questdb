@@ -84,7 +84,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
 
-        for (int i = 0; i < model.getColumnCount(); i++) {
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
             final CharSequence name = model.getColumnName(i);
             final int type = model.getColumnType(i);
             addColumn0(name, type);

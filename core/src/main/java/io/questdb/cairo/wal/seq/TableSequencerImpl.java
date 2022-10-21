@@ -202,13 +202,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     public long lastTxn() {
-        // todo: why is there a lock to read a field?
-        schemaLock.readLock().lock();
-        try {
-            return tableTransactionLog.lastTxn();
-        } finally {
-            schemaLock.readLock().unlock();
-        }
+        return tableTransactionLog.lastTxn();
     }
 
     public void open() {
