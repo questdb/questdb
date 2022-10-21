@@ -216,6 +216,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private UpdateOperatorImpl updateOperatorImpl;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
+
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
@@ -1273,7 +1274,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         int walRootPathLen = walPath.length();
 
         try {
-            mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
+            mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
 
             try {
                 o3Columns = walMappedColumns;
@@ -3166,7 +3167,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    private void mmapWalColumn(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumns(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
