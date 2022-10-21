@@ -114,13 +114,8 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
-        schemaLock.writeLock().lock();
-        try {
-            checkDistressed();
-            return tableTransactionLog.getCursor(seqTxn);
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
+        checkDistressed();
+        return tableTransactionLog.getCursor(seqTxn);
     }
 
     @Override

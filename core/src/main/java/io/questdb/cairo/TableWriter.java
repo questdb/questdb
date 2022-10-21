@@ -96,7 +96,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private final Path path;
     private final Path other;
     private final LongList rowValueIsNotNull = new LongList();
-    private final Row regularRow = new RowImpl();
+    private final Row row = new RowImpl();
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -174,7 +174,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
-    private Row row = regularRow;
     private long todoTxn;
     private MemoryMAT o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -1567,7 +1566,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
-            row = regularRow;
             openPartition(prevTimestamp);
             setAppendPosition(newTransientRowCount, false);
         } else {
@@ -1969,7 +1967,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
         txWriter.truncate(columnVersionWriter.getVersion());
-        row = regularRow;
         try {
             clearTodoLog();
         } catch (CairoException err) {
