@@ -1129,7 +1129,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             row.putInt(0, n);
                             row.putSym(1, "test" + n);
                             row.append();
-                            if (n % 10 == 0) {
+                            if ((n + 1) % maxRowCount == 0) {
                                 walWriter.commit();
                             }
                         }
