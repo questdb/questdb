@@ -25,15 +25,14 @@ ingestion using the InfluxDB line protocol, PostgreSQL wire protocol, and a REST
 API for bulk imports and exports.
 
 QuestDB is well suited for financial market data, application metrics, sensor
-data, realtime analytics, dashboards, and infrastructure monitoring.
+data, real-time analytics, dashboards, and infrastructure monitoring.
 
-QuestDB uses ANSI SQL and benefits from time-series SQL semantics. These SQL
-semantics make it simple to correlate data from multiple sources using
-relational and time-series joins. QuestDB achieves high performance from a
-column-oriented storage model, parallelized vector execution, SIMD instructions,
-and various low-latency techniques. The entire codebase is built from the ground
-up in Java and C++, with no dependencies, and is 100% free from garbage
-collection.
+QuestDB uses ANSI SQL and benefits from time-series SQL semantics. It is simple
+to correlate data from multiple sources using relational and time-series joins.
+We achieve high performance from a column-oriented storage model,
+parallelized vector execution, SIMD instructions, and various low-latency
+techniques. The entire codebase is built from the ground up in Java and C++,
+with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
