@@ -363,7 +363,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int segmentId,
             long walRowCount
     ) {
-        securityContext.checkWritePermission();
         if (tableSequencerAPI.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
             return new WalReader(configuration, tableName, walName, segmentId, walRowCount);

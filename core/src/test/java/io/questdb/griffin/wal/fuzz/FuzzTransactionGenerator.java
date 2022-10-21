@@ -114,7 +114,7 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, i, transactionCount);
+                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, rnd.nextLong(), transactionCount);
                rowCount -= blockRows;
                 lastTimestamp = stopTs;
             }
@@ -181,7 +181,7 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            int seed,
+            long seed,
             long tsRound
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
@@ -194,7 +194,7 @@ public class FuzzTransactionGenerator {
             }
             // Use stable random seeds which depends on the transaction index and timestamp
             // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
-            long seed1 = timestamp - (maxTimestamp - minTimestamp) * seed;
+            long seed1 = seed + timestamp;
             long seed2 = timestamp;
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
