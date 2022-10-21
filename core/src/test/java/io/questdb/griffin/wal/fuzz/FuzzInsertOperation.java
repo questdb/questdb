@@ -83,7 +83,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd rnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
-        rnd.reset(this.s0, this.s1);
+        rnd.reset(this.s1, this.s0);
         TableWriter.Row row = tableWriter.newRow(timestamp);
 
         int columnCount = metadata.getColumnCount();

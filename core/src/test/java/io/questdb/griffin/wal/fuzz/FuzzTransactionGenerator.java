@@ -188,13 +188,15 @@ public class FuzzTransactionGenerator {
         long timestamp = minTimestamp;
         for (int i = 0; i < rowCount; i++) {
             if (o3) {
-                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + seed;
+                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + i;
             } else {
                 timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
             }
             // Use stable random seeds which depends on the transaction index and timestamp
             // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
-            transaction.operationList.add(new FuzzInsertOperation(seed, timestamp, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            long seed1 = timestamp - (maxTimestamp - minTimestamp) * seed;
+            long seed2 = timestamp;
+            transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
         transaction.rollback = getZeroToOneDouble(rnd) < rollback;

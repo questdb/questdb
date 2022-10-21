@@ -130,16 +130,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         fullRandomFuzz(rnd, tableCount);
     }
 
-    private void setRandomAppendPageSize(Rnd rnd) {
-        int minPage = 18;
-        dataAppendPageSize = 1L << (minPage + rnd.nextInt(29 - minPage)); // MAX page size 512Kb
-        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
-    }
-
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
-        setFuzzProbabilities(0.7, 0.5, 0.1, 0.7, 0.05, 0.05, 0.05, 1.0);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);
     }
@@ -470,10 +464,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private void fullRandomFuzz(Rnd rnd) throws Exception {
         setFuzzProbabilities(
+                0.5 * getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
+                0.5 * getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
@@ -495,10 +489,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
         setFuzzProbabilities(
+                0.5 * getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
+                0.5 * getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
                 getZeroToOneDouble(rnd),
@@ -677,5 +671,11 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
         this.dataAddProb = dataAddProb;
+    }
+
+    private void setRandomAppendPageSize(Rnd rnd) {
+        int minPage = 18;
+        dataAppendPageSize = 1L << (minPage + rnd.nextInt(22 - minPage)); // MAX page size 4Mb
+        LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
     }
 }
