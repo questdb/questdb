@@ -102,13 +102,13 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TestUtils.await(barrier);
                         long lastTxn = 0;
                         do {
-                            try (TransactionLogCursor cursor = engine.getTableRegistry().getCursor(tableName, lastTxn)) {
+                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, lastTxn)) {
                                 while (cursor.hasNext()) {
                                     lastTxn = cursor.getTxn();
                                 }
                             }
 
-                        } while (engine.getTableRegistry().lastTxn(tableName) < iterations && exception.get() == null);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     }
