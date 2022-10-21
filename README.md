@@ -19,16 +19,16 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 
 # QuestDB
 
-QuestDB is a high-performance, open-source time-series database for applications
-where timely data ingestion and querying is critical. It is widely used with
-financial market data, application metrics, sensor data, realtime analytics and
-dashboards, and infrastructure monitoring.
+QuestDB is an open-source time-series database with high throughput ingestion
+and fast SQL queries. Its applications span financial market data, application
+metrics, sensor data, realtime analytics, dashboards, and infrastructure
+monitoring.
 
 QuestDB uses ANSI SQL and benefits from time-series SQL semantics. These SQL
 semantics make it simple to correlate data from multiple sources using
 relational and time-series joins. QuestDB achieves high performance from a
 column-oriented storage model, parallelized vector execution, SIMD instructions,
-and various low-latency techniques. The entire codebase was built from the
+and various low-latency techniques. The entire codebase is built from the
 ground up in Java and C++, with no dependencies, and is 100% free from garbage
 collection.
 
