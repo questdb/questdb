@@ -27,16 +27,14 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -1257,6 +1255,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = "src49";
