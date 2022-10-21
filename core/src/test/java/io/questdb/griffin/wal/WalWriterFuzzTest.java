@@ -125,8 +125,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        int tableCount = Math.max(2, rnd.nextInt(10));
-        setRandomAppendPageSize(rnd);
+        int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
     }
 
@@ -488,27 +487,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     private void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        setFuzzProbabilities(
-                0.5 * getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                0.5 * getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd)
-        );
-
-        setFuzzCounts(
-                rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
-                rnd.nextInt(1000),
-                rnd.nextInt(1000),
-                rnd.nextInt(1000),
-                rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
-        );
         runFuzz(rnd, testName.getMethodName(), tableCount);
     }
 
@@ -636,6 +614,28 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
             for (int i = 0; i < tableCount; i++) {
                 String tableNameWal = tableNameBase + "_" + i;
+                setFuzzProbabilities(
+                        0.5 * getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        0.5 * getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd),
+                        getZeroToOneDouble(rnd)
+                );
+
+                setFuzzCounts(
+                        rnd.nextBoolean(),
+                        rnd.nextInt(2_000_000),
+                        rnd.nextInt(1000),
+                        rnd.nextInt(1000),
+                        rnd.nextInt(1000),
+                        rnd.nextInt(1000),
+                        rnd.nextInt(1_000_000),
+                        5 + rnd.nextInt(10)
+                );
+
                 ObjList<FuzzTransaction> transactions = createTransactions(rnd, tableNameWal);
                 fuzzTransactions.add(transactions);
             }
