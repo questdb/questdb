@@ -227,7 +227,7 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
-    int getReplaceFunctionMaxBufferLength();
+    int getStrFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 

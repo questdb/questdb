@@ -446,8 +446,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return conf.getReplaceFunctionMaxBufferLength();
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
     }
 
     @Override

@@ -499,7 +499,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getReplaceFunctionMaxBufferLength() {
+    public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
     }
 
