@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Argument;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -54,91 +55,67 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         final Function strFunc = args.getQuick(0);
         final Function delimiterFunc = args.getQuick(1);
         final Function indexFunc = args.getQuick(2);
-        final int indexPosition = argPositions.getQuick(2);
 
-        if (indexFunc.isConstant()) {
-            int index = indexFunc.getInt(null);
+        Argument<CharSequence> strParam = Argument.fromDynamicFunction(strFunc, "str", argPositions.getQuick(0), func -> func::getStr);
+        Argument<CharSequence> delimiterParam = Argument.fromDynamicFunction(delimiterFunc, "delimiter", argPositions.getQuick(1), func -> func::getStr);
+        Argument<Integer> indexParam = Argument.fromRuntimeConstantFunction(indexFunc, "index", argPositions.getQuick(2), func -> func::getInt);
+
+        Function fallback = indexParam.validateConstant((index, paramName, paramPosition) -> {
             if (index == Numbers.INT_NaN) {
                 return StrConstant.NULL;
             } else if (index == 0) {
-                throw SqlException.$(indexPosition, "field position must not be zero");
-            } else {
-                return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);
+                throw SqlException.$(paramPosition, "field position must not be zero");
             }
-        } else if (!indexFunc.isRuntimeConstant()) {
-            throw SqlException.$(indexPosition, "index must be a constant or runtime-constant");
+            return null;
+        });
+        if (fallback != null) {
+            return fallback;
         }
-        return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
+        indexParam.registerRuntimeConstantValidator((index, paramName, paramPosition) -> {
+            if (index == 0) {
+                throw SqlException.$(paramPosition, "field position must not be zero");
+            }
+        });
+
+        return new SplitPartFunction(strParam, delimiterParam, indexParam);
     }
 
-    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return indexFunc.getInt(rec);
-        }
-    }
-
-    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
-        private final int index;
-
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-            this.index = index;
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return index;
-        }
-    }
-
-    private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
+    private static class SplitPartFunction extends StrFunction implements TernaryFunction {
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        protected final Function strFunc;
-        protected final Function delimiterFunc;
-        protected final Function indexFunc;
-        private final int indexPosition;
+        private final Argument<CharSequence> strParam;
+        private final Argument<CharSequence> delimiterParam;
+        private final Argument<Integer> indexParam;
 
-        public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            this.strFunc = strFunc;
-            this.delimiterFunc = delimiterFunc;
-            this.indexFunc = indexFunc;
-            this.indexPosition = indexPosition;
+        public SplitPartFunction(Argument<CharSequence> strParam,
+                                 Argument<CharSequence> delimiterParam,
+                                 Argument<Integer> indexParam) {
+            this.strParam = strParam;
+            this.delimiterParam = delimiterParam;
+            this.indexParam = indexParam;
         }
-
-        abstract int getIndex(Record rec);
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (indexFunc.isRuntimeConstant()) {
-                int index = indexFunc.getInt(null);
-                if (index == 0) {
-                    throw SqlException.$(indexPosition, "field position must not be zero");
-                }
-            }
+            strParam.init(symbolTableSource, executionContext);
+            delimiterParam.init(symbolTableSource, executionContext);
+            indexParam.init(symbolTableSource, executionContext);
         }
 
         @Override
-        public final Function getLeft() {
-            return strFunc;
+        public Function getLeft() {
+            return strParam.getFunc();
         }
 
         @Override
-        public final Function getCenter() {
-            return delimiterFunc;
+        public Function getCenter() {
+            return delimiterParam.getFunc();
         }
 
         @Override
-        public final Function getRight() {
-            return indexFunc;
+        public Function getRight() {
+            return indexParam.getFunc();
         }
 
         @Override
@@ -158,9 +135,9 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Nullable
         private <S extends CharSink> S getStr0(Record rec, S sink, boolean clearSink) {
-            CharSequence str = strFunc.getStr(rec);
-            CharSequence delimiter = delimiterFunc.getStr(rec);
-            int index = getIndex(rec);
+            CharSequence str = strParam.getValue(rec);
+            CharSequence delimiter = delimiterParam.getValue(rec);
+            int index = indexParam.getValue(rec);
             if (str == null || delimiter == null || index == Numbers.INT_NaN) {
                 return null;
             }
