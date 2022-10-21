@@ -15,7 +15,7 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md)
 
 # QuestDB
 
