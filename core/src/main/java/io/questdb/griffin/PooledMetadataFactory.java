@@ -58,7 +58,7 @@ public class PooledMetadataFactory implements MetadataFactory {
     public TableRecordMetadata openTableReaderMetadata(String tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
         try {
-            tableReaderMetadata.readSafe(dbRoot, tableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+//            tableReaderMetadata.load(dbRoot, tableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return tableReaderMetadata;
         } catch (CairoException e) {
             Misc.free(tableReaderMetadata);
@@ -82,7 +82,7 @@ public class PooledMetadataFactory implements MetadataFactory {
         boolean closing = false;
 
         ReusableTableReaderMetadata() {
-            super(ff, "<temp>");
+            super(configuration, "<temp>");
         }
 
         @Override

@@ -62,6 +62,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
+    private final MetadataPool metadataPool;
     private final CairoConfiguration configuration;
     private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -90,6 +91,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
+        this.metadataPool = new MetadataPool(configuration, tableSequencerAPI);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
@@ -163,6 +165,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
+        Misc.free(metadataPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
@@ -260,6 +263,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             MetadataFactory metadataFactory
     ) {
         securityContext.checkWritePermission();
+        // todo: GC heavy
         final String tableNameStr = Chars.toString(tableName);
         if (tableSequencerAPI.hasSequencer(tableNameStr)) {
             // This is WAL table because sequencer exists

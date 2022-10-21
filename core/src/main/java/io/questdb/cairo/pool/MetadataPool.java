@@ -32,11 +32,13 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -53,14 +55,14 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
     private static final int NEXT_LOCKED = 2;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
-    private final MessageBus messageBus;
     private final int maxEntries;
+    private final TableSequencerAPI tableSequencerAPI;
 
-    public MetadataPool(CairoConfiguration configuration, MessageBus messageBus) {
+    public MetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
         super(configuration, configuration.getInactiveReaderTTL());
         this.maxSegments = configuration.getReaderPoolMaxSegments();
-        this.messageBus = messageBus;
         this.maxEntries = maxSegments * ENTRY_SIZE;
+        this.tableSequencerAPI = tableSequencerAPI;
     }
 
     public Map<CharSequence, Entry> entries() {
@@ -68,15 +70,15 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
     }
 
     @Override
-    public TableRecordMetadata get(CharSequence name) {
+    public TableRecordMetadata get(CharSequence tableName) {
 
-        Entry e = getEntry(name);
+        Entry e = getEntry(tableName);
 
         long lockOwner = e.lockOwner;
         long thread = Thread.currentThread().getId();
 
         if (lockOwner != UNLOCKED) {
-            LOG.info().$('\'').utf8(name).$("' is locked [owner=").$(lockOwner).$(']').$();
+            LOG.info().$('\'').utf8(tableName).$("' is locked [owner=").$(lockOwner).$(']').$();
             throw EntryLockedException.instance("unknown");
         }
 
@@ -85,32 +87,31 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
-                    R r = e.getReader(i);
+                    TableReaderMetadata r = e.getReader(i);
                     if (r == null) {
                         try {
                             LOG.info()
-                                    .$("open '").utf8(name)
+                                    .$("open '").utf8(tableName)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            r = new R(this, e, i, name);
+                            r = newMetadataInstance(tableName, e, i);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
                         }
 
                         e.setReader(i, r);
-                        notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
+                        notifyListener(thread, tableName, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
+                        notifyListener(thread, tableName, PoolListener.EV_GET, e.index, i);
                     }
 
                     if (isClosed()) {
                         e.setReader(i, null);
-                        r.goodbye();
-                        LOG.info().$('\'').utf8(name).$("' born free").$();
+                        LOG.info().$('\'').utf8(tableName).$("' born free").$();
                         return r;
                     }
-                    LOG.debug().$('\'').utf8(name).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    LOG.debug().$('\'').utf8(tableName).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
                     return r;
                 }
             }
@@ -126,9 +127,14 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         } while (e != null && e.index < maxSegments);
 
         // max entries exceeded
-        notifyListener(thread, name, PoolListener.EV_FULL, -1, -1);
-        LOG.info().$("could not get, busy [table=`").utf8(name).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
+        notifyListener(thread, tableName, PoolListener.EV_FULL, -1, -1);
+        LOG.info().$("could not get, busy [table=`").utf8(tableName).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
         throw EntryUnavailableException.instance("unknown");
+    }
+
+    @NotNull
+    private TableReaderMetadata newMetadataInstance(CharSequence tableName, Entry e, int entryIndex) {
+        return new R(this, e, entryIndex, tableName);
     }
 
     public int getBusyCount() {
@@ -365,7 +371,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
             return releaseOrAcquireTimes[pos];
         }
 
-        public void setReader(int pos, R reader) {
+        public void setReader(int pos, TableReaderMetadata reader) {
             readers[pos] = reader;
         }
     }
@@ -376,7 +382,8 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         private Entry entry;
 
         public R(MetadataPool pool, Entry entry, int index, CharSequence name) {
-            super(pool.ff, Chars.toString(name));
+            super(pool.getConfiguration(), Chars.toString(name));
+            load();
             this.pool = pool;
             this.entry = entry;
             this.index = index;

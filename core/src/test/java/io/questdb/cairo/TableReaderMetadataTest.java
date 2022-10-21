@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -161,8 +160,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         expected.put("zall.sym", -1);
 
         String tableName = "all";
-        try (Path path = new Path().of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
-             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
+        try (
+                Path path = new Path().of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
+                TableReaderMetadata metadata = new TableReaderMetadata(configuration)
+        ) {
+            metadata.load0(path);
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -404,45 +406,45 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root).concat(tableName)) {
-                int tableId;
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
-                    tableId = metadata.getTableId();
-                    for (ColumnManipulator manipulator : manipulators) {
-                        long structVersion;
-                        try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
-                            manipulator.restructure(writer);
-                            structVersion = writer.getStructureVersion();
-                        }
-                        long pTransitionIndex = metadata.createTransitionIndex(structVersion);
-                        try {
-                            metadata.applyTransitionIndex();
-                        } finally {
-                            TableUtils.freeTransitionIndex(pTransitionIndex);
-                        }
+            int tableId;
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                metadata.load();
+                tableId = metadata.getTableId();
+                for (ColumnManipulator manipulator : manipulators) {
+                    long structVersion;
+                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                        manipulator.restructure(writer);
+                        structVersion = writer.getStructureVersion();
                     }
-                    StringSink sink = new StringSink();
-                    for (int i = 0; i < metadata.getColumnCount(); i++) {
-                        sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
-                    }
-
-                    TestUtils.assertEquals(expected, sink);
-
-                    if (expected.length() > 0) {
-                        String[] lines = expected.split("\n");
-                        Assert.assertEquals(lines.length, metadata.columnCount);
-
-                        for (int i = 0; i < lines.length; i++) {
-                            int p = lines[i].indexOf(':');
-                            Assert.assertEquals(i, metadata.getColumnIndexQuiet(lines[i].substring(0, p)));
-                        }
+                    long pTransitionIndex = metadata.createTransitionIndex(structVersion);
+                    try {
+                        metadata.applyTransitionIndex();
+                    } finally {
+                        TableUtils.freeTransitionIndex(pTransitionIndex);
                     }
                 }
-
-                // Check that table has same tableId.
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
-                    Assert.assertEquals(tableId, metadata.getTableId());
+                StringSink sink = new StringSink();
+                for (int i = 0; i < metadata.getColumnCount(); i++) {
+                    sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                 }
+
+                TestUtils.assertEquals(expected, sink);
+
+                if (expected.length() > 0) {
+                    String[] lines = expected.split("\n");
+                    Assert.assertEquals(lines.length, metadata.columnCount);
+
+                    for (int i = 0; i < lines.length; i++) {
+                        int p = lines[i].indexOf(':');
+                        Assert.assertEquals(i, metadata.getColumnIndexQuiet(lines[i].substring(0, p)));
+                    }
+                }
+            }
+
+            // Check that table has same tableId.
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                metadata.load();
+                Assert.assertEquals(tableId, metadata.getTableId());
             }
         });
     }

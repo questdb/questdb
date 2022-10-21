@@ -36,7 +36,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     private Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private String tableName;
+    private final String tableName;
     private MemoryMR metaMem;
     private int partitionBy;
     private int tableId;
@@ -45,22 +45,22 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     private long structureVersion;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
+    private final CairoConfiguration configuration;
 
-    public TableReaderMetadata(FilesFacade ff, String tableName) {
-        this.path = new Path();
+    public TableReaderMetadata(CairoConfiguration configuration, String tableName) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.path = new Path().of(configuration.getRoot()).concat(tableName);
         this.tableName = tableName;
-        this.ff = ff;
         this.metaMem = Vm.getMRInstance();
     }
 
-    public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
-        this(ff, tableName);
-        try {
-            deferredInit(path, tableName, ColumnType.VERSION);
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
+    // constructor used to read random metadata files
+    public TableReaderMetadata(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.tableName = null;
+        this.metaMem = Vm.getMRInstance();
     }
 
     @Override
@@ -159,7 +159,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     }
 
     public void copy(TableReaderMetadata metadata) {
-        tableName = metadata.tableName;
         partitionBy = metadata.partitionBy;
         tableId = metadata.tableId;
         maxUncommittedRows = metadata.maxUncommittedRows;
@@ -186,11 +185,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             ));
             columnNameIndexMap.put(columnMetadata.getName(), i);
         }
-    }
-
-    public void deferredInit(Path path, String tableName, int expectedVersion) {
-        this.path.of(path).$();
-        deferredInit(tableName, expectedVersion);
     }
 
     public long createTransitionIndex(long txnStructureVersion) {
@@ -253,15 +247,16 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return tableName;
     }
 
-    public void readSafe(CharSequence dbRoot, String tableName, MillisecondClock millisecondClock, long timeout) {
-        long deadline = millisecondClock.getTicks() + timeout;
-        this.path.of(dbRoot).concat(tableName);
+    public void load() {
+        final long timeout = configuration.getSpinLockTimeout();
+        final MillisecondClock millisecondClock = configuration.getMillisecondClock();
+        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
         int rootLen = this.path.length();
         this.path.concat(TableUtils.META_FILE_NAME).$();
         boolean existenceChecked = false;
         while (true) {
             try {
-                deferredInit(tableName, ColumnType.VERSION);
+                load0(path);
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
@@ -276,11 +271,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             }
         }
     }
+    public void load0(Path path) {
+        load0(path, ColumnType.VERSION);
+    }
 
-    private void deferredInit(String tableName, int expectedVersion) {
+    public void load0(Path path, int expectedVersion) {
         try {
-            this.tableName = tableName;
-            this.metaMem.smallFile(ff, this.path, MemoryTag.NATIVE_TABLE_READER);
+            this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             this.columnNameIndexMap.clear();
             TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);

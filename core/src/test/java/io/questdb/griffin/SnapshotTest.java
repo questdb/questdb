@@ -131,7 +131,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                 try (TableReader tableReader = new TableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
-                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff, "t", path)) {
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                            metadata.load0(path);
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());

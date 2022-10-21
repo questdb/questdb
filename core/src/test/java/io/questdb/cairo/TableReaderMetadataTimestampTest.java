@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -200,31 +198,29 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root).concat(tableName)) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                metadata.load();
+                Assert.assertEquals(12, metadata.getColumnCount());
+                Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
+                long structureVersion;
+                try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                    writer.removeColumn("timestamp");
+                    structureVersion = writer.getStructureVersion();
+                }
 
-                    Assert.assertEquals(12, metadata.getColumnCount());
-                    Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
-                    long structureVersion;
-                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
-                        writer.removeColumn("timestamp");
-                        structureVersion = writer.getStructureVersion();
+                long pTransitionIndex = metadata.createTransitionIndex(structureVersion);
+                StringSink sink = new StringSink();
+                try {
+                    metadata.applyTransitionIndex();
+                    Assert.assertEquals(columnCount, metadata.getColumnCount());
+                    for (int i = 0; i < columnCount; i++) {
+                        sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                     }
 
-                    long pTransitionIndex = metadata.createTransitionIndex(structureVersion);
-                    StringSink sink = new StringSink();
-                    try {
-                        metadata.applyTransitionIndex();
-                        Assert.assertEquals(columnCount, metadata.getColumnCount());
-                        for (int i = 0; i < columnCount; i++) {
-                            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
-                        }
-
-                        TestUtils.assertEquals(expected, sink);
-                        Assert.assertEquals(-1, metadata.getTimestampIndex());
-                    } finally {
-                        TableUtils.freeTransitionIndex(pTransitionIndex);
-                    }
+                    TestUtils.assertEquals(expected, sink);
+                    Assert.assertEquals(-1, metadata.getTimestampIndex());
+                } finally {
+                    TableUtils.freeTransitionIndex(pTransitionIndex);
                 }
             }
         });
@@ -237,31 +233,29 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
-            try (Path path = new Path().of(root).concat(tableName)) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                metadata.load();
+                Assert.assertEquals(12, metadata.getColumnCount());
+                Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
+                long structVersion;
+                try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                    manipulator.restructure(writer);
+                    structVersion = writer.getStructureVersion();
+                }
 
-                    Assert.assertEquals(12, metadata.getColumnCount());
-                    Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
-                    long structVersion;
-                    try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
-                        manipulator.restructure(writer);
-                        structVersion = writer.getStructureVersion();
+                long address = metadata.createTransitionIndex(structVersion);
+                StringSink sink = new StringSink();
+                try {
+                    metadata.applyTransitionIndex();
+                    Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
+                    for (int i = 0; i < expectedColumnCount; i++) {
+                        sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                     }
 
-                    long address = metadata.createTransitionIndex(structVersion);
-                    StringSink sink = new StringSink();
-                    try {
-                        metadata.applyTransitionIndex();
-                        Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
-                        for (int i = 0; i < expectedColumnCount; i++) {
-                            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
-                        }
-
-                        TestUtils.assertEquals(expected, sink);
-                        Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
-                    } finally {
-                        TableUtils.freeTransitionIndex(address);
-                    }
+                    TestUtils.assertEquals(expected, sink);
+                    Assert.assertEquals(expectedFinalTimestampIndex, metadata.getTimestampIndex());
+                } finally {
+                    TableUtils.freeTransitionIndex(address);
                 }
             }
         });
