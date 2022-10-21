@@ -116,6 +116,10 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public void clearAnalyticContext() {
+            }
+
+            @Override
             public void initNow() {
             }
 

@@ -875,6 +875,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public void clearAnalyticContext() {
+            sqlExecutionContext.clearAnalyticContext();
+        }
+
+        @Override
         public void initNow() {
             sqlExecutionContext.initNow();
         }

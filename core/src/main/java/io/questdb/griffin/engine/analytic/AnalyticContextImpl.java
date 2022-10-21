@@ -27,15 +27,22 @@ package io.questdb.griffin.engine.analytic;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class AnalyticContextImpl implements AnalyticContext {
+public class AnalyticContextImpl implements AnalyticContext, Mutable {
     private VirtualRecord partitionByRecord;
     private RecordSink partitionBySink;
     private ColumnTypes partitionByKeyTypes;
+    private boolean empty = true;
     private boolean ordered;
     private boolean baseSupportsRandomAccess;
+
+    @Override
+    public boolean isEmpty() {
+        return empty;
+    }
 
     @Override
     public VirtualRecord getPartitionByRecord() {
@@ -62,6 +69,16 @@ public class AnalyticContextImpl implements AnalyticContext {
         return baseSupportsRandomAccess;
     }
 
+    @Override
+    public void clear() {
+        this.empty = true;
+        this.partitionByRecord = null;
+        this.partitionBySink = null;
+        this.partitionByKeyTypes = null;
+        this.ordered = false;
+        this.baseSupportsRandomAccess = false;
+    }
+
     public void of(
             VirtualRecord partitionByRecord,
             @Nullable RecordSink partitionBySink,
@@ -69,6 +86,7 @@ public class AnalyticContextImpl implements AnalyticContext {
             boolean ordered,
             boolean baseSupportsRandomAccess
     ) {
+        this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionByKeyTypes = partitionByKeyTypes;
