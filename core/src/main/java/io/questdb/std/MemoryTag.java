@@ -77,10 +77,10 @@ public final class MemoryTag {
     public static final int NATIVE_IO_DISPATCHER_RSS = 49;
     public static final int NATIVE_FUNC_RSS = 50;
     public static final int NATIVE_DIRECT_CHAR_SINK = 51;
-    public static final int MMAP_TX_CATALOG_CURSOR = 52;
-    public static final int MMAP_TX_CATALOG = 53;
+    public static final int MMAP_TX_LOG_CURSOR = 52;
+    public static final int MMAP_TX_LOG = 53;
 
-    public static final int SIZE = MMAP_TX_CATALOG + 1;
+    public static final int SIZE = MMAP_TX_LOG + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -140,7 +140,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_IO_DISPATCHER_RSS, "NATIVE_IO_DISPATCHER_RSS");
         tagNameMap.extendAndSet(NATIVE_FUNC_RSS, "NATIVE_FUNC_RSS");
         tagNameMap.extendAndSet(NATIVE_DIRECT_CHAR_SINK, "NATIVE_DIRECT_CHAR_SINK");
-        tagNameMap.extendAndSet(MMAP_TX_CATALOG_CURSOR, "MMAP_TX_CATALOG_CURSOR");
-        tagNameMap.extendAndSet(MMAP_TX_CATALOG, "MMAP_TX_CATALOG");
+        tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
+        tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
     }
 }

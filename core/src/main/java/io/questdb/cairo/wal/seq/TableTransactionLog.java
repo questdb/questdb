@@ -156,9 +156,9 @@ public class TableTransactionLog implements Closeable {
 
     void open(Path path) {
         this.rootPath.of(path);
-        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MemoryTag.MMAP_TX_CATALOG);
-        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_CATALOG);
-        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_CATALOG);
+        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
         maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
         long maxStructureVersion = txnMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
@@ -276,7 +276,7 @@ public class TableTransactionLog implements Closeable {
         @Override
         public void close() {
             if (txnMetaAddress > 0) {
-                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_CATALOG_CURSOR);
+                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_LOG_CURSOR);
                 txnMetaAddress = 0;
             }
             txnMetaOffset = 0;
@@ -326,7 +326,7 @@ public class TableTransactionLog implements Closeable {
                                 txnMetaOffsetHi,
                                 0L,
                                 Files.MAP_RO,
-                                MemoryTag.MMAP_TX_CATALOG_CURSOR
+                                MemoryTag.MMAP_TX_LOG_CURSOR
                         );
                         if (txnMetaAddress < 0) {
                             txnMetaAddress = 0;
