@@ -355,6 +355,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
                 handleWriterUnlockEvent(name);
             }
+            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                handleWriterGetEvent(name);
+            }
             if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                 handleWriterReturnEvent(name);
             }
@@ -366,13 +369,19 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
     }
 
+    void handleWriterGetEvent(CharSequence name) {
+        final TableData table = tables.get(name);
+        table.obtainPermit();
+    }
+
     void handleWriterReturnEvent(CharSequence name) {
         final TableData table = tables.get(name);
-        table.ready();
+        table.returnPermit();
     }
 
     void runTest(PoolListener listener, long minIdleMsBeforeWriterRelease) throws Exception {
         runInContext(receiver -> {
+            Assert.assertEquals(0, tables.size());
             for (int i = 0; i < numOfTables; i++) {
                 final CharSequence tableName = getTableName(i);
                 tables.put(tableName, new TableData(tableName));
