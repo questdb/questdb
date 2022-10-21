@@ -536,7 +536,6 @@ public abstract class AbstractCairoTest {
         engine.getTableRegistry().reopen();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
-        walTxnNotificationQueueCapacity = -1;
     }
 
     @After
