@@ -2630,12 +2630,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         osz > 0,
                         base.recordCursorSupportsRandomAccess()
                 );
-
-                final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                if (!(f instanceof AnalyticFunction)) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                final Function f;
+                try {
+                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    if (!(f instanceof AnalyticFunction)) {
+                        Misc.free(base);
+                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                    }
+                } finally {
+                    executionContext.clearAnalyticContext();
                 }
+
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out

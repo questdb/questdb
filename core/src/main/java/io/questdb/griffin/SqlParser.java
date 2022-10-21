@@ -1655,7 +1655,7 @@ public final class SqlParser {
                 expectTok(lexer, '(');
 
                 col = analyticColumnPool.next().of(null, expr);
-                tok = tok(lexer, "'");
+                tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
 
                 if (isPartitionKeyword(tok)) {
                     expectTok(lexer, "by");
@@ -1667,7 +1667,6 @@ public final class SqlParser {
                         tok = tok(lexer, "'order' or ')'");
                     } while (Chars.equals(tok, ','));
                 }
-
                 if (isOrderKeyword(tok)) {
                     expectTok(lexer, "by");
 
@@ -1721,7 +1720,7 @@ public final class SqlParser {
             model.addBottomUpColumn(colPosition, col, false);
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
-                throw err(lexer, tok, "'from' expected");
+                throw err(lexer, null, "'from' expected");
             }
 
             if (tok == null || Chars.equals(tok, ';')) {
