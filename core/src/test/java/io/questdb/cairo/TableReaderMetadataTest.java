@@ -407,7 +407,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             try (Path path = new Path().of(root).concat(tableName)) {
                 int tableId;
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
-                    tableId = metadata.getId();
+                    tableId = metadata.getTableId();
                     for (ColumnManipulator manipulator : manipulators) {
                         long structVersion;
                         try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
@@ -441,7 +441,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
                 // Check that table has same tableId.
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path.concat(TableUtils.META_FILE_NAME).$())) {
-                    Assert.assertEquals(tableId, metadata.getId());
+                    Assert.assertEquals(tableId, metadata.getTableId());
                 }
             }
         });

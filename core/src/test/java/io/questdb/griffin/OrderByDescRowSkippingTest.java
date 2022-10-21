@@ -751,7 +751,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
 
         return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullBwdDataFrameCursorFactory("trips", metadata.getId(), reader.getVersion()),
+                new FullBwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion()),
                 new BwdDataFrameRowCursorFactory(),
                 false,
                 null,

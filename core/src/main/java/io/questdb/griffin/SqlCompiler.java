@@ -539,7 +539,7 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'='");
                         if (tok.length() == 1 && tok.charAt(0) == '=') {
                             CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName, tableMetadata.getId());
+                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName, tableMetadata.getTableId());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                         }
@@ -591,7 +591,7 @@ public class SqlCompiler implements Closeable {
         AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
                 tableNamePosition,
                 tableName,
-                tableMetadata.getId());
+                tableMetadata.getTableId());
 
         int semicolonPos = -1;
         do {
@@ -771,7 +771,7 @@ public class SqlCompiler implements Closeable {
         }
         return compiledQuery.ofAlter(
                 alterOperationBuilder
-                        .ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
+                        .ofAddIndex(tableNamePosition, tableName, metadata.getTableId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
                         .build()
         );
     }
@@ -793,10 +793,10 @@ public class SqlCompiler implements Closeable {
         }
 
         return cache ? compiledQuery.ofAlter(
-                alterOperationBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getTableId(), columnName).build()
         )
                 : compiledQuery.ofAlter(
-                alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getTableId(), columnName).build()
         );
     }
 
@@ -812,13 +812,13 @@ public class SqlCompiler implements Closeable {
         }
         return compiledQuery.ofAlter(
                 alterOperationBuilder
-                        .ofDropIndex(tableNamePosition, tableName, metadata.getId(), columnName)
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getTableId(), columnName)
                         .build()
         );
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableRecordMetadata metadata) throws SqlException {
-        AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getTableId());
         int semicolonPos = -1;
         do {
             CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -874,10 +874,10 @@ public class SqlCompiler implements Closeable {
                 AlterOperationBuilder alterPartitionStatement;
                 switch (action) {
                     case PartitionAction.DROP:
-                        alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getId());
+                        alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
                         break;
                     case PartitionAction.DETACH:
-                        alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getId());
+                        alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
                         break;
                     default:
                         throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
@@ -923,14 +923,14 @@ public class SqlCompiler implements Closeable {
         AlterOperationBuilder partitions;
         switch (action) {
             case PartitionAction.DROP:
-                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getId());
+                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
                 break;
             case PartitionAction.DETACH:
-                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getId());
+                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
                 break;
             default:
                 // attach
-                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, tableMetadata.getId());
+                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, tableMetadata.getTableId());
         }
         assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
         int semicolonPos = -1;
@@ -976,7 +976,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableRecordMetadata metadata) throws SqlException {
-        AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getTableId());
         int hadSemicolonPos = -1;
 
         do {
