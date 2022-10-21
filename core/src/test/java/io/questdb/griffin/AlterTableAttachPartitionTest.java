@@ -1095,6 +1095,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
+            int txn = 0;
+
             final String tableName = "src48";
             final String partitionName = "2022-10-17";
 
@@ -1109,12 +1111,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         2
                 );
             }
+            txn++;
 
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            txn++;
 
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -1158,11 +1162,19 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            txn++;
 
+            // verify that the link has been renamed to what we expect
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName);
+            TableUtils.txnPartitionConditionally(path, txn - 1);
+            Assert.assertTrue(Files.exists(path.$()));
+
+            // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
-
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                     "l\ti\tts\n" +
                             "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
@@ -1171,6 +1183,57 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
                             "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
             );
+
+            // insert a row at the end of the partition
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '2022-10-17T23:59:59.500001Z')");
+            txn++;
+
+            // insert a row at the beginning of the partition, this will result in the original folder being
+            // copied across to table data space (hot), with a new txn, the original folder is deleted, the
+            // link remains dangling AND this is acceptable as cold partitions are supposed to be read-only,
+            // but if you insist in using them as if they where the norm, then you will need to be aware of
+            // the dangling link.
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '2022-10-17T00:00:00.100005Z')");
+            txn++;
+
+            final String linkAbsolutePath = path.toString();
+
+            // verify that a new partition folder has been created in the table data space (hot)
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName);
+            TableUtils.txnPartitionConditionally(path, txn - 1);
+            Assert.assertTrue(Files.exists(path.$()));
+
+            // verify that the link continues to exist, as well as the original folder, but it is now empty
+            Assert.assertTrue(Files.exists(path.of(linkAbsolutePath).$()));
+            Assert.assertTrue(Files.exists(other));
+            AtomicInteger fileCount = new AtomicInteger();
+            ff.walk(other, (file, type) -> {
+                fileCount.incrementAndGet();
+            });
+            Assert.assertEquals(0, fileCount.get());
+
+            // verify content
+            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                    "l\ti\tts\n" +
+                            "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
+                            "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
+                            "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n" +
+                            "0\t0\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
+            );
+            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
+                    "l\ti\tts\n" +
+                            "-1\t-1\t2022-10-17T00:00:00.100005Z\n" + // <-- the new row at the beginning
+                            "1\t1\t2022-10-17T00:00:17.279900Z\n" +
+                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                            "4\t4\t2022-10-17T00:01:09.119600Z\n"
+            );
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:00.100005Z\t2022-10-18T23:59:59.000000Z\t10002\n");
         });
     }
 
