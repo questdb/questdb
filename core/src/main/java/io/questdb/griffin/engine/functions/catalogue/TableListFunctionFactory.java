@@ -90,7 +90,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
         private Path path;
-        private TableReaderMetadata metaReader;
+        private TableReaderMetadata tableReaderMetadata;
 
         public TableListCursorFactory(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables, CharSequence sysTablePrefix) {
             super(METADATA);
@@ -99,7 +99,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             this.sysTablePrefix = sysTablePrefix;
             cursor = new TableListRecordCursor();
             this.hideTelemetryTables = hideTelemetryTables;
-            this.metaReader = new TableReaderMetadata(ff, "<noname>");
+            this.tableReaderMetadata = new TableReaderMetadata(ff, "<noname>");
         }
 
         @Override
@@ -116,7 +116,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             path = Misc.free(path);
-            metaReader = Misc.free(metaReader);
+            tableReaderMetadata = Misc.free(tableReaderMetadata);
         }
 
         private class TableListRecordCursor implements RecordCursor {
@@ -127,7 +127,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 findPtr = ff.findClose(findPtr);
-                metaReader.clear();//release FD of last table on the list
+                tableReaderMetadata.clear();//release FD of last table on the list
             }
 
             @Override
@@ -210,8 +210,8 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return PartitionBy.toString(partitionBy);
                     }
                     if (col == designatedTimestampColumn) {
-                        if (metaReader.getTimestampIndex() > -1) {
-                            return metaReader.getColumnName(metaReader.getTimestampIndex());
+                        if (tableReaderMetadata.getTimestampIndex() > -1) {
+                            return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
                         }
                     }
                     return null;
@@ -220,7 +220,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public boolean getBool(int col) {
                     if (col == writeModeColumn) {
-                        return metaReader.isWalEnabled();
+                        return tableReaderMetadata.isWalEnabled();
                     }
                     return false;
                 }
@@ -244,13 +244,13 @@ public class TableListFunctionFactory implements FunctionFactory {
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(tableName).concat(META_FILE_NAME).$();
-                        metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
+                        tableReaderMetadata.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
-                        tableId = metaReader.getTableId();
-                        maxUncommittedRows = metaReader.getMaxUncommittedRows();
-                        commitLag = metaReader.getCommitLag();
-                        partitionBy = metaReader.getPartitionBy();
+                        tableId = tableReaderMetadata.getTableId();
+                        maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
+                        commitLag = tableReaderMetadata.getCommitLag();
+                        partitionBy = tableReaderMetadata.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table
                         // remove it from the result set

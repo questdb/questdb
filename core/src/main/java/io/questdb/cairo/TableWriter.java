@@ -1503,7 +1503,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
         metadata.removeColumn(index);
         if (timestamp) {
-            metadata.setTimestampIndex(-1);
+            metadata.clearTimestampIndex();
         }
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();

@@ -254,7 +254,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.getBusyCount();
     }
 
-    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
+    public TableRecordMetadata getMetadata(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            MetadataFactory metadataFactory
+    ) {
         securityContext.checkWritePermission();
         final String tableNameStr = Chars.toString(tableName);
         if (tableSequencerAPI.hasSequencer(tableNameStr)) {

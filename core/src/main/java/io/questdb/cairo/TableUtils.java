@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.AnyRecordMetadata;
-import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -175,7 +172,7 @@ public final class TableUtils {
             @NotNull QueryModel model,
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
-        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
+        final Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
         if (!ColumnType.isCursor(function.getType())) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }

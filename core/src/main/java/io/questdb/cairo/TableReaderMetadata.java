@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-public class TableReaderMetadata extends BaseRecordMetadata implements TableRecordMetadata {
+public class TableReaderMetadata extends BaseRecordMetadata implements TableRecordMetadata, Mutable {
     private Path path;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
@@ -51,8 +51,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         this.tableName = tableName;
         this.ff = ff;
         this.metaMem = Vm.getMRInstance();
-        this.columnMetadata = new ObjList<>(columnCount);
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
     public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
@@ -67,10 +65,9 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
 
     @Override
     public void close() {
-        // TableReaderMetadata is re-usable after close, don't assign nulls
-        Misc.free(metaMem);
+        metaMem = Misc.free(metaMem);
         path = Misc.free(path);
-        Misc.free(transitionMeta);
+        transitionMeta = Misc.free(transitionMeta);
     }
 
     public void applyTransitionIndex() {
@@ -155,8 +152,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         }
     }
 
+    @Override
     public void clear() {
         Misc.free(metaMem);
+        Misc.free(transitionMeta);
     }
 
     public void copy(TableReaderMetadata metadata) {

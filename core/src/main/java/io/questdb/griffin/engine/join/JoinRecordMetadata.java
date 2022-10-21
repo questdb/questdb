@@ -46,8 +46,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
-        this.columnMetadata = new ObjList<>(columnCount);
         this.refCount = 1;
     }
 

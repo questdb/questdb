@@ -61,8 +61,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
             metaMem = null;
             roMetaMem = Vm.getMRInstance();
         }
-        columnMetadata = new ObjList<>();
-        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
     public void addColumn(CharSequence columnName, int columnType) {

@@ -25,17 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
-    public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
-
-    public GenericRecordMetadata() {
-        this.columnMetadata = new ObjList<>();
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        this.timestampIndex = -1;
-    }
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         if (from instanceof BaseRecordMetadata) {

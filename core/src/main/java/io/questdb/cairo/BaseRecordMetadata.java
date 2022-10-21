@@ -30,9 +30,9 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public abstract class BaseRecordMetadata implements RecordMetadata {
-    protected ObjList<TableColumnMetadata> columnMetadata;
-    protected LowerCaseCharSequenceIntHashMap columnNameIndexMap;
-    protected int timestampIndex;
+    protected final ObjList<TableColumnMetadata> columnMetadata = new ObjList<>();
+    protected final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+    protected int timestampIndex = -1;
     protected int columnCount;
 
     public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
@@ -105,11 +105,10 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
 
     @Override
     public boolean isSymbolTableStatic(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).isSymbolTableStatic();
+        return getColumnQuick(columnIndex).isSymbolTableStatic();
     }
 
     public TableColumnMetadata getColumnQuick(int index) {
         return columnMetadata.getQuick(index);
     }
-
 }

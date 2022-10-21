@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.std.QuietCloseable;
 
 public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
+
     long getStructureVersion();
 
     int getTableId();

@@ -28,7 +28,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
     private int id;
@@ -43,16 +42,16 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         reload(metaMem);
     }
 
-    public void reload(MemoryMR metaMem) {
+    public final void reload(MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
+        this.columnNameIndexMap.clear();
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        this.columnMetadata = new ObjList<>(this.columnCount);
+        this.columnMetadata.clear();
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
@@ -178,7 +177,7 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         oldColumnMetadata.setName(newNameStr);
     }
 
-    void setTimestampIndex(int index) {
-        this.timestampIndex = index;
+    void clearTimestampIndex() {
+        this.timestampIndex = -1;
     }
 }
