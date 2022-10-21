@@ -27,9 +27,11 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
@@ -49,7 +51,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         int initialColumnCount = 2;
 
         runAddColumnRace(
-                barrier, tableName, iterations,
+                barrier, tableName, iterations, 1,
                 () -> {
                     try (SequencerMetadata metadata = new SequencerMetadata(engine.getConfiguration().getFilesFacade())) {
                         TestUtils.await(barrier);
@@ -72,12 +74,40 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         int iterations = 100;
 
         runAddColumnRace(
-                barrier, tableName, iterations,
+                barrier, tableName, iterations, 1,
                 () -> {
                     try {
                         TestUtils.await(barrier);
                         do {
                             engine.getTableSequencerAPI().lastTxn(tableName);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
+                    } catch (Throwable e) {
+                        exception.set(e);
+                    }
+                });
+    }
+
+    @Test
+    public void testTxnCursorRace() throws InterruptedException {
+        int readers = 3;
+        CyclicBarrier barrier = new CyclicBarrier(readers + 1);
+        final String tableName = testName.getMethodName();
+        AtomicReference<Throwable> exception = new AtomicReference<>();
+        int iterations = 100;
+
+        runAddColumnRace(
+                barrier, tableName, iterations, readers,
+                () -> {
+                    try {
+                        TestUtils.await(barrier);
+                        long lastTxn = 0;
+                        do {
+                            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, lastTxn)) {
+                                while (cursor.hasNext()) {
+                                    lastTxn = cursor.getTxn();
+                                }
+                            }
+
                         } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
@@ -91,7 +121,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         writer.apply(addColumnC.build(), true);
     }
 
-    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, Runnable runnable) throws InterruptedException {
+    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, Runnable runnable) throws InterruptedException {
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("int", ColumnType.INT)
                 .timestamp("ts")
@@ -104,17 +134,25 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             );
         }
         AtomicReference<Throwable> exception = new AtomicReference<>();
-        Thread copyThread = new Thread(runnable);
-        copyThread.start();
+        ObjList<Thread> readerThreadList = new ObjList<>();
+        for (int i = 0; i < readerThreads; i++) {
+            Thread t = new Thread(runnable);
+            readerThreadList.add(t);
+            t.start();
+        }
+
         runColumnAdd(barrier, tableName, exception, iterations);
-        copyThread.join();
+
+        for (int i = 0; i < readerThreads; i++) {
+            readerThreadList.get(i).join();
+        }
 
         if (exception.get() != null) {
             throw new AssertionError(exception.get());
         }
     }
 
-    private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) throws InterruptedException {
+    private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
         try (WalWriter ww = engine.getTableSequencerAPI().getWalWriter(tableName)) {
             TestUtils.await(barrier);
 
