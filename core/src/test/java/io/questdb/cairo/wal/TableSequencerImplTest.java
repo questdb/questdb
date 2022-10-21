@@ -55,7 +55,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TestUtils.await(barrier);
 
                         do {
-                            engine.getTableRegistry().copyMetadataTo(tableName, metadata);
+                            engine.getTableSequencerAPI().copyMetadataTo(tableName, metadata);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {
@@ -77,8 +77,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     try {
                         TestUtils.await(barrier);
                         do {
-                            engine.getTableRegistry().lastTxn(tableName);
-                        } while (engine.getTableRegistry().lastTxn(tableName) < iterations && exception.get() == null);
+                            engine.getTableSequencerAPI().lastTxn(tableName);
+                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
                     }
@@ -115,7 +115,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) throws InterruptedException {
-        try (WalWriter ww = engine.getTableRegistry().getWalWriter(tableName)) {
+        try (WalWriter ww = engine.getTableSequencerAPI().getWalWriter(tableName)) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {

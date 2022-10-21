@@ -88,13 +88,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                 Assert.assertTrue(walWriter.isOpen());
             }
 
-            engine.getTableRegistry().close();
+            engine.getTableSequencerAPI().close();
 
             try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
-            engine.getTableRegistry().reopen();
+            engine.getTableSequencerAPI().reopen();
         });
     }
 
@@ -113,10 +113,10 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.assertTrue(walWriter.isOpen());
-                engine.getTableRegistry().close();
+                engine.getTableSequencerAPI().close();
             }
 
-            engine.getTableRegistry().reopen();
+            engine.getTableSequencerAPI().reopen();
         });
     }
 
@@ -139,10 +139,10 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.assertTrue(walWriter.isOpen());
-                engine.getTableRegistry().close();
+                engine.getTableSequencerAPI().close();
             } // close it as the pool is closed too
 
-            engine.getTableRegistry().reopen();
+            engine.getTableSequencerAPI().reopen();
         });
     }
 

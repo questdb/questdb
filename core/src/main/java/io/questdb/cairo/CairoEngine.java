@@ -203,7 +203,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return sqlCompilerPool.get();
     }
 
-    public TableSequencerAPI getTableRegistry() {
+    public TableSequencerAPI getTableSequencerAPI() {
         return tableSequencerAPI;
     }
 
