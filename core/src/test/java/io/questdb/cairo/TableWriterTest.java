@@ -192,6 +192,8 @@ public class TableWriterTest extends AbstractCairoTest {
             int totalColAddCount = 1000;
             writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
             int tableId = 11;
+            // Reduce disk space by for the test run.
+            dataAppendPageSize = 1 << 20; // 1MB
 
             String tableName = "testAddColumnConcurrentWithDataUpdates";
             try (Path path = new Path()) {
