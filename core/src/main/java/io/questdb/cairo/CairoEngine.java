@@ -214,9 +214,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         int tableId = (int) tableIdGenerator.getNextId();
         if (struct.isWalEnabled()) {
-            if (struct.getPartitionBy() == PartitionBy.NONE) {
-                throw CairoException.nonCritical().put("WAL is only supported for partitioned tables");
-            }
             tableRegistry.registerTable(tableId, struct);
         }
 
