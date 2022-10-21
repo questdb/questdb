@@ -37,7 +37,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final TxReader txReader;
     private final CharSequence dbRoot;
-    private long lastProcessedCount = 0;
+    private long lastProcessed = 0;
     private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
@@ -52,12 +52,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
         // todo: too much GC
-        Path rootPath = Path.PATH.get().of(dbRoot);
+        final Path rootPath = Path.PATH.get().of(dbRoot);
         rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader2.unsafeReadTxn() < txn) {
+            if (txReader2.unsafeReadTxn() < txn && !engine.getTableRegistry().isSuspended(tableName)) {
                 // table name should be immutable when in the notification message
-                String tableNameStr = Chars.toString(tableName);
+                final String tableNameStr = Chars.toString(tableName);
                 engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
             }
         }
@@ -65,12 +65,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     @Override
     protected boolean runSerially() {
-        long failedTxnCount = engine.getFailedWalTxnCount();
-        if (failedTxnCount == lastProcessedCount) {
+        final long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
+        if (unpublishedWalTxnCount == lastProcessed) {
             return false;
         }
         checkMissingWalTransactions();
-        lastProcessedCount = failedTxnCount;
+        lastProcessed = unpublishedWalTxnCount;
         return true;
     }
 }

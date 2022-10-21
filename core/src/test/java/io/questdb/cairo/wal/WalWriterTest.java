@@ -360,7 +360,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableUtils") && stackTrace[1].getMethodName().equals("openRO")) {
+                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
                         return -1;
                     }
                 }

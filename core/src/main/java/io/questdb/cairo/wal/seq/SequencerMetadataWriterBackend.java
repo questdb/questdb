@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.wal.TableWriterSPI;
 
 public interface SequencerMetadataWriterBackend extends TableWriterSPI {
 

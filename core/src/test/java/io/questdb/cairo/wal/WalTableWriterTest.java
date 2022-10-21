@@ -396,7 +396,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testApplyWalUpdates() throws Exception {
+    public void testWalTxnRepublishing() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
@@ -421,8 +421,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                 drainWalQueue(true);
                 new CheckWalTransactionsJob(engine).runSerially();
-                drainWalQueue(false);
 
+                drainWalQueue(false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -834,8 +834,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId;
         try (
-                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test");
-                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal")
+                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "copy");
+                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "wal")
         ) {
             tableId = tableWriter.getMetadata().getId();
             if (!inOrder) {

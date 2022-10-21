@@ -238,6 +238,21 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public long getDatabaseIdHi() {
+                if (stackFailureClass != null) {
+                    try {
+                        throw new RuntimeException("Test failure");
+                    } catch (Exception e) {
+                        final StackTraceElement[] stackTrace = e.getStackTrace();
+                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
+                            throw CairoException.nonCritical().put(e.getMessage());
+                        }
+                    }
+                }
+                return super.getDatabaseIdHi();
+            }
+
+            @Override
             public DateFormat getBackupDirTimestampFormat() {
                 if (backupDirTimestampFormat != null) {
                     return backupDirTimestampFormat;
@@ -638,19 +653,24 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void drainWalQueue() {
-        try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
-            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            for (int i = 0; i < 1; i++) {
-                while (job.run(0)) {
-                    // run until empty
-                }
+    protected static ApplyWal2TableJob createWalApplyJob() {
+        return new ApplyWal2TableJob(engine);
+    }
 
-                if (!checkWalTransactionsJob.run(0)) {
-                    return;
-                }
-                // Do not go in re-try loop in tests. Try to re-process once
-            }
+    protected static void drainWalQueue() {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            drainWalQueue(walApplyJob);
+        }
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        while (walApplyJob.run(0)) {
+            // run until empty
+        }
+
+        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        while (checkWalTransactionsJob.run(0)) {
+            // run until empty
         }
     }
 

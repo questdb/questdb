@@ -32,9 +32,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
-import io.questdb.cairo.wal.seq.TableMetadataChange;
-import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -210,7 +208,7 @@ public class WalWriter implements TableWriterAPI {
     public long truncate() {
         try {
             lastSegmentTxn = events.truncate();
-            return getTableTxn();
+            return getSequencerTxn();
         } catch (Throwable th) {
             rollback();
             throw th;
@@ -228,40 +226,17 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private long totalColumnByteCount() {
-        long size = 0;
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            final int columnType = metadata.getColumnType(columnIndex);
-            if (columnType > 0) {  // Column not deleted.
-                final MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-                assert primaryColumn != null;
-                final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
-                size += primaryColumn.getAppendOffset();
-                if (secondaryColumn != null) {
-                    size += secondaryColumn.getAppendOffset();
-                }
-            }
-        }
-        return size;
-    }
-
-    private void mayRollSegmentOnNextRow() {
-        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())) {
-            rollSegmentOnNextRow = true;
-        }
-    }
-
-    // Returns table transaction number.
+    // Returns sequencer transaction number
     public long commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
                 lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                final long tableTxn = getTableTxn();
+                final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                return tableTxn;
+                return seqTxn;
             }
         } catch (Throwable th) {
             if (!isDistressed()) {
@@ -543,7 +518,7 @@ public class WalWriter implements TableWriterAPI {
         }
         try {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
-            return getTableTxn();
+            return getSequencerTxn();
         } catch (Throwable th) {
             // perhaps half record was written to WAL-e, better to not use this WAL writer instance
             distressed = true;
@@ -859,15 +834,15 @@ public class WalWriter implements TableWriterAPI {
         return symbolMapReaders.getQuick(columnIndex);
     }
 
-    private long getTableTxn() {
-        long txn;
+    private long getSequencerTxn() {
+        long seqTxn;
         do {
-            txn = tableSequencerAPI.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-            if (txn == NO_TXN) {
+            seqTxn = tableSequencerAPI.nextTxn(tableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            if (seqTxn == NO_TXN) {
                 applyMetadataChangeLog(Long.MAX_VALUE);
             }
-        } while (txn == NO_TXN);
-        return txn;
+        } while (seqTxn == NO_TXN);
+        return seqTxn;
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {

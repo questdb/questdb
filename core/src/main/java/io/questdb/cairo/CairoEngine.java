@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -73,7 +74,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final TextImportExecutionContext textImportExecutionContext;
     private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
-    private final AtomicLong failedWalTxnCount = new AtomicLong(1);
+    private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -125,12 +126,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
     }
 
-    public long getFailedWalTxnCount() {
-        return failedWalTxnCount.get();
+    public long getUnpublishedWalTxnCount() {
+        return unpublishedWalTxnCount.get();
     }
 
     public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
-        Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
+        final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
@@ -142,8 +143,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").$(tableName)
                         .$();
-                // Oh, no queue overflow! Throw away notification and trigger a job to rescan all the tables
-                notifyWalTxnFailed();
+                // queue overflow, throw away notification and notify a job to rescan all tables
+                notifyWalTxnRepublisher();
                 return;
             }
         }
@@ -154,6 +155,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
+        messageBus.reset();
         return b1 & b2 & b3;
     }
 
@@ -321,8 +323,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getWriter(securityContext, tableName, lockReason);
     }
 
-    public void notifyWalTxnFailed() {
-        failedWalTxnCount.incrementAndGet();
+    public void notifyWalTxnRepublisher() {
+        unpublishedWalTxnCount.incrementAndGet();
     }
 
     public void setPoolListener(PoolListener poolListener) {
