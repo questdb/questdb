@@ -1218,11 +1218,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify that the link continues to exist, as well as the original folder, but it is now empty
             Assert.assertTrue(Files.exists(path.of(linkAbsolutePath).$()));
             Assert.assertTrue(Files.exists(other));
-            AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
-            Assert.assertEquals(0, fileCount.get());
+            if (Os.type != Os.WINDOWS) { // soft links are funny in windows
+                AtomicInteger fileCount = new AtomicInteger();
+                ff.walk(other, (file, type) -> {
+                    fileCount.incrementAndGet();
+                });
+                Assert.assertEquals(0, fileCount.get());
+            }
 
             // update a row toward the beginning of the partition
             executeOperation(
@@ -1275,7 +1277,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
 
             // different location, another volume potentially
-            final CharSequence s3Buckets = temp.newFolder("SNOW").getAbsolutePath();
+            final CharSequence snowBuckets = temp.newFolder("SNOW").getAbsolutePath();
 
             // copy .detached folder to the different location
             final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
@@ -1283,7 +1285,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     configuration.getRoot(),
                     tableName,
                     detachedPartitionName,
-                    s3Buckets,
+                    snowBuckets,
                     tableName,
                     detachedPartitionName,
                     null
@@ -1299,7 +1301,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // create the .attachable link in the table's data folder
             // with target the .detached folder in the different location
-            other.of(s3Buckets) // <-- the copy of the now lost .detached folder
+            other.of(snowBuckets) // <-- the copy of the now lost .detached folder
                     .concat(tableName)
                     .concat(detachedPartitionName)
                     .$();
