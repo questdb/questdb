@@ -81,7 +81,7 @@ Puedes conectarte con QuestDB utilizando las siguientes interfaces:
 
 ## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
 
-En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sóla CPU y 
+En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sola CPU y 
 6 hilos de ejecución en un AMD Ryzen 3970X:
 
 [Suite de referencia de series temporales](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -105,13 +105,13 @@ de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponib
 
 ### 📚 Lee la documentación
 
-- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende como instalar, configurar y correr QuestDB.
+- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr QuestDB.
 - [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
 - [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que vienen.
 
 ### ❓ Ayuda!
 
-- [Community Slack:](https://slack.questdb.io) participa en las discusiones tecnicas, pregunta, conoce al equipo y a otros usuarios.
+- [Community Slack:](https://slack.questdb.io) participa en las discusiones técnicas, pregunta, conoce al equipo y a otros usuarios y usuarias.
 - [GitHub issues:](https://github.com/questdb/questdb/issues) envía informes de error, o de problemas con QuestDB.
 - [GitHub discussions:](https://github.com/questdb/questdb/discussions) propón nuevas características, o muestra tus contribuciones.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones a problemas comunes.
@@ -129,7 +129,7 @@ de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponib
 Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación, 
 informes de errores, solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
 
-- Echa un vistazo a GitHub, en particular elementos etiquetados
+- Echa un vistazo a GitHub, en particular a los elementos etiquetados
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
 - Para obtener detalles sobre la compilación, empaquetado e instalación de QuestDB, consulta
