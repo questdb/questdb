@@ -29,6 +29,7 @@ import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;

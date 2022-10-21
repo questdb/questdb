@@ -25,8 +25,6 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.wal.SequencerMetadata;
-import io.questdb.cairo.wal.SequencerMetadataUpdater;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -56,7 +54,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final FilesFacade ff;
     private final int mkDirMode;
     private volatile boolean open = false;
-    private boolean isDistressed;
+    private boolean distressed;
 
     TableSequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
@@ -115,11 +113,11 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TransactionLogCursor getTransactionLogCursor(long lastCommittedTxn) {
+    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         schemaLock.writeLock().lock();
         try {
             checkDistressed();
-            return tableTransactionLog.getCursor(lastCommittedTxn);
+            return tableTransactionLog.getCursor(seqTxn);
         } finally {
             schemaLock.writeLock().unlock();
         }
@@ -158,7 +156,7 @@ public class TableSequencerImpl implements TableSequencer {
                 return NO_TXN;
             }
         } catch (Throwable th) {
-            isDistressed = true;
+            distressed = true;
             LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableName)
                     .$(", error=").$(th.getMessage())
                     .I$();
@@ -166,7 +164,9 @@ public class TableSequencerImpl implements TableSequencer {
         } finally {
             schemaLock.writeLock().unlock();
         }
-        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, txn);
+        if (!metadata.isSuspended()) {
+            engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, txn);
+        }
         return txn;
     }
 
@@ -185,8 +185,20 @@ public class TableSequencerImpl implements TableSequencer {
         } finally {
             schemaLock.writeLock().unlock();
         }
-        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, txn);
+        if (!metadata.isSuspended()) {
+            engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, txn);
+        }
         return txn;
+    }
+
+    @Override
+    public void suspendTable() {
+        metadata.suspendTable();
+    }
+
+    @Override
+    public boolean isSuspended() {
+        return metadata.isSuspended();
     }
 
     public String getTableName() {
@@ -194,13 +206,14 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     public boolean isDistressed() {
-        return isDistressed;
+        return distressed;
     }
 
     public boolean isOpen() {
-        return this.open;
+        return open;
     }
 
+    @Override
     public long lastTxn() {
         // todo: why is there a lock to read a field?
         schemaLock.readLock().lock();
@@ -240,7 +253,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void checkDistressed() {
-        if (isDistressed) {
+        if (distressed) {
             throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
         }
     }

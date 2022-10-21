@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.wal.SequencerMetadata;
 import io.questdb.std.QuietCloseable;
 
 public interface TableSequencer extends QuietCloseable {
@@ -45,4 +44,10 @@ public interface TableSequencer extends QuietCloseable {
 
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn);
+
+    long lastTxn();
+
+    void suspendTable();
+
+    boolean isSuspended();
 }

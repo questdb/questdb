@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -46,6 +46,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     private long structureVersion = -1;
     private int tableId;
     private String tableName;
+    private boolean suspended;
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
@@ -78,11 +79,12 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         clear(truncateMode);
     }
 
-    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion) {
+    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion, boolean suspended) {
         reset();
         this.tableName = tableName;
         timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
+        this.suspended = suspended;
 
         for (int i = 0; i < model.getColumnCount(); i++) {
             final CharSequence name = model.getColumnName(i);
@@ -95,11 +97,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     }
 
     public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.getTableName(), metadata.getTableId(), metadata.getStructureVersion());
+        copyFrom(metadata, metadata.tableName, metadata.tableId, metadata.structureVersion, metadata.suspended);
     }
 
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
-        copyFrom(model, tableName, tableId, 0);
+        copyFrom(model, tableName, tableId, 0, false);
         switchTo(path, pathLen);
     }
 
@@ -120,10 +122,12 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         return tableId;
     }
 
+    @Override
     public long getStructureVersion() {
         return structureVersion;
     }
 
+    @Override
     public int getTableId() {
         return tableId;
     }
@@ -136,6 +140,15 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     @Override
     public boolean isWalEnabled() {
         return true;
+    }
+
+    void suspendTable() {
+        suspended = true;
+        syncToMetaFile();
+    }
+
+    boolean isSuspended() {
+        return suspended;
     }
 
     @Override
@@ -178,6 +191,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+        suspended = roMetaMem.getBool(SEQ_META_SUSPENDED);
 
         if (readonly) {
             // close early
@@ -212,7 +226,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         structureVersion++;
     }
 
-    public void syncToMetaFile() {
+    void syncToMetaFile() {
         metaMem.jumpTo(0);
         // Size of metadata
         metaMem.putInt(0);
@@ -221,6 +235,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
+        metaMem.putBool(suspended);
         for (int i = 0; i < columnCount; i++) {
             final int columnType = getColumnType(i);
             metaMem.putInt(columnType);
@@ -298,5 +313,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnCount = 0;
         timestampIndex = -1;
         tableName = null;
+        tableId = -1;
+        suspended = false;
     }
 }

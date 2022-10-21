@@ -28,8 +28,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -206,8 +207,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
         });
     }
 
@@ -578,6 +578,37 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMainAndWalTableDropPartitionFailed() throws Exception {
+        stackFailureClass = "TableWriter";
+        stackFailureMethod = "truncate";
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            executeOperation(
+                    "alter table " + tableName + " drop partition list '2022-02-24'",
+                    CompiledQuery.ALTER
+            );
+
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
+
+            drainWalQueue();
+
+            // because truncate failed in the middle we are in an inconsistent state!
+            // symbol tables have been cleared but the data files have not
+            // there is still data in the table but no symbols
+            // we will need a proper rollback for all alter operations which should be run in case of a failure to avoid inconsistency
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\t\t2022-02-24T00:00:00.000000Z\t\n");
+        });
+
+        stackFailureClass = null;
+        stackFailureMethod = null;
+    }
+
+    @Test
     public void testMainTableAddColumnFailed() throws Exception {
         AtomicBoolean fail = new AtomicBoolean(true);
 
@@ -592,27 +623,24 @@ public class WalTableFailureTest extends AbstractGriffinTest {
         };
 
         assertMemoryLeak(ffOverride, () -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                String tableName = testName.getMethodName();
+                createStandardWalTable(tableName);
 
-            compile("alter table " + tableName + " add column new_column int");
+                compile("alter table " + tableName + " add column new_column int");
 
-            executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
+                executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
 
-            fail.set(false);
+                fail.set(false);
 
-            executeInsert("insert into " + tableName +
-                    " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
-            drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\tnew_column\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n" +
-                    "102\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t123\n");
+                executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
+                drainWalQueue(walApplyJob);
+                assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                        "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            }
         });
     }
 
@@ -670,7 +698,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableWriterDirectAddColumnStopsWall() throws Exception {
+    public void testTableWriterDirectAddColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             createStandardWalTable(tableName);
@@ -695,7 +723,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableWriterDirectDropColumnDoesNotBreakWal() throws Exception {
+    public void testTableWriterDirectDropColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             createStandardWalTable(tableName);
@@ -704,7 +732,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try (TableWriter writer = engine.getWriter(
                     sqlExecutionContext.getCairoSecurityContext(),
                     tableName,
-                    "dropCol")
+                    "wal killer")
             ) {
                 writer.removeColumn("x");
                 writer.removeColumn("sym");
@@ -712,6 +740,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             compile("insert into " + tableName + " values (1, 'ab', '2022-02-25', 'abcde')");
             compile("insert into " + tableName + " values (2, 'ab', '2022-02-25', 'abcdr')");
+            // inserts do not check structure version
+            // it fails only when structure is changing through the WAL
             compile("alter table " + tableName + " add column dddd2 long");
             compile("insert into " + tableName + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
 
@@ -719,8 +749,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             assertSql(tableName, "ts\tsym2\n" +
                     "2022-02-24T00:00:00.000000Z\tEF\n" +
                     "2022-02-25T00:00:00.000000Z\tabcde\n" +
-                    "2022-02-25T00:00:00.000000Z\tabcdr\n" +
-                    "2022-02-25T00:00:00.000000Z\tabcdt\n");
+                    "2022-02-25T00:00:00.000000Z\tabcdr\n");
         });
     }
 

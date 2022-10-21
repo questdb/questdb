@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 
 import java.io.Closeable;
 
