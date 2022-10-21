@@ -1237,6 +1237,119 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
+            final String tableName = "src49";
+            final String partitionName = "2022-10-17";
+
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        partitionName,
+                        2
+                );
+            }
+
+            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+
+            // different location, another volume potentially
+            final CharSequence s3Buckets = temp.newFolder("SNOW").getAbsolutePath();
+
+            // copy .detached folder to the different location
+            final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
+            copyPartitionAndMetadata(
+                    configuration.getRoot(),
+                    tableName,
+                    detachedPartitionName,
+                    s3Buckets,
+                    tableName,
+                    detachedPartitionName,
+                    null
+            );
+
+            // then remove the original .detached folder
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(detachedPartitionName)
+                    .$();
+            Assert.assertEquals(0, Files.rmdir(path));
+            Assert.assertFalse(ff.exists(path));
+
+            // create the .attachable link in the table's data folder
+            // with target the .detached folder in the different location
+            other.of(s3Buckets) // <-- the copy of the now lost .detached folder
+                    .concat(tableName)
+                    .concat(detachedPartitionName)
+                    .$();
+            path.of(configuration.getRoot()) // <-- soft link path
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(configuration.getAttachPartitionSuffix())
+                    .$();
+            Assert.assertEquals(0, ff.softLink(other, path));
+
+            // attach the partition via soft link
+            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+
+            // detach the partition which was attached via soft link
+            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+
+            // insert a row at the end of the partition, the only row, which will create the partition
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '2022-10-17T23:59:59.500001Z')");
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n");
+
+            // drop the partition
+            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+
+            // rename the currently detached version, to attachable and attach it
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(TableUtils.DETACHED_DIR_MARKER)
+                    .$();
+            other.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(configuration.getAttachPartitionSuffix())
+                    .$();
+            Assert.assertEquals(0, Files.rename(path, other));
+            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+
+            // verify content
+            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                    "l\ti\tts\n" +
+                            "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
+                            "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
+                            "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
+                            "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
+                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
+            );
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+        });
+    }
+
     private void assertSchemaMatch(AddColumn tm, int idx) throws Exception {
         if (idx > 0) {
             setUp();
