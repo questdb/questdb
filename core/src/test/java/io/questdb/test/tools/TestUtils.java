@@ -74,7 +74,7 @@ public final class TestUtils {
     }
 
     public static double getZeroToOneDouble(Rnd rnd) {
-        return rnd.nextPositiveInt() / (double) Integer.MAX_VALUE;
+        return rnd.nextPositiveLong() / (double) Long.MAX_VALUE;
     }
 
     public static boolean areEqual(BinarySequence a, BinarySequence b) {
