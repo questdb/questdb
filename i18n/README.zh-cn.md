@@ -96,7 +96,7 @@ questdb stop  // To stop questdb
 
 ### 获取数据
 
-以下是我們官方開發的 InfluxDB line protocol 客户端，支持多种编程语言：
+以下是我們官方开发的 InfluxDB line protocol 客户端，支持多种编程语言：
 
 - [.NET](https://github.com/questdb/net-questdb-client)
 - [C/C++](https://github.com/questdb/c-questdb-client)
