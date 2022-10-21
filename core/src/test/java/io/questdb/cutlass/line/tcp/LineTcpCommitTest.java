@@ -138,14 +138,14 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         }, minIdleMsBeforeWriterRelease);
     }
 
+    @Override
     void handleWriterUnlockEvent(CharSequence name) {
-        final String tableName = name.toString();
-        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+        super.handleWriterUnlockEvent(name);
 
         // set the table ready right after created
         // instead of the 'ready' latch we will rely on the timeout in assertTable(table)
         final TableData table = tables.get(name);
-        table.ready();
+        table.returnPermit();
     }
 
     void handleWriterReturnEvent(CharSequence name) {
