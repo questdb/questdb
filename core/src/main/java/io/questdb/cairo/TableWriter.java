@@ -1919,7 +1919,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     @Override
-    public final long truncate() {
+    public final void truncate() {
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
@@ -1928,7 +1928,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         if (size() == 0) {
-            return -1;
+            return;
         }
 
         // this is a crude block to test things for now
@@ -1974,7 +1974,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         LOG.info().$("truncated [name=").utf8(tableName).I$();
-        return txWriter.getTxn();
     }
 
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
@@ -5412,7 +5411,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                             || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, SEQ_DIR)
             ) {
-                // Do not remove detached partitions, wals and sequencer directories
+                // Do not remove detached partitions, wal and sequencer directories
                 // They are probably about to be attached.
                 return;
             }
