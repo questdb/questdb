@@ -5,55 +5,56 @@
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="Slack канал спільноти QuestDB"/>
+    <img src="https://slack.questdb.io/badge.svg" alt="Comunidad QuestDB en Slack"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="Дописувачі QuestDB"/>
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="Contribuidores OSS QuestDB"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB на Apache Maven"/>
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB en Maven Central"/>
   </a>
 </p>
 
 [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md)
 # QuestDB
 
-QuestDB — це високопродуктивна база даних SQL з відкритим кодом для застосування у
-сфері фінансових послуг, IoT, машинного навчання, DevOps та моніторінгу. 
-База даних підтримує підключення по протоколу PostgreSQL, високопропускний запис даних із використанням 
-протоколу InfluxDB і REST API для імпорту та експорту.
 
-QuestDB реалізує мову ANSI SQL із власними розширеннями для ефективної обробки часових рядів.
-Ці розширення значно спрощують обробку та аналіз декількох часових рядів за допомогою реляційних та часових операцій,
-а також шляхом з'єднання таблиць.
-QuestDB досягає високих результатів завдяки колонко-орієнтованій моделі зберігання даних,
-масивно-паралельним обчисленням з використанням SIMD інструкцій, та застосуванням різноманітних технік низької затримки (low-latency).
-Вся кодова база була створена з нуля із використанням мов програмування Java та С++,
-не має зовнішніх залежностей, а також повністю незалежна від роботи автоматичного збирача сміття Java (GC-free).
+QuestDB es una base de datos SQL, de código abierto y alto rendimiento. Es usada por aplicaciones 
+en el ámbito de los servicios financieros, IoT, aprendizaje automático, DevOps y observabilidad. 
+Es compatible con el protocolo de PostgreSQL, ofrece puntos de conexión de alto 
+rendimiento usando el protocolo InfluxDB, además de un API REST para consultas y la
+importación/exportación masiva de datos.
+
+QuestDB implementa ANSI SQL con extensiones nativas orientadas al manejo de series temporales. 
+Estas extensiones simplifican la correlación de datos de múltiples fuentes utilizando uniones y 
+relacionales. QuestDB logra un alto rendimiento al usar un modelo de almacenamiento orientado 
+a columnas, ejecución vectorial masivamente paralela, instrucciones SIMD y varias técnicas de 
+baja latencia, que incluyen un compilador JIT. La totalidad del código ha sido creado desde cero 
+en Java y C++, sin dependencias, y es 100% libre de GC (recolección de basura).
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img alt="Веб-консоль QuestDB показує кілька інструкцій SQL і візуалізує запит у вигляді діаграми" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
+    <img alt="Consola web de QuestDB que muestra varias declaraciones SQL y visualiza una consulta como un gráfico" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
-## Спробуйте QuestDB
+## Prueba QuestDB
 
-Ми надаємо [онлайн демо](https://demo.questdb.io/) з останньою версією QuestDB та наступними зразками даних:
+Esta es una [demo](https://demo.questdb.io/) con la última versión de QuestDB, que incluye datos y consultas de ejemplo:
 
-- 10 років поїздок таксі Нью-Йорка (1,6 мільярда рядків)
-- реальні торгові дані з біржі криптовалют
-- дані геолокації 250 тисяч унікальних кораблів
+- 10 años de viajes en taxi por la ciudad de Nueva York con 1600 millones de filas
+- datos comerciales en vivo de un exchange, o bolsa, de criptomonedas
+- geolocalizaciones de una flota de 250k navíos y buques a lo largo del tiempo
 
-## Встановіть QuestDB
+## Instala QuestDB
 
-Для швидкого запуску QuestDB можна використовувати Docker:
+Para empezar ya con QuestDB puedes usar Docker:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Користувачі macOS можуть скористатися Homebrew:
+En MacOS puedes usar Homebrew:
 
 ```bash
 brew install questdb
@@ -63,81 +64,83 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-[Сторінка завантажень QuestDB](https://questdb.io/get-questdb/) надає прямий доступ до інсталяційних
-файлів та містить інформацію про інші методи розгортання ПЗ.
+La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece 
+métodos de instalacion en una variedad de plataformas.
 
-### Підключіться до QuestDB
+### Conéctate con QuestDB
 
-Ви можете взаємодіяти з QuestDB за допомогою таких інтерфейсів:
+Puedes conectarte con QuestDB utilizando las siguientes interfaces:
 
-- [Веб-консоль](https://questdb.io/docs/develop/web-console/) слухає порт`9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) слухає порт `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) протокол, слухає порт `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) високо-пропускний протокол прийому, слухає порт `9009`
+- [Consola web] (https://questdb.io/docs/develop/web-console/) escuchando en el puerto
+  `9000`
+- [API REST](https://questdb.io/docs/reference/api/rest/) en el puerto `9000`
+- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) protocolo de conexión en
+  puerto `8812`
+- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) protocolo de línea para
+  ingesta de alto rendimiento en el puerto `9009`
 
-## Порівняння QuestDB із іншими TSDB з відкритим кодом
+## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
 
-Ось результати тесту продуктивності для даних великої розмірності
-[Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
-що використовує `cpu-only` варіант з 6 паралельними потоками на AMD Ryzen 3970X:
+En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sóla CPU y 
+6 hilos de ejecución en un AMD Ryzen 3970X:
+
+[Suite de referencia de series temporales](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="Діаграма порівняння максимальної пропускної здатності QuestDB, ClickHouse, TimescaleDB і InfluxDB." src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
 
-У наведеній нижче таблиці показано час виконання запиту мільярда рядків, який виконуються на c5.metal
-і використовує 16 із 96 доступних потоків:
+La siguiente tabla muestra los tiempos de ejecución para 1MM, un millón de millones
+de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 
-| Запит                                                        | Час виконання    |
+| Query                                                        | Runtime    |
 | ------------------------------------------------------------ | ---------- |
 | `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
 | `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-## Ресурси
+## Recursos
 
-### 📚 Читайте документацію
+### 📚 Lee la documentación
 
-- [Документація QuestDB:](https://questdb.io/docs/introduction/) знайдіть як запускати та налаштовувати QuestDB.
-- [Підручники:](https://questdb.io/tutorial/) вивчайте що можливо робити з QuestDB крок за кроком.
-- [Дорожня карта продукту:](https://github.com/questdb/questdb/projects) наш план майбутніх релізів.
+- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende como instalar, configurar y correr QuestDB.
+- [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que vienen.
 
-### ❓ Отримайте підтримку
+### ❓ Ayuda!
 
-- [Спільнота Slack:](https://slack.questdb.io) приєднуйтесь до технічних дискусій, запитуйте та знайомтесь 
-  з іншими користувачами!
-- [GitHub issues:](https://github.com/questdb/questdb/issues) повідомляйте про помилки або проблеми із QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) пропонуйте нові функції або 
-  демонструйте те, що ви створили.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) шукайте загальні способи усунення несправностей.
+- [Community Slack:](https://slack.questdb.io) participa en las discusiones tecnicas, pregunta, conoce al equipo y a otros usuarios.
+- [GitHub issues:](https://github.com/questdb/questdb/issues) envía informes de error, o de problemas con QuestDB.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propón nuevas características, o muestra tus contribuciones.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones a problemas comunes.
 
-### 🚢 Розгорніть QuestDB
+### 🚢 Despliega QuestDB
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
+- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform)
+- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker)
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
-## Зробіть свій внесок у розробку
+## Contribuye
 
-Ми завжди раді будь-якому внеску у проєкт, незалежно від того, чи це програмний код, 
-документація, звіти про помилки, запити щодо функцій або відгуки:
+Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación, 
+informes de errores, solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
 
-- Ознайомтеся з проблемами на GitHub позначеними "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
-- Прочитайте
-  [посібник для співавторів](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
-- Подивіться детальні
-  [інструкції із збірки](https://github.com/questdb/questdb/blob/master/core/README.md).
-- [Створіть форк](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-  QuestDB і надішліть pull request із запропонованими вами змінами.
+- Echa un vistazo a GitHub, en particular elementos etiquetados
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- Para obtener detalles sobre la compilación, empaquetado e instalación de QuestDB, consulta
+  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Crea un fork](https://docs.github.com/en/github/empezando-con-github/fork-a-repo)
+  de QuestDB y envía un pull request con los cambios propuestos.
 
-✨ На знак подяки ми також надсилаємо **QuestDB swag** нашим помічникам.
-[Заявіть про свій тут.](https://questdb.io/community)
+✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**. [Reclama tu botín aquí.](https://questdb.io/community)
 
-Велика подяка цим чудовим людям, які зробили свій внесок у проєкт QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+Un gran agradecimiento a las siguientes personas maravillosas que han contribuido a
+QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -288,6 +291,5 @@ questdb stop  // To stop questdb
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-This project adheres to the
-[all-contributors](https://github.com/all-contributors/all-contributors)
-specification. Contributions of any kind are welcome!
+Este proyecto se adhiere a la especificación [all-contributors](https://github.com/all-contributors/all-contributors). 
+Las contribuciones de cualquier tipo son bienvenidas y se llevan premio!

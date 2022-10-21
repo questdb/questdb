@@ -28,8 +28,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md)
-
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md)
 # QuestDB
 
 QuestDB 是一個高性能的開源 SQL 數據庫，適用於金融服務、物聯網、機器學習、DevOps 和可觀測性領域的應用場景。它兼容 PostgreSQL 的 wire 協議，也兼容 InfluxDB Line 協議以獲取不受模式影響的高吞吐量數據，以及提供用於查詢、批量導入和導出的 REST API。
