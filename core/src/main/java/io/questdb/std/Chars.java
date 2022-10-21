@@ -156,6 +156,8 @@ public final class Chars {
                     }
                 } else {    // first character matched, try to match the rest of the term
                     if (sequence.charAt(i) != term.charAt(i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
                         foundIndex = -1;
                     }
                 }
@@ -180,6 +182,8 @@ public final class Chars {
                     }
                 } else {    // last character matched, try to match the rest of the term
                     if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
                         foundIndex = -1;
                     }
                 }
