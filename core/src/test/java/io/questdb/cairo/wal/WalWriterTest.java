@@ -1107,7 +1107,8 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final int numOfRows = 4000;
             final int maxRowCount = 500;
-            walSegmentRolloverRowCount = maxRowCount;  // affects `configuration.getWalSegmentRolloverRowCount()`.
+            walSegmentRolloverRowCount = maxRowCount;
+            Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
             final int numOfTxn = numOfThreads * numOfSegments;
@@ -1133,6 +1134,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                             }
                         }
                         walWriter.commit();
+                        assertWalExistence(true, tableName, walId);
+                        for (int n = 0; n < numOfSegments; n++) {
+                            assertSegmentExistence(true, tableName, walId, n);
+                        }
+                        assertSegmentExistence(false, tableName, walId, numOfSegments);
                     } catch (Exception e) {
                         e.printStackTrace();
                         Assert.fail("Write failed [e=" + e + "]");
