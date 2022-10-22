@@ -26,10 +26,12 @@ package io.questdb.cutlass.line.tcp.load;
 
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -37,7 +39,7 @@ public class TableData {
     private final CharSequence tableName;
     private final ObjList<LineData> rows = new ObjList<>();
     private final IntLongPriorityQueue index = new IntLongPriorityQueue();
-    private final SOCountDownLatch readyLatch = new SOCountDownLatch(1);
+    private final AtomicLong writePermits = new AtomicLong();
 
     public TableData(CharSequence tableName) {
         this.tableName = tableName;
@@ -47,12 +49,18 @@ public class TableData {
         return tableName;
     }
 
-    public void ready() {
-        readyLatch.countDown();
+    public void obtainPermit() {
+        writePermits.incrementAndGet();
+    }
+
+    public void returnPermit() {
+        writePermits.decrementAndGet();
     }
 
     public void await() {
-        readyLatch.await();
+        while(writePermits.get() > 0L) {
+            Os.pause();
+        }
     }
 
     public synchronized int size() {

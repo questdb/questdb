@@ -29,6 +29,8 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
 
 public interface AnalyticContext {
+    boolean isEmpty();
+
     VirtualRecord getPartitionByRecord();
 
     RecordSink getPartitionBySink();
