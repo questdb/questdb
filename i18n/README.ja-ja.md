@@ -91,9 +91,12 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 <div align="center">
   <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
-    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
+<!--     <img  src=".github/tsbs-results.png"/> -->
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." width="1042" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
   </a>
 </div>
+
+
 
 次の表は、1 つのサーバーで実行された 10 億行のクエリ実行時間を示しています。
 利用可能な 96 個のスレッドのうち 16 個を使用する `c5.metal` インスタンス:
