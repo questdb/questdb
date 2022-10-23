@@ -1455,34 +1455,38 @@ public class TableWriter implements Closeable {
             return false;
         }
 
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
             // removing active partition
 
+            // calculate new transient row count, min/max timestamps and find the partition to open next
+            final long nextMaxTimestamp;
+            final long newTransientRowCount;
+            final long prevTimestamp;
             if (index == 0) {
-                // removing the very last partition is equivalent to truncating the table
-                truncate();
-                return true;
-            }
-
-            // calculate new transient row count and max timestamp
-            final int prevIndex = index - 1;
-            final long prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-            final long newTransientRowCount = txWriter.getPartitionSize(prevIndex);
-            try {
-                setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
-            }
-            finally {
-                path.trimTo(rootLen);
+                nextMaxTimestamp = Long.MIN_VALUE;
+                newTransientRowCount = 0L;
+                prevTimestamp = 0L; // meaningless
+            } else {
+                final int prevIndex = index - 1;
+                prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                try {
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
+                    TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    nextMaxTimestamp = attachMaxTimestamp;
+                } finally {
+                    path.trimTo(rootLen);
+                }
             }
 
             columnVersionWriter.removePartition(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
-            // max is updated upon finishing the transaction, the value was loaded by readPartitionMinMax
-            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), attachMaxTimestamp);
+            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
@@ -1490,9 +1494,14 @@ public class TableWriter implements Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
-            row = regularRow;
-            openPartition(prevTimestamp);
-            setAppendPosition(newTransientRowCount, false);
+
+            if (index != 0) {
+                openPartition(prevTimestamp);
+                setAppendPosition(newTransientRowCount, false);
+                row = regularRow;
+            } else {
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+            }
         } else {
 
             // when we want to delete first partition we must find out minTimestamp from
@@ -1508,7 +1517,6 @@ public class TableWriter implements Closeable {
                 nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
             }
 
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             columnVersionWriter.removePartition(timestamp);
 
             txWriter.beginPartitionSizeUpdate();
@@ -1520,11 +1528,10 @@ public class TableWriter implements Closeable {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-
-            // Call O3 methods to remove check TxnScoreboard and remove partition directly
-            safeDeletePartitionDir(timestamp, partitionNameTxn);
         }
 
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        safeDeletePartitionDir(timestamp, partitionNameTxn);
         return true;
     }
 
