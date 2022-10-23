@@ -29,7 +29,9 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -49,6 +51,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected long indexShift = 0;
     protected long aIndex;
     protected long aLimit;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
@@ -83,6 +86,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final MessageBus bus = executionContext.getMessageBus();
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
@@ -113,6 +117,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         int hashColumnIndex = -1;
         int hashColumnType = ColumnType.UNDEFINED;
 
+        sharedCircuitBreaker.reset();
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
@@ -131,113 +136,143 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final TableReader reader = this.dataFrameCursor.getTableReader();
 
         long foundRowCount = 0;
-        while ((frame = this.dataFrameCursor.next()) != null && foundRowCount < keyCount) {
-            doneLatch.reset();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+        int queuedCount = 0;
 
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+        try {
+            while ((frame = this.dataFrameCursor.next()) != null && foundRowCount < keyCount) {
+                doneLatch.reset();
+                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
 
-            final long keyBaseAddress = indexReader.getKeyBaseAddress();
-            final long keysMemorySize = indexReader.getKeyMemorySize();
-            final long valueBaseAddress = indexReader.getValueBaseAddress();
-            final long valuesMemorySize = indexReader.getValueMemorySize();
-            final int valueBlockCapacity = indexReader.getValueBlockCapacity();
-            final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
-            final int partitionIndex = frame.getPartitionIndex();
+                final long rowLo = frame.getRowLo();
+                final long rowHi = frame.getRowHi() - 1;
 
-            long hashColumnAddress = 0;
+                final long keyBaseAddress = indexReader.getKeyBaseAddress();
+                final long keysMemorySize = indexReader.getKeyMemorySize();
+                final long valueBaseAddress = indexReader.getValueBaseAddress();
+                final long valuesMemorySize = indexReader.getValueMemorySize();
+                final int valueBlockCapacity = indexReader.getValueBlockCapacity();
+                final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+                final int partitionIndex = frame.getPartitionIndex();
 
-            //hashColumnIndex can be -1 for latest by part only (no prefixes to match)
-            if (hashColumnIndex > -1) {
-                final int columnBase = reader.getColumnBase(partitionIndex);
-                final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
-                final MemoryR column = reader.getColumn(primaryColumnIndex);
-                hashColumnAddress = column.getPageAddress(0);
-            }
+                long hashColumnAddress = 0;
 
-            // -1 must be dead case here
-            final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
-
-            int queuedCount = 0;
-            for (long i = 0; i < taskCount; ++i) {
-                final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                final long found = LatestByArguments.getRowsSize(argsAddress);
-                final long keyHi = LatestByArguments.getKeyHi(argsAddress);
-                final long keyLo = LatestByArguments.getKeyLo(argsAddress);
-
-                // Skip range if all keys found
-                if (found >= keyHi - keyLo) {
-                    continue;
+                //hashColumnIndex can be -1 for latest by part only (no prefixes to match)
+                if (hashColumnIndex > -1) {
+                    final int columnBase = reader.getColumnBase(partitionIndex);
+                    final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
+                    final MemoryR column = reader.getColumn(primaryColumnIndex);
+                    hashColumnAddress = column.getPageAddress(0);
                 }
-                // Update hash column address with current frame value
-                LatestByArguments.setHashesAddress(argsAddress, hashColumnAddress);
 
-                final long seq = pubSeq.next();
+                // -1 must be dead case here
+                final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
-                if (seq < 0) {
-                    GeoHashNative.latestByAndFilterPrefix(
-                            keyBaseAddress,
-                            keysMemorySize,
-                            valueBaseAddress,
-                            valuesMemorySize,
-                            argsAddress,
-                            unIndexedNullCount,
-                            rowHi,
-                            rowLo,
-                            partitionIndex,
-                            valueBlockCapacity,
-                            hashColumnAddress,
-                            hashesColumnSize,
-                            prefixesAddress,
-                            prefixesCount
-                    );
-                } else {
-                    queue.get(seq).of(
-                            keyBaseAddress,
-                            keysMemorySize,
-                            valueBaseAddress,
-                            valuesMemorySize,
-                            argsAddress,
-                            unIndexedNullCount,
-                            rowHi,
-                            rowLo,
-                            partitionIndex,
-                            valueBlockCapacity,
-                            hashColumnAddress,
-                            hashesColumnSize,
-                            prefixesAddress,
-                            prefixesCount,
-                            doneLatch
-                    );
-                    pubSeq.done(seq);
-                    queuedCount++;
+                queuedCount = 0;
+                for (long i = 0; i < taskCount; ++i) {
+                    final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                    final long found = LatestByArguments.getRowsSize(argsAddress);
+                    final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                    final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+
+                    // Skip range if all keys found
+                    if (found >= keyHi - keyLo) {
+                        continue;
+                    }
+                    // Update hash column address with current frame value
+                    LatestByArguments.setHashesAddress(argsAddress, hashColumnAddress);
+
+                    final long seq = pubSeq.next();
+                    if (seq < 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        GeoHashNative.latestByAndFilterPrefix(
+                                keyBaseAddress,
+                                keysMemorySize,
+                                valueBaseAddress,
+                                valuesMemorySize,
+                                argsAddress,
+                                unIndexedNullCount,
+                                rowHi,
+                                rowLo,
+                                partitionIndex,
+                                valueBlockCapacity,
+                                hashColumnAddress,
+                                hashesColumnSize,
+                                prefixesAddress,
+                                prefixesCount
+                        );
+                    } else {
+                        queue.get(seq).of(
+                                keyBaseAddress,
+                                keysMemorySize,
+                                valueBaseAddress,
+                                valuesMemorySize,
+                                argsAddress,
+                                unIndexedNullCount,
+                                rowHi,
+                                rowLo,
+                                partitionIndex,
+                                valueBlockCapacity,
+                                hashColumnAddress,
+                                hashesColumnSize,
+                                prefixesAddress,
+                                prefixesCount,
+                                doneLatch,
+                                sharedCircuitBreaker
+                        );
+                        pubSeq.done(seq);
+                        queuedCount++;
+                    }
+                }
+
+                // process our own queue
+                // this should fix deadlock with 1 worker configuration
+                while (doneLatch.getCount() > -queuedCount) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    long seq = subSeq.next();
+                    if (seq > -1) {
+                        queue.get(seq).run();
+                        subSeq.done(seq);
+                    }
+                }
+
+                doneLatch.await(queuedCount);
+
+                foundRowCount = 0; // Reset found counter
+                for (int i = 0; i < taskCount; i++) {
+                    final long address = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                    foundRowCount += LatestByArguments.getRowsSize(address);
                 }
             }
-
-            // process our own queue
-            // this should fix deadlock with 1 worker configuration
-            while (doneLatch.getCount() > -queuedCount) {
-                long seq = subSeq.next();
-                if (seq > -1) {
-                    queue.get(seq).run();
-                    subSeq.done(seq);
-                }
-            }
-
-            doneLatch.await(queuedCount);
-
-            foundRowCount = 0; // Reset found counter
-            for (int i = 0; i < taskCount; i++) {
-                final long address = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                foundRowCount += LatestByArguments.getRowsSize(address);
+        } catch (Throwable t) {
+            sharedCircuitBreaker.cancel();
+            throw t;
+        } finally {
+            processTasks(circuitBreaker, queue, subSeq, queuedCount);
+            if (sharedCircuitBreaker.isCanceled()) {
+                LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
             }
         }
+
         final long rowCount = GeoHashNative.slideFoundBlocks(argumentsAddress, taskCount);
         LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
+    }
+
+    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCircuitBreaker.cancel();
+                }
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);
     }
 
     private static int getPow2SizeOfGeoHashType(int type) {

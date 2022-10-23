@@ -28,6 +28,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -47,6 +48,8 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
         DataFrame frame;
         if (!isOpen()) {
             map.reopen();
@@ -59,6 +62,7 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
                 recordA.jumpTo(frame.getPartitionIndex(), rowHi);
                 for (long row = rowHi; row >= rowLo; row--) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     recordA.setRecordIndex(row);
                     MapKey key = map.withKey();
                     key.put(recordA, recordSink);

@@ -197,12 +197,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void finishPartitionSizeUpdate() {
         recordStructureVersion++;
-        assert getPartitionCount() > 0;
-        this.transientRowCount = getPartitionSize(getPartitionCount() - 1);
-        this.fixedRowCount = 0;
-        this.txPartitionCount = getPartitionCount();
+        int numPartitions = getPartitionCount();
+        transientRowCount = numPartitions > 0 ? getPartitionSize(numPartitions - 1) : 0L;
+        fixedRowCount = 0L;
+        txPartitionCount = getPartitionCount();
         for (int i = 0, hi = txPartitionCount - 1; i < hi; i++) {
-            this.fixedRowCount += getPartitionSize(i);
+            fixedRowCount += getPartitionSize(i);
         }
     }
 

@@ -62,7 +62,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
                         "  from weather \n" +
                         ") inq \n" +
-                        "where rid = 0 \n" +
+                        "where rid = 1 \n" +
                         "order by ts",
                 "create table weather as " +
                         "(select cast(x*36000000000 as timestamp) ts, \n" +
