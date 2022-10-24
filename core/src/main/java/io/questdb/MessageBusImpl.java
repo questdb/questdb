@@ -33,6 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
     private final CairoConfiguration configuration;
@@ -209,7 +210,7 @@ public class MessageBusImpl implements MessageBus {
         Misc.free(pageFrameReduceQueue);
     }
 
-    @Override
+    @TestOnly
     public void reset() {
         clearQueue(walTxnNotificationSubSequence);
     }

@@ -158,7 +158,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
-        messageBus.reset();
+        ((MessageBusImpl) messageBus).reset();
         return b1 & b2 & b3;
     }
 
