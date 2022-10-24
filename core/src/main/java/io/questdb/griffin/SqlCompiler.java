@@ -948,7 +948,7 @@ public class SqlCompiler implements Closeable {
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
             // reader == null means it's compilation for WAL table
-            // before applyting to WAL writer
+            // before applying to WAL writer
             if (reader != null) {
                 final long timestamp;
                 try {
