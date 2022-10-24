@@ -45,6 +45,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -578,16 +579,16 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
+    // TODO: support truncate
     public void testMainAndWalTableDropPartitionFailed() throws Exception {
-        stackFailureClass = "TableWriter";
-        stackFailureMethod = "truncate";
-
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             createStandardWalTable(tableName);
 
+            // TODO: make truncate fail
             executeOperation(
-                    "alter table " + tableName + " drop partition list '2022-02-24'",
+                    "truncate table " + tableName,
                     CompiledQuery.ALTER
             );
 
@@ -603,9 +604,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\t\t2022-02-24T00:00:00.000000Z\t\n");
         });
-
-        stackFailureClass = null;
-        stackFailureMethod = null;
     }
 
     @Test

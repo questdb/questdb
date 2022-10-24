@@ -53,6 +53,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.*;
@@ -1565,20 +1566,23 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
         assertMemoryLeak(() -> {
-            stackFailureClass = "TableSequencerImpl";
-            stackFailureMethod = "<init>";
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        return -1;
+                    }
+                    return Files.openRW(name, opts);
+                }
+            };
 
             final String tableName = testName.getMethodName();
             try {
                 createTable(tableName);
                 fail("Exception expected");
-            } catch(Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertEquals("Test failure", e.getMessage());
+            } catch(CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
-
-            stackFailureClass = null;
-            stackFailureMethod = null;
         });
     }
 

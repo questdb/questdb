@@ -109,8 +109,6 @@ public abstract class AbstractCairoTest {
     protected static RostiAllocFacade rostiAllocFacade = null;
     protected static int parallelImportStatusLogKeepNDays = -1;
     protected static Boolean ioURingEnabled = null;
-    protected static String stackFailureClass;
-    protected static String stackFailureMethod;
     protected static boolean hideTelemetryTable = false;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
@@ -234,21 +232,6 @@ public abstract class AbstractCairoTest {
             @Override
             public String getAttachPartitionSuffix() {
                 return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
-            }
-
-            @Override
-            public long getDatabaseIdHi() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw CairoException.nonCritical().put(e.getMessage());
-                        }
-                    }
-                }
-                return super.getDatabaseIdHi();
             }
 
             @Override
@@ -407,21 +390,6 @@ public abstract class AbstractCairoTest {
                 // Bump it to high number so that test doesn't fail with memory leak if LongList
                 // re-allocates
                 return 512;
-            }
-
-            @Override
-            public CharSequence getRoot() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw e;
-                        }
-                    }
-                }
-                return root;
             }
 
             @Override
