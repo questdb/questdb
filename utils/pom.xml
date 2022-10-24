@@ -28,7 +28,7 @@
 
   <groupId>org.example</groupId>
   <artifactId>utils</artifactId>
-  <version>6.5.4-SNAPSHOT</version>
+  <version>6.5.4</version>
 
   <name>Command line utils for QuestDB</name>
 
@@ -53,7 +53,7 @@
     <dependency>
       <groupId>org.questdb</groupId>
       <artifactId>questdb</artifactId>
-      <version>6.5.4-SNAPSHOT</version>
+      <version>6.5.4</version>
     </dependency>
   </dependencies>
 
