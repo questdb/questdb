@@ -31,8 +31,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -147,18 +147,6 @@ public abstract class AbstractCairoTest {
 
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (FACTORY_TAGS[i]) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
                 memUsed += Unsafe.getMemUsedByTag(i);
             }
         }
@@ -598,7 +586,7 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                engine.clearPools();
+                engine.releaseInactiveCompilers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {

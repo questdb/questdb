@@ -33,7 +33,8 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.TextImportExecutionContext;
@@ -74,15 +75,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final TextImportExecutionContext textImportExecutionContext;
     private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
+    // initial value of unpublishedWalTxnCount is 1 because we want to scan for unapplied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
+    // Defaults WAL Apply threads set to 2, this is the upper limit of number of parallel compilations when applying WAL segments.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled(), 5);
+        this(configuration, Metrics.disabled(), 2);
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalIoThreads) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalWALApplyThreads) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -123,7 +126,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw e;
         }
 
-        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
+        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalWALApplyThreads);
     }
 
     public long getUnpublishedWalTxnCount() {
@@ -510,7 +513,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     @TestOnly
-    public void clearPools() {
+    public void releaseInactiveCompilers() {
         sqlCompilerPool.releaseInactive();
     }
 

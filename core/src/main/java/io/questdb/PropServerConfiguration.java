@@ -208,7 +208,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
-    private final String tmpRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -439,20 +438,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
         this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 300000);
-        this.walTxnNotificationQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
+        this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.isWalSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, false);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+        String tmpRoot;
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
-            this.tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
+            tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
-            this.tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+            tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -826,7 +826,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.tmpRoot);
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
             if (cairoSqlCopyRoot != null) {
                 this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
             } else {

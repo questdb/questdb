@@ -29,8 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -209,10 +209,13 @@ public class ServerMain implements Closeable {
     }
 
     private static int getTotalWorkerCount(PropServerConfiguration config) {
-        return Math.min(1, config.getWorkerPoolConfiguration().getWorkerCount()
-                + config.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount()
-                + config.getHttpServerConfiguration().getWorkerCount()
-                + config.getPGWireConfiguration().getWorkerCount());
+        final int walApplyThreads;
+        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+            walApplyThreads = config.getWalApplyPoolConfiguration().getWorkerCount();
+        } else {
+            walApplyThreads = config.getWorkerPoolConfiguration().getWorkerCount();
+        }
+        return Math.max(1, walApplyThreads);
     }
 
     public static void main(String[] args) throws Exception {
