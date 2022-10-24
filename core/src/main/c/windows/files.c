@@ -280,8 +280,8 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclas
     }
 
     jboolean result = FALSE;
-    FILE_STANDARD_INFO info;
-    if (GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
+    FILE_ATTRIBUTE_TAG_INFO info;
+    if (GetFileInformationByHandleEx((HANDLE) fd, FileAttributeTagInfo, &info, sizeof(FILE_ATTRIBUTE_TAG_INFO))) {
         result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
     }
     CloseHandle(fd);
