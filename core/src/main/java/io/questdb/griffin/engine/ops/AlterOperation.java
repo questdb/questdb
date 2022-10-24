@@ -42,7 +42,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterOperation extends AbstractOperation implements Mutable, TableMetadataChange {
+public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
