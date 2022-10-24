@@ -178,5 +178,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
         public ObjList<Function> getArgs() {
             return functions;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("concat(").put(functions).put(')');
+        }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.str.CharSink;
 
 public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
 
@@ -51,6 +52,11 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
     @Override
     public CharSequence getSymbolB(Record rec) {
         return null;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SymbolType");
     }
 
     @Override

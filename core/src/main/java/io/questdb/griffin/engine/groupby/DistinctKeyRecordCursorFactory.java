@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -78,6 +79,12 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
                 0,
                 symbolTableSkewIndex
         );
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DistinctKey");
+        sink.child(baseAggregatorFactory);
     }
 
     @Override

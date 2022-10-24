@@ -39,4 +39,9 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
     public void computeNext(MapValue mapValue, Record record) {
         super.computeFirst(mapValue, record);
     }
+
+    @Override
+    public String getSymbol() {
+        return "last";
+    }
 }

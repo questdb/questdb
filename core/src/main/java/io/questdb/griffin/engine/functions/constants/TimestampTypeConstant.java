@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 
 public class TimestampTypeConstant extends TimestampFunction implements TypeConstant {
     public static final TimestampTypeConstant INSTANCE = new TimestampTypeConstant();
@@ -35,5 +36,10 @@ public class TimestampTypeConstant extends TimestampFunction implements TypeCons
     @Override
     public long getTimestamp(Record rec) {
         return Numbers.LONG_NaN;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("TimestampType");
     }
 }

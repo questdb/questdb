@@ -41,7 +41,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     private final Map map;
     private final RecordSink recordSink;
-    private final Function filter;
+    protected final Function filter;
 
     public LatestByAllFilteredRecordCursor(
             @NotNull Map map,

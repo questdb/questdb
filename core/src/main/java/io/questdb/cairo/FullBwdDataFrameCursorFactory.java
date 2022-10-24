@@ -52,7 +52,7 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("FullBwdDataFrame");
+        sink.type("Full backward scan");
         super.toPlan(sink);
     }
 }

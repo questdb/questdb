@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
     @Override
@@ -77,6 +78,11 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
             return arrayFunction.getStrLen(rec, indexFunction.getInt(rec));
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arrayFunction).put('[').put(indexFunction).put(']');
         }
     }
 }

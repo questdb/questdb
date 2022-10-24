@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
@@ -88,6 +89,11 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put(" <> all ").put(set);
         }
     }
 }

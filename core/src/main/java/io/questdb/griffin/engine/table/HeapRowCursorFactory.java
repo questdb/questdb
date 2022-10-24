@@ -28,6 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
@@ -60,5 +61,13 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     @Override
     public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.prepareCursor(cursorFactories, tableReader, sqlExecutionContext);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("HeapRowCursor");
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            sink.child(cursorFactories.getQuick(i));
+        }
     }
 }

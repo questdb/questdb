@@ -59,6 +59,11 @@ final class TimestampFloorFunctions {
         }
 
         abstract protected long floor(long timestamp);
+
+        @Override
+        public String getSymbol() {
+            return "timestamp_floor";
+        }
     }
 
     static class TimestampFloorDDFunction extends AbstractTimestampFloorFunction {

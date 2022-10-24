@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class ToUppercaseFunctionFactory implements FunctionFactory {
@@ -90,6 +91,11 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(final Record rec) {
             return arg.getStrLen(rec);
+        }
+
+        @Override
+        public String getSymbol() {
+            return "to_uppercase";
         }
     }
 }

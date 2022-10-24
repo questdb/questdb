@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class EqStrFunctionFactory implements FunctionFactory {
     @Override
@@ -94,6 +95,16 @@ public class EqStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (arg.getStrLen(rec) == -1L);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put(" is not null ");
+            } else {
+                sink.put(" is null");
+            }
+        }
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -114,25 +125,20 @@ public class EqStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(constant, arg.getStr(rec));
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
+            super(left, right);
         }
 
         @Override

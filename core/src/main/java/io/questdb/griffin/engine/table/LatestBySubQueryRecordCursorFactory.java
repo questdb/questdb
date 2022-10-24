@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
@@ -75,6 +76,20 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
         this.func = func;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestBySubQuery");
+        boolean isIndexed = cursor instanceof LatestByValuesIndexedFilteredRecordCursor || cursor instanceof LatestByValuesIndexedRecordCursor;
+        sink.meta("indexed").val(isIndexed);
+
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        sink.attr("columnIdx").val(columnIndex);
+        sink.child(dataFrameCursorFactory);
+        sink.child(recordCursorFactory);
     }
 
     @Override

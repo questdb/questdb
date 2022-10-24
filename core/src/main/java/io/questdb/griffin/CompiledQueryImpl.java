@@ -167,6 +167,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(SELECT, recordCursorFactory);
     }
 
+    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+        return of(EXPLAIN, recordCursorFactory);
+    }
+
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;

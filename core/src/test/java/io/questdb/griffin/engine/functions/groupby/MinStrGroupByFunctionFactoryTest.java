@@ -141,7 +141,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals("[0] interpolation is not supported for function: MinStr(StrColumn(2))", e.getMessage());
+                Assert.assertEquals("[0] interpolation is not supported for function: min(Str(2))", e.getMessage());
             }
         });
     }

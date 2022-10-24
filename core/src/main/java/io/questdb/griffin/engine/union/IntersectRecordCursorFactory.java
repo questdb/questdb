@@ -62,4 +62,14 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
         Misc.free(this.cursor);
         super._close();
     }
+
+    @Override
+    protected CharSequence getOperation() {
+        return "Intersect";
+    }
+
+    @Override
+    protected boolean isSecondFactoryHashed() {
+        return true;
+    }
 }

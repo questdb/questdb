@@ -109,4 +109,9 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public boolean isConstant() {
         return false;
     }
+
+    @Override
+    public String getSymbol() {
+        return "sum";
+    }
 }

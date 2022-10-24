@@ -31,6 +31,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -58,7 +59,6 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             Function offsetFunc,
             int offsetFuncPos
     ) throws SqlException {
-
         super(
                 configuration,
                 base,
@@ -91,6 +91,13 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             Misc.free(map);
             throw e;
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFillNull");
+        sink.optAttr("groupByFunctions", cursor.groupByFunctions);
+        sink.child(base);
     }
 
     @NotNull

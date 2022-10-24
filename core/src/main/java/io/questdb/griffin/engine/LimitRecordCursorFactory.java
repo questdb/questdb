@@ -27,6 +27,7 @@ package io.questdb.griffin.engine;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
@@ -225,5 +226,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public void skipTo(long rowCount) {
             base.skipTo(Math.max(0, rowCount));
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Limit");
+        if (cursor.loFunction != null) {
+            sink.meta("lo").val(cursor.loFunction);
+        }
+        if (cursor.hiFunction != null) {
+            sink.meta("hi").val(cursor.hiFunction);
+        }
+        sink.child(base);
     }
 }

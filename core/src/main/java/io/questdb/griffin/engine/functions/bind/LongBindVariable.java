@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 
 class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
 
@@ -52,5 +53,10 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::long");
     }
 }

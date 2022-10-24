@@ -31,6 +31,37 @@ public interface ExecutionModel {
     int INSERT = 4;
     int COPY = 5;
     int UPDATE = 6;
+    int EXPLAIN = 7;
+    int MAX = EXPLAIN + 1;
 
     int getModelType();
+
+    default QueryModel getQueryModel() {
+        return null;
+    }
+
+    default String getTypeName() {
+        return Inner.typeNameMap[getModelType()];
+    }
+
+    default CharSequence getTargetTableName() {
+        return null;
+    }
+
+    class Inner {
+        private static final String[] typeNameMap = new String[ExecutionModel.MAX];
+
+        static {
+            typeNameMap[ExecutionModel.QUERY] = "QUERY";
+            typeNameMap[ExecutionModel.CREATE_TABLE] = "CREATE_TABLE";
+            typeNameMap[ExecutionModel.RENAME_TABLE] = "RENAME_TABLE";
+            typeNameMap[ExecutionModel.INSERT] = "INSERT";
+            typeNameMap[ExecutionModel.COPY] = "COPY";
+            typeNameMap[ExecutionModel.UPDATE] = "UPDATE";
+            typeNameMap[ExecutionModel.EXPLAIN] = "EXPLAIN";
+        }
+    }
 }
+
+
+

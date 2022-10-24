@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -84,5 +85,22 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
+    }
+
+    protected abstract CharSequence getOperation();
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type(getOperation());
+        sink.child(factoryA);
+        if (isSecondFactoryHashed()) {
+            sink.child("Hash", factoryB);
+        } else {
+            sink.child(factoryB);
+        }
+    }
+
+    protected boolean isSecondFactoryHashed() {
+        return false;
     }
 }

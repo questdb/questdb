@@ -83,4 +83,9 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     public boolean isConstant() {
         return false;
     }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
 }

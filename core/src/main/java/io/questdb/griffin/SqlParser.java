@@ -46,6 +46,7 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder;
+    private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
@@ -88,6 +89,7 @@ public final class SqlParser {
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertPoolCapacity());
         this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
+        this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
@@ -377,6 +379,13 @@ public final class SqlParser {
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
+        if (isExplainKeyword(tok)) {
+            ExecutionModel model = parseExplain(lexer, executionContext);
+            ExplainModel explainModel = explainModelPool.next();
+            explainModel.setModel(model);
+            return explainModel;
+        }
+
         if (isSelectKeyword(tok)) {
             return parseSelect(lexer);
         }
@@ -399,6 +408,33 @@ public final class SqlParser {
 
         if (isCopyKeyword(tok)) {
             return parseCopy(lexer);
+        }
+
+        if (isWithKeyword(tok)) {
+            return parseWith(lexer);
+        }
+
+        return parseSelect(lexer);
+    }
+
+    //doesn't allow copy, rename  
+    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+
+        if (isSelectKeyword(tok)) {
+            return parseSelect(lexer);
+        }
+
+        if (isCreateKeyword(tok)) {
+            return parseCreateStatement(lexer, executionContext);
+        }
+
+        if (isUpdateKeyword(tok)) {
+            return parseUpdate(lexer);
+        }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer);
         }
 
         if (isWithKeyword(tok)) {

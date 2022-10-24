@@ -43,18 +43,63 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
     StringSink planSink = new StringSink();
 
     @Test
+    public void testGetPlan() throws SqlException {
+        compile("CREATE TABLE spot_trades (\n" +
+                "  id LONG,\n" +
+                "  instrument_key SYMBOL capacity 256 CACHE,\n" +
+                "  venue SYMBOL capacity 256 CACHE,\n" +
+                "  base_ccy SYMBOL capacity 256 CACHE,\n" +
+                "  quote_ccy SYMBOL capacity 256 CACHE,\n" +
+                "  symbol SYMBOL capacity 256 CACHE index capacity 256,\n" +
+                "  created_timestamp TIMESTAMP,\n" +
+                "  trade_timestamp TIMESTAMP,\n" +
+                "  side SYMBOL capacity 256 CACHE,\n" +
+                "  qty DOUBLE,\n" +
+                "  price DOUBLE,\n" +
+                "  trade_id STRING,\n" +
+                "  notional_usd DOUBLE,\n" +
+                "  notional_base_ccy DOUBLE\n" +
+                ") timestamp (trade_timestamp) PARTITION BY DAY;");
+
+        assertPlan("SELECT  \n" +
+                        "    trade_timestamp as candle_st,\n" +
+                        "    venue,\n" +
+                        "    count(*) AS num_ticks,\n" +
+                        "    SUM(qty*price) AS quote_volume,\n" +
+                        "    SUM(qty*price)/SUM(qty) AS vwap\n" +
+                        "  FROM 'spot_trades'\n" +
+                        "  WHERE \n" +
+                        "    instrument_key like 'ETH_USD_S_%'\n" +
+                        "    AND trade_timestamp >= '2022-01-01 00:00'\n" +
+                        "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
+                        "  SAMPLE BY 1h \n" +
+                        "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
+                "VirtualRecord\n" +
+                        "  functions: [Timestamp(0),Symbol(1),Long(2),Double(3),Double(3)/Double(4)]\n" +
+                        "    SampleByFillNone\n" +
+                        "      functions: [Timestamp,MapSymbol,count(1),sum(Double(3)*Double(2)),sum(Double(3))]\n" +
+                        "        SelectedRecord\n" +
+                        "            async filter\n" +
+                        "              filter: Symbol(4) ~ ETH.USD.S..*? and Symbol(1) in [CBS,FUS,LMX,BTS]\n" +
+                        "              preTouch: true\n" +
+                        "              workers: 1\n" +
+                        "                Interval forward Scan on: spot_trades\n" +
+                        "                  intervals: [static=[1640995200000000,9223372036854775807]\n");
+    }
+
+    @Test
     public void testAggregatesOnColumnWithNoKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"KSumDouble(ByteColumn(0))", "NSumDouble(ByteColumn(0))", "SumInt(ByteColumn(0))", "AvgDouble(ByteColumn(0))", "MinInt(ByteColumn(0))", "MaxInt(ByteColumn(0))"},//byte
-                    {"KSumDouble(ShortColumn(0))", "NSumDouble(ShortColumn(0))", "SumInt(ShortColumn(0))", "AvgDouble(ShortColumn(0))", "MinInt(ShortColumn(0))", "MaxInt(ShortColumn(0))"},//short
-                    {null, null, null, null, "MinChar(CharColumn(0))", "MaxChar(CharColumn(0))"},//char
-                    {"KSumDouble(IntColumn(0))", "NSumDouble(IntColumn(0))", "SumIntVector(0)", "AvgIntVector(0)", "MinIntVector(0)", "MaxIntVector(0)"},//int
-                    {"KSumDouble(LongColumn(0))", "NSumDouble(LongColumn(0))", "SumLongVector(0)", "AvgLongVector(0)", "MinLongVector(0)", "MaxLongVector(0)"},//long
-                    {null, null, "SumDateVector(0)", "AvgLongVector(0)", "MinDateVector(0)", "MaxDateVector(0)"},//date
-                    {null, null, "SumTimestampVector(0)", "AvgLongVector(0)", "MinTimestampVector(0)", "MaxTimestampVector(0)"},//timestamp
-                    {"KSumDouble(FloatColumn(0))", "NSumDouble(FloatColumn(0))", "SumFloat(FloatColumn(0))", "AvgDouble(FloatColumn(0))", "MinFloat(FloatColumn(0))", "MaxFloat(FloatColumn(0))"}, //float
-                    {"KSumDoubleVector(0)", "NSumDoubleVector(0)", "SumDoubleVector(0)", "AvgDoubleVector(0)", "MinDoubleVector(0)", "MaxDoubleVector(0)"}, //double
+            String[][] expectedFunctions = {{"ksum(Byte(0))", "nsum(Byte(0))", "sum(Byte(0))", "avg(Byte(0))", "min(Byte(0))", "max(Byte(0))"},//byte
+                    {"ksum(Short(0))", "nsum(Short(0))", "sum(Short(0))", "avg(Short(0))", "min(Short(0))", "max(Short(0))"},//short
+                    {null, null, null, null, "min(Char(0))", "max(Char(0))"},//char
+                    {"ksum(Int(0))", "nsum(Int(0))", "sum(Int(0))", "avg(Int(0))", "min(Int(0))", "max(Int(0))"},//int
+                    {"ksum(Long(0))", "nsum(Long(0))", "sum(Long(0))", "avg(Long(0))", "min(Long(0))", "max(Long(0))"},//long
+                    {null, null, "sum(Date(0))", "avg(Long(0))", "min(Date(0))", "max(Date(0))"},//date
+                    {null, null, "sum(Timestamp(0))", "avg(Long(0))", "min(Timestamp(0))", "max(Timestamp(0))"},//timestamp
+                    {"ksum(Float(0))", "nsum(Float(0))", "sum(Float(0))", "avg(Float(0))", "min(Float(0))", "max(Float(0))"}, //float
+                    {"ksum(Double(0))", "nsum(Double(0))", "sum(Double(0))", "avg(Double(0))", "min(Double(0))", "max(Double(0))"}, //double
             };
             //other types aren't accepted by aggregates at all (including string and symbol!)
             for (int t = BYTE; t <= DOUBLE; t++) {
@@ -73,11 +118,9 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
 
                     planSink.clear();
-                    planSink.put("GroupByNotKeyed vectorized=").put(vectorized).put("\n")
-                            .put("  groupByFunctions=[").put(expectedFunction).put("]\n")
-                            .put("    DataFrameRecordCursorFactory\n")
-                            .put("        FullFwdDataFrame\n")
-                            .put("          tableName=test");
+                    planSink.put("GroupByNotKeyed vectorized: ").put(vectorized).put("\n")
+                            .put("  groupByFunctions: [").put(expectedFunction).put("]\n")
+                            .put("    Full forward scan on: test\n");
 
                     sqlSink.clear();
                     sqlSink.put("select ").put(function.toLowerCase()).put("(val) agg from test");
@@ -105,15 +148,15 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
     public void testAggregatesOnColumnWithSingleKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"KSumDouble(ByteColumn(1))", "NSumDouble(ByteColumn(1))", "SumInt(ByteColumn(1))", "AvgDouble(ByteColumn(1))", "MinInt(ByteColumn(1))", "MaxInt(ByteColumn(1))"},//byte
-                    {"KSumDouble(ShortColumn(1))", "NSumDouble(ShortColumn(1))", "SumInt(ShortColumn(1))", "AvgDouble(ShortColumn(1))", "MinInt(ShortColumn(1))", "MaxInt(ShortColumn(1))"},//short
-                    {null, null, null, null, "MinChar(CharColumn(1))", "MaxChar(CharColumn(1))"},//char
-                    {"KSumDouble(IntColumn(1))", "NSumDouble(IntColumn(1))", "SumIntVector(1)", "AvgIntVector(1)", "MinIntVector(1)", "MaxIntVector(1)"},//int
-                    {"KSumDouble(LongColumn(1))", "NSumDouble(LongColumn(1))", "SumLongVector(1)", "AvgLongVector(1)", "MinLongVector(1)", "MaxLongVector(1)"},//long
-                    {null, null, "SumDateVector(1)", "AvgLongVector(1)", "MinDateVector(1)", "MaxDateVector(1)"},//date
-                    {null, null, "SumTimestampVector(1)", "AvgLongVector(1)", "MinTimestampVector(1)", "MaxTimestampVector(1)"},//timestamp
-                    {"KSumDouble(FloatColumn(1))", "NSumDouble(FloatColumn(1))", "SumFloat(FloatColumn(1))", "AvgDouble(FloatColumn(1))", "MinFloat(FloatColumn(1))", "MaxFloat(FloatColumn(1))"}, //float
-                    {"KSumDoubleVector(1)", "NSumDoubleVector(1)", "SumDoubleVector(1)", "AvgDoubleVector(1)", "MinDoubleVector(1)", "MaxDoubleVector(1)"}, //double
+            String[][] expectedFunctions = {{"ksum(Byte(1))", "nsum(Byte(1))", "sum(Byte(1))", "avg(Byte(1))", "min(Byte(1))", "max(Byte(1))"},//byte
+                    {"ksum(Short(1))", "nsum(Short(1))", "sum(Short(1))", "avg(Short(1))", "min(Short(1))", "max(Short(1))"},//short
+                    {null, null, null, null, "min(Char(1))", "max(Char(1))"},//char
+                    {"ksum(Int(1))", "nsum(Int(1))", "sum(Int(1))", "avg(Int(1))", "min(Int(1))", "max(Int(1))"},//int
+                    {"ksum(Long(1))", "nsum(Long(1))", "sum(Long(1))", "avg(Long(1))", "min(Long(1))", "max(Long(1))"},//long
+                    {null, null, "sum(Date(1))", "avg(Long(1))", "min(Date(1))", "max(Date(1))"},//date
+                    {null, null, "sum(Timestamp(1))", "avg(Long(1))", "min(Timestamp(1))", "max(Timestamp(1))"},//timestamp
+                    {"ksum(Float(1))", "nsum(Float(1))", "sum(Float(1))", "avg(Float(1))", "min(Float(1))", "max(Float(1))"}, //float
+                    {"ksum(Double(1))", "nsum(Double(1))", "sum(Double(1))", "avg(Double(1))", "min(Double(1))", "max(Double(1))"}, //double
             };
             //other types aren't accepted by aggregates at all (including string and symbol!)
             for (int t = BYTE; t <= DOUBLE; t++) {
@@ -137,12 +180,11 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     }
 
                     planSink.clear();
-                    planSink.put("GroupByRecord vectorized=").put(vectorized + "\n")
-                            .put("  groupByFunctions=[").put(expectedFunction).put("]\n")
-                            .put("  ").put((vectorized ? "keyColumnIndex=0\n" : "recordFunctions=[IntColumn(" + keyPos + ")," + expectedFunction + "]\n"))
-                            .put("    DataFrameRecordCursorFactory\n")
-                            .put("        FullFwdDataFrame\n")
-                            .put("          tableName=test");
+                    planSink.put("GroupByRecord vectorized: ").put(vectorized + "\n")
+                            .put("  groupByFunctions: [").put(expectedFunction).put("]\n")
+                            .put("  ").put((vectorized ? "keyColumnIndex: 0\n" : "recordFunctions: [Int(" + keyPos + ")," + expectedFunction + "]\n"))
+                            .put(vectorized ? "  workers: 1\n" : "")
+                            .put("    Full forward scan on: test\n");
 
                     sqlSink.clear();
                     sqlSink.put("select key, ").put(function.toLowerCase()).put("(val) agg from test group by key;");
@@ -181,7 +223,7 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     sqlSink.put("select key1, key2, ").put(function).put("(val) agg from test group by key1, key2;");
 
                     try {
-                        Assert.assertTrue(Chars.contains(getPlan(sqlSink).getText(), "vectorized=false"));
+                        Assert.assertTrue(Chars.contains(getPlanSink(sqlSink).getText(), "vectorized: false"));
                     } catch (Exception ae) {
                         throwWithContext(typeName, function, ae);
                     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.CharSink;
 
 public interface TernaryFunction extends Function {
 
@@ -80,4 +81,9 @@ public interface TernaryFunction extends Function {
     Function getCenter();
 
     Function getRight();
+
+    @Override
+    default void toSink(CharSink sink) {
+        sink.put(getSymbol()).put('(').put(getLeft()).put(',').put(getCenter()).put(',').put(getRight()).put(')');
+    }
 }

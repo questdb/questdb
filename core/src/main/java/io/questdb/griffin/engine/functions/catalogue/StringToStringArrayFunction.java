@@ -180,6 +180,11 @@ public class StringToStringArrayFunction extends StrArrayFunction {
         return true;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(items).put("::string[]");
+    }
+
     private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
         sink.put(type, stringStartIndex, stringEndIndex + 1);
         items.add(Chars.toString(sink));

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public class MapSymbolColumn extends SymbolFunction {
@@ -118,5 +119,10 @@ public class MapSymbolColumn extends SymbolFunction {
         if (ownSymbolTable) {
             symbolTable = Misc.freeIfCloseable(symbolTable);
         }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MapSymbol");
     }
 }

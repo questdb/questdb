@@ -40,6 +40,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastStrToSymbolFunctionFactory implements FunctionFactory {
@@ -83,6 +84,11 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         public CharSequence getSymbolB(Record rec) {
             final CharSequence value = arg.getStrB(rec);
             return getSymbol(value);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put("::symbol");
         }
 
         private CharSequence getSymbol(CharSequence value) {

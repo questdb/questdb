@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -95,6 +96,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 NullRecordFactory.getInstance(masterFactory.getMetadata()),
                 NullRecordFactory.getInstance(slaveFactory.getMetadata())
         );
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Splice join");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
     }
 
     @Override

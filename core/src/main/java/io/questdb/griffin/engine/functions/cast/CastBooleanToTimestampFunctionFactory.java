@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastBooleanToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -44,7 +45,7 @@ public class CastBooleanToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
+    private static class Func extends AbstractCastToTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }

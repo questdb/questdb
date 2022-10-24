@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NegIntFunctionFactory implements FunctionFactory {
     @Override
@@ -68,6 +69,11 @@ public class NegIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NaN ? -value : Numbers.INT_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('-').put(arg);
         }
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -57,6 +58,12 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.base = base;
         this.cursor = new DistinctRecordCursor(configuration, metadata);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Distinct");
+        sink.child(base);
     }
 
     @Override

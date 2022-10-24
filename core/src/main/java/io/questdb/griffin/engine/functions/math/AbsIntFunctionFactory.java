@@ -68,5 +68,10 @@ public class AbsIntFunctionFactory implements FunctionFactory {
             int value = arg.getInt(rec);
             return Math.abs(value);
         }
+
+        @Override
+        public String getSymbol() {
+            return "abs";
+        }
     }
 }

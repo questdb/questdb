@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class EqIntStrCFunctionFactory implements FunctionFactory {
     @Override
@@ -79,12 +80,26 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getInt(rec) == right);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put('=').put(right);
+        }
     }
 
     private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
         @Override
         public boolean getBool(Record rec) {
             return negated;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(negated);
         }
     }
 }

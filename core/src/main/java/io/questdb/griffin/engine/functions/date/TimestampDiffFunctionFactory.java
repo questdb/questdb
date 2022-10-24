@@ -37,7 +37,9 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 public class TimestampDiffFunctionFactory implements FunctionFactory {
     private static final ObjList<LongDiffFunction> diffFunctions = new ObjList<>();
@@ -51,21 +53,21 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
 
-        final Function perionFunction = args.getQuick(0);
-        if (perionFunction.isConstant()) {
+        final Function periodFunction = args.getQuick(0);
+        if (periodFunction.isConstant()) {
             final Function start = args.getQuick(1);
             final Function end = args.getQuick(2);
-            final char period = perionFunction.getChar(null);
+            final char period = periodFunction.getChar(null);
             if (period < diffFunctionsMax) {
                 final LongDiffFunction func = diffFunctions.getQuick(period);
                 if (func != null) {
                     if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
-                        return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), func);
+                        return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), func, period);
                     }
                     if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
-                        return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), func);
+                        return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), func, period);
                     }
-                    return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func);
+                    return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func, period);
                 }
             }
             return TimestampConstant.NULL;
@@ -82,11 +84,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
         private final LongDiffFunction func;
+        private final char symbol;
 
-        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func) {
+        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func, char symbol) {
             this.left = left;
             this.right = right;
             this.func = func;
+            this.symbol = symbol;
         }
 
         @Override
@@ -108,17 +112,24 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             }
             return func.diff(l, r);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("datediff('").put(symbol).put("',").put(left).put(',').put(right).put(')');
+        }
     }
 
     private static class DiffVarConstFunction extends LongFunction implements UnaryFunction {
         private final Function arg;
         private final long constantTime;
         private final LongDiffFunction func;
+        private final char symbol;
 
-        public DiffVarConstFunction(Function left, long right, LongDiffFunction func) {
+        public DiffVarConstFunction(Function left, long right, LongDiffFunction func, char symbol) {
             this.arg = left;
             this.constantTime = right;
             this.func = func;
+            this.symbol = symbol;
         }
 
         @Override
@@ -133,6 +144,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return func.diff(l, constantTime);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("datediff('").put(symbol).put("',").put(arg).put(',').put(constantTime).put(')');
         }
     }
 
@@ -171,6 +187,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return Timestamps.getPeriodBetween(l, c, r);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("datediff('").put(left).put("',").put(center).put(',').put(right).put(')');
         }
     }
 

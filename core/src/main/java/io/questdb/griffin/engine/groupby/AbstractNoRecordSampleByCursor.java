@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
@@ -233,6 +234,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("Timestamp");
         }
     }
 }

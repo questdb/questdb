@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CeilFloatFunctionFactory implements FunctionFactory {
     @Override
@@ -61,6 +62,11 @@ public class CeilFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             float value = function.getFloat(rec);
             return (float) Math.ceil(value);
+        }
+
+        @Override
+        public String getSymbol() {
+            return "ceil";
         }
     }
 }

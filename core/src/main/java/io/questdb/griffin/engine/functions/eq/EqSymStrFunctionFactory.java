@@ -30,13 +30,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class EqSymStrFunctionFactory implements FunctionFactory {
     @Override
@@ -98,13 +98,23 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (arg.getSymbol(rec) == null);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put(" is not null");
+            } else {
+                sink.put(" is null");
+            }
+        }
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final CharSequence constant;
+    private static abstract class ConstEqSymFunc extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+        protected final CharSequence constant;
 
-        public ConstCheckFunc(Function arg, CharSequence constant) {
+        protected ConstEqSymFunc(Function arg, CharSequence constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -112,6 +122,22 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
+        }
+    }
+
+
+    private static class ConstCheckFunc extends ConstEqSymFunc {
+        public ConstCheckFunc(Function arg, CharSequence constant) {
+            super(arg, constant);
         }
 
         @Override
@@ -120,61 +146,49 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstSymIntCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final SymbolFunction arg;
-        private final CharSequence constant;
+    private static class ConstSymIntCheckFunc extends ConstEqSymFunc {
         private int valueIndex;
         private boolean exists;
 
         public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg, constant);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (exists && arg.getInt(rec) == valueIndex);
+            return negated != (exists && arg().getInt(rec) == valueIndex);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            StaticSymbolTable staticSymbolTable = arg.getStaticSymbolTable();
+            arg().init(symbolTableSource, executionContext);
+            StaticSymbolTable staticSymbolTable = arg().getStaticSymbolTable();
             assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
             valueIndex = staticSymbolTable.keyOf(constant);
             exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
         }
+
+        SymbolFunction arg() {
+            return (SymbolFunction) arg;
+        }
     }
 
-    private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final SymbolFunction arg;
-        private final CharSequence constant;
+    private static class ConstCheckColumnFunc extends ConstEqSymFunc {
         private int valueIndex;
 
         public ConstCheckColumnFunc(SymbolFunction arg, CharSequence constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg, constant);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == valueIndex);
+            return negated != (arg().getInt(rec) == valueIndex);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
+            arg().init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = arg().getStaticSymbolTable();
             assert symbolTable != null;
             valueIndex = symbolTable.keyOf(constant);
         }
@@ -183,25 +197,15 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         public boolean isConstant() {
             return valueIndex == SymbolTable.VALUE_NOT_FOUND;
         }
+
+        SymbolFunction arg() {
+            return (SymbolFunction) arg;
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
+            super(left, right);
         }
 
         @Override

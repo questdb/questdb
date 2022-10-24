@@ -38,6 +38,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class InStrFunctionFactory implements FunctionFactory {
     @Override
@@ -98,6 +99,11 @@ public class InStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return set.contains(arg.getStr(rec));
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put(" in ").put(set);
         }
     }
 }

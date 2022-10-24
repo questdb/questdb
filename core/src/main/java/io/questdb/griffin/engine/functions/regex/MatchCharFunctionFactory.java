@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class MatchCharFunctionFactory implements FunctionFactory {
     @Override
@@ -67,6 +68,11 @@ public class MatchCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return value;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put(" ~ '").put(expected).put('\'');
         }
     }
 }

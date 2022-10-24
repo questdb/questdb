@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -800,7 +801,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         if (expectedPlan != null) {
             planSink.reset();
             factory.toPlan(planSink);
-            TestUtils.assertEquals(expectedPlan, planSink.getText());
+            assertCursor(expectedPlan, new ExplainPlanFactory(factory), false, checkSameStr, expectSize, sizeCanBeVariable);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
@@ -1475,19 +1476,30 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected PlanSink getPlan(CharSequence query) throws SqlException {
+    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
+        planSink.reset();
+        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+        return new ExplainPlanFactory(factory);
+    }
+
+    protected PlanSink getPlanSink(CharSequence query) throws SqlException {
         RecordCursorFactory factory = null;
         try {
             planSink.reset();
             factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
             factory.toPlan(planSink);
+            planSink.end();
             return planSink;
         } finally {
             Misc.free(factory);
         }
     }
 
+    //asserts plan without having to prefix query with 'explain ' or specify the fixed output header  
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
-        TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
+        try (ExplainPlanFactory planFactory = getPlanFactory(query);
+             RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
+            TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
+        }
     }
 }

@@ -120,6 +120,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             this.sqlExecutionContext = executionContext;
         }
 
+        @Override
+        public String getSymbol() {
+            return "touch";
+        }
+
         private void clearCounters() {
             dataPages = 0;
             indexKeyPages = 0;

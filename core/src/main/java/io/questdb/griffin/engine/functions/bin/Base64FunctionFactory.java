@@ -101,5 +101,10 @@ public class Base64FunctionFactory implements FunctionFactory {
             final BinarySequence sequence = getArg().getBin(rec);
             Chars.base64Encode(sequence, this.maxLength, sink);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("base64(").put(data).put(',').put(maxLength).put(')');
+        }
     }
 }

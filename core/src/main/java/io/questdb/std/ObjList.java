@@ -323,9 +323,17 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     @Override
     public void toSink(CharSink sink) {
+        toSink(sink, 0, size());
+    }
+
+    public void toSink(CharSink sink, int from) {
+        toSink(sink, from, size());
+    }
+
+    public void toSink(CharSink sink, int from, int to) {
         sink.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
+        for (int i = from; i < to; i++) {
+            if (i > from) {
                 sink.put(',');
             }
             T obj = getQuick(i);

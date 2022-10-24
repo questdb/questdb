@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class LtIntFunctionFactory implements FunctionFactory {
     @Override
@@ -86,6 +87,17 @@ public class LtIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left);
+            if (negated) {
+                sink.put(">=");
+            } else {
+                sink.put('<');
+            }
+            sink.put(right);
         }
     }
 }

@@ -178,6 +178,16 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
     }
 
     default void toSink(CharSink sink) {
-        sink.put(getClass().getName());
+        sink.put(getSymbol()).put("()");
+    }
+
+    //used in generic toSink implementations
+    default boolean isOperator() {
+        return false;
+    }
+
+    //used in generic toSink implementations
+    default String getSymbol() {
+        return getClass().getName();
     }
 }

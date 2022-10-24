@@ -49,7 +49,6 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
     }
 
     public static final class ToTimestampFunction extends TimestampFunction implements UnaryFunction {
-
         private final Function arg;
 
         public ToTimestampFunction(Function arg) {
@@ -69,6 +68,11 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public String getSymbol() {
+            return "to_timestamp";
         }
     }
 }

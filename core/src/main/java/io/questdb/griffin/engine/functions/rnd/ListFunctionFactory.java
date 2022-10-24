@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class ListFunctionFactory implements FunctionFactory {
     @Override
@@ -102,6 +103,11 @@ public class ListFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             position = 0;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("list(").put(symbols).put(')');
         }
     }
 }

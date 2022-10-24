@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastByteToCharFunctionFactory implements FunctionFactory {
     @Override
@@ -45,7 +46,7 @@ public class CastByteToCharFunctionFactory implements FunctionFactory {
         return new CastByteToCharFunction(args.getQuick(0));
     }
 
-    public static class CastByteToCharFunction extends CharFunction implements UnaryFunction {
+    public static class CastByteToCharFunction extends AbstractCastToCharFunction {
         private final Function arg;
 
         public CastByteToCharFunction(Function arg) {

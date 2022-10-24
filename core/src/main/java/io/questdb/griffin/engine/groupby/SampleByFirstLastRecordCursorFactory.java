@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -95,6 +96,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 offsetFunc,
                 offsetFuncPos
         );
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFirstLast");
+        sink.attr("groupByColIdx").val(groupBySymbolColIndex);
     }
 
     @Override

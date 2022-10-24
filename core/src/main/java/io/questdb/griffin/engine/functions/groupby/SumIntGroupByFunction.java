@@ -100,7 +100,7 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("SumInt(").put(arg).put(')');
+    public String getSymbol() {
+        return "sum";
     }
 }

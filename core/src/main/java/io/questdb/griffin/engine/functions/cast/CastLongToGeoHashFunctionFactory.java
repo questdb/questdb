@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -85,6 +86,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? (byte) value : GeoHashes.BYTE_NULL;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put("::geobyte");
+        }
     }
 
     private static class CastGeoIntFunc extends GeoIntFunction implements UnaryFunction {
@@ -106,6 +112,10 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             return value != Numbers.LONG_NaN ? (int) value : GeoHashes.INT_NULL;
         }
 
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put("::geoint");
+        }
     }
 
     private static class CastGeoShortFunc extends GeoShortFunction implements UnaryFunction {
@@ -126,6 +136,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? (short) value : GeoHashes.SHORT_NULL;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put("::geoshort");
+        }
     }
 
     private static class CastGeoLongFunc extends GeoLongFunction implements UnaryFunction {
@@ -145,6 +160,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? value : GeoHashes.NULL;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put("::geolong");
         }
     }
 }

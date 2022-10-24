@@ -47,4 +47,9 @@ public final class Long256NullConstant extends Long256Function implements Consta
     public Long256 getLong256B(Record rec) {
         return Long256Impl.NULL_LONG256;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("null::long256");
+    }
 }

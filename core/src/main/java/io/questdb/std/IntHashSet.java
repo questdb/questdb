@@ -24,10 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.CharSink;
+
 import java.util.Arrays;
 
 
-public class IntHashSet extends AbstractIntHashSet {
+public class IntHashSet extends AbstractIntHashSet implements Sinkable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
@@ -108,6 +110,11 @@ public class IntHashSet extends AbstractIntHashSet {
             super.removeAt(index);
             list.remove(key);
         }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        list.toSink(sink, noEntryKeyValue);
     }
 
     @Override

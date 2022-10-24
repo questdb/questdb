@@ -100,9 +100,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("VirtualRecordCursorFactory");
-        sink.attr("supportsRandomAccess");
-        sink.val(supportsRandomAccess);
+        sink.type("VirtualRecord");
         sink.attr("functions");
         sink.val(functions);
         sink.child(baseFactory);

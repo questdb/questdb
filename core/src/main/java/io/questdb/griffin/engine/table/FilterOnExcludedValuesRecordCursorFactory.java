@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -85,6 +86,15 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
         this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnExcludedValues");
+        sink.attr("symbolFilter").val("Symbol(").val(columnIndex).val(") not in ").val(keyExcludedValueFunctions);
+        sink.optAttr("filter", filter);
+        sink.child(cursor.getRowCursorFactory());
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

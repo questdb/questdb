@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class Long128Column extends Long128Function implements ScalarFunction {
@@ -66,5 +68,10 @@ public class Long128Column extends Long128Function implements ScalarFunction {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("Long128(").put(columnIndex).put(')');
     }
 }

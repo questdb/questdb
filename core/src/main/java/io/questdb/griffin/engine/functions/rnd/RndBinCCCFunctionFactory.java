@@ -36,6 +36,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndBinCCCFunctionFactory implements FunctionFactory {
     @Override
@@ -110,6 +111,11 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.sequence.rnd = executionContext.getRandom();
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_bin(").put(lo).put(',').put(range + lo - 1).put(',').put(nullRate - 1).put(')');
+        }
     }
 
     private static final class FixLenFunction extends BinFunction implements Function {
@@ -142,6 +148,11 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.sequence.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_bin(").put(this.sequence.len).put(',').put(nullRate - 1).put(')');
         }
     }
 

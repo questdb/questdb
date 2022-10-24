@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -78,7 +79,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
     }
 
     private static class LongSequenceCursorFactory extends AbstractRecordCursorFactory {
-        private final RecordCursor cursor;
+        private final LongSequenceRecordCursor cursor;
 
         public LongSequenceCursorFactory(RecordMetadata metadata, long recordCount) {
             super(metadata);
@@ -95,10 +96,16 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public boolean recordCursorSupportsRandomAccess() {
             return true;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("long_sequence");
+            sink.meta("count").val(cursor.recordCount);
+        }
     }
 
     private static class SeedingLongSequenceCursorFactory extends AbstractRecordCursorFactory {
-        private final RecordCursor cursor;
+        private final LongSequenceRecordCursor cursor;
         private final Rnd rnd;
         private final long seedLo;
         private final long seedHi;
@@ -120,6 +127,12 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("long_sequence");
+            sink.meta("count").val(cursor.recordCount);
         }
     }
 

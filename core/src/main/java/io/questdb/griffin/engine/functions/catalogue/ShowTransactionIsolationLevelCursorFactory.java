@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 
@@ -50,6 +51,11 @@ public class ShowTransactionIsolationLevelCursorFactory extends AbstractRecordCu
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("transaction_isolation");
     }
 
     static {

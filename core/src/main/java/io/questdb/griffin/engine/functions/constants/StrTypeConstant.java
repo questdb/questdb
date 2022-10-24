@@ -51,4 +51,9 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     public int getStrLen(Record rec) {
         return -1;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("StrType");
+    }
 }

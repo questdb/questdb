@@ -228,6 +228,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getExplainPoolCapacity() {
+        return conf.getExplainPoolCapacity();
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return conf.getFileOperationRetryCount();
     }

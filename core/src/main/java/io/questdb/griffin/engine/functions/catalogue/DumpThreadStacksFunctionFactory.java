@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
@@ -44,9 +45,11 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-thread-stacks");
 
+    private static final String SIGNATURE = "dump_thread_stacks()";
+
     @Override
     public String getSignature() {
-        return "dump_thread_stacks()";
+        return SIGNATURE;
     }
 
     @Override
@@ -69,6 +72,11 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 

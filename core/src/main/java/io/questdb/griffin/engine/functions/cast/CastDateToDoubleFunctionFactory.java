@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastDateToDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -51,7 +52,7 @@ public class CastDateToDoubleFunctionFactory implements FunctionFactory {
         return new CastDateToDoubleFunction(args.getQuick(0));
     }
 
-    public static class CastDateToDoubleFunction extends DoubleFunction implements UnaryFunction {
+    public static class CastDateToDoubleFunction extends AbstractCastToDoubleFunction {
         private final Function arg;
 
         public CastDateToDoubleFunction(Function arg) {

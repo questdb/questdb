@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 
 public class DataFrameRowCursorFactory implements RowCursorFactory {
     private final DataFrameRowCursor cursor = new DataFrameRowCursor();
@@ -40,5 +41,10 @@ public class DataFrameRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isEntity() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("ForwardDataFrameRowCursor");
     }
 }

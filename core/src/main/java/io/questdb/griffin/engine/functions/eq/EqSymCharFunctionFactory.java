@@ -126,28 +126,14 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function symFunc;
-        private final Function chrFunc;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function symFunc, Function chrFunc) {
-            this.symFunc = symFunc;
-            this.chrFunc = chrFunc;
-        }
-
-        @Override
-        public Function getLeft() {
-            return symFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return chrFunc;
+            super(symFunc, chrFunc);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
+            return negated != Chars.equalsNc(left.getSymbol(rec), right.getChar(rec));
         }
     }
 }

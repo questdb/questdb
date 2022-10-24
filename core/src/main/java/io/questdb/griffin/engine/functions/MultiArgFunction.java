@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public interface MultiArgFunction extends Function {
 
@@ -84,5 +85,10 @@ public interface MultiArgFunction extends Function {
             }
         }
         return true;
+    }
+
+    @Override
+    default void toSink(CharSink sink) {
+        sink.put(getSymbol()).put('(').put(getArgs()).put(')');
     }
 }

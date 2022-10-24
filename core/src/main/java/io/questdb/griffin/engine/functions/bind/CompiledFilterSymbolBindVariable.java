@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.str.CharSink;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
@@ -72,6 +73,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     @Override
     public boolean isSymbolTableStatic() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::symbol");
     }
 
     @Override

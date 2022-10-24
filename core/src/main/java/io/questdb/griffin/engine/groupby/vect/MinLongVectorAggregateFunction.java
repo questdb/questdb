@@ -136,6 +136,6 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinLongVector(").put(columnIndex).put(')');
+        sink.put("min(Long(").put(columnIndex).put("))");
     }
 }

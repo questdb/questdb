@@ -107,6 +107,6 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("CountVectorAgg(").put(valueOffset).put(')');
+        sink.put("count(").put(valueOffset).put(')');
     }
 }

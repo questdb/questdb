@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
@@ -224,5 +225,10 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     private Function getBase() {
         assert base != null;
         return base;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("$").put(variableIndex).put("::").put(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 }

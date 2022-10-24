@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
@@ -65,6 +66,13 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                 offsetFunc,
                 offsetFuncPos
         );
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFillNoneNotKeyed");
+        sink.optAttr("groupByFunctions", cursor.groupByFunctions);
+        sink.child(base);
     }
 
     @Override

@@ -67,4 +67,9 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     public boolean fragmentedSymbolTables() {
         return true;
     }
+
+    @Override
+    protected CharSequence getOperation() {
+        return "Union";
+    }
 }

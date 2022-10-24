@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastIntToSymbolFunctionFactory implements FunctionFactory {
@@ -54,7 +55,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractToSymbolCastFunction {
+    private static class Func extends AbstractCastToSymbolFunction {
         public Func(Function arg) {
             super(arg);
         }
@@ -78,7 +79,7 @@ public class CastIntToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected AbstractToSymbolCastFunction newFunc() {
+        protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
         }
     }

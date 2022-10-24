@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
-class DoubleCaseFunction extends DoubleFunction implements MultiArgFunction {
+class DoubleCaseFunction extends DoubleFunction implements CaseFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 

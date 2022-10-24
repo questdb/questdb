@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -38,11 +39,12 @@ import io.questdb.std.str.Path;
 public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog(PgAttrDefFunctionFactory.class);
+    private static final String SIGNATURE = "pg_attrdef()";
     static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
-        return "pg_attrdef()";
+        return SIGNATURE;
     }
 
     @Override
@@ -72,6 +74,11 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             super(metadata);
             this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
             this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
         }
 
         @Override

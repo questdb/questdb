@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndByteCCFunctionFactory implements FunctionFactory {
 
@@ -45,7 +46,6 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-
         byte lo = (byte) args.getQuick(0).getInt(null);
         byte hi = (byte) args.getQuick(1).getInt(null);
 
@@ -83,6 +83,11 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_byte(").put(lo).put(',').put(range).put(')');
         }
     }
 }

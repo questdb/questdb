@@ -71,5 +71,10 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
         public char getChar(Record rec) {
             return chrFunc1.getChar(rec) == chrFunc2.getChar(rec) ? Character.MIN_VALUE : chrFunc1.getChar(rec);
         }
+
+        @Override
+        public String getSymbol() {
+            return "nullif";
+        }
     }
 }

@@ -47,27 +47,15 @@ public class CastTimestampToIntFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends IntFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToIntFunction implements UnaryFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            sink.put("CastTimestampToInt(").put(arg).put(')');
         }
     }
 

@@ -77,8 +77,13 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
-            sink.put("AddLongToTimestamp(").put(left).put(",").put(right).put(')');
+        public String getSymbol() {
+            return "+";
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

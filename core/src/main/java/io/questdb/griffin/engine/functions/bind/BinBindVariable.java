@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.CharSink;
 
 public class BinBindVariable extends BinFunction implements ScalarFunction {
     BinarySequence value;
@@ -55,5 +56,10 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::binary");
     }
 }

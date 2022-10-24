@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
 
 class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutable {
     double value;
@@ -50,5 +51,10 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::double");
     }
 }

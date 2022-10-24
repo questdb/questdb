@@ -52,16 +52,9 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         return new CastSymbolToStrFunction(args.getQuick(0));
     }
 
-    public static class CastSymbolToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
-
+    public static class CastSymbolToStrFunction extends AbstractCastToStrFunction {
         public CastSymbolToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

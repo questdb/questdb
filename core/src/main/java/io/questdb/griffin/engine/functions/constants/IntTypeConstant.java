@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 
 public class IntTypeConstant extends IntFunction implements TypeConstant {
     public static final IntTypeConstant INSTANCE = new IntTypeConstant();
@@ -39,5 +40,10 @@ public class IntTypeConstant extends IntFunction implements TypeConstant {
     @Override
     public int getInt(Record rec) {
         return Numbers.INT_NaN;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("IntType");
     }
 }

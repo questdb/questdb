@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -92,6 +93,11 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put(" !~ ").put(matcher.pattern().toString());
         }
     }
 }

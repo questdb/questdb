@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class LengthStrFunctionFactory implements FunctionFactory {
     @Override
@@ -60,6 +61,11 @@ public class LengthStrFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             return arg.getStrLen(rec);
+        }
+
+        @Override
+        public String getSymbol() {
+            return "length";
         }
     }
 }

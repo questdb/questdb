@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
@@ -71,6 +72,18 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             IntList columnIndexes
     ) {
         this(configuration, metadata, dataFrameCursorFactory, latestByIndex, null, filter, columnIndexes);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByDeferredListValuesFiltered");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        if (symbolFunctions != null) {
+            sink.attr("symbolFunctions").val(symbolFunctions);
+        }
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

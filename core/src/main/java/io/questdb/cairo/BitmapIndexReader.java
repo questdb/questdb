@@ -34,6 +34,9 @@ public interface BitmapIndexReader extends Closeable {
     int DIR_FORWARD = 1;
     int DIR_BACKWARD = 2;
 
+    String NAME_BACKWARD = "backward";
+    String NAME_FORWARD = "forward";
+
     @Override
     default void close() {
     }
@@ -70,4 +73,8 @@ public interface BitmapIndexReader extends Closeable {
     long getUnIndexedNullCount();
 
     int getValueBlockCapacity();
+
+    static CharSequence nameOf(int direction) {
+        return DIR_FORWARD == direction ? NAME_FORWARD : NAME_BACKWARD;
+    }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastCharToBooleanFunctionFactory implements FunctionFactory {
     @Override
@@ -45,16 +46,9 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
         return new CastCharToBooleanFunction(args.getQuick(0));
     }
 
-    public static class CastCharToBooleanFunction extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
+    public static class CastCharToBooleanFunction extends AbstractCastToBooleanFunction {
         public CastCharToBooleanFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

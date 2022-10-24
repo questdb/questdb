@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -129,5 +130,9 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public boolean isUsingIndex() {
         return rowCursorFactory.isUsingIndex();
+    }
+
+    public RowCursorFactory getRowCursorFactory() {
+        return rowCursorFactory;
     }
 }

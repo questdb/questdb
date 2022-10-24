@@ -167,6 +167,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
+    public CharSequence getTargetTableName() {
+        return getTableName();
+    }
+
+    @Override
     public int getTimestampIndex() {
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
     }

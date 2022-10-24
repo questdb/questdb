@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -76,5 +77,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public boolean hasDescendingOrder() {
         return base.hasDescendingOrder();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SelectedRecord");
+        sink.child(base);
     }
 }

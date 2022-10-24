@@ -62,11 +62,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 if (func != null) {
                     if (interval.isConstant()) {
                         if (interval.getInt(null) != Numbers.INT_NaN) {
-                            return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func);
+                            return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func, periodValue);
                         }
                         return TimestampConstant.NULL;
                     }
-                    return new AddLongIntVarVarFunction(args.getQuick(2), args.getQuick(1), func);
+                    return new AddLongIntVarVarFunction(args.getQuick(2), args.getQuick(1), func, periodValue);
                 }
             }
             return TimestampConstant.NULL;
@@ -83,11 +83,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
         private final LongAddIntFunction func;
+        private final char periodSymbol;
 
-        public AddLongIntVarVarFunction(Function left, Function right, LongAddIntFunction func) {
+        public AddLongIntVarVarFunction(Function left, Function right, LongAddIntFunction func, char periodSymbol) {
             this.left = left;
             this.right = right;
             this.func = func;
+            this.periodSymbol = periodSymbol;
         }
 
         @Override
@@ -109,17 +111,24 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             return func.add(l, r);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("dateadd('").put(periodSymbol).put("',").put(left).put(',').put(right).put(')');
+        }
     }
 
     private static class AddLongIntVarConstFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
         private final int interval;
         private final LongAddIntFunction func;
+        private final char periodSymbol;
 
-        public AddLongIntVarConstFunction(Function left, int right, LongAddIntFunction func) {
+        public AddLongIntVarConstFunction(Function left, int right, LongAddIntFunction func, char periodSymbol) {
             this.arg = left;
             this.interval = right;
             this.func = func;
+            this.periodSymbol = periodSymbol;
         }
 
         @Override
@@ -138,7 +147,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("AddLongIntVarConstFunction");
+            sink.put("dateadd('").put(periodSymbol).put("',").put(interval).put(',').put(arg).put(')');
         }
     }
 
@@ -177,6 +186,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return Timestamps.addPeriod(l, c, r);
+        }
+
+        @Override
+        public String getSymbol() {
+            return "dateadd";
         }
     }
 

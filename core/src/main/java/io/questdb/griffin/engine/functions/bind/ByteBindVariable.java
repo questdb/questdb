@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
 
 class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     byte value;
@@ -50,5 +51,10 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::byte");
     }
 }

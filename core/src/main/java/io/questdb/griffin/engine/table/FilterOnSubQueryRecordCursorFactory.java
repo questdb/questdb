@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -67,6 +68,23 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         this.func = func;
         this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnSubQuery");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        sink.child(recordCursorFactory);
+        sink.child(dataFrameCursorFactory);
+        for (int i = 0, n = factoriesA.size(); i < n; i++) {
+            sink.child(factoriesA.get(i));
+        }
+        for (int i = 0, n = factoriesB.size(); i < n; i++) {
+            sink.child(factoriesB.get(i));
+        }
+
     }
 
     @Override

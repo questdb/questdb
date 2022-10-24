@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -111,6 +112,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 }
             }
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(valueArg).put(" in ").put(cursorArg);
+        }
     }
 
     private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -179,6 +185,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return cursorArg;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(valueArg).put(" in ").put(cursorArg);
         }
     }
 }

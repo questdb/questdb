@@ -36,6 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSink;
 
 public class CastSymbolToDateFunctionFactory implements FunctionFactory {
     @Override
@@ -48,7 +49,7 @@ public class CastSymbolToDateFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends DateFunction implements UnaryFunction {
+    private static class Func extends AbstractCastToDateFunction {
         private final Function arg;
 
         public Func(Function arg) {

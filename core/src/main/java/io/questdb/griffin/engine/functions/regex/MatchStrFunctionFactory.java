@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import java.util.regex.Matcher;
 
@@ -87,6 +88,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put(" ~ ").put(matcher.pattern().toString());
+        }
     }
 
     private static class MatchRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
@@ -132,6 +138,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
             this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value).put(" ~ ").put(pattern.toString());
         }
     }
 }

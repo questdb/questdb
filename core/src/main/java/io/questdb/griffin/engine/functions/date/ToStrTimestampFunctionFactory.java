@@ -148,5 +148,10 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         private void toSink(long value, CharSink sink) {
             format.format(value, locale, "Z", sink);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("to_str(").put(arg).put(')');
+        }
     }
 }

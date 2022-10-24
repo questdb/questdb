@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -133,6 +134,11 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("pg_class");
         }
 
         @Override

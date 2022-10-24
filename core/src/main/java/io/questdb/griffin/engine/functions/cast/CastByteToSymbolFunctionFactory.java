@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastByteToSymbolFunctionFactory implements FunctionFactory {
@@ -52,7 +53,7 @@ public class CastByteToSymbolFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    private static class Func extends AbstractToSymbolCastFunction {
+    private static class Func extends AbstractCastToSymbolFunction {
 
         public Func(Function arg) {
             super(arg);
@@ -69,7 +70,7 @@ public class CastByteToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected AbstractToSymbolCastFunction newFunc() {
+        protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
         }
     }

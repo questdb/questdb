@@ -82,5 +82,10 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return true;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("pg_catalog.current_schemas()");
+        }
     }
 }

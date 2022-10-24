@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class LogDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -65,6 +66,11 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             double value = function.getDouble(rec);
             return Math.log10(value);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("log(").put(function).put(')');
         }
     }
 }

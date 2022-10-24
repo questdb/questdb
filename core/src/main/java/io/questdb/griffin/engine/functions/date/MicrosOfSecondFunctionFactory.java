@@ -70,5 +70,10 @@ public class MicrosOfSecondFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NaN;
         }
+
+        @Override
+        public String getSymbol() {
+            return "micros";
+        }
     }
 }

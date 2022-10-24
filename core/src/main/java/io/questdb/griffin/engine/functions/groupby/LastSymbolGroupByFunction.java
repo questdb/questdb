@@ -38,4 +38,9 @@ public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
     public void computeNext(MapValue mapValue, Record record) {
         computeFirst(mapValue, record);
     }
+
+    @Override
+    public String getSymbol() {
+        return "last";
+    }
 }

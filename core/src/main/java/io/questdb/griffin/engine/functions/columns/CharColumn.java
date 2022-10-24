@@ -59,7 +59,7 @@ public class CharColumn extends CharFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("CharColumn(").put(columnIndex).put(')');
+        sink.put("Char(").put(columnIndex).put(')');
     }
 
     static {

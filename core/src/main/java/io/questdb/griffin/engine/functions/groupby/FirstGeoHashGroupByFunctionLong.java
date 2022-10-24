@@ -93,4 +93,9 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     public long getGeoLong(Record rec) {
         return rec.getGeoLong(this.valueIndex);
     }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
 }

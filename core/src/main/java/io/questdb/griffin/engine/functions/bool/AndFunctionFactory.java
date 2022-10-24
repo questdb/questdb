@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class AndFunctionFactory implements FunctionFactory {
     @Override
@@ -94,6 +95,13 @@ public class AndFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left);
+            sink.put(" and ");
+            sink.put(right);
         }
     }
 }

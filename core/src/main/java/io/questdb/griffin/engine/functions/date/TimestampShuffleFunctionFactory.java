@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class TimestampShuffleFunctionFactory implements FunctionFactory {
     @Override
@@ -84,6 +85,11 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toSink(CharSink sink) {
+            sink.put("timestamp_shuffle(").put(start).put(',').put(end).put(')');
+        }
+
+        @Override
         public void toTop() {
             rnd.reset();
         }
@@ -92,5 +98,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
         }
+
+
     }
 }

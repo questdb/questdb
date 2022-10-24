@@ -84,7 +84,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinFloat(").put(arg).put(')');
+    public String getSymbol() {
+        return "min";
     }
 }

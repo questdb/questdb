@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndDoubleCCFunctionFactory implements FunctionFactory {
 
@@ -77,6 +78,11 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_double(").put(nanRate).put(")");
         }
     }
 }

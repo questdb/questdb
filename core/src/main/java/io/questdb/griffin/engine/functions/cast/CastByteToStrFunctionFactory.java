@@ -56,18 +56,12 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
         return new CastByteToStrFunction(args.getQuick(0));
     }
 
-    public static class CastByteToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastByteToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastByteToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

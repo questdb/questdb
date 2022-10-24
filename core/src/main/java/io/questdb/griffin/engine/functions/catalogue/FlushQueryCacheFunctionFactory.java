@@ -36,14 +36,17 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.str.CharSink;
 
 public class FlushQueryCacheFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("flush-query-cache");
 
+    private static final String SIGNATURE = "flush_query_cache()";
+
     @Override
     public String getSignature() {
-        return "flush_query_cache()";
+        return SIGNATURE;
     }
 
     @Override
@@ -85,6 +88,11 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

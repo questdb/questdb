@@ -40,7 +40,7 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final int pageFrameMinRows;
     protected final int pageFrameMaxRows;
-    private final DataFrameRecordCursor cursor;
+    protected final DataFrameRecordCursor cursor;
     private final boolean followsOrderByAdvice;
     private final Function filter;
     private final boolean framingSupported;
@@ -49,6 +49,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     private final boolean supportsRandomAccess;
+    protected final RowCursorFactory rowCursorFactory;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -64,7 +65,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
-
+        this.rowCursorFactory = rowCursorFactory;
         this.cursor = new DataFrameRecordCursor(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
@@ -123,9 +124,24 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DataFrameRecordCursorFactory");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
+        if (filter != null ||
+                rowCursorFactoryIsNonStandard()) {
+            sink.type("DataFrame");
+            toPlanInner(sink);
+        } else {
+            dataFrameCursorFactory.toPlan(sink);
+        }
+    }
+
+    private boolean rowCursorFactoryIsNonStandard() {
+        return !(rowCursorFactory instanceof DataFrameRowCursorFactory ||
+                rowCursorFactory instanceof BwdDataFrameRowCursorFactory);
+    }
+
+    protected void toPlanInner(PlanSink sink) {
+        sink.optAttr("filter", filter);
+        if (rowCursorFactoryIsNonStandard()) {
+            sink.child(rowCursorFactory);
         }
         sink.child(dataFrameCursorFactory);
     }

@@ -120,6 +120,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("replace(").put(value).put(',').put(oldSubStr).put(',').put(newSubStr).put(')');
+        }
+
         //if result is null then return null; otherwise return sink
         private CharSink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, CharSink sink) throws CairoException {
             int valueLen = value.length();

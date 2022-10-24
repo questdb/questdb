@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -68,6 +69,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         this.cursor = new LatestByLightRecordCursor(latestByMap);
         this.timestampIndex = timestampIndex;
         this.orderedByTimestampAsc = orderedByTimestampAsc;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestBy light");
+        sink.meta("order_by_timestamp").val(orderedByTimestampAsc);
+        sink.child(base);
     }
 
     @Override

@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.QueryModel;
@@ -42,6 +43,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final int columnIndex;
     private final Function filter;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
+    private final RowCursorFactory rowCursorFactory;
     private final boolean followedOrderByAdvice;
     private final IntList columnIndexes;
     private final int orderDirection;
@@ -65,7 +67,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         this.filter = filter;
         this.columnIndexes = columnIndexes;
         this.orderDirection = orderDirection;
-        cursorFactories = new ObjList<>(nKeyValues);
+        this.cursorFactories = new ObjList<>(nKeyValues);
         final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
         for (int i = 0; i < nKeyValues; i++) {
             final Function symbol = keyValues.get(i);
@@ -76,11 +78,20 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             }
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
-            this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+            this.rowCursorFactory = new SequentialRowCursorFactory(cursorFactories);
+            this.cursor = new DataFrameRecordCursor(rowCursorFactory, false, filter, columnIndexes);
         } else {
-            this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), false, filter, columnIndexes);
+            this.rowCursorFactory = new HeapRowCursorFactory(cursorFactories);
+            this.cursor = new DataFrameRecordCursor(rowCursorFactory, false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = followedOrderByAdvice;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FilterOnValues");
+        sink.child(rowCursorFactory);
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

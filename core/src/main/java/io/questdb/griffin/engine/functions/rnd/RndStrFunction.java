@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 class RndStrFunction extends StrFunction implements Function {
     private final int lo;
@@ -59,5 +60,10 @@ class RndStrFunction extends StrFunction implements Function {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.rnd = executionContext.getRandom();
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("rnd_str(").put(lo).put(',').put(range + lo - 1).put(',').put(nullRate).put(')');
     }
 }

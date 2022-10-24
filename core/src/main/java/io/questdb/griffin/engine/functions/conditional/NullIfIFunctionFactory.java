@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NullIfIFunctionFactory implements FunctionFactory {
     @Override
@@ -71,6 +72,11 @@ public class NullIfIFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
             return val == replacement ? Numbers.INT_NaN : val;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("nullif(").put(value).put(',').put(replacement).put(')');
         }
     }
 }

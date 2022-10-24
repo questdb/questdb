@@ -34,12 +34,15 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndDoubleFunctionFactory implements FunctionFactory {
 
+    static final String SIGNATURE = "rnd_double()";
+
     @Override
     public String getSignature() {
-        return "rnd_double()";
+        return SIGNATURE;
     }
 
     @Override
@@ -65,5 +68,11 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
+        }
     }
+
 }

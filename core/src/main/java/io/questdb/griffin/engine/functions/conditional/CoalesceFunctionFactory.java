@@ -113,7 +113,21 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 value.getLong3() != Numbers.LONG_NaN);
     }
 
-    private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryFunction {
+    private interface BinaryCoalesceFunction extends BinaryFunction {
+        @Override
+        default String getSymbol() {
+            return "coalesce";
+        }
+    }
+
+    private interface MultiArgCoalesceFunction extends MultiArgFunction {
+        @Override
+        default String getSymbol() {
+            return "coalesce";
+        }
+    }
+
+    private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -143,7 +157,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleCoalesceFunction extends DoubleFunction implements MultiArgFunction {
+    private static class DoubleCoalesceFunction extends DoubleFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -169,7 +183,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoFloatCoalesceFunction extends FloatFunction implements BinaryFunction {
+    private static class TwoFloatCoalesceFunction extends FloatFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -199,7 +213,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FloatCoalesceFunction extends FloatFunction implements MultiArgFunction {
+    private static class FloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -225,7 +239,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoDateCoalesceFunction extends DateFunction implements BinaryFunction {
+    private static class TwoDateCoalesceFunction extends DateFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -255,7 +269,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DateCoalesceFunction extends DateFunction implements MultiArgFunction {
+    private static class DateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -281,7 +295,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryFunction {
+    private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -311,7 +325,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgFunction {
+    private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -337,7 +351,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class TwoLongCoalesceFunction extends LongFunction implements BinaryFunction {
+    public static class TwoLongCoalesceFunction extends LongFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -367,7 +381,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class LongCoalesceFunction extends LongFunction implements MultiArgFunction {
+    public static class LongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -394,7 +408,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryFunction {
+    private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryCoalesceFunction {
         private final Function args1;
         private final Function args0;
 
@@ -442,7 +456,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Long256CoalesceFunction extends Long256Function implements MultiArgFunction {
+    private static class Long256CoalesceFunction extends Long256Function implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -492,7 +506,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryFunction {
+    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -522,7 +536,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class IntCoalesceFunction extends IntFunction implements MultiArgFunction {
+    private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
@@ -549,7 +563,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoSymStrCoalesceFunction extends StrFunction implements BinaryFunction {
+    private static class TwoSymStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
         private final boolean args0IsSymbol;
@@ -592,7 +606,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoSymCoalesceFunction extends StrFunction implements BinaryFunction {
+    private static class TwoSymCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -631,7 +645,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoStrCoalesceFunction extends StrFunction implements BinaryFunction {
+    private static class TwoStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
 
@@ -670,7 +684,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SymStrCoalesceFunction extends StrFunction implements MultiArgFunction {
+    private static class SymStrCoalesceFunction extends StrFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 

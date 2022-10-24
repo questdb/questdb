@@ -37,14 +37,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-memory-usage");
+    private static final String SIGNATURE = "dump_memory_usage()";
 
     @Override
     public String getSignature() {
-        return "dump_memory_usage()";
+        return SIGNATURE;
     }
 
     @Override
@@ -77,6 +79,11 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

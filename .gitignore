@@ -26,3 +26,4 @@ core/CMakeCache.txt
 **/CMakeFiles
 .envrc
 .vscode
+node_modules

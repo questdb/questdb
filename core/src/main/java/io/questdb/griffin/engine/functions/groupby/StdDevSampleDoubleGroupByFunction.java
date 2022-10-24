@@ -124,4 +124,9 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
     public boolean isConstant() {
         return false;
     }
+
+    @Override
+    public String getSymbol() {
+        return "stddev_samp";
+    }
 }

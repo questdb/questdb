@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -76,6 +77,13 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveValueSink
         );
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Lt join");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
     }
 
     @Override

@@ -53,18 +53,12 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         return new CastDateToStrFunction(args.getQuick(0));
     }
 
-    public static class CastDateToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastDateToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public CastDateToStrFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

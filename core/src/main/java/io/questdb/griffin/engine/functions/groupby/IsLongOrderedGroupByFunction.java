@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class IsLongOrderedGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
@@ -83,5 +84,10 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "isOrdered";
     }
 }

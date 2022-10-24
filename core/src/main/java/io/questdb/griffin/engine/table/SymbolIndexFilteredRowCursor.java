@@ -68,6 +68,14 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         this.record = new TableReaderSelectedColumnRecord(columnIndexes);
     }
 
+    int getIndexDirection() {
+        return indexDirection;
+    }
+
+    Function getFilter() {
+        return filter;
+    }
+
     @Override
     public boolean hasNext() {
         while (rowCursor.hasNext()) {

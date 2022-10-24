@@ -62,5 +62,10 @@ public class AbsDoubleFunctionFactory implements FunctionFactory {
             double value = function.getDouble(rec);
             return Math.abs(value);
         }
+
+        @Override
+        public String getSymbol() {
+            return "abs";
+        }
     }
 }

@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndFloatCFunctionFactory implements FunctionFactory {
 
@@ -77,6 +78,11 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_float(").put(nanRate).put(')');
         }
     }
 }

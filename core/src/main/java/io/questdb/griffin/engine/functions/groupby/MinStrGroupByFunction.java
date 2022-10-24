@@ -148,6 +148,6 @@ public class MinStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinStr(").put(arg).put(')');
+        sink.put("min(").put(arg).put(')');
     }
 }

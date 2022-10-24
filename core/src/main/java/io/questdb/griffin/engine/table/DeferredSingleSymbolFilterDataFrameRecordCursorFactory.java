@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -115,5 +116,11 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             }
         }
         return fwdPageFrameCursor;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DeferredSingleSymbolFilterDataFrame");
+        super.toPlanInner(sink);
     }
 }

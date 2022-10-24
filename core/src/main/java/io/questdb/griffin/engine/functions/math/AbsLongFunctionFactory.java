@@ -54,5 +54,10 @@ public class AbsLongFunctionFactory implements FunctionFactory {
             long value = arg.getLong(rec);
             return Math.abs(value);
         }
+
+        @Override
+        public String getSymbol() {
+            return "abs";
+        }
     }
 }

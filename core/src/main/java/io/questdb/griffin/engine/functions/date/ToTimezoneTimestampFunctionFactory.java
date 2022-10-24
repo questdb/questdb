@@ -93,5 +93,10 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                 return timestampValue;
             }
         }
+
+        @Override
+        public String getSymbol() {
+            return "to_timezone";
+        }
     }
 }

@@ -139,4 +139,9 @@ public class CountLong256GroupByFunction extends LongFunction implements UnaryFu
                 value.getLong2() != Numbers.LONG_NaN ||
                 value.getLong3() != Numbers.LONG_NaN);
     }
+
+    @Override
+    public String getSymbol() {
+        return "count";
+    }
 }

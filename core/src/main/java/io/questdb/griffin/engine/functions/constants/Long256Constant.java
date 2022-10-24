@@ -55,4 +55,9 @@ public class Long256Constant extends Long256Function implements ConstantFunction
     public Long256 getLong256B(Record rec) {
         return value;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(value);
+    }
 }

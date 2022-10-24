@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class BitwiseNotLongFunctionFactory implements FunctionFactory {
     @Override
@@ -68,6 +69,11 @@ public class BitwiseNotLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long val = value.getLong(rec);
             return val != Numbers.LONG_NaN ? ~val : Numbers.LONG_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('~').put(value);
         }
     }
 }

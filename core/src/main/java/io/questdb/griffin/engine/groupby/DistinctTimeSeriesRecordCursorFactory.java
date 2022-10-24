@@ -30,6 +30,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -71,6 +72,12 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 dataMap,
                 recordSink
         );
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DistinctTimeSeries");
+        sink.child(base);
     }
 
     @Override

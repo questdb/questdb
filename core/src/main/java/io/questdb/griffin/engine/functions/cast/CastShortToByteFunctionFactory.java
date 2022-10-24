@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastShortToByteFunctionFactory implements FunctionFactory {
     @Override
@@ -45,7 +46,7 @@ public class CastShortToByteFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends ByteFunction implements UnaryFunction {
+    private static class Func extends AbstractCastToByteFunction {
         private final Function arg;
 
         public Func(Function arg) {

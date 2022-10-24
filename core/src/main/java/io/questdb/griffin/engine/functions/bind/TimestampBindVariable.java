@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 
 class TimestampBindVariable extends TimestampFunction implements ScalarFunction, Mutable {
     long value;
@@ -51,5 +52,10 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::timestamp");
     }
 }

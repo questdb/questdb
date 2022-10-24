@@ -42,14 +42,16 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
+    private static final String SIGNATURE = "row_number()";
 
     @Override
     public String getSignature() {
-        return "row_number()";
+        return SIGNATURE;
     }
 
     @Override
@@ -262,6 +264,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

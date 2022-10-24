@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class StrPosCharFunctionFactory implements FunctionFactory {
@@ -112,6 +113,11 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return substrFunc;
         }
+
+        @Override
+        public String getSymbol() {
+            return "strpos";
+        }
     }
 
     public static class ConstFunc extends IntFunction implements UnaryFunction {
@@ -136,6 +142,11 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return strFunc;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("strpos(").put(strFunc).put(",'").put(substr).put("')");
         }
     }
 }

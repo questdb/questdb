@@ -80,7 +80,7 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinDate(").put(arg).put(')');
+    public String getSymbol() {
+        return "min";
     }
 }

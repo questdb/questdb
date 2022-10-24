@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cutlass.text.AtomicBooleanCircuitBreaker;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
@@ -136,6 +137,11 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Copy");
     }
 
     private static class ImportIdRecord implements Record {

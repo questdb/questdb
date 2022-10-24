@@ -33,11 +33,14 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.CharSink;
 
 public class SystimestampFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "systimestamp()";
+
     @Override
     public String getSignature() {
-        return "systimestamp()";
+        return SIGNATURE;
     }
 
     @Override
@@ -61,6 +64,11 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

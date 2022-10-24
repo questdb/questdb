@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -52,6 +53,24 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
             this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
         }
         this.filter = filter;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByValueFiltered");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        if (cursor instanceof LatestByValueRecordCursor) {
+            LatestByValueRecordCursor cur = (LatestByValueRecordCursor) cursor;
+            sink.attr("columnIndex").val(cur.columnIndex);
+            sink.attr("symbolKey").val(cur.symbolKey);
+        } else {
+            LatestByValueFilteredRecordCursor cur = (LatestByValueFilteredRecordCursor) cursor;
+            sink.attr("columnIndex").val(cur.columnIndex);
+            sink.attr("symbolKey").val(cur.symbolKey);
+        }
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

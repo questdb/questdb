@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class SubLongFunctionFactory implements FunctionFactory {
     @Override
@@ -75,6 +76,11 @@ public class SubLongFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left).put('-').put(right);
         }
     }
 }

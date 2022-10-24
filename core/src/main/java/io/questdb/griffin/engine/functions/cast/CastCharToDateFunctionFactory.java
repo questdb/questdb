@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastCharToDateFunctionFactory implements FunctionFactory {
     @Override
@@ -46,7 +47,7 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
         return new CastCharToDateFunction(args.getQuick(0));
     }
 
-    public static class CastCharToDateFunction extends DateFunction implements UnaryFunction {
+    public static class CastCharToDateFunction extends AbstractCastToDateFunction {
         private final Function arg;
 
         public CastCharToDateFunction(Function arg) {

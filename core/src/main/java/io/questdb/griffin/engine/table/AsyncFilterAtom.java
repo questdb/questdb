@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,7 +37,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable {
+public class AsyncFilterAtom implements StatefulAtom, Closeable, Sinkable {
 
     public static final LongAdder PRE_TOUCH_BLACKHOLE = new LongAdder();
 
@@ -200,5 +201,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
         }
         // Flush the accumulated sum to the blackhole.
         PRE_TOUCH_BLACKHOLE.add(sum);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(filter);
     }
 }

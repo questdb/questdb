@@ -34,12 +34,15 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndIntFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rnd_int()";
+
     @Override
     public String getSignature() {
-        return "rnd_int()";
+        return SIGNATURE;
     }
 
     @Override
@@ -64,6 +67,11 @@ public class RndIntFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

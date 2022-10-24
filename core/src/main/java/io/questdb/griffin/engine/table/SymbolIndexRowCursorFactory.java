@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.griffin.PlanSink;
 
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
@@ -75,5 +77,13 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     @Override
     public Function getFunction() {
         return symbolFunction;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SymbolIndexRowCursor");
+        sink.attr("direction").val(BitmapIndexReader.nameOf(indexDirection));
+        sink.attr("usesIndex").val(isUsingIndex());
+        sink.attr("filter").val("Symbol(").val(columnIndex).val(')').val('=').val(symbolFunction);
     }
 }

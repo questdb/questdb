@@ -68,6 +68,6 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.attr("tableName").val(tableName);
+        sink.meta("on").val(tableName);
     }
 }

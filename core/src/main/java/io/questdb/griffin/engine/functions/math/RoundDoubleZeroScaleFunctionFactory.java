@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
     @Override
@@ -61,6 +62,11 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             final double d = arg.getDouble(rec);
             return d == d ? Math.round(d) : Double.NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("round(").put(arg).put(')');
         }
     }
 }

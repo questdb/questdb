@@ -34,12 +34,15 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndBooleanFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rnd_boolean()";
+
     @Override
     public String getSignature() {
-        return "rnd_boolean()";
+        return SIGNATURE;
     }
 
     @Override
@@ -64,6 +67,11 @@ public class RndBooleanFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

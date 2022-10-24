@@ -126,10 +126,17 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.commitLag = lag;
     }
 
-    public int getRowTupleCount() { return rowTupleValues.size(); }
+    public int getRowTupleCount() {
+        return rowTupleValues.size();
+    }
 
     public ExpressionNode getTableName() {
         return tableName;
+    }
+
+    @Override
+    public CharSequence getTargetTableName() {
+        return tableName.token;
     }
 
     public void setTableName(ExpressionNode tableName) {

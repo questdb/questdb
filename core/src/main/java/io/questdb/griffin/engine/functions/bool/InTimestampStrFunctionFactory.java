@@ -38,6 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.model.IntervalUtils.*;
 
@@ -87,6 +88,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return left;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left).put(" in ").put(intervals);
         }
     }
 

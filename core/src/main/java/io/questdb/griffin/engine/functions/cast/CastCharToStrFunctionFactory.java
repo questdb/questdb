@@ -64,18 +64,12 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         return new Func(func);
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

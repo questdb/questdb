@@ -290,4 +290,9 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     public void stopInterpolating() {
         interpolating = false;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("Interpolated(").put(wrappedFunction).put(")");
+    }
 }

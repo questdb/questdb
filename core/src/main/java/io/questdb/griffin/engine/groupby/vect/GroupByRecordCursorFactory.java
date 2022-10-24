@@ -66,6 +66,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
 
     private final CairoConfiguration configuration;
+    private final int workerCount;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -80,6 +81,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         this.configuration = configuration;
+        this.workerCount = workerCount;
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -400,6 +402,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.meta("vectorized").val(true);
         sink.attr("groupByFunctions").val(vafList);
         sink.attr("keyColumnIndex").val(keyColumnIndex);
+        sink.attr("workers").val(workerCount);
         sink.child(base);
     }
 

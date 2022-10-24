@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class InCharFunctionFactory implements FunctionFactory {
     @Override
@@ -99,6 +100,11 @@ public class InCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return set.contains(arg.getChar(rec));
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put(" in ").put(set);
         }
     }
 }

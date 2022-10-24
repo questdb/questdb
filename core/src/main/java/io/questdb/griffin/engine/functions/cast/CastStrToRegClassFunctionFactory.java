@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
@@ -85,6 +86,11 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
                 return valueMap.get(val);
             }
             return Numbers.INT_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put("::regclass");
         }
     }
 

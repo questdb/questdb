@@ -105,4 +105,9 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
         // it fully relies on the argument
         return arg.newSymbolTable();
     }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
 }

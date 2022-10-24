@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndLongCCFunctionFactory implements FunctionFactory {
     @Override
@@ -88,6 +89,11 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_long(").put(lo).put(',').put(range + lo - 1).put(',').put(nanRate - 1).put(')');
         }
     }
 }

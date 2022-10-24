@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.CharSink;
 
 public final class NullBinConstant extends BinFunction implements ConstantFunction {
 
@@ -41,5 +42,10 @@ public final class NullBinConstant extends BinFunction implements ConstantFuncti
     @Override
     public long getBinLen(Record rec) {
         return TableUtils.NULL_LEN;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("null::binary");
     }
 }

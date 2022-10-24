@@ -37,9 +37,11 @@ import io.questdb.std.str.CharSink;
 
 public class NowFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "now()";
+
     @Override
     public String getSignature() {
-        return "now()";
+        return SIGNATURE;
     }
 
     @Override
@@ -78,7 +80,7 @@ public class NowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("NowFunction");
+            sink.put(SIGNATURE);
         }
     }
 }

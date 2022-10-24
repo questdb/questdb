@@ -73,4 +73,9 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::long256");
+    }
 }

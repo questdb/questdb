@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastLong256ToLongFunctionFactory implements FunctionFactory {
     @Override
@@ -45,16 +46,9 @@ public class CastLong256ToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends LongFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToLongFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

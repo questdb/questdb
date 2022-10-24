@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -76,6 +77,11 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
         }
         cursor.of(KEYS, values);
         return cursor;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("table_writer_metrics");
     }
 
     static {

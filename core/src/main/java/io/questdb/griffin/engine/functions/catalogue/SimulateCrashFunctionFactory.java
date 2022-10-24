@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 
 public class SimulateCrashFunctionFactory implements FunctionFactory {
 
@@ -71,12 +72,22 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
             Unsafe.getUnsafe().getLong(0L);
             return true;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("simulate_crash(jvm)");
+        }
     }
 
     private static class OutOfMemoryFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
             throw new OutOfMemoryError("simulate_crash('M')");
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("simulate_crash(oom)");
         }
     }
 
@@ -89,6 +100,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("simulate_crash(dummy)");
         }
     }
 }

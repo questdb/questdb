@@ -24,7 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.std.Sinkable;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 /**
@@ -36,12 +38,15 @@ public class PlanSink {
     private int depth;
     private String childIndent;
     private String attrIndent;
+    private final IntList eolIndexes;
 
     public PlanSink() {
-        this.sink = new StringSink();
+        this.sink = new EscapingStringSink();
         this.depth = 0;
         this.attrIndent = "  ";
         this.childIndent = "    ";
+        this.eolIndexes = new IntList();
+        this.eolIndexes.add(0);
     }
 
     public void reset() {
@@ -49,6 +54,8 @@ public class PlanSink {
         this.depth = 0;
         this.attrIndent = "  ";
         this.childIndent = "    ";
+        this.eolIndexes.clear();
+        this.eolIndexes.add(0);
     }
 
     public PlanSink type(CharSequence type) {
@@ -58,14 +65,31 @@ public class PlanSink {
 
     public PlanSink meta(CharSequence name) {
         sink.put(" ");
-        sink.put(name).put('=');
+        sink.put(name).put(": ");
+        return this;
+    }
+
+    public PlanSink optAttr(CharSequence name, Sinkable value) {
+        if (value != null) {
+            if (value instanceof ConstantFunction && ((ConstantFunction) value).isNullConstant()) {
+                return this;
+            }
+            attr(name).val(value);
+        }
+        return this;
+    }
+
+    public PlanSink optAttr(CharSequence name, ObjList<?> value) {
+        if (value != null && value.size() > 0) {
+            attr(name).val(value);
+        }
         return this;
     }
 
     public PlanSink attr(CharSequence name) {
         newLine();
         sink.put(attrIndent);
-        sink.put(name).put('=');
+        sink.put(name).put(':').put(' ');
         return this;
     }
 
@@ -111,6 +135,16 @@ public class PlanSink {
         return this;
     }
 
+    public PlanSink child(CharSequence outer, Plannable inner) {
+        depth++;
+        newLine();
+        sink.put(outer);
+        child(inner);
+        depth--;
+
+        return this;
+    }
+
     public PlanSink child(Plannable p) {
         depth++;
         newLine();
@@ -121,13 +155,98 @@ public class PlanSink {
     }
 
     private void newLine() {
-        sink.put("\n");
+        eolIndexes.add(sink.length());
         for (int i = 0; i < depth; i++) {
             sink.put(childIndent);
         }
     }
 
-    public CharSequence getText() {
-        return sink;
+    public StringSink getText() {
+        StringSink result = Misc.getThreadLocalBuilder();
+
+        for (int i = 0, n = eolIndexes.size() - 1; i < n; i++) {
+            result.put(sink, eolIndexes.getQuick(i), eolIndexes.getQuick(i + 1));
+        }
+
+        return result;
+    }
+
+    public void clear() {
+        reset();
+    }
+
+    public int getLineCount() {
+        return eolIndexes.size() - 1;
+    }
+
+    public CharSequence getLine(int idx) {
+        return sink.subSequence(eolIndexes.getQuick(idx - 1), eolIndexes.getQuick(idx));
+    }
+
+    public void end() {
+        newLine();
+    }
+
+    private static class EscapingStringSink extends StringSink {
+        @Override
+        public CharSink put(CharSequence cs) {
+            for (int i = 0, n = cs.length(); i < n; i++) {
+                escapeSpace(cs.charAt(i));
+            }
+            return this;
+        }
+
+        @Override
+        public CharSink put(CharSequence cs, int lo, int hi) {
+            for (int i = lo; i < hi; i++) {
+                escapeSpace(cs.charAt(i));
+            }
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            escapeSpace(c);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char[] chars, int start, int len) {
+            for (int i = start; i < start + len; i++) {
+                escapeSpace(chars[i]);
+            }
+            return this;
+        }
+
+        private void escapeSpace(char c) {
+            if (c < 32) {
+                switch (c) {
+                    case '\b':
+                        super.put("\\b");
+                        break;
+                    case '\f':
+                        super.put("\\f");
+                        break;
+                    case '\n':
+                        super.put("\\n");
+                        break;
+                    case '\r':
+                        super.put("\\r");
+                        break;
+                    case '\t':
+                        super.put("\\t");
+                        break;
+                    default:
+                        super.put("\\u00");
+                        super.put(c >> 4);
+                        super.put(Numbers.hexDigits[c & 15]);
+                        break;
+                }
+            } else {
+                super.put(c);
+            }
+        }
+
+
     }
 }

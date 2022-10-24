@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long128Function;
+import io.questdb.std.str.CharSink;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 
@@ -49,4 +50,8 @@ public class Long128Constant extends Long128Function implements ConstantFunction
         return lo;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(hi).put(lo);
+    }
 }

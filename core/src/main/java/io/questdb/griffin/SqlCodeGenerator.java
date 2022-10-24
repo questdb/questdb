@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
-import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.*;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
 import io.questdb.griffin.engine.analytic.CachedAnalyticRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -179,6 +176,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
+    }
+
+    private static class RecordCursorFactoryStub implements RecordCursorFactory {
+        final ExecutionModel model;
+        final RecordCursorFactory factory;
+
+        protected RecordCursorFactoryStub(ExecutionModel model, RecordCursorFactory factory) {
+            this.model = model;
+            this.factory = factory;
+        }
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(model.getTypeName());
+            sink.meta("table").val(model.getTargetTableName());
+            if (factory != null) {
+                sink.child(factory);
+            }
+        }
+    }
+
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
+        return new ExplainPlanFactory(recordCursorFactory);
+    }
+
+    public RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+        ExecutionModel innerModel = model.getInnerExecutionModel();
+        QueryModel queryModel = innerModel.getQueryModel();
+        RecordCursorFactory factory;
+        if (queryModel != null) {
+            factory = generate(queryModel, executionContext);
+            if (innerModel.getModelType() != QUERY) {
+                factory = new RecordCursorFactoryStub(innerModel, factory);
+            }
+        } else {
+            factory = new RecordCursorFactoryStub(innerModel, null);
+        }
+
+        return new ExplainPlanFactory(factory);
     }
 
     private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
@@ -1324,7 +1371,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             reduceTaskPool,
                             limitLoFunction,
                             limitLoPos,
-                            preTouchColumns
+                            preTouchColumns,
+                            executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     Misc.free(jitFilter);
@@ -1363,7 +1411,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ),
                     limitLoFunction,
                     limitLoPos,
-                    preTouchColumns
+                    preTouchColumns,
+                    executionContext.getSharedWorkerCount()
             );
         }
         return new FilteredRecordCursorFactory(factory, filter);
@@ -1612,7 +1661,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false
+                                false,
+                                executionContext.getSharedWorkerCount()
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(
@@ -2094,6 +2144,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.getUnionModel() != null) {
             return generateSetFactory(model, factory, executionContext);
         }
+
         return factory;
     }
 

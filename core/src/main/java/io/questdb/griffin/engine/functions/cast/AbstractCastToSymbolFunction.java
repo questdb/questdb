@@ -36,17 +36,18 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractToSymbolCastFunction extends SymbolFunction implements UnaryFunction {
+public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements UnaryFunction {
     protected final Function arg;
     protected final StringSink sink = new StringSink();
     protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap();
     protected final ObjList<String> symbols = new ObjList<>();
     protected int next = 1;
 
-    public AbstractToSymbolCastFunction(Function arg) {
+    public AbstractCastToSymbolFunction(Function arg) {
         this.arg = arg;
         symbols.add(null);
     }
@@ -114,15 +115,20 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
         return valueOf(key);
     }
 
-    protected abstract AbstractToSymbolCastFunction newFunc();
+    protected abstract AbstractCastToSymbolFunction newFunc();
 
     @Override
     public @Nullable SymbolTable newSymbolTable() {
-        AbstractToSymbolCastFunction copy = newFunc();
+        AbstractCastToSymbolFunction copy = newFunc();
         copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
         copy.symbols.clear();
         copy.symbols.addAll(this.symbols);
         copy.next = this.next;
         return copy;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(arg).put("::symbol");
     }
 }

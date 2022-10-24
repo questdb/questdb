@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -61,6 +62,18 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.hiFunction = hiFunc;
         this.configuration = configuration;
         this.comparator = comparator;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Sort light");
+        if (loFunction != null) {
+            sink.meta("lo").val(loFunction);
+        }
+        if (hiFunction != null) {
+            sink.meta("hi").val(hiFunction);
+        }
+        sink.child(base);
     }
 
     @Override

@@ -71,5 +71,10 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
             final int year = Timestamps.getYear(value);
             return Timestamps.isLeapYear(year);
         }
+
+        @Override
+        public String getSymbol() {
+            return "is_leap_year";
+        }
     }
 }

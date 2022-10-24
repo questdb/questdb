@@ -148,6 +148,6 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxStr(").put(arg).put(')');
+        sink.put("max(").put(arg).put(')');
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class CastLong256ToStrFunctionFactory implements FunctionFactory {
@@ -63,6 +64,11 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return toSink(rec, sinkB);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put("::string");
         }
 
         private StringSink toSink(Record rec, StringSink sinkA) {

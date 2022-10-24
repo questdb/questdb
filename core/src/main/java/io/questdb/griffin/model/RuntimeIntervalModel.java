@@ -80,8 +80,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("[static=").put(intervals);
-        sink.put(" dynamic=").put(dynamicRangeList).put("]");
+        if (intervals != null && intervals.size() > 0) {
+            sink.put("[static=").put(intervals);
+        }
+        if (dynamicRangeList != null && dynamicRangeList.size() > 0) {
+            sink.put(" dynamic=").put(dynamicRangeList).put("]");
+        }
     }
 
     private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {

@@ -83,6 +83,6 @@ public class GeoLongColumn extends GeoLongFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("GeoLongColumn(").put(columnIndex).put(')');
+        sink.put("GeoLong(").put(columnIndex).put(')');
     }
 }

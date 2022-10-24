@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
@@ -41,6 +42,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -60,6 +62,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private DirectLongList negativeLimitRows;
+    private final boolean preTouchColumns;
+    private final int workerCount;
 
     public AsyncJitFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -72,7 +76,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns
+            boolean preTouchColumns,
+            int workerCount
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -95,6 +100,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        this.preTouchColumns = preTouchColumns;
+        this.workerCount = workerCount;
     }
 
     @Override
@@ -236,7 +243,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         atom.preTouchColumns(record, rows);
     }
 
-    private static class AsyncJitFilterAtom extends AsyncFilterAtom {
+    private static class AsyncJitFilterAtom extends AsyncFilterAtom implements Sinkable {
 
         final CompiledFilter compiledFilter;
         final MemoryCARW bindVarMemory;
@@ -269,6 +276,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             Misc.free(compiledFilter);
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            super.toSink(sink);
         }
 
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -343,5 +355,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
             }
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("async jit filter");
+        if (limitLoFunction != null) {
+            sink.attr("limit").val(limitLoFunction);
+        }
+        sink.attr("filter").val(filterAtom);
+        sink.attr("preTouch").val(preTouchColumns);
+        sink.attr("workers").val(workerCount);
+        sink.child(base);
     }
 }

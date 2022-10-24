@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NegShortFunctionFactory implements FunctionFactory {
     @Override
@@ -60,6 +61,11 @@ public class NegShortFunctionFactory implements FunctionFactory {
         @Override
         public short getShort(Record rec) {
             return (short) -arg.getShort(rec);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('-').put(arg);
         }
     }
 }

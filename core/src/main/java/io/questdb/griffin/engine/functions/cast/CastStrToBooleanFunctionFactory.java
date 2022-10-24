@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastStrToBooleanFunctionFactory implements FunctionFactory {
     @Override
@@ -56,16 +57,9 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
         return str != null && SqlKeywords.isTrueKeyword(str);
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToBooleanFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

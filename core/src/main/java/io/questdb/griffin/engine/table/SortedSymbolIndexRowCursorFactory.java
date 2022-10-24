@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -95,6 +97,14 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     @Override
     public boolean isEntity() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SortedSymbolIndexRowCursor");
+        sink.attr("usesIndex").val(true);
+        sink.attr("direction").val(BitmapIndexReader.nameOf(indexDirection));
+
     }
 
     // this is a thread-local contraption used for sorting symbol values. We ought to think of something better

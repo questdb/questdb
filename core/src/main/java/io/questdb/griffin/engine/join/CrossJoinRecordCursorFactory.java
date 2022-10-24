@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
@@ -50,6 +51,13 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.cursor = new CrossJoinRecordCursor(columnSplit);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Cross join");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
     }
 
     @Override

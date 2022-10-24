@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.str.CharSink;
 
 public final class BinTypeConstant extends BinFunction implements TypeConstant {
     public final static BinTypeConstant INSTANCE = new BinTypeConstant();
@@ -41,5 +42,10 @@ public final class BinTypeConstant extends BinFunction implements TypeConstant {
     @Override
     public long getBinLen(Record rec) {
         return TableUtils.NULL_LEN;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("BinType");
     }
 }

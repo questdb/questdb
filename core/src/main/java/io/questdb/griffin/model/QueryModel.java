@@ -482,6 +482,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderByPosition;
     }
 
+    @Override
+    public QueryModel getQueryModel() {
+        return this;
+    }
+
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
@@ -766,6 +771,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getTableName() {
         return tableName;
+    }
+
+    @Override
+    public CharSequence getTargetTableName() {
+        return tableName.token;
     }
 
     public void setTableName(ExpressionNode tableName) {

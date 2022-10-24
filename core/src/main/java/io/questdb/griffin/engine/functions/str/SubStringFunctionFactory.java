@@ -159,5 +159,10 @@ public class SubStringFunctionFactory implements FunctionFactory {
             sink.put(str, start, end);
             return sink;
         }
+
+        @Override
+        public String getSymbol() {
+            return "substring";
+        }
     }
 }

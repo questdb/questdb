@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.std.str.CharSink;
 
 public class ByteTypeConstant extends ByteFunction implements TypeConstant {
     public static final ByteTypeConstant INSTANCE = new ByteTypeConstant();
@@ -34,5 +35,10 @@ public class ByteTypeConstant extends ByteFunction implements TypeConstant {
     @Override
     public byte getByte(Record rec) {
         return 0;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("ByteType");
     }
 }

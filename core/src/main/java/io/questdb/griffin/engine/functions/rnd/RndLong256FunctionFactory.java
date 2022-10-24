@@ -37,9 +37,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class RndLong256FunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rnd_long256()";
+
     @Override
     public String getSignature() {
-        return "rnd_long256()";
+        return SIGNATURE;
     }
 
     @Override
@@ -71,6 +73,11 @@ public class RndLong256FunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
 
         @NotNull

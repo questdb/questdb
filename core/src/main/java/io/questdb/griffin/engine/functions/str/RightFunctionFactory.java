@@ -119,6 +119,11 @@ public class RightFunctionFactory implements FunctionFactory {
             return TableUtils.NULL_LEN;
         }
 
+        @Override
+        public String getSymbol() {
+            return "right";
+        }
+
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
             final CharSequence str = strFunc.getStr(rec);
@@ -176,6 +181,11 @@ public class RightFunctionFactory implements FunctionFactory {
             final int len = strFunc.getStrLen(rec);
             final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);
             return len - pos;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("right(").put(strFunc).put(',').put(count).put(')');
         }
 
         private int getPos(int len) {

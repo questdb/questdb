@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -97,6 +98,11 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbolB(Record rec) {
             return getSymbol(rec);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put("::symbol");
         }
 
         @Override

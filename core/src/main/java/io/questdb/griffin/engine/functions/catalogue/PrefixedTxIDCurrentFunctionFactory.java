@@ -33,20 +33,28 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PrefixedTxIDCurrentFunctionFactory implements FunctionFactory {
     private static final AtomicLong PG_TX_ID = new AtomicLong();
 
+    private static final String SIGNATURE = "pg_catalog.txid_current()";
+
     @Override
     public String getSignature() {
-        return "pg_catalog.txid_current()";
+        return SIGNATURE;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new LongFunction() {
+            @Override
+            public void toSink(CharSink sink) {
+                sink.put(SIGNATURE);
+            }
+
             @Override
             public long getLong(Record rec) {
                 return PG_TX_ID.incrementAndGet();

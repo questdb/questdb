@@ -34,19 +34,20 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndByteFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "rnd_byte()";
+
     @Override
     public String getSignature() {
-        return "rnd_byte()";
+        return SIGNATURE;
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
         return new RndFunction();
-
     }
 
     private static class RndFunction extends ByteFunction implements Function {
@@ -76,6 +77,11 @@ public class RndByteFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

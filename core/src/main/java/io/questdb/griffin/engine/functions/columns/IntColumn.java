@@ -60,7 +60,7 @@ public class IntColumn extends IntFunction implements ScalarFunction, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("IntColumn(").put(columnIndex).put(')');
+        sink.put("Int(").put(columnIndex).put(')');
     }
 
     static {

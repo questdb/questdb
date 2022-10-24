@@ -60,7 +60,8 @@ public interface CompiledQuery {
     short SNAPSHOT_DB_PREPARE = 22;
     short SNAPSHOT_DB_COMPLETE = 23;
     short DEALLOCATE = 24;
-    short TYPES_COUNT = DEALLOCATE;
+    short EXPLAIN = 25;
+    short TYPES_COUNT = EXPLAIN;
 
     RecordCursorFactory getRecordCursorFactory();
 

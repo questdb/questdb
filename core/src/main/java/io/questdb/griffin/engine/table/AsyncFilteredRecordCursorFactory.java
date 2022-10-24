@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -56,6 +57,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final int limitLoPos;
     private final int maxNegativeLimit;
     private DirectLongList negativeLimitRows;
+    private final boolean preTouchColumns;
+    private final int workerCount;
 
     public AsyncFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -66,7 +69,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns
+            boolean preTouchColumns,
+            int workerCount
     ) {
         super(base.getMetadata());
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
@@ -86,6 +90,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
+        this.preTouchColumns = preTouchColumns;
+        this.workerCount = workerCount;
     }
 
     @Override
@@ -193,5 +199,17 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
         // Pre-touch fixed-size columns, if asked.
         atom.preTouchColumns(record, rows);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("async filter");
+        if (limitLoFunction != null) {
+            sink.attr("limit").val(limitLoFunction);
+        }
+        sink.attr("filter").val(filterAtom);
+        sink.attr("preTouch").val(preTouchColumns);
+        sink.attr("workers").val(workerCount);
+        sink.child(base);
     }
 }

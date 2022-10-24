@@ -183,4 +183,9 @@ public class CursorFunction implements ScalarFunction {
     public boolean isReadThreadSafe() {
         return false;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("cursor ").put(factory);
+    }
 }

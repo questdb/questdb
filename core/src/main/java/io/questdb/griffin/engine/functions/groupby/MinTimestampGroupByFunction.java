@@ -80,7 +80,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinTimestamp(").put(arg).put(')');
+    public String getSymbol() {
+        return "min";
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class FloorFloatFunctionFactory implements FunctionFactory {
     @Override
@@ -61,6 +62,11 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             float value = function.getFloat(rec);
             return (float) Math.floor(value);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("floor(").put(function).put(')');
         }
     }
 }

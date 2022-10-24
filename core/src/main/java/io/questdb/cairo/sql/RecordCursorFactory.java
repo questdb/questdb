@@ -144,9 +144,4 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default boolean fragmentedSymbolTables() {
         return false;
     }
-
-    @Override
-    default void toPlan(PlanSink sink) {
-        sink.type(getClass().getName());
-    }
 }

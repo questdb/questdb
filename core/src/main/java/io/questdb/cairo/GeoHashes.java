@@ -86,6 +86,21 @@ public class GeoHashes {
         prefixes.add(mask);
     }
 
+    public static void append(long hash, int bits, CharSink sink) {
+        if (hash == GeoHashes.NULL) {
+            sink.put("null");
+        } else {
+            sink.put('\"');
+            if (bits < 0) {
+                GeoHashes.appendCharsUnsafe(hash, -bits, sink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+            }
+            sink.put('\"');
+        }
+    }
+
+
     public static void appendBinary(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);

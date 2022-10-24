@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class RemIntFunctionFactory implements FunctionFactory {
     @Override
@@ -68,6 +69,11 @@ public class RemIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left).put('%').put(right);
         }
     }
 }

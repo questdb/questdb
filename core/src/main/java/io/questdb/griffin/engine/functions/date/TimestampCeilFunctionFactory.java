@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 public class TimestampCeilFunctionFactory implements FunctionFactory {
     @Override
@@ -72,9 +73,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     private abstract static class AbstractTimestampCeilFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
+        private final char symbol;
 
-        public AbstractTimestampCeilFunction(Function arg) {
+        public AbstractTimestampCeilFunction(Function arg, char symbol) {
             this.arg = arg;
+            this.symbol = symbol;
         }
 
         @Override
@@ -88,23 +91,29 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : ceil(micros);
         }
 
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("timestamp_ceil('").put(symbol).put("',").put(arg).put(')');
+        }
+
         abstract long ceil(long timestamp);
     }
 
     public static class TimestampCeilDDFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilDDFunction(Function arg) {
-            super(arg);
+            super(arg, 'd');
         }
 
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilDD(timestamp);
         }
+
     }
 
     public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMMFunction(Function arg) {
-            super(arg);
+            super(arg, 'M');
         }
 
         @Override
@@ -115,7 +124,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilYYYYFunction(Function arg) {
-            super(arg);
+            super(arg, 'y');
         }
 
         @Override
@@ -126,7 +135,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilHHFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilHHFunction(Function arg) {
-            super(arg);
+            super(arg, 'h');
         }
 
         @Override
@@ -137,7 +146,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilMIFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMIFunction(Function arg) {
-            super(arg);
+            super(arg, 'm');
         }
 
         @Override
@@ -148,7 +157,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilSSFunction(Function arg) {
-            super(arg);
+            super(arg, 's');
         }
 
         @Override
@@ -159,7 +168,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
 
     public static class TimestampCeilMSFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilMSFunction(Function arg) {
-            super(arg);
+            super(arg, 'T');
         }
 
         @Override

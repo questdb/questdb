@@ -40,6 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 import java.util.regex.Matcher;
@@ -132,6 +133,16 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         public boolean isReadThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value);
+            sink.put(" ~ ");//impl is regex 
+            sink.put(matcher.pattern().toString());
+            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
+                sink.put(" [case-sensitive]");
+            }
+        }
     }
 
     private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
@@ -186,6 +197,16 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(value);
+            sink.put(" ~ ");//impl is regex 
+            sink.put(pattern);
+            if (!caseInsensitive) {
+                sink.put(" [case-sensitive]");
+            }
         }
     }
 }

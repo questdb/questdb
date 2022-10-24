@@ -67,7 +67,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
 
-        DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
+        DateFormat dateFormat = tlCompiler.get().compile(format);
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getDate(null);
@@ -81,7 +81,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             return new StrConstant(sink);
         }
 
-        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale());
+        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale(), format);
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
@@ -90,13 +90,15 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         final DateLocale locale;
         final StringSink sink1;
         final StringSink sink2;
+        final CharSequence formatStr;
 
-        public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale) {
+        public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale, CharSequence formatStr) {
             this.arg = arg;
             this.format = format;
             this.locale = locale;
-            sink1 = new StringSink();
-            sink2 = new StringSink();
+            this.sink1 = new StringSink();
+            this.sink2 = new StringSink();
+            this.formatStr = formatStr;
         }
 
         @Override
@@ -132,6 +134,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             sink1.clear();
             toSink(value, sink1);
             return sink1.length();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("to_str(").put(arg).put(',').put(formatStr).put(')');
         }
 
         @Nullable

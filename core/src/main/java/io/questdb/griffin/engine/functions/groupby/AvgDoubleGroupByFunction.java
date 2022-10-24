@@ -100,7 +100,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("AvgDouble(").put(arg).put(')');
+    public String getSymbol() {
+        return "avg";
     }
 }

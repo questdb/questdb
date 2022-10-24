@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class BitwiseNotIntFunctionFactory implements FunctionFactory {
     @Override
@@ -68,6 +69,11 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
             return val != Numbers.INT_NaN ? ~val : Numbers.INT_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('~').put(value);
         }
     }
 }

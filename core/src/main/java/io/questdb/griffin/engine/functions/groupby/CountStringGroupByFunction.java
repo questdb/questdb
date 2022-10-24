@@ -134,4 +134,9 @@ public class CountStringGroupByFunction extends LongFunction implements UnaryFun
         UnaryFunction.super.toTop();
         setIndex = 0;
     }
+
+    @Override
+    public String getSymbol() {
+        return "count";
+    }
 }

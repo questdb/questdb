@@ -77,4 +77,9 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     public double getDouble(Record rec) {
         return rec.getDouble(this.valueIndex);
     }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
 }

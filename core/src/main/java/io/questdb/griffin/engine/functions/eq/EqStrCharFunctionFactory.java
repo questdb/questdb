@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class EqStrCharFunctionFactory implements FunctionFactory {
     @Override
@@ -100,6 +101,16 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(strFunc.getStr(rec), chrConst);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(strFunc);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='");
+            sink.put(chrConst).put("'");
+        }
     }
 
     private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -120,6 +131,16 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (chrFunc.getChar(rec) == chrConst);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(chrFunc);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put('=');
+            sink.put(chrConst);
+        }
     }
 
     private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
@@ -133,6 +154,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != equals;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(getBool(null));
+        }
     }
 
     private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
@@ -141,30 +167,21 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(getBool(null));
+        }
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function strFunc;
-        private final Function chrFunc;
-
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function strFunc, Function chrFunc) {
-            this.strFunc = strFunc;
-            this.chrFunc = chrFunc;
-        }
-
-        @Override
-        public Function getLeft() {
-            return strFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return chrFunc;
+            super(strFunc, chrFunc);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
+            return negated != (Chars.equalsNc(left.getStr(rec), right.getChar(rec)));
         }
     }
 }

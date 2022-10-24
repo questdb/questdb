@@ -39,6 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.str.CharSink;
 
 public class ToDateFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
@@ -55,7 +56,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale(), pattern);
     }
 
     private static final class ToDateFunction extends DateFunction implements UnaryFunction {
@@ -63,11 +64,13 @@ public class ToDateFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final DateFormat dateFormat;
         private final DateLocale locale;
+        private final CharSequence pattern;
 
-        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale) {
+        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
             this.arg = arg;
             this.dateFormat = dateFormat;
             this.locale = locale;
+            this.pattern = pattern;
         }
 
         @Override
@@ -85,6 +88,11 @@ public class ToDateFunctionFactory implements FunctionFactory {
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("to_date(").put(arg).put(',').put(pattern).put(')');
         }
     }
 }

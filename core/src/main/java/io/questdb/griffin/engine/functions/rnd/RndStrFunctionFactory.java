@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndStrFunctionFactory implements FunctionFactory {
 
@@ -89,6 +90,11 @@ public class RndStrFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_str(").put(len).put(',').put(len).put(',').put(nullRate - 1).put(')');
         }
     }
 }

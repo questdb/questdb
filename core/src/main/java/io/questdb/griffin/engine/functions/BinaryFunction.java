@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.CharSink;
 
 public interface BinaryFunction extends Function {
 
@@ -67,5 +68,23 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isReadThreadSafe() {
         return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
+    }
+
+    //used in generic toSink implementation
+    default boolean isOperator() {
+        return false;
+    }
+
+    default String getSymbol() {
+        return getClass().getName();
+    }
+
+    @Override
+    default void toSink(CharSink sink) {
+        if (isOperator()) {
+            sink.put(getLeft()).put(getSymbol()).put(getRight());
+        } else {
+            sink.put(getSymbol()).put('(').put(getLeft()).put(',').put(getRight()).put(')');
+        }
     }
 }

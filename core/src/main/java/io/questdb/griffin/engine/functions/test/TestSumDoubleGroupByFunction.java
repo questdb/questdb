@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -81,5 +82,10 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sumx";
     }
 }

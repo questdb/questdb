@@ -32,11 +32,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class TestNPEFactory implements FunctionFactory {
+    public static final String SIGNATURE = "npe()";
+
     @Override
     public String getSignature() {
-        return "npe()";
+        return SIGNATURE;
     }
 
     @Override
@@ -56,6 +59,11 @@ public class TestNPEFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
     }
 }

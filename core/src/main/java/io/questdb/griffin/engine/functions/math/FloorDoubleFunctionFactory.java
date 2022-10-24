@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class FloorDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -61,6 +62,11 @@ public class FloorDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             double value = function.getDouble(rec);
             return Math.floor(value);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("floor(").put(function).put(')');
         }
     }
 }

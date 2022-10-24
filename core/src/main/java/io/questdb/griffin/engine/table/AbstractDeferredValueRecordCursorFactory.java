@@ -36,7 +36,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
 
     protected final Function filter;
     protected final int columnIndex;
-    private final Function symbolFunc;
+    protected final Function symbolFunc;
     private AbstractDataFrameRecordCursor cursor;
 
     public AbstractDeferredValueRecordCursorFactory(

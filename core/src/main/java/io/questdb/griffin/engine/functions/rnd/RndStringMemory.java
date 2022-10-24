@@ -116,4 +116,12 @@ class RndStringMemory implements Closeable {
             idxMem.putLong(o - Vm.getStorageLength(len));
         }
     }
+
+    public int getHi() {
+        return hi;
+    }
+
+    public int getLo() {
+        return lo;
+    }
 }

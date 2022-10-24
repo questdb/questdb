@@ -2110,6 +2110,60 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testExplainPlan() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                    "select x," +
+                    " timestamp_sequence(0, 1000) ts" +
+                    " from long_sequence(100000)) timestamp (ts)")) {
+                pstmt.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx limit 10")) {
+                statement.execute();
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "Limit lo: 10\n" +
+                                    "    Full forward scan on: xx\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExplainPlanWithWhitespaces() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
+                    "select x as x," +
+                    " 's' || x as str" +
+                    " from long_sequence(100000))")) {
+                pstmt.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where str = '\n' order by str,x limit 10")) {
+                statement.execute();
+                try (ResultSet rs = statement.getResultSet()) {
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "Sort light lo: 10\n" +
+                                    "    async filter\n" +
+                                    "      filter: Str(1)='\\n'\n" +
+                                    "      preTouch: true\n" +
+                                    "      workers: 2\n" +
+                                    "        Full forward scan on: xx\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEmptySql() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {

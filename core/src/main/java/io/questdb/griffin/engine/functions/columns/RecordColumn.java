@@ -55,6 +55,6 @@ public class RecordColumn extends RecordFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("RecordColumn(").put(columnIndex).put(')');
+        sink.put("Record(").put(columnIndex).put(')');
     }
 }

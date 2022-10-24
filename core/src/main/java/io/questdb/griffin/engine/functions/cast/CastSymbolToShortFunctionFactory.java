@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastSymbolToShortFunctionFactory implements FunctionFactory {
     @Override
@@ -47,7 +48,7 @@ public class CastSymbolToShortFunctionFactory implements FunctionFactory {
         return new CastSymbolToShortFunction(args.getQuick(0));
     }
 
-    public static class CastSymbolToShortFunction extends ShortFunction implements UnaryFunction {
+    public static class CastSymbolToShortFunction extends AbstractCastToShortFunction {
         private final Function arg;
 
         public CastSymbolToShortFunction(Function arg) {

@@ -234,4 +234,9 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     public boolean isNullConstant() {
         return true;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("null");
+    }
 }

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.std.str.CharSink;
 
 public class CharConstant extends CharFunction implements ConstantFunction {
     public static final CharConstant ZERO = new CharConstant((char) 0);
@@ -42,5 +43,10 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     @Override
     public char getChar(Record rec) {
         return value;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('\'').put(value).put('\'');
     }
 }

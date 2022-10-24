@@ -29,12 +29,14 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
 
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
@@ -57,6 +59,13 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
         }
         this.filter = filter;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByValuesIndexed");
+        sink.optAttr("filter", filter);
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

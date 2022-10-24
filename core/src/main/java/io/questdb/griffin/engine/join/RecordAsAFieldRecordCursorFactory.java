@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -51,6 +52,12 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("RecordAsAField");
+        sink.child(base);
     }
 
     @Override

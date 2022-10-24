@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTag;
@@ -56,6 +57,11 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
         collectMetrics(values);
         cursor.of(KEYS, values);
         return cursor;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("memory_metrics");
     }
 
     private static void collectMetrics(long[] collector) {

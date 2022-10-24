@@ -152,4 +152,9 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::string");
+    }
 }

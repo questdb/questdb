@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 import java.lang.ThreadLocal;
 
@@ -94,6 +95,16 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put('=');
+            Numbers.appendLong256(long0, long1, long2, long3, sink);
         }
     }
 

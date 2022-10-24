@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastByteToLongFunctionFactory implements FunctionFactory {
     @Override
@@ -50,7 +51,7 @@ public class CastByteToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryLongFunction {
+    private static class Func extends AbstractCastToLongFunction {
         public Func(Function arg) {
             super(arg);
         }

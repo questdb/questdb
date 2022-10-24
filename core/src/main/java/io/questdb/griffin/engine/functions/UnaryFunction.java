@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.CharSink;
 
 public interface UnaryFunction extends Function {
     @Override
@@ -59,5 +60,14 @@ public interface UnaryFunction extends Function {
     @Override
     default boolean isReadThreadSafe() {
         return getArg().isReadThreadSafe();
+    }
+
+    @Override
+    default void toSink(CharSink sink) {
+        if (isOperator()) {
+            sink.put(getSymbol()).put(getArg());
+        } else {
+            sink.put(getSymbol()).put('(').put(getArg()).put(')');
+        }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
 
 public class BooleanBindVariable extends BooleanFunction implements ScalarFunction, Mutable {
     boolean value;
@@ -50,5 +51,10 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     @Override
     public boolean isReadThreadSafe() {
         return true;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("?::boolean");
     }
 }

@@ -98,6 +98,11 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
             return count;
         }
 
+        @Override
+        public String getSymbol() {
+            return "to_char";
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final BinarySequence sequence = arg.getBin(rec);

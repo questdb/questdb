@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -41,6 +42,8 @@ public class TestMatchFunctionFactory implements FunctionFactory {
     private static final AtomicInteger openCounter = new AtomicInteger();
     private static final AtomicInteger topCounter = new AtomicInteger();
     private static final AtomicInteger closeCount = new AtomicInteger();
+
+    private static final String SIGNATURE = "test_match()";
 
     public static boolean assertAPI(SqlExecutionContext executionContext) {
         return openCounter.get() > 0 && openCounter.get() >= closeCount.get() && topCounter.get() > 0
@@ -60,7 +63,7 @@ public class TestMatchFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "test_match()";
+        return SIGNATURE;
     }
 
     @Override
@@ -88,6 +91,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
         }
 
         @Override

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
@@ -108,5 +109,13 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Misc.free(cursor);
             throw ex;
         }
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SampleByFillNone");
+        sink.attr("functions");
+        sink.val(recordFunctions);
+        sink.child(base);
     }
 }

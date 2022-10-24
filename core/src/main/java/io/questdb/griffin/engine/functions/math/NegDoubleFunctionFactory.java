@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NegDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -60,6 +61,11 @@ public class NegDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return -arg.getDouble(rec);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('-').put(arg);
         }
     }
 }

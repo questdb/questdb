@@ -93,4 +93,9 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
 }

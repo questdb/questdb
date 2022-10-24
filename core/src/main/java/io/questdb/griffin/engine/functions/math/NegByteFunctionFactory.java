@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NegByteFunctionFactory implements FunctionFactory {
     @Override
@@ -60,6 +61,11 @@ public class NegByteFunctionFactory implements FunctionFactory {
         @Override
         public byte getByte(Record rec) {
             return (byte) -arg.getByte(rec);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put('-').put(arg);
         }
     }
 }

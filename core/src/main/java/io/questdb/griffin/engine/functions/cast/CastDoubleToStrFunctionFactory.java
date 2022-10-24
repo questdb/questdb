@@ -57,20 +57,14 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         return new CastDoubleToStrFunction(args.getQuick(0), configuration.getDoubleToStrCastScale());
     }
 
-    public static class CastDoubleToStrFunction extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class CastDoubleToStrFunction extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final int scale;
 
         public CastDoubleToStrFunction(Function arg, int scale) {
-            this.arg = arg;
+            super(arg);
             this.scale = scale;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
         }
 
         @Override

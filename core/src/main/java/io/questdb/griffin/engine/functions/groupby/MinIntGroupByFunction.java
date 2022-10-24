@@ -81,12 +81,17 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public Function getArg() {
         return arg;
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinInt(").put(arg).put(')');
+    public String getSymbol() {
+        return "min";
     }
 }

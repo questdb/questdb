@@ -85,7 +85,7 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MinLong(").put(arg).put(')');
+    public String getSymbol() {
+        return "min";
     }
 }

@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
 
 public class RndShortCCFunctionFactory implements FunctionFactory {
 
@@ -83,6 +84,11 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("rnd_short(").put(lo).put(',').put(range + lo - 1).put(')');
         }
     }
 }

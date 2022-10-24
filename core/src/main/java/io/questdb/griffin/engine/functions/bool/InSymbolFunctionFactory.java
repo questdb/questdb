@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -172,6 +173,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
         private boolean testAsInt(Record rec) {
             return intSet.contains(arg.getInt(rec));
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put(" in ").put(set);
         }
     }
 }

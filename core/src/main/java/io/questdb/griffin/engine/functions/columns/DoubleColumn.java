@@ -66,6 +66,6 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("DoubleColumn(").put(columnIndex).put(')');
+        sink.put("Double(").put(columnIndex).put(')');
     }
 }

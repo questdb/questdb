@@ -70,5 +70,10 @@ public class DayOfWeekFunctionFactory implements FunctionFactory {
             }
             return Timestamps.getDayOfWeek(value);
         }
+
+        @Override
+        public String getSymbol() {
+            return "day_of_week";
+        }
     }
 }

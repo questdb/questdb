@@ -1080,6 +1080,17 @@ public class SqlCompiler implements Closeable {
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
+
+        if (ExecutionModel.EXPLAIN != model.getModelType()) {
+            return compileExecutionModel0(executionContext, model);
+        } else {
+            ExplainModel explainModel = (ExplainModel) model;
+            explainModel.setModel(compileExecutionModel0(executionContext, explainModel.getInnerExecutionModel()));
+            return explainModel;
+        }
+    }
+
+    private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext);
@@ -1166,7 +1177,6 @@ public class SqlCompiler implements Closeable {
         // lexer would have parsed first token to determine direction of execution flow
         lexer.unparseLast();
         codeGenerator.clear();
-
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
@@ -1184,6 +1194,8 @@ public class SqlCompiler implements Closeable {
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 UpdateOperation updateStatement = generateUpdate(updateQueryModel, executionContext);
                 return compiledQuery.ofUpdate(updateStatement);
+            case ExecutionModel.EXPLAIN:
+                return compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
@@ -1196,6 +1208,23 @@ public class SqlCompiler implements Closeable {
                 } else {
                     return insert(executionModel, executionContext);
                 }
+        }
+    }
+
+    private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
+            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                    updateQueryModel.getUpdateTableName(),
+                    selectQueryModel,
+                    updateQueryModel,
+                    executionContext
+            );
+
+            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, executionContext);
+        } else {
+            return codeGenerator.generateExplain(model, executionContext);
         }
     }
 

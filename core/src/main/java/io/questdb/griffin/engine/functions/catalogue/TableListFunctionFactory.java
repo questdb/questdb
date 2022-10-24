@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
@@ -42,6 +43,7 @@ import io.questdb.std.str.StringSink;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "tables()";
     private static final RecordMetadata METADATA;
     private static final int idColumn;
     private static final int nameColumn;
@@ -54,7 +56,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "tables()";
+        return SIGNATURE;
     }
 
     @Override
@@ -111,6 +113,11 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("tables()");
         }
 
         @Override

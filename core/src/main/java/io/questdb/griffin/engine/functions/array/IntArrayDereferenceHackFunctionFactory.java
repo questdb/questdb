@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 // This is a hack. pg_index.indkey in PG is an int vector. We have it as INT
 // because we don't support array column type yet. Some metadata PG SQLs
@@ -76,6 +77,11 @@ public class IntArrayDereferenceHackFunctionFactory implements FunctionFactory {
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arrayFunction).put('[').put(indexFunction).put(']');
         }
     }
 }

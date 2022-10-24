@@ -66,6 +66,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
+    public static final String TAG_EXPLAIN = "EXPLAIN";
     // create as select tag
     public static final String TAG_CTAS = "CTAS";
     public static final char STATUS_IN_TRANSACTION = 'T';
@@ -2005,6 +2006,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();
                 break;
+            case CompiledQuery.EXPLAIN:
+                //explain results should not be cached 
+                typesAndSelectIsCached = false;
+                typesAndSelect = typesAndSelectPool.pop();
+                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
                 typesAndSelect = typesAndSelectPool.pop();
                 typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);

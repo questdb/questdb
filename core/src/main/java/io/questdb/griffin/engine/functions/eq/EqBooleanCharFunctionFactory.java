@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class EqBooleanCharFunctionFactory implements FunctionFactory {
     @Override
@@ -77,6 +78,15 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return left;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(left);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put('=').put(right);
         }
     }
 }

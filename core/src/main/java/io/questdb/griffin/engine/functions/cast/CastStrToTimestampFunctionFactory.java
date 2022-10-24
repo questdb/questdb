@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class CastStrToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -47,7 +48,7 @@ public class CastStrToTimestampFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    public static class Func extends AbstractUnaryTimestampFunction {
+    public static class Func extends AbstractCastToTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }

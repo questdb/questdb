@@ -35,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 public class SecondOfMinuteFunctionFactory implements FunctionFactory {
 
@@ -70,6 +71,11 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
                 return Timestamps.getSecondOfMinute(value);
             }
             return Numbers.INT_NaN;
+        }
+
+        @Override
+        public String getSymbol() {
+            return "second";
         }
     }
 }

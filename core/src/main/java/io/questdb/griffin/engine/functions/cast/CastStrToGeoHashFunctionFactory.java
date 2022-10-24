@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.cairo.ColumnType.GEO_HASH_MAX_BITS_LENGTH;
 
@@ -133,6 +134,11 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             assert bitsPrecision >= 32;
             return getGeoHashLong0(rec);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(arg).put("::geohash");
         }
 
         private long getGeoHashLong0(Record rec) {

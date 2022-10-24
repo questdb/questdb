@@ -51,16 +51,9 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
-
+    private static class Func extends AbstractCastToStrFunction {
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

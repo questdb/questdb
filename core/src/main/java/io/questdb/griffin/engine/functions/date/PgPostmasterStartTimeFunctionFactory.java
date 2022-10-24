@@ -34,9 +34,18 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 
 public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
+
+    private static final String SIGNATURE = "pg_postmaster_start_time()";
+
     private static final TimestampFunction FUNC = new TimestampFunction() {
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put(SIGNATURE);
+        }
+
         @Override
         public long getTimestamp(Record rec) {
             return Timestamps.STARTUP_TIMESTAMP;
@@ -45,7 +54,7 @@ public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_postmaster_start_time()";
+        return SIGNATURE;
     }
 
     @Override

@@ -45,18 +45,12 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends Long256Function implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends AbstractCastToLong256Function {
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override

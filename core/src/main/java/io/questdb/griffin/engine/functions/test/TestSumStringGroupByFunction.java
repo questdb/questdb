@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -94,5 +95,10 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sum_t";
     }
 }

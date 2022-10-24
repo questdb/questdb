@@ -37,6 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class RoundDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -103,6 +104,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("round(").put(left).put(',').put(right).put(')');
+        }
     }
 
     private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
@@ -128,6 +134,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
             return Numbers.roundHalfUpPosScale(l, scale);
         }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("round(").put(arg).put(',').put(scale).put(')');
+        }
     }
 
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
@@ -152,6 +163,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundHalfUpNegScale(l, scale);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("round(").put(arg).put(',').put(-scale).put(')');
         }
     }
 }

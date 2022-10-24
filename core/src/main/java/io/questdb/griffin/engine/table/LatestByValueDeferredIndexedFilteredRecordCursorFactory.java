@@ -28,6 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
@@ -50,6 +51,15 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestByValueDeferredIndexedFiltered");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        sink.child(dataFrameCursorFactory);
     }
 
     @Override

@@ -98,5 +98,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             }
             return Chars.equals(cs1, cs2) ? null : cs1;
         }
+
+        @Override
+        public String getSymbol() {
+            return "nullif";
+        }
     }
 }

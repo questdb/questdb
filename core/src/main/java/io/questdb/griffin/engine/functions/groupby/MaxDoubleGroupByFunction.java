@@ -84,7 +84,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("MaxDouble(").put(arg).put(')');
+    public String getSymbol() {
+        return "max";
     }
 }

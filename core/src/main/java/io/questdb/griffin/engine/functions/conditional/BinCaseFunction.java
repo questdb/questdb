@@ -27,11 +27,10 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 
-class BinCaseFunction extends BinFunction implements MultiArgFunction {
+class BinCaseFunction extends BinFunction implements CaseFunction {
     private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
 

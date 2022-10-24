@@ -129,6 +129,8 @@ public interface CairoConfiguration {
 
     int getDoubleToStrCastScale();
 
+    int getExplainPoolCapacity();
+
     int getFileOperationRetryCount();
 
     FilesFacade getFilesFacade();

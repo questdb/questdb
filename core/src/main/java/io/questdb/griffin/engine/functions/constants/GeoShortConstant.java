@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
+import io.questdb.std.str.CharSink;
 
 public class GeoShortConstant extends GeoShortFunction implements ConstantFunction {
 
@@ -43,5 +44,10 @@ public class GeoShortConstant extends GeoShortFunction implements ConstantFuncti
     @Override
     public short getGeoShort(Record rec) {
         return hash;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        GeoHashes.append(hash, type, sink);
     }
 }

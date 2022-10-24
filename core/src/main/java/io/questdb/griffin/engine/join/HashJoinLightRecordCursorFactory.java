@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -60,6 +61,13 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash join light");
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
     }
 
     @Override

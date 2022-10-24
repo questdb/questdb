@@ -30,6 +30,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -51,6 +52,11 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         this.ff = ff;
         path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("all_tables()");
     }
 
     @Override
