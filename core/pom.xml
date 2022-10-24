@@ -35,10 +35,10 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <web.console.version>0.0.7</web.console.version>
+        <web.console.version>0.0.8</web.console.version>
     </properties>
 
-    <version>6.5.4-SNAPSHOT</version>
+    <version>6.5.4</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>

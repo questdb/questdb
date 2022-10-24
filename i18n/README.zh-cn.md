@@ -28,8 +28,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md)
-
+[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README-PT.md) | [日本](./README.ja-ja.md)
 # QuestDB
 
 QuestDB 是一个高性能、开源的 SQL 数据库，适用于金融服务、物联网、机器学习

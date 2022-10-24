@@ -1,155 +1,146 @@
 <div align="center">
-  <img
-    alt="QuestDB Logo"
-    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
-    width="305px"
-  />
+  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img
-      src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
-    />
+    <img src="https://slack.questdb.io/badge.svg" alt="Comunidad QuestDB en Slack"/>
   </a>
   <a href="#contribute">
-    <img
-      src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
-    />
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="Contribuidores OSS QuestDB"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img
-      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
-    />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB en Maven Central"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README-PT.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | Español | [Português](README-PT.md) | [日本](./README.ja-ja.md)
 # QuestDB
 
-QuestDB 是一個高性能的開源 SQL 數據庫，適用於金融服務、物聯網、機器學習、DevOps 和可觀測性領域的應用場景。它兼容 PostgreSQL 的 wire 協議，也兼容 InfluxDB Line 協議以獲取不受模式影響的高吞吐量數據，以及提供用於查詢、批量導入和導出的 REST API。
 
-QuestDB 使用了包含時間導向的原生擴展語言功能的 ANSI SQL。這些擴展能更簡單的連接（JOIN）多個來源的關聯數據以及時間序列數據。QuestDB 通過列導向的存儲模型、大規模並行的矢量執行、SIMD 指令和各種低延遲技術實現了高性能。整個代碼庫是用 Java 和 C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾回收的影響。
+QuestDB es una base de datos SQL, de código abierto y alto rendimiento. Es usada por aplicaciones 
+en el ámbito de los servicios financieros, IoT, aprendizaje automático, DevOps y observabilidad. 
+Es compatible con el protocolo de PostgreSQL, ofrece puntos de conexión de alto 
+rendimiento usando el protocolo InfluxDB, además de un API REST para consultas y la
+importación/exportación masiva de datos.
+
+QuestDB implementa ANSI SQL con extensiones nativas orientadas al manejo de series temporales. 
+Estas extensiones simplifican la correlación de datos de múltiples fuentes utilizando uniones y 
+relacionales. QuestDB logra un alto rendimiento al usar un modelo de almacenamiento orientado 
+a columnas, ejecución vectorial masivamente paralela, instrucciones SIMD y varias técnicas de 
+baja latencia, que incluyen un compilador JIT. La totalidad del código ha sido creado desde cero 
+en Java y C++, sin dependencias, y es 100% libre de GC (recolección de basura).
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
-      width="600"
-    />
+    <img alt="Consola web de QuestDB que muestra varias declaraciones SQL y visualiza una consulta como un gráfico" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
-## 開始使用 QuestDB
+## Prueba QuestDB
 
-我們提供了一個[在線演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本和幾個樣本數據集：
+Esta es una [demo](https://demo.questdb.io/) con la última versión de QuestDB, que incluye datos y consultas de ejemplo:
 
-- 一個 16 億行的數據集，包括近 10 年的紐約市出租車行程軌跡。
-- 一個即時的加密貨幣（比特幣、乙太幣）交易數據集。
-- 一個包括 25 萬艘船的時序地理數據集。
+- 10 años de viajes en taxi por la ciudad de Nueva York con 1600 millones de filas
+- datos comerciales en vivo de un exchange, o bolsa, de criptomonedas
+- geolocalizaciones de una flota de 250k navíos y buques a lo largo del tiempo
 
-## 安裝 QuestDB
+## Instala QuestDB
 
-你可以使用 Docker 來快速啓動一個 QuestDB 實例：
+Para empezar ya con QuestDB puedes usar Docker:
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-macOS 用戶可以使用 Homebrew 來啓動：
+En MacOS puedes usar Homebrew:
 
 ```bash
 brew install questdb
 brew services start questdb
 
-questdb start // 啓動 questdb
-questdb stop  // 停止 questdb
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
-[QuestDB 下載頁面](https://questdb.io/get-questdb/) 提供二進制文件的直接下載，並提供其他安裝和部署方法的詳細資訊。
+La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece 
+métodos de instalacion en una variedad de plataformas.
 
-### 連接到 QuestDB
+### Conéctate con QuestDB
 
-你可以使用以下接口與 QuestDB 進行交互。
+Puedes conectarte con QuestDB utilizando las siguientes interfaces:
 
-- [Web 控制台](https://questdb.io/docs/develop/web-console/)     在端口 `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/)       在端口 `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 在端口 `8812` (支持 wire 協議)
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/)   在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
+- [Consola web] (https://questdb.io/docs/develop/web-console/) escuchando en el puerto
+  `9000`
+- [API REST](https://questdb.io/docs/reference/api/rest/) en el puerto `9000`
+- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) protocolo de conexión en
+  puerto `8812`
+- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) protocolo de línea para
+  ingesta de alto rendimiento en el puerto `9009`
 
-## QuestDB 與其他開源 TSDB 的比較
+## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
 
-下面是 [時間序列基準測試套件](https://github.com/timescale/tsbs) 運行 `cpu-only`
-用例的測試結果，基於 6 個 worker 的 AMD Ryzen 3970X 上測試對比得到：
+En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sola CPU y 
+6 hilos de ejecución en un AMD Ryzen 3970X:
+
+[Suite de referencia de series temporales](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
-    />
+  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+    <img alt="Una gráfica que compara el rendimiento máximo de QuestDB, ClickHouse, TimescaleDB e InfluxDB" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"/>
   </a>
 </div>
 
-下表顯示了在 `c5.metal` 實例上使用 96 個線程中的 16 個線程運行 10 億條記錄的查詢執行時間。
+La siguiente tabla muestra los tiempos de ejecución para 1MM, un millón de millones
+de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 
-| 查詢                                                       | 運行時間    |
-| --------------------------------------------------------- | ---------- |
-| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
+| Query                                                        | Runtime    |
+| ------------------------------------------------------------ | ---------- |
+| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
+| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
+| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-## 相關資源
+## Recursos
 
-### 📚 閱讀文檔
+### 📚 Lee la documentación
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) 描述了如何運行
-  和配置 QuestDB 的技術參考。
-- 由我們的社區成員編寫的[教程](https://questdb.io/tutorial/)展示了 QuestDB 的可
-  能應用。
-- [產品路線圖](https://github.com/questdb/questdb/projects/3)列出了我們目前正在
-  進行的任務和功能。
+- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr QuestDB.
+- [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que vienen.
 
-### ❓ 尋求支持
+### ❓ Ayuda!
 
-- [Community Slack:](https://slack.questdb.io) 是一個進行技術討論和認識其他用戶
-  的好地方。👋
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 回報問題或建議。
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) 提案新的
-  特性以及查看已經構建的功能。
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 尋找常見
-  問題的解決方法。
+- [Community Slack:](https://slack.questdb.io) participa en las discusiones técnicas, pregunta, conoce al equipo y a otros usuarios y usuarias.
+- [GitHub issues:](https://github.com/questdb/questdb/issues) envía informes de error, o de problemas con QuestDB.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propón nuevas características, o muestra tus contribuciones.
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones a problemas comunes.
 
-### 🚢 部署 QuestDB
+### 🚢 Despliega QuestDB
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
+- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform)
+- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker)
 - [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
-## 貢獻
+## Contribuye
 
-我們總是樂於收到原始碼、文檔、錯誤報告、功能請求等個項目的貢獻和建議。如果要開始貢獻：
+Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación, 
+informes de errores, solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
 
-- 請看一下 GitHub 上標有
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  的問題。
-- 閱讀[貢獻指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有關構建 QuestDB 的詳細信息，請參見[構建說明](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [創建 QuestDB 的一個分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
-  並提交一個 pull request，說明你的修改建議。
+- Echa un vistazo a GitHub, en particular a los elementos etiquetados
+  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
+- Lee la [guía de contribución](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
+- Para obtener detalles sobre la compilación, empaquetado e instalación de QuestDB, consulta
+  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md).
+- [Crea un fork](https://docs.github.com/en/github/empezando-con-github/fork-a-repo)
+  de QuestDB y envía un pull request con los cambios propuestos.
 
-✨ 為了表示感謝，我們將向貢獻者發送一些我們的 QuestDB 禮品，如貼紙和 T 恤衫
-[在這裡申領](https://questdb.io/community)
+✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**. [Reclama tu botín aquí.](https://questdb.io/community)
 
-衷心感謝以下為 QuestDB 作出貢獻的優秀人士：
-（[表情符號鍵](https://allcontributors.org/docs/en/emoji-key)）：
+Un gran agradecimiento a las siguientes personas maravillosas que han contribuido a
+QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
@@ -275,6 +266,23 @@ questdb stop  // 停止 questdb
   <tr>
     <td align="center"><a href="https://github.com/HeZean"><img src="https://avatars.githubusercontent.com/u/49837965?v=4" width="100px;" alt=""/><br /><sub><b>HeZean</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=HeZean" title="Code">💻</a> <a href="https://github.com/questdb/questdb/issues?q=author%3AHeZean" title="Bug reports">🐛</a></td>
     <td align="center"><a href="https://github.com/iridess"><img src="https://avatars.githubusercontent.com/u/104518201?v=4" width="100px;" alt=""/><br /><sub><b>iridess</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=iridess" title="Code">💻</a> <a href="https://github.com/questdb/questdb/commits?author=iridess" title="Documentation">📖</a></td>
+    <td align="center"><a href="https://www.linkedin.com/in/selmanfaruky%C4%B1lmaz/"><img src="https://avatars.githubusercontent.com/u/96119894?v=4" width="100px;" alt=""/><br /><sub><b>selmanfarukyilmaz</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aselmanfarukyilmaz" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="http://www.donet5.com"><img src="https://avatars.githubusercontent.com/u/12455385?v=4" width="100px;" alt=""/><br /><sub><b>donet5</b></sub></a><br /><a href="#ideas-donet5" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/questdb/questdb/issues?q=author%3Adonet5" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/Zahlii"><img src="https://avatars.githubusercontent.com/u/218582?v=4" width="100px;" alt=""/><br /><sub><b>Zahlii</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AZahlii" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/salsasepp"><img src="https://avatars.githubusercontent.com/u/4884807?v=4" width="100px;" alt=""/><br /><sub><b>salsasepp</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Asalsasepp" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/EmmettM"><img src="https://avatars.githubusercontent.com/u/4196372?v=4" width="100px;" alt=""/><br /><sub><b>EmmettM</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AEmmettM" title="Bug reports">🐛</a> <a href="https://github.com/questdb/questdb/commits?author=EmmettM" title="Tests">⚠️</a></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="https://allfactors.com"><img src="https://avatars.githubusercontent.com/u/571328?v=4" width="100px;" alt=""/><br /><sub><b>robd003</b></sub></a><br /><a href="#ideas-robd003" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://github.com/AllenEdison"><img src="https://avatars.githubusercontent.com/u/46532217?v=4" width="100px;" alt=""/><br /><sub><b>AllenEdison</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3AAllenEdison" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/CSharpDummy"><img src="https://avatars.githubusercontent.com/u/7610502?v=4" width="100px;" alt=""/><br /><sub><b>CSharpDummy</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ACSharpDummy" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="https://github.com/shimondoodkin"><img src="https://avatars.githubusercontent.com/u/314464?v=4" width="100px;" alt=""/><br /><sub><b>shimondoodkin</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Ashimondoodkin" title="Bug reports">🐛</a> <a href="#ideas-shimondoodkin" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://www.zsmart.tech/"><img src="https://avatars.githubusercontent.com/u/40519768?v=4" width="100px;" alt=""/><br /><sub><b>huuhait</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Ahuuhait" title="Bug reports">🐛</a> <a href="#ideas-huuhait" title="Ideas, Planning, & Feedback">🤔</a></td>
+    <td align="center"><a href="https://clickhouse.com/"><img src="https://avatars.githubusercontent.com/u/18581488?v=4" width="100px;" alt=""/><br /><sub><b>alexey-milovidov</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aalexey-milovidov" title="Bug reports">🐛</a></td>
+    <td align="center"><a href="http://blog.suconghou.cn"><img src="https://avatars.githubusercontent.com/u/4580719?v=4" width="100px;" alt=""/><br /><sub><b>suconghou</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Asuconghou" title="Bug reports">🐛</a></td>
+  </tr>
+   <tr>
+    <td align="center"><a href="https://github.com/TheZal"><img src="https://avatars.githubusercontent.com/TheZal?v=4" width="100px;" alt=""/><br /><sub><b>TheZal</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATheZal" title="Documentation">📖</a></td>
   </tr>
 </table>
 
@@ -283,6 +291,5 @@ questdb stop  // 停止 questdb
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本項目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 標準.
-歡迎任何形式的貢獻！
+Este proyecto se adhiere a la especificación [all-contributors](https://github.com/all-contributors/all-contributors). 
+Las contribuciones de cualquier tipo son bienvenidas y se llevan premio!

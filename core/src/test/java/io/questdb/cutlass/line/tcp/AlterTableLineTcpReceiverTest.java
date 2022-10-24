@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
@@ -39,10 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -53,6 +48,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(AlterTableLineTcpReceiverTest.class);
@@ -73,17 +71,13 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                     "ALTER TABLE plug Add COLUMN label2 INT");
-
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
 
-            send(
-                    server,
-                    lineData
-            );
+            send(server, lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
                     "6C\t666\t1970-01-01T00:25:31.817902Z\tNaN\tLine\n" +
@@ -120,6 +114,120 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     assertTable(expected);
                 },
                 true, 250
+        );
+    }
+
+    @Test
+    public void testAlterCommandDropLastPartition() throws Exception {
+        runInContext((server) -> {
+                    long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
+
+                    try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
+                        tm.col("room", ColumnType.SYMBOL);
+                        tm.col("watts", ColumnType.LONG);
+                        tm.timestamp();
+
+                        CairoTestUtils.create(tm);
+                    }
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
+                        TableWriter.Row row = writer.newRow(day1 / 1000);
+                        row.putSym(0, "6A");
+                        row.putLong(1, 100L);
+                        row.append();
+                        writer.commit();
+                    }
+
+                    Assert.assertNull(sendWithAlterStatement(
+                            server,
+                            "plug,room=6A watts=1i " + day1 + "\n" +
+                                    "plug,room=6B watts=37i " + day1 + "\n" +
+                                    "plug,room=7G watts=21i " + day1 + "\n" +
+                                    "plug,room=1C watts=11i " + day1 + "\n",
+                            WAIT_ALTER_TABLE_RELEASE,
+                            "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"));
+                    assertTable("room\twatts\ttimestamp\n");
+
+                    send(server, "plug,room=6A watts=125i " + day1 + "\n");
+                    assertTable("room\twatts\ttimestamp\n" +
+                            "6A\t125\t2023-02-27T00:00:00.000000Z\n");
+                },
+                true, 50L
+        );
+    }
+
+    @Test
+    public void testAlterCommandDropAllPartitions() throws Exception {
+        long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000;
+        long day2 = IntervalUtils.parseFloorPartialTimestamp("2023-02-28") * 1000;
+        runInContext((server) -> {
+
+                    final AtomicLong ilpProducerWatts = new AtomicLong(0L);
+                    final AtomicBoolean keepSending = new AtomicBoolean(true);
+                    final AtomicReference<Throwable> ilpProducerProblem = new AtomicReference<>();
+                    final SOCountDownLatch ilpProducerHalted = new SOCountDownLatch(1);
+
+                    final Thread ilpProducer = new Thread(() -> {
+                        String lineTpt = "plug,room=6A watts=\"%di\" %d%n";
+                        try {
+                            while (keepSending.get()) {
+                                try {
+                                    long watts = ilpProducerWatts.getAndIncrement();
+                                    long day = (watts + 1) % 4 == 0 ? day1 : day2;
+                                    String lineData = String.format(lineTpt, watts, day);
+                                    send(server, lineData);
+                                    LOG.info().$("sent: ").$(lineData).$();
+                                } catch (Throwable unexpected) {
+                                    ilpProducerProblem.set(unexpected);
+                                    keepSending.set(false);
+                                    break;
+                                }
+                            }
+                        } finally {
+                            ilpProducerHalted.countDown();
+                            LOG.info().$("sender is finished").$();
+                        }
+                    }, "ilp-producer");
+                    ilpProducer.start();
+
+
+                    final AtomicReference<SqlException> partitionDropperProblem = new AtomicReference<>();
+
+                    final Thread partitionDropper = new Thread(() -> {
+                        while (ilpProducerWatts.get() < 20) {
+                            Os.pause();
+                        }
+                        LOG.info().$("ABOUT TO DROP PARTITIONS").$();
+                        try (SqlCompiler compiler = new SqlCompiler(engine);
+                             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                                     .with(
+                                             AllowAllCairoSecurityContext.INSTANCE,
+                                             new BindVariableServiceImpl(configuration),
+                                             null,
+                                             -1,
+                                             null
+                                     )
+                        ) {
+                            CompiledQuery cc = compiler.compile("ALTER TABLE plug DROP PARTITION WHERE timestamp > 0", sqlExecutionContext);
+                            try (OperationFuture result = cc.execute(scSequence)) {
+                                result.await();
+                                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, result.getStatus());
+                            }
+                        } catch (SqlException e) {
+                            partitionDropperProblem.set(e);
+                        } finally {
+                            // a few rows may have made it into the active partition,
+                            // as dropping it is concurrent with inserting
+                            keepSending.set(false);
+                        }
+
+                    }, "partition-dropper");
+                    partitionDropper.start();
+
+                    ilpProducerHalted.await();
+                    Assert.assertNull(ilpProducerProblem.get());
+                    Assert.assertNull(partitionDropperProblem.get());
+                },
+                true, 50L
         );
     }
 
@@ -395,15 +503,15 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             Assert.assertNull(exception3);
 
             assertTable("label\troom\twatts\ttimestamp\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                            "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n"
             );
 
             engine.releaseAllReaders();
