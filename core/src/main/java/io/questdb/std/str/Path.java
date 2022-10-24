@@ -122,7 +122,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public void close() {
         if (ptr != 0) {
             Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_PATH);
-//            new Exception("closed cap " + capacity + 1).printStackTrace();
             ptr = 0;
         }
     }

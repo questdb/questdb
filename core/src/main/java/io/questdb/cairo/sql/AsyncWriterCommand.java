@@ -24,16 +24,12 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.wal.TableWriterSPI;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
 
 import java.io.Closeable;
 
-public interface AsyncWriterCommand extends Closeable {
-    long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
-
+public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
     AsyncWriterCommand deserialize(TableWriterTask task);
 
     int getCommandType();
