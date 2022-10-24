@@ -59,7 +59,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                         ")",
                 sqlExecutionContext
         );
-        return "select to_long128(row_number() - 1 + " + tsStartSequence + "L, ts1) ts," +
+        return "select to_long128(rn - 1 + " + tsStartSequence + "L, ts1) ts," +
                 "ts1," +
                 "i," +
                 "timestamp," +
@@ -71,7 +71,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 "j," +
                 "l," +
                 "l256" +
-                " from (wal_" + tableId + " order by j)";
+                " from (select *, row_number() over() rn from (wal_" + tableId + " order by j))";
     }
 
     @NotNull
