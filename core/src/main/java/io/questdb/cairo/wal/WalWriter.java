@@ -226,6 +226,12 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void mayRollSegmentOnNextRow() {
+        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())) {
+            rollSegmentOnNextRow = true;
+        }
+    }
+
     // Returns sequencer transaction number
     public long commit() {
         checkDistressed();
