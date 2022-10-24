@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.jit.JitUtil;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -1157,6 +1156,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .put(configuration.getAttachPartitionSuffix())
                     .$();
             Assert.assertEquals(0, ff.softLink(other, path));
+            Assert.assertFalse(ff.isSoftLink(other));
+            Assert.assertTrue(ff.isSoftLink(path));
 
             // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
@@ -1216,6 +1217,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify that the link continues to exist, as well as the original folder, but it is now empty
             Assert.assertTrue(Files.exists(path.of(linkAbsolutePath).$()));
             Assert.assertTrue(Files.exists(other));
+            Assert.assertFalse(ff.isSoftLink(other));
+            Assert.assertTrue(ff.isSoftLink(path));
             if (Os.type != Os.WINDOWS) { // soft links are funny in windows
                 AtomicInteger fileCount = new AtomicInteger();
                 ff.walk(other, (file, type) -> {
@@ -1311,6 +1314,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .put(configuration.getAttachPartitionSuffix())
                     .$();
             Assert.assertEquals(0, ff.softLink(other, path));
+            Assert.assertFalse(ff.isSoftLink(other));
+            Assert.assertTrue(ff.isSoftLink(path));
 
             // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);

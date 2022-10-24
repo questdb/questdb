@@ -271,6 +271,25 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+
+    jlong fd = Java_io_questdb_std_Files_openRO(e, cl, pcharSoftLink);
+    if (fd < -1) {
+        return FALSE; // save last error already called ^ ^
+    }
+
+    jboolean result = FALSE;
+    FILE_STANDARD_INFO info;
+    if (GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
+        result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+    }
+    CloseHandle(fd);
+    SaveLastError();
+    return result;
+}
+
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszSoftLink) {
 
     size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);

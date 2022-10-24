@@ -179,6 +179,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean isSoftLink(LPSZ softLink) {
+        return Files.isSoftLink(softLink);
+    }
+
+    @Override
     public void iterateDir(LPSZ path, FindVisitor func) {
         long p = findFirst(path);
         if (p > 0) {

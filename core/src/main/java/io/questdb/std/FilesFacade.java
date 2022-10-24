@@ -78,6 +78,8 @@ public interface FilesFacade {
 
     boolean isRestrictedFileSystem();
 
+    boolean isSoftLink(LPSZ softLink);
+
     void iterateDir(LPSZ path, FindVisitor func);
 
     long length(long fd);

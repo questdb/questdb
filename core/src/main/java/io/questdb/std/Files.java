@@ -218,6 +218,12 @@ public final class Files {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
     }
 
+    public native static boolean isSoftLink(long lpszPath);
+
+    public static boolean isSoftLink(LPSZ path) {
+        return isSoftLink(path.address());
+    }
+
     public static long length(LPSZ lpsz) {
         return length0(lpsz.address());
     }

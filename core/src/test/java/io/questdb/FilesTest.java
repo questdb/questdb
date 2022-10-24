@@ -847,6 +847,8 @@ public class FilesTest {
                 // create the soft link
                 Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+                Assert.assertFalse(Files.isSoftLink(srcFilePath));
+                Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
 
                 // check contents are the same
                 assertEqualsFileContent(softLinkFilePath, fileContent);
@@ -859,6 +861,8 @@ public class FilesTest {
 
                 // create the soft link again
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+                Assert.assertFalse(Files.isSoftLink(srcFilePath));
+                Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
 
                 // rename the link
                 Assert.assertEquals(0, Files.rename(softLinkFilePath, softLinkRenamedFilePath));
