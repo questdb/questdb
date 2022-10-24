@@ -19,19 +19,20 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 
 # QuestDB
 
-QuestDB is a high-performance, open-source SQL database for applications in
-financial services, IoT, machine learning, DevOps and observability. It includes
-endpoints for PostgreSQL wire protocol, high-throughput schema-agnostic
-ingestion using InfluxDB Line Protocol, and a REST API for queries, bulk
-imports, and exports.
+QuestDB is an open-source time-series database for high throughput ingestion and
+fast SQL queries with operational simplicity. It supports schema-agnostic
+ingestion using the InfluxDB line protocol, PostgreSQL wire protocol, and a REST
+API for bulk imports and exports.
 
-QuestDB implements ANSI SQL with native extensions for time-oriented language
-features. These extensions make it simple to correlate data from multiple
-sources using relational and time series joins. QuestDB achieves high
-performance from a column-oriented storage model, massively-parallelized vector
-execution, SIMD instructions, and various low-latency techniques. The entire
-codebase was built from the ground up in Java and C++, with no dependencies, and
-is 100% free from garbage collection.
+QuestDB is well suited for financial market data, application metrics, sensor
+data, real-time analytics, dashboards, and infrastructure monitoring.
+
+QuestDB implements ANSI SQL with native time-series SQL semantics. These SQL
+semantics make it simple to correlate data from multiple sources using
+relational and time-series joins. We achieve high performance by adopting a
+column-oriented storage model, parallelized vector execution, SIMD instructions,
+and low-latency techniques. The entire codebase is built from the ground up in
+Java and C++, with no dependencies and zero garbage collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -48,7 +49,9 @@ QuestDB release and sample datasets:
 - live trading data from a cryptocurrency exchange
 - geolocations of 250k unique ships over time
 
-## Install QuestDB
+## Get started
+
+### Install QuestDB
 
 To run QuestDB, Docker can be used to get started quickly:
 
@@ -74,15 +77,32 @@ methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) listening on port
-  `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
-  port `8812`
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) line protocol for
+- [Web Console](https://questdb.io/docs/develop/web-console/) for interactive
+  SQL editor on port `9000`
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) for
   high-throughput ingestion on port `9009`
+- [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
+- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) on
+  port `8812`
+
+### Insert data
+
+Below are our official InfluxDB line protocol clients for popular programming
+languages:
+
+- [.NET](https://github.com/questdb/net-questdb-client)
+- [C/C++](https://github.com/questdb/c-questdb-client)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
+- [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ## How QuestDB compares to other open source TSDBs
+
+[This article](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
+compares QuestDB to other open source time series databases spanning
+functionality, maturity and performance.
 
 Here are high-cardinality
 [Time Series Benchmark Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -120,8 +140,6 @@ The following table shows query execution time of a billion rows run on a
   questions, and meet other users!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
   issues with QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propose
-  new features or show what you've built.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
   common troubleshooting solutions.
 
