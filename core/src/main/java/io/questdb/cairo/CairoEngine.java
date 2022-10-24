@@ -302,10 +302,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return metrics;
     }
 
-    public PoolListener getPoolListener() {
-        return this.writerPool.getPoolListener();
-    }
-
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
     }
@@ -327,6 +323,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
+    @TestOnly
+    public PoolListener getPoolListener() {
+        return this.writerPool.getPoolListener();
+    }
+
+    @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
