@@ -134,7 +134,7 @@ public class TableTransactionLog implements Closeable {
     TransactionLogCursor getCursor(long txnLo) {
         final Path path = Path.PATH.get().of(rootPath);
         final int rootLen = path.length();
-        path.concat(CATALOG_FILE_NAME).$();
+        path.concat(TXNLOG_FILE_NAME).$();
         try {
             // todo: use thread-local here
             return new TransactionLogCursorImpl(ff, txnLo, path); //todo: dup fd
@@ -156,9 +156,9 @@ public class TableTransactionLog implements Closeable {
 
     void open(Path path) {
         this.rootPath.of(path);
-        openSmallFile(ff, path, path.length(), txnMem, CATALOG_FILE_NAME, MemoryTag.MMAP_TX_CATALOG);
-        openSmallFile(ff, path, path.length(), txnMetaMem, CATALOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_CATALOG);
-        openSmallFile(ff, path, path.length(), txnMetaMemIndex, CATALOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_CATALOG);
+        openSmallFile(ff, path, path.length(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, path.length(), txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, path.length(), txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
         maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
         long maxStructureVersion = txnMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
@@ -195,7 +195,7 @@ public class TableTransactionLog implements Closeable {
 
         public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
             this.ff = ff;
-            this.fd = openFileRO(ff, path, CATALOG_FILE_NAME);
+            this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
             this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
@@ -276,7 +276,7 @@ public class TableTransactionLog implements Closeable {
         @Override
         public void close() {
             if (txnMetaAddress > 0) {
-                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_CATALOG_CURSOR);
+                ff.munmap(txnMetaAddress, txnMetaOffsetHi, MemoryTag.MMAP_TX_LOG_CURSOR);
                 txnMetaAddress = 0;
             }
             txnMetaOffset = 0;
@@ -310,9 +310,9 @@ public class TableTransactionLog implements Closeable {
             // deallocates current state
             close();
 
-            final long fdTxn = openFileRO(ff, path, CATALOG_FILE_NAME);
-            final long fdTxnMeta = openFileRO(ff, path, CATALOG_FILE_NAME_META_VAR);
-            final long fdTxnMetaIndex = openFileRO(ff, path, CATALOG_FILE_NAME_META_INX);
+            final long fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            final long fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
+            final long fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
 
             this.ff = ff;
             this.serializer = serializer;
@@ -326,7 +326,7 @@ public class TableTransactionLog implements Closeable {
                                 txnMetaOffsetHi,
                                 0L,
                                 Files.MAP_RO,
-                                MemoryTag.MMAP_TX_CATALOG_CURSOR
+                                MemoryTag.MMAP_TX_LOG_CURSOR
                         );
                         if (txnMetaAddress < 0) {
                             txnMetaAddress = 0;

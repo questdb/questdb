@@ -231,11 +231,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return commitLag;
     }
 
-    @Override
-    public int getId() {
-        return tableId;
-    }
-
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }

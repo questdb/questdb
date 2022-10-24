@@ -47,7 +47,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     public void checkMissingWalTransactions() {
-        engine.getTableRegistry().forAllWalTables(callback);
+        engine.getTableSequencerAPI().forAllWalTables(callback);
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
@@ -55,7 +55,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         final Path rootPath = Path.PATH.get().of(dbRoot);
         rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader2.unsafeReadTxn() < txn && !engine.getTableRegistry().isSuspended(tableName)) {
+            if (txReader2.unsafeReadTxn() < txn && !engine.getTableSequencerAPI().isSuspended(tableName)) {
                 // table name should be immutable when in the notification message
                 final String tableNameStr = Chars.toString(tableName);
                 engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);

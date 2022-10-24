@@ -96,7 +96,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private final Path path;
     private final Path other;
     private final LongList rowValueIsNotNull = new LongList();
-    private final Row regularRow = new RowImpl();
+    private final Row row = new RowImpl();
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -174,7 +174,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
-    private Row row = regularRow;
     private long todoTxn;
     private MemoryMAT o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
@@ -216,6 +215,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private UpdateOperatorImpl updateOperatorImpl;
     private DropIndexOperator dropIndexOperator;
     private final WalEventReader walEventReader;
+
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
@@ -1273,7 +1273,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         int walRootPathLen = walPath.length();
 
         try {
-            mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
+            mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
 
             try {
                 o3Columns = walMappedColumns;
@@ -1327,34 +1327,35 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 walColumnMemoryPool.push(mappedColumnMem);
             }
         }
-        walEventReader.close();
     }
 
     public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
-        final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
-        final byte walTxnType = walEventCursor.getType();
-        switch (walTxnType) {
-            case DATA:
-                final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
-                processWalData(
-                        walPath,
-                        !dataInfo.isOutOfOrder(),
-                        dataInfo.getStartRowID(),
-                        dataInfo.getEndRowID(),
-                        dataInfo.getMinTimestamp(),
-                        dataInfo.getMaxTimestamp(),
-                        dataInfo
-                );
-                break;
-            case SQL:
-                final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                processWalSql(sqlInfo, sqlToOperation);
-                break;
-            case TRUNCATE:
-                truncate();
-                break;
-            default:
-                throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+        try (WalEventReader eventReader = walEventReader) {
+            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+            final byte walTxnType = walEventCursor.getType();
+            switch (walTxnType) {
+                case DATA:
+                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                    processWalData(
+                            walPath,
+                            !dataInfo.isOutOfOrder(),
+                            dataInfo.getStartRowID(),
+                            dataInfo.getEndRowID(),
+                            dataInfo.getMinTimestamp(),
+                            dataInfo.getMaxTimestamp(),
+                            dataInfo
+                    );
+                    break;
+                case SQL:
+                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
+                    processWalSql(sqlInfo, sqlToOperation);
+                    break;
+                case TRUNCATE:
+                    truncate();
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+            }
         }
     }
 
@@ -1566,7 +1567,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
-            row = regularRow;
             openPartition(prevTimestamp);
             setAppendPosition(newTransientRowCount, false);
         } else {
@@ -1920,7 +1920,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     @Override
-    public final long truncate() {
+    public final void truncate() {
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
@@ -1929,7 +1929,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         if (size() == 0) {
-            return -1;
+            return;
         }
 
         // this is a crude block to test things for now
@@ -1968,7 +1968,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
         txWriter.truncate(columnVersionWriter.getVersion());
-        row = regularRow;
         try {
             clearTodoLog();
         } catch (CairoException err) {
@@ -1976,7 +1975,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         LOG.info().$("truncated [name=").utf8(tableName).I$();
-        return txWriter.getTxn();
     }
 
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
@@ -3166,7 +3164,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    private void mmapWalColumn(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumns(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
@@ -5414,7 +5412,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                             || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, SEQ_DIR)
             ) {
-                // Do not remove detached partitions, wals and sequencer directories
+                // Do not remove detached partitions, wal and sequencer directories
                 // They are probably about to be attached.
                 return;
             }

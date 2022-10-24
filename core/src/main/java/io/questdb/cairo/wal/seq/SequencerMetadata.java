@@ -118,11 +118,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     }
 
     @Override
-    public int getId() {
-        return tableId;
-    }
-
-    @Override
     public long getStructureVersion() {
         return structureVersion;
     }

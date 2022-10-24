@@ -220,7 +220,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         try {
             final long lastAppliedTxn = txReader.unsafeReadVersion();
 
-            TableSequencerAPI tableSequencerAPI = engine.getTableRegistry();
+            TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
             try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableName, lastAppliedTxn)) {
                 while (transactionLogCursor.hasNext() && (discoveredWalIds.size() > 0)) {
                     final int walId = transactionLogCursor.getWalId();

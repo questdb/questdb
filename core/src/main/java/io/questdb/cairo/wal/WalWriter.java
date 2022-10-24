@@ -205,10 +205,10 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public long truncate() {
+    public void truncate() {
         try {
             lastSegmentTxn = events.truncate();
-            return getSequencerTxn();
+            getSequencerTxn();
         } catch (Throwable th) {
             rollback();
             throw th;

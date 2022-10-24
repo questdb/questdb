@@ -203,7 +203,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return sqlCompilerPool.get();
     }
 
-    public TableSequencerAPI getTableRegistry() {
+    public TableSequencerAPI getTableSequencerAPI() {
         return tableSequencerAPI;
     }
 
@@ -348,8 +348,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         checkTableName(tableName);
         TableReader reader = readerPool.get(tableName);
         if ((version > -1 && reader.getVersion() != version)
-                || tableId > -1 && reader.getMetadata().getId() != tableId) {
-            ReaderOutOfDateException ex = ReaderOutOfDateException.of(tableName, tableId, reader.getMetadata().getId(), version, reader.getVersion());
+                || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
+            ReaderOutOfDateException ex = ReaderOutOfDateException.of(tableName, tableId, reader.getMetadata().getTableId(), version, reader.getVersion());
             reader.close();
             throw ex;
         }

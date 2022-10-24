@@ -93,6 +93,8 @@ public interface SqlExecutionContext extends Closeable {
             boolean baseSupportsRandomAccess
     );
 
+    void clearAnalyticContext();
+
     void initNow();
 
     long getNow();

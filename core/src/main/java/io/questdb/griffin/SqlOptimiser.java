@@ -2118,7 +2118,7 @@ class SqlOptimiser {
                 )
         ) {
             model.setTableVersion(r.getVersion());
-            model.setTableId(r.getMetadata().getId());
+            model.setTableId(r.getMetadata().getTableId());
             copyColumnsFromMetadata(model, r.getMetadata(), false);
             if (model.isUpdate()) {
                 copyColumnTypesFromMetadata(model, r.getMetadata());

@@ -35,7 +35,7 @@ public interface TableWriterAPI extends Closeable {
 
     long apply(UpdateOperation operation)  throws SqlException;
 
-    long truncate();
+    void truncate();
 
     @Override
     void close();

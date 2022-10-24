@@ -53,9 +53,5 @@ public interface MemoryMA extends MemoryM, MemoryA {
         jumpTo(0);
     }
 
-    default void switchTo(long fd, long offset) {
-        switchTo(fd, offset, Vm.TRUNCATE_TO_PAGE);
-    }
-
     void switchTo(long fd, long offset, byte truncateMode);
 }

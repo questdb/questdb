@@ -82,13 +82,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 break;
             } catch (CairoException ex) {
                 LOG.critical().$("failed to apply WAL transaction to table, will be moved to SUSPENDED state [table=").$(tableName)
-                        .$(", error=").$(ex.getMessage())
+                        .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 return WAL_APPLY_FAILED;
             }
 
-            lastSeqTxn = engine.getTableRegistry().lastTxn(tableName);
+            lastSeqTxn = engine.getTableSequencerAPI().lastTxn(tableName);
         } while (lastAppliedSeqTxn < lastSeqTxn);
         assert lastAppliedSeqTxn == lastSeqTxn;
 
@@ -134,7 +134,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
             } else if (lastAppliedSeqTxn != -1L) {
                 lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
-                engine.getTableRegistry().suspendTable(tableName);
+                engine.getTableSequencerAPI().suspendTable(tableName);
             }
         } else {
             LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableName).$(", txn=").$(seqTxn).I$();
@@ -147,7 +147,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             SqlToOperation sqlToOperation
     ) {
-        final TableSequencerAPI tableSequencerAPI = engine.getTableRegistry();
+        final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(writer.getTableName(), writer.getSeqTxn())) {
             final Path tempPath = Path.PATH.get();
 
