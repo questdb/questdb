@@ -1327,34 +1327,35 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 walColumnMemoryPool.push(mappedColumnMem);
             }
         }
-        walEventReader.close();
     }
 
     public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
-        final WalEventCursor walEventCursor = walEventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
-        final byte walTxnType = walEventCursor.getType();
-        switch (walTxnType) {
-            case DATA:
-                final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
-                processWalData(
-                        walPath,
-                        !dataInfo.isOutOfOrder(),
-                        dataInfo.getStartRowID(),
-                        dataInfo.getEndRowID(),
-                        dataInfo.getMinTimestamp(),
-                        dataInfo.getMaxTimestamp(),
-                        dataInfo
-                );
-                break;
-            case SQL:
-                final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                processWalSql(sqlInfo, sqlToOperation);
-                break;
-            case TRUNCATE:
-                truncate();
-                break;
-            default:
-                throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+        try (WalEventReader eventReader = walEventReader) {
+            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+            final byte walTxnType = walEventCursor.getType();
+            switch (walTxnType) {
+                case DATA:
+                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                    processWalData(
+                            walPath,
+                            !dataInfo.isOutOfOrder(),
+                            dataInfo.getStartRowID(),
+                            dataInfo.getEndRowID(),
+                            dataInfo.getMinTimestamp(),
+                            dataInfo.getMaxTimestamp(),
+                            dataInfo
+                    );
+                    break;
+                case SQL:
+                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
+                    processWalSql(sqlInfo, sqlToOperation);
+                    break;
+                case TRUNCATE:
+                    truncate();
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+            }
         }
     }
 
@@ -1926,7 +1927,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
     @Override
-    public final long truncate() {
+    public final void truncate() {
         rollback();
 
         // we do this before size check so that "old" corrupt symbol tables are brought back in line
@@ -1935,7 +1936,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         if (size() == 0) {
-            return -1;
+            return;
         }
 
         // this is a crude block to test things for now
@@ -1981,7 +1982,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         LOG.info().$("truncated [name=").utf8(tableName).I$();
-        return txWriter.getTxn();
     }
 
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
@@ -5419,7 +5419,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                             || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
                             || Chars.startsWith(fileNameSink, SEQ_DIR)
             ) {
-                // Do not remove detached partitions, wals and sequencer directories
+                // Do not remove detached partitions, wal and sequencer directories
                 // They are probably about to be attached.
                 return;
             }
