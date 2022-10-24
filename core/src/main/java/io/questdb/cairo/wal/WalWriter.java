@@ -268,10 +268,12 @@ public class WalWriter implements TableWriterAPI {
         return tableName;
     }
 
+    @Override
     public TableWriter.Row newRow() {
-        return newRow(0L);
+        throw new UnsupportedOperationException();
     }
 
+    @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
         try {
