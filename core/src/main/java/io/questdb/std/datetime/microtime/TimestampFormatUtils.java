@@ -29,6 +29,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -90,6 +91,22 @@ public class TimestampFormatUtils {
         } else if (v < 100) {
             sink.put('0').put('0');
         } else if (v < 1000) {
+            sink.put('0');
+        }
+        Numbers.append(sink, val);
+    }
+
+    public static void append00000(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0').put('0').put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0').put('0').put('0').put('0');
+        } else if (v < 1000) {
+            sink.put('0').put('0').put('0');
+        } else if (v < 10000) {
+            sink.put('0').put('0');
+        } else if (v < 100000) {
             sink.put('0');
         }
         Numbers.append(sink, val);
@@ -432,5 +449,15 @@ public class TimestampFormatUtils {
     }
 
     public static void init() {
+    }
+
+    public static void main(String[] args) throws NumericException {
+        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        DateFormat f = compiler.compile("y-MM-dd HH:mm:ss.U+");
+        long t = f.parse("2022-02-02 02:02:02.1", TimestampFormatUtils.enLocale);
+        System.out.println(t);
+        StringSink sink = new StringSink();
+        f.format(t, TimestampFormatUtils.enLocale, "Z", sink);
+        System.out.println(sink);
     }
 }

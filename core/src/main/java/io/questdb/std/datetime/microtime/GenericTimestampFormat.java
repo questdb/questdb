@@ -68,16 +68,23 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // MICROS
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                     if (micros0 == -1) {
-                        micros0 = Timestamps.getMicrosOfSecond(micros);
+                        micros0 = Timestamps.getMicrosOfMilli(micros);
                     }
                     sink.put(micros0);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
                     if (micros0 == -1) {
                         micros0 = Timestamps.getMicrosOfSecond(micros);
+                    }
+                    TimestampFormatUtils.append00000(sink, micros0);
+                    break;
+
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    if (micros0 == -1) {
+                        micros0 = Timestamps.getMicrosOfMilli(micros);
                     }
                     TimestampFormatUtils.append00(sink, micros0);
                     break;
@@ -423,8 +430,14 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     micros = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                     l = Numbers.parseInt000Greedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                    l = Numbers.parseInt000000Greedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
