@@ -97,7 +97,7 @@ public class TableSequencerAPI extends AbstractPool {
         }
     }
 
-    public TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
             return tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
         }

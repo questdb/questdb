@@ -553,12 +553,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, getStructureVersion())) {
-            if (structureChangeCursor == null) {
-                // nothing to do
-                return;
-            }
             long metadataVersion = getStructureVersion();
-
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
                 try {

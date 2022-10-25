@@ -46,7 +46,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
     private long structureVersion = -1;
     private int tableId;
     private String tableName;
-    private boolean suspended;
+    private volatile boolean suspended;
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
