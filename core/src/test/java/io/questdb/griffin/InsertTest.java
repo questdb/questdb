@@ -507,6 +507,50 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertEmptyStringSelectEmptyStringColumnIndexed() throws Exception{
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
+                    executeInsert("insert into tab values (1, '')");
+                    assertSql("select id from tab where val = ''", "id\n1\n");
+                }
+        );
+    }
+
+    @Test
+    public void testInsertEmptyStringSelectNullStringColumnIndexed() throws Exception{
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
+                    executeInsert("insert into tab values (1, '')");
+                    assertSql("select id from tab where val = null", "id\n");
+                }
+        );
+    }
+
+    @Test
+    public void testInsertNullStringSelectEmptyStringColumnIndexed() throws Exception{
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
+                    executeInsert("insert into tab values (1, NULL)");
+                    assertSql("select id from tab where val = ''", "id\n");
+                }
+        );
+    }
+
+    @Test
+    public void testInsertNullStringSelectNullStringColumnIndexed() throws Exception{
+        assertMemoryLeak(
+                () -> {
+                    compiler.compile("create table tab (id int, val symbol index)", sqlExecutionContext);
+                    executeInsert("insert into tab values (1, null)");
+                    assertSql("select id from tab where val = null", "id\n1\n");
+                }
+        );
+    }
+
+    @Test
     public void testInsertSingleAndMultipleCharacterSymbols() throws Exception {
         final String expected = "sym\tid\tts\n" +
                 "A\t315515118\t1970-01-03T00:00:00.000000Z\n" +

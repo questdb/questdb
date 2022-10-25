@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-public class TableWriteBenchmark {
+public class TableWriterBenchmark {
 
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 500_000;
@@ -60,7 +60,7 @@ public class TableWriteBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(TableWriteBenchmark.class.getSimpleName())
+                .include(TableWriterBenchmark.class.getSimpleName())
                 .warmupIterations(1)
                 .measurementIterations(3)
                 .forks(1)

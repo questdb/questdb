@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -53,6 +54,7 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         prepare();
         DataFrame frame;
         while ((frame = this.dataFrameCursor.next()) != null) {
@@ -62,6 +64,7 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
                 int index = map.keyIndex(key);
