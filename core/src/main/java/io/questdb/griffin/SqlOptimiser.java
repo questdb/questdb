@@ -3361,7 +3361,7 @@ class SqlOptimiser {
             }
         }
 
-        if (sampleBy != null && baseModel.getTimestamp() != null){
+        if (sampleBy != null && baseModel.getTimestamp() != null) {
             CharSequence timestamp = baseModel.getTimestamp().token;
             // does model already select timestamp column?
             if (innerVirtualModel.getColumnNameToAliasMap().excludes(timestamp)) {
