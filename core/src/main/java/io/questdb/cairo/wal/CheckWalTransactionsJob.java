@@ -30,33 +30,44 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final TxReader txReader;
     private final CharSequence dbRoot;
+    private final FilesFacade ff;
     private long lastProcessedCount = 0;
+    private Path threadLocalPath;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
-        txReader = new TxReader(engine.getConfiguration().getFilesFacade());
-        dbRoot = engine.getConfiguration().getRoot();
+        this.ff = engine.getConfiguration().getFilesFacade();
+        this.txReader = new TxReader(engine.getConfiguration().getFilesFacade());
+        this.dbRoot = engine.getConfiguration().getRoot();
     }
 
     public void checkMissingWalTransactions() {
+        threadLocalPath = Path.PATH.get().of(dbRoot);
         engine.getTableRegistry().forAllWalTables(this::checkNotifyOutstandingTxnInWal);
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence systemTableName, long txn) {
-        Path rootPath = Path.PATH.get().of(dbRoot);
-        rootPath.concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            if (txReader2.unsafeReadTxn() < txn) {
-                // table name should be immutable when in the notification message
-                String tableNameStr = Chars.toString(systemTableName);
-                engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
+        threadLocalPath.trimTo(dbRoot.length()).concat(TableUtils.META_FILE_NAME).$();
+        if (ff.exists(threadLocalPath)) {
+            threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
+            try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                if (txReader2.unsafeReadTxn() < txn) {
+                    // table name should be immutable when in the notification message
+                    String tableNameStr = Chars.toString(systemTableName);
+                    engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
+                }
             }
+        } else {
+            String tableNameStr = Chars.toString(systemTableName);
+            // table is dropped, remove from registry
+            engine.notifyWalTxnCommitted(tableId, tableNameStr, Long.MAX_VALUE);
         }
     }
 
