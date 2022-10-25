@@ -28,12 +28,18 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README-PT.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | 繁體中文 | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README-PT.md) | [日本](./README.ja-ja.md)
 # QuestDB
 
-QuestDB 是一個高性能的開源 SQL 數據庫，適用於金融服務、物聯網、機器學習、DevOps 和可觀測性領域的應用場景。它兼容 PostgreSQL 的 wire 協議，也兼容 InfluxDB Line 協議以獲取不受模式影響的高吞吐量數據，以及提供用於查詢、批量導入和導出的 REST API。
+QuestDB 是一個開源的 SQL 時序數據庫，支持高吞吐量數據和快速 SQL 查詢，操作簡單。
+其應用範圍包括金融市場數據、感測器數據、實時數據、儀表板和基礎設施監控。它兼容
+InfluxDB 行協議以提供不受模式影響的高吞吐量數據，也兼容 PostgreSQL 線路協議，並
+提供 REST API 以便於批量導入和導出。
 
-QuestDB 使用了包含時間導向的原生擴展語言功能的 ANSI SQL。這些擴展能更簡單的連接（JOIN）多個來源的關聯數據以及時間序列數據。QuestDB 通過列導向的存儲模型、大規模並行的矢量執行、SIMD 指令和各種低延遲技術實現了高性能。整個代碼庫是用 Java 和 C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾回收的影響。
+QuestDB 以 ANSI SQL 為基礎，並使用時間導向的 SQL 語義。這些 SQL 語義能更簡單的連
+接（JOIN）不同來源的關聯數據以及時間序列數據。QuestDB 通過列導向的存儲模型、大規
+模並行的矢量執行、SIMD 指令和各種低延遲技術實現了高性能。整個代碼庫是用 Java 和
+C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾回收的影響。
 
 <div align="center">
   <a href="https://demo.questdb.io">
@@ -45,7 +51,7 @@ QuestDB 使用了包含時間導向的原生擴展語言功能的 ANSI SQL。這
   </a>
 </div>
 
-## 開始使用 QuestDB
+## 嘗試 QuestDB
 
 我們提供了一個[在線演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本和幾個樣本數據集：
 
@@ -53,7 +59,9 @@ QuestDB 使用了包含時間導向的原生擴展語言功能的 ANSI SQL。這
 - 一個即時的加密貨幣（比特幣、乙太幣）交易數據集。
 - 一個包括 25 萬艘船的時序地理數據集。
 
-## 安裝 QuestDB
+## 開始使用
+
+### 安裝 QuestDB
 
 你可以使用 Docker 來快速啓動一個 QuestDB 實例：
 
@@ -77,10 +85,22 @@ questdb stop  // 停止 questdb
 
 你可以使用以下接口與 QuestDB 進行交互。
 
-- [Web 控制台](https://questdb.io/docs/develop/web-console/)     在端口 `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/)       在端口 `9000`
+- [Web 控制台](https://questdb.io/docs/develop/web-console/) 在端口 `9000`
+- [REST API](https://questdb.io/docs/reference/api/rest/) 在端口 `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 在端口 `8812` (支持 wire 協議)
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/)   在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/) 在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
+
+### 擷取數據
+
+以下是我們官方開發的 InfluxDB line protocol 用戶端，支持多種程式语言：
+
+- [.NET](https://github.com/questdb/net-questdb-client)
+- [C/C++](https://github.com/questdb/c-questdb-client)
+- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
+- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
+- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
+- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
+- [Rust](https://docs.rs/crate/questdb-rs/latest)
 
 ## QuestDB 與其他開源 TSDB 的比較
 
@@ -98,7 +118,7 @@ questdb stop  // 停止 questdb
 
 下表顯示了在 `c5.metal` 實例上使用 96 個線程中的 16 個線程運行 10 億條記錄的查詢執行時間。
 
-| 查詢                                                       | 運行時間    |
+| 查詢                                                      | 運行時間   |
 | --------------------------------------------------------- | ---------- |
 | `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
@@ -119,9 +139,7 @@ questdb stop  // 停止 questdb
 
 - [Community Slack:](https://slack.questdb.io) 是一個進行技術討論和認識其他用戶
   的好地方。👋
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 回報問題或建議。
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) 提案新的
-  特性以及查看已經構建的功能。
+- [GitHub issues:](https://github.com/questdb/questdb/issues) 回報問題或提案建議新功能。
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 尋找常見
   問題的解決方法。
 

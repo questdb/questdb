@@ -436,7 +436,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
-        });
+        }, false, 1000);
     }
 
     @Test
