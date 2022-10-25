@@ -809,6 +809,28 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportCsvWithLongTsIntoExistingTable() throws Exception {
+        executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("CREATE TABLE reading (\n" +
+                    "  readingTypeId SYMBOL,\n" +
+                    "  value FLOAT,\n" +
+                    "  readingDate TIMESTAMP\n" +
+                    ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.of("reading", "test-quotes-rawts.csv", 1, -1, (byte) ',', null, null, true, null);
+                importer.process();
+            }
+            assertQuery("readingTypeId\tvalue\treadingDate\n" +
+                            "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000001Z\n" +
+                            "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000002Z\n" +
+                            "electricity.power.hour\t0.1010\t2020-01-01T00:00:00.000003Z\n",
+                    "select * from reading",
+                    "readingDate", true, false, true);
+        });
+    }
+
+    @Test
     public void testImportCsvIntoExistingTableWithColumnReorder() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
