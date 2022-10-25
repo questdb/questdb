@@ -91,7 +91,6 @@ public class CopyWalSegmentUtils {
     private static boolean copyVarLenFile(FilesFacade ff, MemoryMA primaryColumn, MemoryMA secondaryColumn, long primaryFd, long secondaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
         long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
         long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
-        ff.madvise(srcIndexAddr, indexMapSize, Files.POSIX_MADV_SEQUENTIAL);
         try {
             long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);
             long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);
@@ -106,7 +105,7 @@ public class CopyWalSegmentUtils {
 
             long indexLen = (rowCount + 1) * Long.BYTES;
             long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
-            ff.madvise(dstIndexAddr, indexLen, Files.POSIX_MADV_SEQUENTIAL);
+            ff.madvise(dstIndexAddr, indexLen, Files.POSIX_MADV_RANDOM);
 
             Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
