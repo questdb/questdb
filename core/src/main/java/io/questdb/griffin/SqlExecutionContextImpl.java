@@ -177,6 +177,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void clearAnalyticContext() {
+        analyticContext.clear();
+    }
+
+    @Override
     public void initNow() {
         now = cairoConfiguration.getMicrosecondClock().getTicks();
     }

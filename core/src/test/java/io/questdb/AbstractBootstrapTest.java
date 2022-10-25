@@ -48,8 +48,11 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
-    static final Properties PG_CONNECTION_PROPERTIES = new Properties();
-    static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
+    protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
+    protected static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
+
+    protected static final int ILP_PORT = 9009;
+    protected static final int ILP_BUFFER_SIZE = 4 * 1024;
     private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
     protected static CharSequence root;
     private static boolean publicZipStubCreated = false;
@@ -88,7 +91,7 @@ public abstract class AbstractBootstrapTest {
         temp.delete();
     }
 
-    static void createDummyConfiguration() throws Exception {
+    protected static void createDummyConfiguration() throws Exception {
         final String confPath = root.toString() + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
@@ -114,9 +117,9 @@ public abstract class AbstractBootstrapTest {
             writer.println("http.bind.to=0.0.0.0:9010");
             writer.println("http.min.net.bind.to=0.0.0.0:9011");
             writer.println("pg.net.bind.to=0.0.0.0:8822");
-            writer.println("line.tcp.net.bind.to=0.0.0.0:9019");
-            writer.println("line.udp.bind.to=0.0.0.0:9019");
-            writer.println("line.udp.receive.buffer.size=" + 1024 * 4);
+            writer.println("line.tcp.net.bind.to=0.0.0.0:" + ILP_PORT);
+            writer.println("line.udp.bind.to=0.0.0.0:" + ILP_PORT);
+            writer.println("line.udp.receive.buffer.size=" + ILP_BUFFER_SIZE);
 
             // configure worker pools
             writer.println("shared.worker.count=2");

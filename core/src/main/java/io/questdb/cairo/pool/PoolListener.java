@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.pool;
 
+@FunctionalInterface
 public interface PoolListener {
     byte SRC_WRITER = 1;
     byte SRC_READER = 2;

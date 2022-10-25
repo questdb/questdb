@@ -72,7 +72,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        final int maxLength = configuration.getReplaceFunctionMaxBufferLength();
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
         return new Func(value, term, withWhat, maxLength);
     }
 
