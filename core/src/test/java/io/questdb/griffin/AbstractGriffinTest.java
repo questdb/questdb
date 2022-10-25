@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -1499,6 +1500,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         try (ExplainPlanFactory planFactory = getPlanFactory(query);
              RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
+
+            if (!JitUtil.isJitSupported()) {
+                expectedPlan = Chars.toString(expectedPlan).replace("async jit", "async");
+            }
+
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
         }
     }
