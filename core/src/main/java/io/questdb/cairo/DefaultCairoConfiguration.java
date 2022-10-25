@@ -264,6 +264,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return getInactiveWriterTTL();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }

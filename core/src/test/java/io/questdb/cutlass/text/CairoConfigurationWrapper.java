@@ -218,6 +218,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return conf.getMetadataPoolCapacity();
     }

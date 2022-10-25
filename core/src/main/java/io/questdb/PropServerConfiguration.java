@@ -421,6 +421,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final boolean isWalSupported;
     private final int walRecreateDistressedSequencerAttempts;
+    private final long inactiveWalWriterTTL;
 
     public PropServerConfiguration(
             String root,
@@ -712,6 +713,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.idleCheckInterval = getLong(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
             this.inactiveReaderTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
+            this.inactiveWalWriterTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_WAL_WRITER_TTL, this.inactiveWriterTTL);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
@@ -2063,6 +2065,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultSymbolCapacity() {
             return defaultSymbolCapacity;
+        }
+
+        @Override
+        public long getInactiveWalWriterTTL() {
+            return inactiveWalWriterTTL;
         }
 
         @Override

@@ -64,7 +64,7 @@ public class TableSequencerAPI implements Closeable {
         this.engine = engine;
         this.createSequencerInstanceLambda = this::createSequencerInstance;
         this.createWalPoolLambda = this::createWalPool;
-        this.inactiveTtlUs = configuration.getInactiveWriterTTL() * 1000;
+        this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
     }
 

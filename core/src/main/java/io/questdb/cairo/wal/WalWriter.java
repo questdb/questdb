@@ -420,7 +420,7 @@ public class WalWriter implements TableWriterAPI {
                         final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         final String columnName = metadata.getColumnName(columnIndex);
 
-                        CopySegmentFileJob.rollColumnToSegment(ff,
+                        CopyWalSegmentUtils.rollColumnToSegment(ff,
                                 configuration.getWriterFileOpenOpts(),
                                 primaryColumn,
                                 secondaryColumn,

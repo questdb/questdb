@@ -127,6 +127,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    long getInactiveWalWriterTTL();
+
     int getMetadataPoolCapacity();
 
     int getDoubleToStrCastScale();

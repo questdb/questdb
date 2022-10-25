@@ -34,10 +34,10 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalWriter.*;
+import static io.questdb.cairo.wal.WalWriter.NEW_COL_RECORD_SIZE;
 
-public class CopySegmentFileJob {
-    private static final Log LOG = LogFactory.getLog(WalWriter.class);
+public class CopyWalSegmentUtils {
+    private static final Log LOG = LogFactory.getLog(CopyWalSegmentUtils.class);
     private static final int MEMORY_TAG = MemoryTag.MMAP_TABLE_WAL_WRITER;
 
     public static void rollColumnToSegment(
@@ -91,6 +91,7 @@ public class CopySegmentFileJob {
     private static boolean copyVarLenFile(FilesFacade ff, MemoryMA primaryColumn, MemoryMA secondaryColumn, long primaryFd, long secondaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
         long indexMapSize = (rowOffset + rowCount + 1) * Long.BYTES;
         long srcIndexAddr = TableUtils.mapRW(ff, secondaryColumn.getFd(), indexMapSize, MEMORY_TAG);
+        ff.madvise(srcIndexAddr, indexMapSize, Files.POSIX_MADV_SEQUENTIAL);
         try {
             long varStart = Unsafe.getUnsafe().getLong(srcIndexAddr + rowOffset * Long.BYTES);
             long varEnd = Unsafe.getUnsafe().getLong(srcIndexAddr + (rowOffset + rowCount) * Long.BYTES);
@@ -105,6 +106,8 @@ public class CopySegmentFileJob {
 
             long indexLen = (rowCount + 1) * Long.BYTES;
             long dstIndexAddr = TableUtils.mapRW(ff, secondaryFd, indexLen, MEMORY_TAG);
+            ff.madvise(dstIndexAddr, indexLen, Files.POSIX_MADV_SEQUENTIAL);
+
             Vect.shiftCopyFixedSizeColumnData(varStart, srcIndexAddr, rowOffset, rowOffset + rowCount, dstIndexAddr);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 4, (rowOffset + 1) * Long.BYTES);
             newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 5, indexLen);

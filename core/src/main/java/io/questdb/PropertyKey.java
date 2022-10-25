@@ -374,7 +374,8 @@ public enum PropertyKey {
     WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
-    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts");
+    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
