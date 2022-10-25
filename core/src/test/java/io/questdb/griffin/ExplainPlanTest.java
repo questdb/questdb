@@ -1993,11 +1993,10 @@ public class ExplainPlanTest extends AbstractGriffinTest {
 
     @Test
     public void testExplainUpdateWithFilter() throws SqlException {
-        compile("create table a ( l long, d double, ts timestamp) timestamp(ts)");
-        assertSql("explain update a set l = 20, d = d+rnd_double() " +
+        assertPlan("create table a ( l long, d double, ts timestamp) timestamp(ts)",
+                "update a set l = 20, d = d+rnd_double() " +
                         "where d < 100.0d and ts > dateadd('d', -1, now());",
-                "QUERY PLAN\n" +
-                        "UPDATE table: a\n" +
+                "UPDATE table: a\n" +
                         "    VirtualRecord\n" +
                         "      functions: [20,Double(0)+rnd_double()]\n" +
                         "        async jit filter\n" +

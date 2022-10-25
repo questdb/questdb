@@ -1477,12 +1477,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
-        planSink.reset();
-        RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-        return new ExplainPlanFactory(factory);
-    }
-
     protected PlanSink getPlanSink(CharSequence query) throws SqlException {
         RecordCursorFactory factory = null;
         try {
@@ -1496,9 +1490,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    //asserts plan without having to prefix query with 'explain ' or specify the fixed output header  
+    //asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc. 
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
-        try (ExplainPlanFactory planFactory = getPlanFactory(query);
+        StringSink sink = new StringSink();
+        sink.put("EXPLAIN ").put(query);
+
+        try (ExplainPlanFactory planFactory = getPlanFactory(sink);
              RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
 
             if (!JitUtil.isJitSupported()) {
@@ -1507,5 +1504,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
         }
+    }
+
+    protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
+        return (ExplainPlanFactory) compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
     }
 }
