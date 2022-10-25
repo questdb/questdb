@@ -426,11 +426,15 @@ public class TableSequencerAPI implements Closeable {
                         return;
                     }
                 }
+
+                // Sequencer is distressed, close before removing from the pool.
+                super.close();
                 if (pool != null) {
                     pool.seqRegistry.remove(getTableName(), this);
                 }
+            } else {
+                super.close();
             }
-            super.close();
         }
     }
 

@@ -83,7 +83,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
         final String tableName = testName.getMethodName();
         AtomicReference<Throwable> exception = new AtomicReference<>();
-        int iterations = 100;
+        int iterations = 50;
 
         AtomicInteger threadId = new AtomicInteger();
 
