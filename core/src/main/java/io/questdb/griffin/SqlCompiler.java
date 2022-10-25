@@ -1616,9 +1616,6 @@ public class SqlCompiler implements Closeable {
                         ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
                     throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
                 }
-                if (model.getTimestampFormat() == null) {
-                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                }
                 if (model.getDelimiter() < 0) {
                     model.setDelimiter((byte) ',');
                 }

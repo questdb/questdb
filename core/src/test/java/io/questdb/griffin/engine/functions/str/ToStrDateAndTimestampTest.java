@@ -57,6 +57,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "yy",
                 "yyy",
                 "yyyy",
+                // "YYYY", only used in PartitionBy as it relates to ISO Weeks
                 "M",
                 "MM",
                 "MMM",
@@ -68,7 +69,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "u",
                 "D",
                 "w",
-                "W",
+                // "ww", only used in PartitionBy as it relates to ISO Weeks
                 "a",
                 "H",
                 "HH",
