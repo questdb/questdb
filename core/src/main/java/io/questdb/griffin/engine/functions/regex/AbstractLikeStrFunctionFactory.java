@@ -69,9 +69,10 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 if (isCaseInsensitive()) {
                     flags |= Pattern.CASE_INSENSITIVE;
                 }
+                String new_pattern = p.replaceAll("\\\\","");
                 return new ConstLikeStrFunction(
                         value,
-                        Pattern.compile(p, flags).matcher("")
+                        Pattern.compile(new_pattern, flags).matcher("")
                 );
             }
             return BooleanConstant.FALSE;
