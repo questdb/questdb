@@ -58,9 +58,9 @@ public class TableSequencerAPI extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), "TableSequencerAPI", PoolListener.EV_POOL_OPEN);
     }
 
-    public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            tableSequencer.copyMetadataTo(metadata);
+            tableSequencer.getTableMetadata(sink);
         }
     }
 

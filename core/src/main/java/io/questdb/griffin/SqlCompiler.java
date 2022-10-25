@@ -105,7 +105,6 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final IndexBuilder rebuildIndex = new IndexBuilder();
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final MetadataFactory metadataFactory;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -132,7 +131,6 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
-        this.metadataFactory = new PooledMetadataFactory(configuration);
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(
                 configuration,
@@ -255,7 +253,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
-        Misc.free(metadataFactory);
     }
 
     @NotNull
@@ -445,8 +442,7 @@ public class SqlCompiler implements Closeable {
             String tableName = Chars.toString(tok);
             try (TableRecordMetadata tableMetadata = engine.getMetadata(
                     executionContext.getCairoSecurityContext(),
-                    tableName,
-                    metadataFactory
+                    tableName
             )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -629,7 +625,7 @@ public class SqlCompiler implements Closeable {
 
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
+                    int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || tok.charAt(0) != ')') {
                         if (tok != null) {
@@ -640,7 +636,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition())
                                 .put("invalid GEOHASH type literal, expected ')'");
                     }
-                    type = ColumnType.getGeoHashTypeWithBits(geosizeBits);
+                    type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
                 } else {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("missing GEOHASH precision");
@@ -948,7 +944,7 @@ public class SqlCompiler implements Closeable {
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
             // reader == null means it's compilation for WAL table
-            // before applyting to WAL writer
+            // before applying to WAL writer
             if (reader != null) {
                 final long timestamp;
                 try {
@@ -1129,8 +1125,7 @@ public class SqlCompiler implements Closeable {
                 try (
                         TableRecordMetadata metadata = engine.getMetadata(
                                 executionContext.getCairoSecurityContext(),
-                                queryModel.getTableName().token,
-                                metadataFactory
+                                queryModel.getTableName().token
                         )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
                         optimiser.optimiseUpdate(queryModel, executionContext, metadata);
@@ -1220,8 +1215,7 @@ public class SqlCompiler implements Closeable {
                 try (
                         TableRecordMetadata metadata = engine.getMetadata(
                                 executionContext.getCairoSecurityContext(),
-                                updateQueryModel.getTableName().token,
-                                metadataFactory
+                                updateQueryModel.getTableName().token
                         )
                 ) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
@@ -1780,8 +1774,7 @@ public class SqlCompiler implements Closeable {
         ObjList<Function> valueFunctions = null;
         try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
-                name.token,
-                metadataFactory
+                name.token
         )) {
             metadata.toReaderIndexes();
             final long structureVersion = metadata.getStructureVersion();

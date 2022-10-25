@@ -53,11 +53,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         runAddColumnRace(
                 barrier, tableName, iterations, 1,
                 () -> {
-                    try (SequencerMetadata metadata = new SequencerMetadata(engine.getConfiguration().getFilesFacade())) {
+                    try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
                         do {
-                            engine.getTableSequencerAPI().copyMetadataTo(tableName, metadata);
+                            engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {

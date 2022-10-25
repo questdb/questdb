@@ -24,11 +24,7 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -87,7 +83,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
-                    TableReaderMetadata r = e.getReader(i);
+                    R1 r = e.getReader(i);
                     if (r == null) {
                         try {
                             LOG.info()
@@ -130,11 +126,6 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         notifyListener(thread, tableName, PoolListener.EV_FULL, -1, -1);
         LOG.info().$("could not get, busy [table=`").utf8(tableName).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
         throw EntryUnavailableException.instance("unknown");
-    }
-
-    @NotNull
-    private TableReaderMetadata newMetadataInstance(CharSequence tableName, Entry e, int entryIndex) {
-        return new R(this, e, entryIndex, tableName);
     }
 
     public int getBusyCount() {
@@ -242,7 +233,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         for (Entry e : entries.values()) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    R r;
+                    R1 r;
                     if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getReader(i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
@@ -275,7 +266,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
     }
 
     private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = entry.getReader(index);
+        R1 r = entry.getReader(index);
         if (r != null) {
             r.goodbye();
             r.close();
@@ -302,6 +293,16 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         return e;
     }
 
+    @NotNull
+    private R1 newMetadataInstance(CharSequence tableName, Entry e, int entryIndex) {
+        if (tableSequencerAPI.hasSequencer(tableName)) {
+            R r = new R(this, e, entryIndex);
+            tableSequencerAPI.getTableMetadata(tableName, r);
+            return r;
+        }
+        return new LegacyR(this, e, entryIndex, tableName);
+    }
+
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
@@ -309,13 +310,13 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         }
     }
 
-    private boolean returnToPool(R reader) {
-        CharSequence name = reader.getTableName();
+    private boolean returnToPool(R1 r) {
+        CharSequence name = r.getTableName();
 
         long thread = Thread.currentThread().getId();
 
-        int index = reader.index;
-        final MetadataPool.Entry e = reader.entry;
+        int index = r.getIndex();
+        final MetadataPool.Entry e = r.getEntry();
         if (e == null) {
             return false;
         }
@@ -339,7 +340,18 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         throw CairoException.critical(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
     }
 
-    public static final class Entry {
+    private interface R1 extends TableRecordMetadata {
+
+        Entry getEntry();
+
+        int getIndex();
+
+        MetadataPool getPool();
+
+        void goodbye();
+    }
+
+    private static final class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
         final Object[] readers = new Object[ENTRY_SIZE];
@@ -355,33 +367,33 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
             Arrays.fill(releaseOrAcquireTimes, currentMicros);
         }
 
-        public Entry getNext() {
+        Entry getNext() {
             return next;
         }
 
-        public long getOwnerVolatile(int pos) {
+        long getOwnerVolatile(int pos) {
             return Unsafe.arrayGetVolatile(allocations, pos);
         }
 
-        public R getReader(int pos) {
-            return (R) readers[pos];
+        R1 getReader(int pos) {
+            return (R1) readers[pos];
         }
 
-        public long getReleaseOrAcquireTime(int pos) {
+        long getReleaseOrAcquireTime(int pos) {
             return releaseOrAcquireTimes[pos];
         }
 
-        public void setReader(int pos, TableReaderMetadata reader) {
+        void setReader(int pos, R1 reader) {
             readers[pos] = reader;
         }
     }
 
-    public static class R extends TableReaderMetadata {
+    private static class LegacyR extends TableReaderMetadata implements R1 {
         private final int index;
         private MetadataPool pool;
         private Entry entry;
 
-        public R(MetadataPool pool, Entry entry, int index, CharSequence name) {
+        public LegacyR(MetadataPool pool, Entry entry, int index, CharSequence name) {
             super(pool.getConfiguration(), Chars.toString(name));
             load();
             this.pool = pool;
@@ -391,8 +403,8 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
 
         @Override
         public void close() {
-            final MetadataPool pool = this.pool;
-            if (pool != null && entry != null) {
+            final MetadataPool pool = getPool();
+            if (pool != null && getEntry() != null) {
                 if (pool.returnToPool(this)) {
                     return;
                 }
@@ -400,7 +412,65 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
             super.close();
         }
 
-        private void goodbye() {
+        @Override
+        public Entry getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
+        @Override
+        public MetadataPool getPool() {
+            return pool;
+        }
+
+        public void goodbye() {
+            entry = null;
+            pool = null;
+        }
+    }
+
+    private static class R extends GenericTableRecordMetadata implements R1 {
+        private final int index;
+        private MetadataPool pool;
+        private Entry entry;
+
+        public R(MetadataPool pool, Entry entry, int index) {
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+        }
+
+        @Override
+        public void close() {
+            final MetadataPool pool = getPool();
+            if (pool != null && getEntry() != null) {
+                if (pool.returnToPool(this)) {
+                    return;
+                }
+            }
+            super.close();
+        }
+
+        @Override
+        public Entry getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
+        @Override
+        public MetadataPool getPool() {
+            return pool;
+        }
+
+        public void goodbye() {
             entry = null;
             pool = null;
         }

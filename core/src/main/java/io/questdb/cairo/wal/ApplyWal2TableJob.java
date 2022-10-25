@@ -68,7 +68,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         do {
             // security context is checked on writing to the WAL and can be ignored here
             try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
-                assert writer.getMetadata().getId() == tableId;
+                assert writer.getMetadata().getTableId() == tableId;
                 applyOutstandingWalTransactions(writer, engine, sqlToOperation);
                 lastAppliedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {

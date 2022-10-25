@@ -32,6 +32,7 @@ import io.questdb.tasks.TableWriterTask;
 import java.io.Closeable;
 
 public interface AsyncWriterCommand extends Closeable {
+
     long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
 
     AsyncWriterCommand deserialize(TableWriterTask task);

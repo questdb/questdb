@@ -24,15 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.ColumnMetadataCollection;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 
-public class GenericRecordMetadata extends BaseRecordMetadata {
+public class GenericRecordMetadata extends AbstractRecordMetadata {
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
-        if (from instanceof BaseRecordMetadata) {
-            final BaseRecordMetadata gm = (BaseRecordMetadata) from;
+        if (from instanceof AbstractRecordMetadata) {
+            final AbstractRecordMetadata gm = (AbstractRecordMetadata) from;
             for (int i = 0, n = gm.getColumnCount(); i < n; i++) {
-                to.add(gm.getColumnQuick(i));
+                to.add(gm.getColumnMetadata(i));
             }
         } else {
             for (int i = 0, n = from.getColumnCount(); i < n; i++) {
@@ -49,16 +51,39 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         }
     }
 
-    public static GenericRecordMetadata copyDense(BaseRecordMetadata writerMetadata) {
+    public static GenericRecordMetadata copyDense(TableRecordMetadata tableMetadata) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        int columnCount = writerMetadata.getColumnCount();
-        int timestampIndex = writerMetadata.getTimestampIndex();
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata column = writerMetadata.getColumnQuick(i);
-            if (column.getType() >= 0) {
-                metadata.add(column);
-                if (i == timestampIndex) {
-                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+        int columnCount = tableMetadata.getColumnCount();
+        int timestampIndex = tableMetadata.getTimestampIndex();
+        if (tableMetadata instanceof ColumnMetadataCollection) {
+            for (int i = 0; i < columnCount; i++) {
+                TableColumnMetadata column = ((ColumnMetadataCollection) tableMetadata).getColumnMetadata(i);
+                if (column.getType() >= 0) {
+                    metadata.add(column);
+                    if (i == timestampIndex) {
+                        metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                    }
+                }
+            }
+        } else {
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (columnType >= 0) {
+                    metadata.add(
+                            new TableColumnMetadata(
+                                    metadata.getColumnName(i),
+                                    metadata.getColumnHash(i),
+                                    columnType,
+                                    metadata.isColumnIndexed(i),
+                                    metadata.getIndexValueBlockCapacity(i),
+                                    metadata.isSymbolTableStatic(i),
+                                    metadata.getMetadata(i),
+                                    metadata.getWriterIndex(i)
+                            )
+                    );
+                    if (i == timestampIndex) {
+                        metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                    }
                 }
             }
         }

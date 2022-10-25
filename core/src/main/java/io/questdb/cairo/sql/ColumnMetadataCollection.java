@@ -22,38 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.cairo.TableColumnMetadata;
 
-import java.io.Closeable;
-
-public interface TableWriterAPI extends Closeable {
-    long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
-
-    long apply(UpdateOperation operation)  throws SqlException;
-
-    void truncate();
-
-    @Override
-    void close();
-
-    long commit();
-
-    long commitWithLag(long commitLag);
-
-    TableRecordMetadata getMetadata();
-
-    long getStructureVersion();
-
-    CharSequence getTableName();
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
+public interface ColumnMetadataCollection {
+    TableColumnMetadata getColumnMetadata(int columnIndex);
 }

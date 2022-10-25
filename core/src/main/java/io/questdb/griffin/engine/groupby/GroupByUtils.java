@@ -211,7 +211,7 @@ public class GroupByUtils {
 
                 // and finish with populating metadata for this factory
                 if (column.getAlias() == null) {
-                    groupByMetadata.add(BaseRecordMetadata.copyOf(metadata, index));
+                    groupByMetadata.add(AbstractRecordMetadata.copyOf(metadata, index));
                 } else {
                     groupByMetadata.add(
                             new TableColumnMetadata(

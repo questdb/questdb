@@ -24,46 +24,23 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
+public interface TableRecordMetadataSink {
 
-public class SequencerMetadataUpdater implements SequencerTableWriterSPI {
-    private final SequencerMetadata metadata;
-    private final CharSequence tableName;
-
-    public SequencerMetadataUpdater(SequencerMetadata metadata, CharSequence tableName) {
-        this.metadata = metadata;
-        this.tableName = tableName;
-    }
-
-    @Override
-    public void addColumn(
-            CharSequence name,
-            int type,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
+    void addColumn(
+            String columnName,
+            int columnType,
+            long columnHash,
+            boolean columnIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
-    ) {
-        metadata.addColumn(name, type);
-    }
+            boolean symbolTableStatic
+    );
 
-    public TableRecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public void removeColumn(CharSequence columnName) {
-        metadata.removeColumn(columnName);
-    }
-
-    @Override
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
-        metadata.renameColumn(columnName, newName);
-    }
+    void of(
+            String tableName,
+            int tableId,
+            int timestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount
+    );
 }

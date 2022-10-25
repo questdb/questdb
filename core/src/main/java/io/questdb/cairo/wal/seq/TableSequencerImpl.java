@@ -93,10 +93,29 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void copyMetadataTo(@NotNull SequencerMetadata copyTo) {
+    public void getTableMetadata(@NotNull TableRecordMetadataSink sink) {
         schemaLock.readLock().lock();
         try {
-            copyTo.copyFrom(metadata);
+
+            int columnCount;
+            sink.of(
+                    tableName,
+                    metadata.getTableId(),
+                    metadata.getTimestampIndex(),
+                    metadata.isSuspended(),
+                    metadata.getStructureVersion(),
+                    columnCount = metadata.getColumnCount()
+            );
+
+            for (int i = 0, n = columnCount; i < n; i++) {
+                sink.addColumn(
+                        metadata.getColumnName(i),
+                        metadata.getColumnType(i),
+                        metadata.getColumnHash(i), metadata.isColumnIndexed(i),
+                        metadata.getIndexValueBlockCapacity(i),
+                        metadata.isSymbolTableStatic(i)
+                );
+            }
         } finally {
             schemaLock.readLock().unlock();
         }

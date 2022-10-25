@@ -144,8 +144,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
-                                TableColumnMetadata columnMetadata0 = metadata0.getColumnQuick(i);
-                                TableColumnMetadata columnMetadata1 = metadata0.getColumnQuick(i);
+                                TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
+                                TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
                                 Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
                                 Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
                                 Assert.assertEquals(columnMetadata0.getHash(), columnMetadata1.getHash());

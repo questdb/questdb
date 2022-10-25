@@ -24,35 +24,103 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 
-public class TableWriterMetadata extends BaseRecordMetadata {
-    private int id;
+class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
+    private final String tableName;
+    private int tableId;
     private int metaFileSize;
     private int symbolMapCount;
     private int version;
     private int maxUncommittedRows;
     private long commitLag;
     private long structureVersion;
+    private boolean walEnabled;
 
-    public TableWriterMetadata(MemoryMR metaMem) {
+    public TableWriterMetadata(String tableName, MemoryMR metaMem) {
+        this.tableName = tableName;
         reload(metaMem);
+    }
+
+    @Override
+    public void close() {
+        // nothing to release
+    }
+
+    public int getFileDataSize() {
+        return metaFileSize;
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public void toReaderIndexes() {
+        // todo: what is this for?
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
+    }
+
+    public void setMaxUncommittedRows(int rows) {
+        this.maxUncommittedRows = rows;
+    }
+
+    public void setStructureVersion(long value) {
+        this.structureVersion = value;
+    }
+
+    public int getSymbolMapCount() {
+        return symbolMapCount;
+    }
+
+    public int getTableVersion() {
+        return version;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        return walEnabled;
     }
 
     public final void reload(MemoryMR metaMem) {
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap.clear();
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-        this.id = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
+        this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+        this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -84,56 +152,6 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         metaFileSize = (int) offset;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getDenseColumnCount() {
-        int count = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata.getQuick(i).getType() > 0) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
-    public int getFileDataSize() {
-        return metaFileSize;
-    }
-
-    public int getId() {
-        return id;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public void setMaxUncommittedRows(int rows) {
-        this.maxUncommittedRows = rows;
-    }
-
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    public void setStructureVersion(long value) {
-        this.structureVersion = value;
-    }
-
-    public int getSymbolMapCount() {
-        return symbolMapCount;
-    }
-
-    public int getTableVersion() {
-        return version;
-    }
-
     public void setTableVersion() {
         version = ColumnType.VERSION;
     }
@@ -159,6 +177,10 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         }
     }
 
+    void clearTimestampIndex() {
+        this.timestampIndex = -1;
+    }
+
     void removeColumn(int columnIndex) {
         TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         if (ColumnType.isSymbol(deletedMeta.getType())) {
@@ -175,9 +197,5 @@ public class TableWriterMetadata extends BaseRecordMetadata {
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
         oldColumnMetadata.setName(newNameStr);
-    }
-
-    void clearTimestampIndex() {
-        this.timestampIndex = -1;
     }
 }

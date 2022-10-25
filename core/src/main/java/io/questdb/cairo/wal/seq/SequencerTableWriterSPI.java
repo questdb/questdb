@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.TableWriterSPI;
 
-public interface SequencerMetadataWriterBackend extends TableWriterSPI {
+public interface SequencerTableWriterSPI extends TableWriterSPI {
 
     @Override
     default void addIndex(CharSequence columnName, int indexValueBlockSize) {

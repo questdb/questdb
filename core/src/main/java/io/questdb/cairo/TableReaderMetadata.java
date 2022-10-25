@@ -32,11 +32,12 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-public class TableReaderMetadata extends BaseRecordMetadata implements TableRecordMetadata, Mutable {
-    private Path path;
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private final String tableName;
+    private final CairoConfiguration configuration;
+    private Path path;
     private MemoryMR metaMem;
     private int partitionBy;
     private int tableId;
@@ -45,7 +46,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     private long structureVersion;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
-    private final CairoConfiguration configuration;
 
     public TableReaderMetadata(CairoConfiguration configuration, String tableName) {
         this.configuration = configuration;
@@ -61,13 +61,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         this.ff = configuration.getFilesFacade();
         this.tableName = null;
         this.metaMem = Vm.getMRInstance();
-    }
-
-    @Override
-    public void close() {
-        metaMem = Misc.free(metaMem);
-        path = Misc.free(path);
-        transitionMeta = Misc.free(transitionMeta);
     }
 
     public void applyTransitionIndex() {
@@ -158,6 +151,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         Misc.free(transitionMeta);
     }
 
+    @Override
+    public void close() {
+        metaMem = Misc.free(metaMem);
+        path = Misc.free(path);
+        transitionMeta = Misc.free(transitionMeta);
+    }
+
     public void copy(TableReaderMetadata metadata) {
         partitionBy = metadata.partitionBy;
         tableId = metadata.tableId;
@@ -220,14 +220,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return columnCount;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -245,6 +237,25 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     @Override
     public String getTableName() {
         return tableName;
+    }
+
+    @Override
+    public void toReaderIndexes() {
+        // Do nothing, already reading indexes
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public boolean isWalEnabled() {
+        return walEnabled;
     }
 
     public void load() {
@@ -271,6 +282,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             }
         }
     }
+
     public void load0(Path path) {
         load0(path, ColumnType.VERSION);
     }
@@ -287,6 +299,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+            // todo: should be boolean
             this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
@@ -321,14 +334,5 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             clear();
             throw e;
         }
-    }
-
-    public boolean isWalEnabled() {
-        return walEnabled;
-    }
-
-    @Override
-    public void toReaderIndexes() {
-        // Do nothing, already reading indexes
     }
 }

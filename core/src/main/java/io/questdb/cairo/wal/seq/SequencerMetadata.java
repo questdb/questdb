@@ -37,7 +37,7 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
+public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final boolean readonly;
     private final MemoryMARW metaMem;
@@ -288,7 +288,18 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        name,
+                        -1L,
+                        columnType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnMetadata.size()
+                )
+        );
         columnCount++;
     }
 
