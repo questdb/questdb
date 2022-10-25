@@ -150,7 +150,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void tesWalWritersUnknownTable() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "NotExist";
+            final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
@@ -160,8 +160,9 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.fail();
-            } catch (CairoError e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+            } catch (CairoException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not open read-write"));
+                MatcherAssert.assertThat(e.getMessage(), containsString(tableName));
             }
         });
     }

@@ -603,7 +603,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine);
+        return new ApplyWal2TableJob(engine, 1, 1);
     }
 
     protected static void drainWalQueue() {

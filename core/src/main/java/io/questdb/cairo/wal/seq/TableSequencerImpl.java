@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
@@ -49,7 +50,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
     private final Path path;
-    private final BinaryAlterFormatter alterCommandWalFormatter = new BinaryAlterFormatter();
+    private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final FilesFacade ff;
     private final int mkDirMode;
@@ -86,7 +87,9 @@ public class TableSequencerImpl implements TableSequencer {
     public void close() {
         schemaLock.writeLock().lock();
         try {
-            doClose();
+            if (open) {
+                doClose();
+            }
         } finally {
             schemaLock.writeLock().unlock();
         }
@@ -211,6 +214,16 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public long lastTxn() {
         return tableTransactionLog.lastTxn();
+    }
+
+    @TestOnly
+    public void setDistressed() {
+        schemaLock.writeLock().lock();
+        try {
+            this.distressed = true;
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     public void open() {

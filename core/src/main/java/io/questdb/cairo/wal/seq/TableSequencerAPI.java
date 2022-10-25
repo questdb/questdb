@@ -39,10 +39,13 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
@@ -51,11 +54,13 @@ public class TableSequencerAPI extends AbstractPool {
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
+    private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
         this.engine = engine;
         notifyListener(Thread.currentThread().getId(), "TableSequencerAPI", PoolListener.EV_POOL_OPEN);
+        this.createSequencerInstanceLambda = this::createSequencerInstance;
     }
 
     public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
@@ -92,15 +97,15 @@ public class TableSequencerAPI extends AbstractPool {
         }
     }
 
-    public int getNextWalId(final CharSequence tableName) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.getNextWalId();
-        }
-    }
-
     public TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
             return tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+        }
+    }
+
+    public int getNextWalId(final CharSequence tableName) {
+        try (TableSequencer tableSequencer = openSequencer(tableName)) {
+            return tableSequencer.getNextWalId();
         }
     }
 
@@ -116,21 +121,15 @@ public class TableSequencerAPI extends AbstractPool {
         return isWalTable(tableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade());
     }
 
-    public long lastTxn(final CharSequence tableName) {
-        try (TableSequencer sequencer = openSequencer(tableName)) {
-            return sequencer.lastTxn();
-        }
-    }
-
     public boolean isSuspended(final CharSequence tableName) {
         try (TableSequencer sequencer = openSequencer(tableName)) {
             return sequencer.isSuspended();
         }
     }
 
-    public void suspendTable(final CharSequence tableName) {
+    public long lastTxn(final CharSequence tableName) {
         try (TableSequencer sequencer = openSequencer(tableName)) {
-            sequencer.suspendTable();
+            return sequencer.lastTxn();
         }
     }
 
@@ -149,6 +148,19 @@ public class TableSequencerAPI extends AbstractPool {
     public void registerTable(int tableId, final TableStructure tableStructure) {
         //noinspection EmptyTryBlock
         try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
+        }
+    }
+
+    @TestOnly
+    public void setDistressed(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencer(tableName)) {
+            sequencer.setDistressed();
+        }
+    }
+
+    public void suspendTable(final CharSequence tableName) {
+        try (TableSequencer sequencer = openSequencer(tableName)) {
+            sequencer.suspendTable();
         }
     }
 
@@ -177,6 +189,14 @@ public class TableSequencerAPI extends AbstractPool {
         });
     }
 
+    @Nullable
+    private TableSequencerEntry createSequencerInstance(CharSequence tableNameStr) {
+        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (String) tableNameStr);
+        sequencer.reset();
+        sequencer.open();
+        return sequencer;
+    }
+
     private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
         throwIfClosed();
         // todo: GC again
@@ -196,20 +216,7 @@ public class TableSequencerAPI extends AbstractPool {
             return entry;
         }
 
-        if (entry != null) {
-            // Remove distressed entry
-            seqRegistry.remove(tableNameStr, entry);
-        }
-
-        entry = seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
-            if (isWalTable(tableNameStr, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
-                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
-                sequencer.reset();
-                sequencer.open();
-                return sequencer;
-            }
-            return null;
-        });
+        entry = seqRegistry.computeIfAbsent(tableNameStr, this.createSequencerInstanceLambda);
 
         if (entry == null) {
             throw new CairoError("Unknown table [name=`" + tableNameStr + "`]");

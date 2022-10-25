@@ -170,6 +170,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
         Misc.free(telemetryQueue);
+        sqlCompilerPool.releaseAll();
     }
 
     public void createTable(
@@ -258,9 +259,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, MetadataFactory metadataFactory) {
-        securityContext.checkWritePermission();
-        final String tableNameStr = Chars.toString(tableName);
-        if (tableSequencerAPI.hasSequencer(tableNameStr)) {
+        if (tableSequencerAPI.hasSequencer(tableName)) {
             // This is WAL table because sequencer exists
             final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
             tableSequencerAPI.copyMetadataTo(tableName, sequencerMetadata);
@@ -268,7 +267,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
 
         try {
-            return metadataFactory.openTableReaderMetadata(tableNameStr);
+            return metadataFactory.openTableReaderMetadata(Chars.toString(tableName));
         } catch (CairoException e) {
             try (TableReader reader = tryGetReaderRepairWithWriter(securityContext, tableName, e)) {
                 return metadataFactory.openTableReaderMetadata(reader);

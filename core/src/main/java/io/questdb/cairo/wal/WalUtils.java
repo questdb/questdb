@@ -24,6 +24,9 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.WorkerPool;
+
 public class WalUtils {
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_NAME_BASE = "wal";
@@ -37,4 +40,13 @@ public class WalUtils {
     public static final long SEQ_META_SUSPENDED = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String SEQ_DIR = "txn_seq";
+
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
+            workerPool.assign(applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
+    }
 }

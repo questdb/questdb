@@ -26,10 +26,10 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -51,10 +51,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final SqlToOperation sqlToOperation;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
 
-    public ApplyWal2TableJob(CairoEngine engine) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
-        this.sqlToOperation = new SqlToOperation(engine);
+        this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
     }
 
     public static long processWalTxnNotification(

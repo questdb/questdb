@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -58,7 +59,7 @@ public class TableTransactionLog implements Closeable {
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
-    private final Path rootPath = new Path();
+    private final StringSink rootPath = new StringSink();
     private long maxTxn;
 
     TableTransactionLog(FilesFacade ff) {
@@ -70,7 +71,6 @@ public class TableTransactionLog implements Closeable {
         Misc.free(txnMem);
         Misc.free(txnMetaMem);
         Misc.free(txnMetaMemIndex);
-        Misc.free(rootPath);
     }
 
     @NotNull
@@ -155,7 +155,9 @@ public class TableTransactionLog implements Closeable {
     }
 
     void open(Path path) {
-        this.rootPath.of(path);
+        this.rootPath.clear();
+        this.rootPath.put(path);
+
         openSmallFile(ff, path, path.length(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, path.length(), txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, path.length(), txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
@@ -336,6 +338,8 @@ public class TableTransactionLog implements Closeable {
                             return;
                         }
                     }
+                } else {
+                    throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
                 }
             } finally {
                 if (fdTxn > -1) {
@@ -348,7 +352,8 @@ public class TableTransactionLog implements Closeable {
                     ff.close(fdTxnMetaIndex);
                 }
             }
-            throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
+            // Set empty. This is not an error, it just means that there are no changes.
+            txnMetaOffset = txnMetaOffsetHi = 0;
         }
     }
 }

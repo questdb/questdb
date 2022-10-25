@@ -48,8 +48,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
@@ -1438,6 +1438,9 @@ public class WalWriter implements TableWriterAPI {
 
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
+                    }
+                    if ("newCol0".equals(columnName)) {
+                        LOG.info().$("newCol99 added").$();
                     }
                     LOG.info().$("added column to wal [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
