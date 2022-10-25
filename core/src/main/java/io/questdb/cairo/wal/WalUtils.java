@@ -32,6 +32,7 @@ public class WalUtils {
     public static final String CATALOG_FILE_NAME = "_catalog.txn";
     public static final String CATALOG_FILE_NAME_META_VAR = "_catalog.meta.d";
     public static final String CATALOG_FILE_NAME_META_INX = "_catalog.meta.i";
+    public static String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
     public static final long SEQ_META_OFFSET_STRUCTURE_VERSION = SEQ_META_OFFSET_WAL_VERSION + Integer.BYTES;

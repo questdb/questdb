@@ -417,6 +417,44 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = testName.getMethodName() + "_new";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            drainWalQueue();
+
+            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            compile("rename table " + tableName + " to " + newTableName);
+
+            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            Assert.assertEquals(table2SystemName, newTableSystemName);
+
+            drainWalQueue();
+
+            assertSql(newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+
+            for (int i = 0; i < 2; i++) {
+                engine.releaseInactive();
+                engine.getTableRegistry().reopen();
+
+                String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
+                Assert.assertEquals(newTableSystemName, newTableSystemName2);
+                assertSql(newTableName, "x\tsym2\tts\n" +
+                        "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testCreateWalDropColumnInsert() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

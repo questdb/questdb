@@ -619,17 +619,23 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         checkTableName(tableName);
         checkTableName(newName);
 
-        CharSequence systemTableName = getSystemTableName(tableName);
-        String lockedReason = lock(securityContext, systemTableName, "renameTable");
-        if (null == lockedReason) {
-            try {
-                rename0(path, tableName, otherPath, newName);
-            } finally {
-                unlock(securityContext, tableName, null, false);
-            }
+        CharSequence systemTableName = tableRegistry.getSystemTableName(tableName);
+        if (systemTableName != null) {
+            // WAL table
+            tableRegistry.rename(tableName, newName, Chars.toString(systemTableName));
         } else {
-            LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
-            throw EntryUnavailableException.instance(lockedReason);
+            systemTableName = getSystemTableName(tableName);
+            String lockedReason = lock(securityContext, systemTableName, "renameTable");
+            if (null == lockedReason) {
+                try {
+                    rename0(path, tableName, otherPath, newName);
+                } finally {
+                    unlock(securityContext, systemTableName, null, false);
+                }
+            } else {
+                LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
+                throw EntryUnavailableException.instance(lockedReason);
+            }
         }
     }
 

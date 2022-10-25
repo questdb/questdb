@@ -1402,7 +1402,8 @@ public class WalWriter implements TableWriterFrontend {
             if (symbolMapReader != null) {
                 int key = symbolMapReader.keyOf(value);
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    putSym0(columnIndex, value);
+                    getPrimaryColumn(columnIndex).putInt(key);
+                    setRowValueNotNull(columnIndex);
                     return;
                 }
                 putSym0(columnIndex, value);
