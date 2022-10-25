@@ -156,11 +156,12 @@ public class TableTransactionLog implements Closeable {
 
     void open(Path path) {
         this.rootPath.clear();
-        this.rootPath.put(path);
+        path.toSink(this.rootPath);
 
-        openSmallFile(ff, path, path.length(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-        openSmallFile(ff, path, path.length(), txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
-        openSmallFile(ff, path, path.length(), txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+        final int pathLength = path.length();
+        openSmallFile(ff, path, pathLength, txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
+        openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
         maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
         long maxStructureVersion = txnMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);

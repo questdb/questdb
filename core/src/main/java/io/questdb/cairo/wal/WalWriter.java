@@ -1434,9 +1434,6 @@ public class WalWriter implements TableWriterAPI {
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount);
                     }
-                    if ("newCol0".equals(columnName)) {
-                        LOG.info().$("newCol99 added").$();
-                    }
                     LOG.info().$("added column to wal [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName).put("' added, cannot commit because of concurrent table definition change ");

@@ -170,7 +170,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
         Misc.free(telemetryQueue);
-        sqlCompilerPool.releaseAll();
+        if (sqlCompilerPool != null) {
+            sqlCompilerPool.releaseAll();
+        }
     }
 
     public void createTable(
