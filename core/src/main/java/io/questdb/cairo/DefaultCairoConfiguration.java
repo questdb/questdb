@@ -810,6 +810,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return false;
     }

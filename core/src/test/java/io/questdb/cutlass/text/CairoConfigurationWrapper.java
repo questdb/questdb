@@ -776,6 +776,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return conf.isO3QuickSortEnabled();
     }

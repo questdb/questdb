@@ -136,6 +136,7 @@ public abstract class AbstractCairoTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+    public static int recreateDistressedSequencerAttempts = 3;
 
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
@@ -466,6 +467,11 @@ public abstract class AbstractCairoTest {
             @Override
             public boolean isWalSupported() {
                 return true;
+            }
+
+            @Override
+            public int getWalRecreateDistressedSequencerAttempts() {
+                return recreateDistressedSequencerAttempts;
             }
         };
         metrics = Metrics.enabled();

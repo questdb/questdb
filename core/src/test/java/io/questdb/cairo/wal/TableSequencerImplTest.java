@@ -37,6 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
 import org.hamcrest.number.OrderingComparison;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -44,6 +45,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TableSequencerImplTest extends AbstractCairoTest {
+    @BeforeClass
+    public static void setUpStatic() {
+        recreateDistressedSequencerAttempts = Integer.MAX_VALUE;
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testCopyMetadataRace() throws Exception {
@@ -89,26 +95,20 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         int threadIdValue = threadId.getAndIncrement();
                         long sv = 0;
                         do {
-                            try {
-                                long sv2 = engine.getTableSequencerAPI().lastTxn(tableName);
-                                if (threadIdValue != 0) {
-                                    engine.getTableSequencerAPI().setDistressed(tableName);
-                                    if (sv != sv2) {
-                                        sv = sv2;
-                                        LOG.info().$("destroyed sv ").$(sv).$();
-                                    }
-                                } else {
-                                    try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, 0)) {
-                                        long transactions = 0;
-                                        while (cursor.hasNext()) {
-                                            transactions++;
-                                        }
-                                        MatcherAssert.assertThat(transactions, OrderingComparison.greaterThanOrEqualTo(sv2));
-                                    }
+                            long sv2 = engine.getTableSequencerAPI().lastTxn(tableName);
+                            if (threadIdValue != 0) {
+                                engine.getTableSequencerAPI().setDistressed(tableName);
+                                if (sv != sv2) {
+                                    sv = sv2;
+                                    LOG.info().$("destroyed sv ").$(sv).$();
                                 }
-                            } catch (CairoException e) {
-                                if (!Chars.contains(e.getFlyweightMessage(), "distressed")) {
-                                    throw e;
+                            } else {
+                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, 0)) {
+                                    long transactions = 0;
+                                    while (cursor.hasNext()) {
+                                        transactions++;
+                                    }
+                                    MatcherAssert.assertThat(transactions, OrderingComparison.greaterThanOrEqualTo(sv2));
                                 }
                             }
                         } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
@@ -144,7 +144,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTxnCursorRace() throws Exception {
+    public void testTxnDistressedCursorRace() throws Exception {
         int readers = 3;
         CyclicBarrier barrier = new CyclicBarrier(readers + 1);
         final String tableName = testName.getMethodName();
@@ -163,7 +163,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                                     lastTxn = cursor.getTxn();
                                 }
                             }
-
                         } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
@@ -217,16 +216,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {
-                while (true) {
-                    try {
-                        addColumn(ww, "newCol" + i, ColumnType.INT);
-                        break;
-                    } catch (CairoException e) {
-                        if (!Chars.contains(e.getFlyweightMessage(), "distressed")) {
-                            throw e;
-                        }
-                    }
-                }
+                addColumn(ww, "newCol" + i, ColumnType.INT);
                 if (exception.get() != null) {
                     break;
                 }

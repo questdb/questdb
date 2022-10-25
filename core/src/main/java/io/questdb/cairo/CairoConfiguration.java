@@ -396,6 +396,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    int getWalRecreateDistressedSequencerAttempts();
+
     boolean isIOURingEnabled();
 
     boolean isO3QuickSortEnabled();
