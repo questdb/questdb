@@ -371,6 +371,7 @@ public enum PropertyKey {
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
     WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_SLEEP_TIMEOUT("wal.apply.worker.sleep.timeout"),
     WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
     CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
     CAIRO_WAL_SUPPORTED("cairo.wal.supported"),

@@ -265,7 +265,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getInactiveWalWriterTTL() {
-        return getInactiveWriterTTL();
+        return 60_000;
     }
 
     @Override
@@ -280,7 +280,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalPurgeInterval() {
-        return 300000;
+        return 30_000;
     }
 
     @Override

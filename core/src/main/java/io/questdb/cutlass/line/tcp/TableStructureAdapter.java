@@ -135,7 +135,7 @@ class TableStructureAdapter implements TableStructure {
 
     @Override
     public boolean isWalEnabled() {
-        return cairoConfiguration.getWalEnabledDefault();
+        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
