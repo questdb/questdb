@@ -280,7 +280,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclas
     }
 
     jboolean result = FALSE;
-    FILE_BASIC_INFO info; // https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_extd_dir_info
+    FILE_BASIC_INFO info;
     if (GetFileInformationByHandleEx((HANDLE) fd, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO))) {
         result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
     }
