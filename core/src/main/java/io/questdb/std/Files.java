@@ -404,6 +404,12 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
+    public native static int unlink(long lpszSoftLink);
+
+    public static int unlink(LPSZ softLink) {
+        return unlink(softLink.address());
+    }
+
     public native static long write(long fd, long address, long len, long offset);
 
     private native static int getPosixFadvRandom();

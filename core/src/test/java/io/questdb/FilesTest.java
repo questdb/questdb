@@ -717,6 +717,58 @@ public class FilesTest {
         });
     }
 
+    @Test
+    public void testUnlink() throws Exception {
+        assertMemoryLeak(() -> {
+            File tmpFolder = temporaryFolder.newFolder("unlink");
+            final String fileName = "いくつかの列.d";
+            final String fileContent = "**unlink** deletes a name from the filesystem." + EOL +
+                    "If the name IS a symbolic link, the link is removed." + EOL +
+                    "If the name is the last link to the file, and no processes have" + EOL +
+                    "the file open, the file is deleted and the space it was using is " + EOL +
+                    "made available for reuse. Otherwise, if any process maintains the" + EOL +
+                    "file open, it will remain in existence until the last file descriptor" + EOL +
+                    "referring to it is closed." + EOL;
+
+
+            try (
+                    Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
+                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$();
+            ) {
+                createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
+
+                // create the soft link
+                createSoftLink(coldRoot, srcPath, linkPath);
+
+                // check contents are the same
+                assertEqualsFileContent(linkPath, fileContent);
+
+                // unlink soft link
+                Assert.assertEquals(0, Files.unlink(linkPath));
+
+                // check original file still exists and contents are the same
+                assertEqualsFileContent(srcPath, fileContent);
+
+                // however the link no longer exists
+                File link = new File(linkPath.toString());
+                Assert.assertFalse(link.exists());
+                Assert.assertFalse(link.canRead());
+                Assert.assertEquals(-1, Files.openRO(linkPath));
+            }
+        });
+    }
+
+    private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
+        Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
+        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+        Assert.assertEquals(0, Files.unlink(softLinkFilePath)); // implicit additional tests for unlink
+        Assert.assertFalse(Files.isSoftLink(softLinkFilePath));
+        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+        Assert.assertFalse(Files.isSoftLink(srcFilePath));
+        Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
+    }
+
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
@@ -845,10 +897,7 @@ public class FilesTest {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 
                 // create the soft link
-                Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
-                Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-                Assert.assertFalse(Files.isSoftLink(srcFilePath));
-                Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
+                createSoftLink(coldRoot, srcFilePath, softLinkFilePath);
 
                 // check contents are the same
                 assertEqualsFileContent(softLinkFilePath, fileContent);
@@ -860,9 +909,7 @@ public class FilesTest {
                 assertEqualsFileContent(srcFilePath, fileContent);
 
                 // create the soft link again
-                Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-                Assert.assertFalse(Files.isSoftLink(srcFilePath));
-                Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
+                createSoftLink(coldRoot, srcFilePath, softLinkFilePath);
 
                 // rename the link
                 Assert.assertEquals(0, Files.rename(softLinkFilePath, softLinkRenamedFilePath));

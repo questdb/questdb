@@ -126,6 +126,8 @@ public interface FilesFacade {
 
     boolean truncate(long fd, long size);
 
+    int unlink(LPSZ softLink);
+
     void walk(Path src, FindVisitor func);
 
     long write(long fd, long address, long len, long offset);

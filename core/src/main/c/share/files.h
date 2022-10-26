@@ -258,6 +258,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    unlink
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    mkdir
  * Signature: (JI)I
  */

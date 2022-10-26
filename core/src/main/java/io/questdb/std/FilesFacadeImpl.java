@@ -315,6 +315,11 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.truncate(fd, size);
     }
 
+    @Override
+    public int unlink(LPSZ softLink) {
+        return Files.unlink(softLink);
+    }
+
     public void walk(Path path, FindVisitor func) {
         int len = path.length();
         long p = findFirst(path);

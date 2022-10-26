@@ -280,9 +280,9 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclas
     }
 
     jboolean result = FALSE;
-    FILE_ATTRIBUTE_TAG_INFO info;
-    if (GetFileInformationByHandleEx((HANDLE) fd, FileAttributeTagInfo, &info, sizeof(FILE_ATTRIBUTE_TAG_INFO))) {
-        result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+    FILE_ID_EXTD_DIR_INFO info; // https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_extd_dir_info
+    if (GetFileInformationByHandleEx((HANDLE) fd, FileIdExtdDirectoryInfo, &info, sizeof(FILE_ID_EXTD_DIR_INFO))) {
+        result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && info.ReparsePointTag == IO_REPARSE_TAG_SYMLINK;
     }
     CloseHandle(fd);
     SaveLastError();
@@ -311,6 +311,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     }
     SaveLastError();
     return -1;
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
+    // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
+    // If the path points to a symbolic link, the symbolic link is deleted, not the target.
+    return Java_io_questdb_std_Files_remove(e, cl, lpszSoftLink) ? 0 : -1;
 }
 
 
