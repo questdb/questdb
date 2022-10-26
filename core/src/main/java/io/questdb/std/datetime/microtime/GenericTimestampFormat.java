@@ -399,6 +399,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         int second = 0;
         int millis = 0;
         int micros = 0;
+        int week = 0;
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
@@ -620,7 +621,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
                 case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     TimestampFormatUtils.assertRemaining(pos+1, hi);
-                    Numbers.parseInt(in, pos, pos+=2);
+                    week = Numbers.parseInt(in, pos, pos+=2);
                     break;
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                     TimestampFormatUtils.assertRemaining(pos, hi);
@@ -722,6 +723,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
         TimestampFormatUtils.assertNoTail(pos, hi);
 
-        return TimestampFormatUtils.compute(locale, era, year, month, day, hour, minute, second, millis, micros, timezone, offset, hourType);
+        return TimestampFormatUtils.compute(locale, era, year, month, week, day, hour, minute, second, millis, micros, timezone, offset, hourType);
     }
 }

@@ -237,6 +237,7 @@ public class TimestampFormatUtils {
             int era,
             int year,
             int month,
+            int week,
             int day,
             int hour,
             int minute,
@@ -288,14 +289,29 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime = Timestamps.yearMicros(year, leap)
-                + Timestamps.monthOfYearMicros(month, leap)
-                + (day - 1) * Timestamps.DAY_MICROS
-                + hour * Timestamps.HOUR_MICROS
-                + minute * Timestamps.MINUTE_MICROS
-                + second * Timestamps.SECOND_MICROS
-                + (long) millis * Timestamps.MILLI_MICROS
-                + micros;
+        long datetime;
+        if (week == 0) {
+            datetime = Timestamps.yearMicros(year, leap)
+                    + Timestamps.monthOfYearMicros(month, leap)
+                    + (day - 1) * Timestamps.DAY_MICROS
+                    + hour * Timestamps.HOUR_MICROS
+                    + minute * Timestamps.MINUTE_MICROS
+                    + second * Timestamps.SECOND_MICROS
+                    + (long) millis * Timestamps.MILLI_MICROS
+                    + micros;
+        } else {
+            long yearMicros = Timestamps.yearMicros(year, leap);
+            // 4 Jan of year Y
+            // dow() is 0 based, we need to correct it to 1-based, hence + 4
+            final long correction = Timestamps.getDayOfWeek(yearMicros + Timestamps.monthOfYearMicros(1, leap) + 4 * Timestamps.DAY_MICROS) + 3;
+            datetime = yearMicros
+                    + (week * 7L + day - correction) * Timestamps.DAY_MICROS
+                    + hour * Timestamps.HOUR_MICROS
+                    + minute * Timestamps.MINUTE_MICROS
+                    + second * Timestamps.SECOND_MICROS
+                    + (long) millis * Timestamps.MILLI_MICROS
+                    + micros;
+        }
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year, leap);

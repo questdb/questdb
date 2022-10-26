@@ -106,7 +106,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testIsoWeekOfYear() throws Exception {
-        assertThat("ww, YYYY", "2010-01-01T00:00:00.000Z", "06, 2010");
+        assertThat("ww, YYYY", "2010-02-08T00:00:00.000Z", "06, 2010");
     }
 
     @Test
@@ -162,6 +162,12 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testFormatMicros3Micros() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000 2", "y-MM-dd HH:mm:ss.SSS U", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatISOWeek() throws NumericException {
+        assertFormat("05", "ww", "2022-01-31T02:02:02.000012Z");
+        assertMicros("yyyy-ww HH:mm:ss.SSS U", "2022-01-31T02:02:02.001002Z", "2022-05 02:02:02.001 002");
     }
 
     @Test
