@@ -473,6 +473,11 @@ public abstract class AbstractCairoTest {
             public int getWalRecreateDistressedSequencerAttempts() {
                 return recreateDistressedSequencerAttempts;
             }
+
+            @Override
+            public long getInactiveWalWriterTTL() {
+                return -10000;
+            }
         };
         metrics = Metrics.enabled();
         engine = new CairoEngine(configuration, metrics, 2);

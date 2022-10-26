@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -41,6 +40,8 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
+
+import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
@@ -142,12 +143,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .$(e2.getFlyweightMessage())
                     .$();
 
-            throw SqlException.$(tableNamePosition, "table '")
-                    .put(tableName)
-                    .put("' could not be altered: [")
-                    .put(e2.getErrno())
-                    .put("] ")
-                    .put(e2.getFlyweightMessage());
+            throw e2;
         }
         return 0;
     }
@@ -374,11 +370,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             tableWriter.dropIndex(columnName);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition)
-                    .put(e.getFlyweightMessage())
-                    .put("[errno=")
-                    .put(e.getErrno())
-                    .put(']');
+            if (e.getErrno() == METADATA_VALIDATION) {
+                throw SqlException.position(tableNamePosition)
+                        .put(e.getFlyweightMessage())
+                        .put("[errno=")
+                        .put(e.getErrno())
+                        .put(']');
+            }
+            throw e;
         }
     }
 

@@ -51,9 +51,9 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
-    private static O3PartitionPurgeJob purgeJob;
     private static final Path path = new Path();
     private static final Path other = new Path();
+    private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -808,7 +808,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 // attempt to reattach
-                assertFailure(
+                assertFailureCairo(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                         "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
                 );
@@ -1831,7 +1831,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     ff.close(fd);
                 }
 
-                assertFailure(
+                assertFailureCairo(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                         "cannot read min, max timestamp from the column"
                 );
@@ -1867,14 +1867,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 Assert.assertEquals(0, ff.rename(src, dst));
-                assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
+                assertFailureCairo("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
                 // Existing partition but wrong folder name
                 dst = Path.PATH2.get().of(configuration.getRoot()).concat(tableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(tableName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 
-                assertFailure(
+                assertFailureCairo(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
                         "invalid timestamp column data in detached partition, data does not match partition directory name"
                 );
@@ -2109,7 +2109,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
                 // attempt to reattach
-                assertFailure(
+                assertFailureCairo(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
                         expectedErrorMessage
                 );
@@ -2168,6 +2168,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             compile(operation, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
+        }
+    }
+
+    private void assertFailureCairo(String operation, String errorMsg) throws SqlException {
+        try {
+            compile(operation, sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
         }
     }

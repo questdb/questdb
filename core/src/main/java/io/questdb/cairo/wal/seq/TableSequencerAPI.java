@@ -102,8 +102,17 @@ public class TableSequencerAPI implements Closeable {
                         try (TableSequencer tableSequencer = openSequencerLocked(nameSink, SequencerLockType.NONE)) {
                             lastTxn = tableSequencer.lastTxn();
                             tableId = tableSequencer.getTableId();
+                        } catch (CairoException ex) {
+                            LOG.critical().$("could not open table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
+                                    .$(", error=").$((Throwable) ex).I$();
+                            return;
                         }
-                        callback.onTable(tableId, nameSink, lastTxn);
+                        try {
+                            callback.onTable(tableId, nameSink, lastTxn);
+                        } catch (CairoException ex) {
+                            LOG.critical().$("could not process table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
+                                    .$(", error=").$((Throwable) ex).I$();
+                        }
                     }
                 }
             });
