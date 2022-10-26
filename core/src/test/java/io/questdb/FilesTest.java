@@ -762,9 +762,6 @@ public class FilesTest {
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
         Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
         Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-        Assert.assertEquals(0, Files.unlink(softLinkFilePath)); // implicit additional tests for unlink
-        Assert.assertFalse(Files.isSoftLink(softLinkFilePath));
-        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
         Assert.assertFalse(Files.isSoftLink(srcFilePath));
         Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
     }
