@@ -157,6 +157,40 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n" +
+                        "1970-01-03T06:00:00.000000Z\t6\n" +
+                        "1970-01-03T12:00:00.000000Z\t6\n" +
+                        "1970-01-03T18:00:00.000000Z\t2\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false);
+    }
+
+    @Test
+    public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
@@ -9262,6 +9296,120 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 "k",
                 false);
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\ttime\tsum1\tsum2\n" +
+                            "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
+                            "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "time\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\tts\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tts\tsum2\n" +
+                            "33.423793766512645\t28.964416248629917\t1970-01-01T00:00:00.000000Z\t32.11038924761886\n" +
+                            "20.686394200400652\t18.863001213785466\t1970-01-01T01:00:00.000000Z\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), a.ts, sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "ts\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
     }
 
     @Test

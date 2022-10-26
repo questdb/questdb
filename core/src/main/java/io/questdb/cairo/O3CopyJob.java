@@ -29,9 +29,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.tasks.O3CopyTask;
-import io.questdb.tasks.O3PartitionUpdateTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -97,8 +99,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             TableWriter tableWriter,
             BitmapIndexWriter indexWriter
     ) {
-        final long opts = tableWriter.getConfiguration().getWriterFileOpenOpts();
-        boolean directIoFlag = Os.type != Os.WINDOWS || opts != CairoConfiguration.O_NONE;
+        final boolean directIoFlag = tableWriter.preferDirectIO();
 
         LOG.debug().$("o3 copy [blockType=").$(blockType)
                 .$(", columnType=").$(columnType)
@@ -472,16 +473,15 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             try {
                 O3Utils.close(ff, srcTimestampFd);
             } finally {
-                notifyWriter(
-                        srcOooPartitionLo,
-                        srcOooPartitionHi,
+                tableWriter.o3NotifyPartitionUpdate(
                         timestampMin,
                         timestampMax,
                         partitionTimestamp,
-                        srcOooMax,
-                        srcDataMax,
+                        srcOooPartitionLo,
+                        srcOooPartitionHi,
                         partitionMutates,
-                        tableWriter
+                        srcOooMax,
+                        srcDataMax
                 );
             }
         } finally {
@@ -710,104 +710,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     // lowest timestamp of partition where data is headed
-
-    static void notifyWriter(
-            long srcOooPartitionLo,
-            long srcOooPartitionHi,
-            long timestampMin,
-            long timestampMax,
-            long partitionTimestamp,
-            long srcOooMax,
-            long srcDataMax,
-            boolean partitionMutates,
-            TableWriter tableWriter
-    ) {
-        final long cursor = tableWriter.getO3PartitionUpdatePubSeq().next();
-        if (cursor > -1) {
-            publishUpdPartitionSizeTaskHarmonized(
-                    cursor,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    partitionTimestamp,
-                    srcDataMax,
-                    partitionMutates,
-                    tableWriter
-            );
-        } else {
-            publishUpdPartitionSizeTaskContended(
-                    cursor,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    timestampMin,
-                    timestampMax,
-                    partitionTimestamp,
-                    srcOooMax,
-                    srcDataMax,
-                    partitionMutates,
-                    tableWriter
-            );
-        }
-    }
-
-    private static void publishUpdPartitionSizeTaskContended(
-            long cursor,
-            long srcOooPartitionLo,
-            long srcOooPartitionHi,
-            long timestampMin,
-            long timestampMax,
-            long partitionTimestamp,
-            long srcOooMax,
-            long srcDataMax,
-            boolean partitionMutates,
-            TableWriter tableWriter
-    ) {
-        while (cursor == -2) {
-            cursor = tableWriter.getO3PartitionUpdatePubSeq().next();
-        }
-
-        if (cursor > -1) {
-            publishUpdPartitionSizeTaskHarmonized(
-                    cursor,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    partitionTimestamp,
-                    srcDataMax,
-                    partitionMutates,
-                    tableWriter
-            );
-        } else {
-            tableWriter.o3PartitionUpdateSynchronized(
-                    timestampMin,
-                    timestampMax,
-                    partitionTimestamp,
-                    srcOooPartitionLo,
-                    srcOooPartitionHi,
-                    partitionMutates,
-                    srcOooMax,
-                    srcDataMax
-            );
-        }
-    }
-
-    private static void publishUpdPartitionSizeTaskHarmonized(
-            long cursor,
-            long srcOooPartitionLo,
-            long srcOooPartitionHi,
-            long partitionTimestamp,
-            long srcDataMax,
-            boolean partitionMutates,
-            TableWriter tableWriter
-    ) {
-        final O3PartitionUpdateTask task = tableWriter.getO3PartitionUpdateQueue().get(cursor);
-        task.of(
-                partitionTimestamp,
-                srcOooPartitionLo,
-                srcOooPartitionHi,
-                srcDataMax,
-                partitionMutates
-        );
-        tableWriter.getO3PartitionUpdatePubSeq().done(cursor);
-    }
 
     private static void copyData(
             FilesFacade ff,

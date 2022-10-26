@@ -186,7 +186,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             retryQueue.add(purgeTaskRun);
             useful = true;
         }
-        commit();
+
+        if (useful) {
+            commit();
+        }
         return useful;
     }
 

@@ -102,7 +102,7 @@ class LineTcpWriterJob implements Job, Closeable {
     }
 
     private void commitTables() {
-        final long wallClockMillis = millisecondClock.getTicks();
+        long wallClockMillis = millisecondClock.getTicks();
         if (wallClockMillis > nextCommitTime) {
             long minTableNextCommitTime = Long.MAX_VALUE;
             for (int n = 0, sz = assignedTables.size(); n < sz; n++) {
@@ -111,6 +111,8 @@ class LineTcpWriterJob implements Job, Closeable {
                 // time greater than millis and that will be our nextCommitTime
                 try {
                     long tableNextCommitTime = assignedTables.getQuick(n).commitIfIntervalElapsed(wallClockMillis);
+                    // get current time again, commit is not instant and take quite some time.
+                    wallClockMillis = millisecondClock.getTicks();
                     if (tableNextCommitTime < minTableNextCommitTime) {
                         // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;

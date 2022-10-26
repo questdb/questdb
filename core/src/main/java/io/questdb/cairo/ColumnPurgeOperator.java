@@ -86,10 +86,8 @@ public class ColumnPurgeOperator implements Closeable {
             longBytes = 0;
         }
         closePurgeLogCompleteFile();
-        path.close();
-        if (txnScoreboard != null) {
-            txnScoreboard.close();
-        }
+        Misc.free(path);
+        txnScoreboard = Misc.free(txnScoreboard);
     }
 
     public boolean purge(ColumnPurgeTask task) {

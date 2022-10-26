@@ -175,6 +175,14 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private boolean checkState(long ptr, byte c) {
+        if (!rollBufferUnusable && !useLineRollBuf && !delayedOutQuote) {
+            this.fieldHi++;
+            return true;
+        }
+        return checkStateSlow(ptr, c);
+    }
+
+    private boolean checkStateSlow(long ptr, byte c) {
         if (rollBufferUnusable) {
             eol(ptr, c);
             return false;
@@ -284,12 +292,21 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     protected void onColumnDelimiter(long lo) {
+        if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
+            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
+            this.fieldLo = this.fieldHi;
+        } else {
+            onColumnDelimiterSlow(lo);
+        }
+    }
+
+    private void onColumnDelimiterSlow(long lo) {
         checkEol(lo);
 
         if (inQuote || ignoreEolOnce) {
             return;
         }
-        stashField(fieldIndex++);
+        stashFieldSlow(fieldIndex++);
     }
 
     protected void onLineEnd(long ptr) throws LineLimitException {
@@ -389,6 +406,15 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     private void stashField(int fieldIndex) {
+        if (lineCount > 0 && fieldIndex <= fieldMax && lastQuotePos < 0) {
+            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);
+            this.fieldLo = this.fieldHi;
+        } else {
+            stashFieldSlow(fieldIndex);
+        }
+    }
+
+    private void stashFieldSlow(int fieldIndex) {
         if (lineCount == 0 && fieldIndex >= fieldMax) {
             addField();
         }

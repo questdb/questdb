@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -73,6 +70,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
@@ -91,9 +89,9 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 if (filter != null) {
                     filter.init(this, executionContext);
                     filter.toTop();
-                    findRestrictedWithFilter(filter, symbolKeys);
+                    findRestrictedWithFilter(filter, symbolKeys, circuitBreaker);
                 } else {
-                    findRestrictedNoFilter(symbolKeys);
+                    findRestrictedNoFilter(symbolKeys, circuitBreaker);
                 }
             }
         } else {
@@ -109,9 +107,9 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 if (filter != null) {
                     filter.init(this, executionContext);
                     filter.toTop();
-                    findAllWithFilter(filter, distinctSymbols);
+                    findAllWithFilter(filter, distinctSymbols, circuitBreaker);
                 } else {
-                    findAllNoFilter(distinctSymbols);
+                    findAllNoFilter(distinctSymbols, circuitBreaker);
                 }
             }
         }
@@ -143,7 +141,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         return false;
     }
 
-    private void findAllNoFilter(int distinctCount) {
+    private void findAllNoFilter(int distinctCount, SqlExecutionCircuitBreaker circuitBreaker) {
         DataFrame frame = dataFrameCursor.next();
         int foundSize = 0;
         while (frame != null) {
@@ -152,6 +150,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (foundKeys.add(key)) {
@@ -165,7 +164,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private void findAllWithFilter(Function filter, int distinctCount) {
+    private void findAllWithFilter(Function filter, int distinctCount, SqlExecutionCircuitBreaker circuitBreaker) {
         DataFrame frame = dataFrameCursor.next();
         int foundSize = 0;
         while (frame != null) {
@@ -174,6 +173,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && foundKeys.add(key)) {
@@ -187,7 +187,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private void findRestrictedNoFilter(IntHashSet symbolKeys) {
+    private void findRestrictedNoFilter(IntHashSet symbolKeys, SqlExecutionCircuitBreaker circuitBreaker) {
         DataFrame frame = dataFrameCursor.next();
         int searchSize = symbolKeys.size();
         int foundSize = 0;
@@ -197,6 +197,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (symbolKeys.contains(key) && foundKeys.add(key)) {
@@ -210,7 +211,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private void findRestrictedWithFilter(Function filter, IntHashSet symbolKeys) {
+    private void findRestrictedWithFilter(Function filter, IntHashSet symbolKeys, SqlExecutionCircuitBreaker circuitBreaker) {
         DataFrame frame = dataFrameCursor.next();
         int searchSize = symbolKeys.size();
         int foundSize = 0;
@@ -220,6 +221,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && symbolKeys.contains(key) && foundKeys.add(key)) {

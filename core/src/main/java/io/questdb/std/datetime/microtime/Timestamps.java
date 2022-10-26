@@ -814,6 +814,25 @@ final public class Timestamps {
         }
     }
 
+    /**
+     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
+     * @param micros
+     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
+     */
+    public static long getIsoWeekMicrosOffset(long micros) {
+        return ((getDayOfWeek(micros) <= 3) ? 4 : -3) * DAY_MICROS;
+    }
+
+    /**
+     * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
+     * @param year
+     * @return difference in the days from the start of the year (January 1st) and the first ISO week
+     */
+    public static int getIsoYearDayOffset(int year) {
+        int dayOfTheWeekOfEndOfPreviousYear = getDayOfTheWeekOfEndOfYear(year - 1);
+        return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ?  0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
+    }
+
     public static long toMicros(int y, int m, int d, int h, int mi) {
         return toMicros(y, isLeapYear(y), m, d, h, mi);
     }

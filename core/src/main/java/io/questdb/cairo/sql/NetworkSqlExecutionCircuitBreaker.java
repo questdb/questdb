@@ -42,7 +42,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private long buffer;
     private int testCount;
     private long fd = -1;
-    private long powerUpTime;
+    private long powerUpTime = Long.MAX_VALUE;
     private final int memoryTag;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
@@ -56,6 +56,8 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         long timeout = configuration.getTimeout();
         if (timeout > 0) {
             this.timeout = timeout;
+        } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {
+            this.timeout = -1;
         } else {
             this.timeout = Long.MAX_VALUE;
         }
@@ -79,6 +81,16 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return fd;
     }
 
+    @Override
+    public void unsetTimer() {
+        powerUpTime = Long.MAX_VALUE;
+    }
+
+    @Override
+    public boolean isTimerSet() {
+        return powerUpTime < Long.MAX_VALUE;
+    }
+
     public void resetMaxTimeToDefault() {
         this.timeout = defaultMaxTime;
     }
@@ -92,11 +104,16 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (testCount < throttle) {
             testCount++;
         } else {
-            testCount = 0;
-            testTimeout();
-            if (testConnection(this.fd)) {
-                throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
-            }
+            statefulThrowExceptionIfTrippedNoThrottle();
+        }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedNoThrottle() {
+        testCount = 0;
+        testTimeout();
+        if (testConnection(this.fd)) {
+            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
     }
 
@@ -130,7 +147,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return this;
     }
 
-    private boolean testConnection(long fd) {
+    protected boolean testConnection(long fd) {
         assert fd != -1;
         final int nRead = nf.peek(fd, buffer, bufferSize);
 

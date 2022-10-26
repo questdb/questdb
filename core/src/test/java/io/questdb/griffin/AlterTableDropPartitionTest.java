@@ -211,14 +211,9 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp > 0 ", sqlExecutionContext).getType());
 
                     String zeroCount = "count\n0\n";
-                    assertPartitionResult(zeroCount,"2025");
-                    assertPartitionResult(
-                            "count\n" +
-                            "124\n",
-                            "2024"
-                    );
-                    assertPartitionResult(zeroCount, "2018");
-                    assertPartitionResult(zeroCount, "2020");
+                    for (int i = 2018; i < 2025; i++) {
+                        assertPartitionResult(zeroCount, String.valueOf(i));
+                    }
                 }
         );
     }

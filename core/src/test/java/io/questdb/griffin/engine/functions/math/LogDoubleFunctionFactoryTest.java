@@ -33,7 +33,7 @@ public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testPositive() throws SqlException {
-        call(2.0).andAssert(0.6931471805599453, 0.0000000001);
+        call(2.0).andAssert(0.3010299956639812, 0.0000000001);
     }
 
     @Test
@@ -41,7 +41,13 @@ public class LogDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(-2.0).andAssert(Double.NaN, 0.000001);
     }
 
+    @Test
+    public void testSimple() throws SqlException {
+        call(1000).andAssert(3, 0.000001);
+    }
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new LogDoubleFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new LogDoubleFunctionFactory();
     }
 }

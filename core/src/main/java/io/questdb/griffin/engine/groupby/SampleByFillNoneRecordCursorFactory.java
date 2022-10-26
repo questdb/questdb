@@ -45,6 +45,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     private final SampleByFillNoneRecordCursor cursor;
 
     public SampleByFillNoneRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
@@ -52,7 +53,6 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             @NotNull ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             int timestampIndex,
@@ -65,11 +65,13 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
-        Map map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
+        final Map map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
+        final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
         this.cursor = new SampleByFillNoneRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 this.recordFunctions,
                 timestampIndex,
                 timestampSampler,

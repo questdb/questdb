@@ -341,9 +341,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 }
             } catch (CairoException e) {
                 LOG.error().$("failed to drop partition [table=").$(tableName)
-                        .$(",ts=").$ts(partitionTimestamp)
-                        .$(",errno=").$(e.getErrno())
-                        .$(",error=").$(e.getFlyweightMessage())
+                        .$(", ts=").$ts(partitionTimestamp)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
                         .I$();
 
                 throw putPartitionName(SqlException.$(tableNamePosition, "could not remove partition '"),

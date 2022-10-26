@@ -46,6 +46,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
+    public void testAggByHourReoptimization() throws Exception {
+        assertQuery("hour\tsum\n" +
+                        "14\t2.0\n",
+                "SELECT hour(ts), sum(amount)\n" +
+                        "FROM trades\n" +
+                        "WHERE symbol = 'BTC-USD' " +
+                        "AND ts > dateadd('d', -1, to_timestamp('2018-01-02T01:30:40', 'yyyy-MM-ddTHH:mm:ss') )\n" +
+                        "ORDER BY hour ASC",
+                "CREATE TABLE trades AS " +
+                        "(select 'BTC-USD'::symbol symbol, 'Buy'::symbol side, 1.0 price, 2.0 amount, to_timestamp('2018-01-01T14:11:40', 'yyyy-MM-ddTHH:mm:ss') as ts " +
+                        " from long_sequence(1) ) " +
+                        " timestamp(ts) ",
+                null,
+                true,
+                true,
+                true);
+    }
+
+    @Test
     public void testOOMInRostiInitRelasesAllocatedNativeMemory() throws Exception {
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {
             int counter = 0;

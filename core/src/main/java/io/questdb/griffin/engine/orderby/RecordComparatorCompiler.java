@@ -134,7 +134,6 @@ public class RecordComparatorCompiler {
         asm.iload(2);
         asm.ireturn();
 
-
         // update ifne jumps to jump to "p" position
         for (int i = 0, n = branches.size(); i < n; i++) {
             asm.setJmp(branches.getQuick(i), p);
@@ -345,7 +344,7 @@ public class RecordComparatorCompiler {
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
 
             int methodIndex;
-            String getterType  = fieldType;
+            String getterType = fieldType;
             if (columnType == ColumnType.LONG128) {
                 // Special case, Long128 is 2 longs of type J on comparison
                 fieldTypeIndices.add(typeIndex);

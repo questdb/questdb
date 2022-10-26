@@ -35,7 +35,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set y = y from tbly y where tblx.x = tbly.y and tblx.x > 10",
                 "update tblx set y = ".length(),
-                "Ambiguous column name",
+                "Ambiguous column [name=y]",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
