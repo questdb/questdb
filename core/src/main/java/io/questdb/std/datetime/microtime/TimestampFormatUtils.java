@@ -302,7 +302,7 @@ public class TimestampFormatUtils {
         } else {
             long yearMicros = Timestamps.yearMicros(year, leap);
             // 4 Jan of year Y
-            // dow() is 0 based, we need to correct it to 1-based, hence + 4
+            // correction formula is taken from https://en.wikipedia.org/wiki/ISO_week_date
             final long correction = Timestamps.getDayOfWeek(yearMicros + Timestamps.monthOfYearMicros(1, leap) + 4 * Timestamps.DAY_MICROS) + 3;
             datetime = yearMicros
                     + (week * 7L + day - correction) * Timestamps.DAY_MICROS
