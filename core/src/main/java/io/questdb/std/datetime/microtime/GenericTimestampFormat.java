@@ -392,7 +392,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     @Override
     public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
         int day = 1;
-        int week = 0;
         int month = 1;
         int year = 1970;
         int hour = 0;
@@ -621,7 +620,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
                 case TimestampFormatCompiler.OP_ISO_WEEK_OF_YEAR:
                     TimestampFormatUtils.assertRemaining(pos+1, hi);
-                    week = Numbers.parseInt(in, pos, pos+=2);
+                    Numbers.parseInt(in, pos, pos+=2);
                     break;
                 case TimestampFormatCompiler.OP_DAY_OF_WEEK:
                     TimestampFormatUtils.assertRemaining(pos, hi);
@@ -723,6 +722,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
         TimestampFormatUtils.assertNoTail(pos, hi);
 
-        return TimestampFormatUtils.compute(locale, era, year, month, week, day, hour, minute, second, millis, micros, timezone, offset, hourType);
+        return TimestampFormatUtils.compute(locale, era, year, month, day, hour, minute, second, millis, micros, timezone, offset, hourType);
     }
 }
