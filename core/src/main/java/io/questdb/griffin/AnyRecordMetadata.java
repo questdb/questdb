@@ -22,28 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.griffin;
 
-import io.questdb.std.Mutable;
+import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.ColumnType;
 
-public interface TableRecordMetadataSink extends Mutable {
+public final class AnyRecordMetadata extends AbstractRecordMetadata {
+    public static final AnyRecordMetadata INSTANCE = new AnyRecordMetadata();
 
-    void addColumn(
-            String columnName,
-            int columnType,
-            long columnHash,
-            boolean columnIndexed,
-            int indexValueBlockCapacity,
-            boolean symbolTableStatic,
-            int writerIndex
-    );
+    private AnyRecordMetadata() {
+        columnCount = 0;
+    }
 
-    void of(
-            String tableName,
-            int tableId,
-            int timestampIndex,
-            boolean suspended,
-            long structureVersion,
-            int columnCount
-    );
+    // this is a hack metadata, which will be able to validate any column name as index 0 and type LONG
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
+        return 0;
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return ColumnType.LONG;
+    }
 }

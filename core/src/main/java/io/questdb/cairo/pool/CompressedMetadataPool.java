@@ -39,10 +39,10 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 import java.util.Map;
 
-public class MetadataPool extends AbstractPool implements ResourcePool<TableRecordMetadata> {
+public class CompressedMetadataPool extends AbstractPool implements ResourcePool<TableRecordMetadata> {
 
     public static final int ENTRY_SIZE = 32;
-    private static final Log LOG = LogFactory.getLog(MetadataPool.class);
+    private static final Log LOG = LogFactory.getLog(CompressedMetadataPool.class);
     private static final long UNLOCKED = -1L;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
@@ -54,15 +54,11 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
     private final int maxEntries;
     private final TableSequencerAPI tableSequencerAPI;
 
-    public MetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public CompressedMetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
         super(configuration, configuration.getInactiveReaderTTL());
         this.maxSegments = configuration.getReaderPoolMaxSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
         this.tableSequencerAPI = tableSequencerAPI;
-    }
-
-    public Map<CharSequence, Entry> entries() {
-        return entries;
     }
 
     @Override
@@ -101,6 +97,8 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
                     } else {
                         notifyListener(thread, tableName, PoolListener.EV_GET, e.index, i);
                     }
+
+                    r.tryReload();
 
                     if (isClosed()) {
                         e.setReader(i, null);
@@ -279,6 +277,10 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         }
     }
 
+    Map<CharSequence, Entry> entries() {
+        return entries;
+    }
+
     private Entry getEntry(CharSequence name) {
         checkClosed();
 
@@ -297,7 +299,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
     private R1 newMetadataInstance(CharSequence tableName, Entry e, int entryIndex) {
         if (tableSequencerAPI.hasSequencer(tableName)) {
             R r = new R(this, e, entryIndex);
-            tableSequencerAPI.getTableMetadata(tableName, r);
+            tableSequencerAPI.getTableMetadata(tableName, r, true);
             return r;
         }
         return new LegacyR(this, e, entryIndex, tableName);
@@ -316,7 +318,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         long thread = Thread.currentThread().getId();
 
         int index = r.getIndex();
-        final MetadataPool.Entry e = r.getEntry();
+        final CompressedMetadataPool.Entry e = r.getEntry();
         if (e == null) {
             return false;
         }
@@ -346,9 +348,11 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
 
         int getIndex();
 
-        MetadataPool getPool();
+        CompressedMetadataPool getPool();
 
         void goodbye();
+
+        void tryReload();
     }
 
     private static final class Entry {
@@ -388,12 +392,12 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         }
     }
 
-    private static class LegacyR extends TableReaderMetadata implements R1 {
+    private static class LegacyR extends DynamicTableReaderMetadata implements R1 {
         private final int index;
-        private MetadataPool pool;
+        private CompressedMetadataPool pool;
         private Entry entry;
 
-        public LegacyR(MetadataPool pool, Entry entry, int index, CharSequence name) {
+        public LegacyR(CompressedMetadataPool pool, Entry entry, int index, CharSequence name) {
             super(pool.getConfiguration(), Chars.toString(name));
             load();
             this.pool = pool;
@@ -403,7 +407,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
 
         @Override
         public void close() {
-            final MetadataPool pool = getPool();
+            final CompressedMetadataPool pool = getPool();
             if (pool != null && getEntry() != null) {
                 if (pool.returnToPool(this)) {
                     return;
@@ -423,7 +427,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         }
 
         @Override
-        public MetadataPool getPool() {
+        public CompressedMetadataPool getPool() {
             return pool;
         }
 
@@ -431,14 +435,19 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
             entry = null;
             pool = null;
         }
+
+        @Override
+        public void tryReload() {
+            reload();
+        }
     }
 
     private static class R extends GenericTableRecordMetadata implements R1 {
         private final int index;
-        private MetadataPool pool;
+        private CompressedMetadataPool pool;
         private Entry entry;
 
-        public R(MetadataPool pool, Entry entry, int index) {
+        public R(CompressedMetadataPool pool, Entry entry, int index) {
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -446,7 +455,7 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
 
         @Override
         public void close() {
-            final MetadataPool pool = getPool();
+            final CompressedMetadataPool pool = getPool();
             if (pool != null && getEntry() != null) {
                 if (pool.returnToPool(this)) {
                     return;
@@ -466,13 +475,18 @@ public class MetadataPool extends AbstractPool implements ResourcePool<TableReco
         }
 
         @Override
-        public MetadataPool getPool() {
+        public CompressedMetadataPool getPool() {
             return pool;
         }
 
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        @Override
+        public void tryReload() {
+            pool.tableSequencerAPI.reloadMetadataConditionally(getTableName(), getStructureVersion(), this, true);
         }
     }
 }

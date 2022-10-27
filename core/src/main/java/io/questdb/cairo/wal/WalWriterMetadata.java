@@ -72,7 +72,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             long columnHash,
             boolean columnIndexed,
             int indexValueBlockCapacity,
-            boolean symbolTableStatic
+            boolean symbolTableStatic,
+            int writerIndex
     ) {
         addColumn0(columnName, columnType);
     }
@@ -84,8 +85,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         this.timestampIndex = timestampIndex;
         this.suspended = suspended;
         this.structureVersion = structureVersion;
-        this.columnCount = 0;
-        this.columnMetadata.clear();
     }
 
     public void addColumn(CharSequence columnName, int columnType) {
@@ -119,25 +118,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     @Override
     public void toReaderIndexes() {
-        // Remove deleted columns from the metadata, e.g. make it reader metadata.
-        // Deleted columns have negative type.
-        int copyTo = 0;
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = columnMetadata.getQuick(i).getType();
-            if (columnType > 0) {
-                if (copyTo != i) {
-                    TableColumnMetadata columnMeta = columnMetadata.get(i);
-                    columnMetadata.set(copyTo, columnMeta);
-                    if (i == timestampIndex) {
-                        timestampIndex = copyTo;
-                    }
-                    columnNameIndexMap.put(columnMeta.getName(), copyTo);
-                }
-                copyTo++;
-            }
-        }
-        columnCount = copyTo;
-        columnMetadata.setPos(columnCount);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -181,6 +162,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
+        // todo: why string ?
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());

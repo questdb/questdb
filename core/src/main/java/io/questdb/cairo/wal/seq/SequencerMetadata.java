@@ -33,6 +33,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -43,7 +44,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
 
-    private long structureVersion = -1;
+    private final AtomicLong structureVersion = new AtomicLong(-1);
     private int tableId;
     private String tableName;
     private boolean suspended;
@@ -65,7 +66,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     @Override
@@ -90,12 +91,12 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             addColumn0(name, type);
         }
 
-        this.structureVersion = structureVersion;
+        this.structureVersion.set(structureVersion);
         columnCount = columnMetadata.size();
     }
 
     public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.tableName, metadata.tableId, metadata.structureVersion, metadata.suspended);
+        copyFrom(metadata, metadata.tableName, metadata.tableId, metadata.structureVersion.get(), metadata.suspended);
     }
 
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
@@ -117,7 +118,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     @Override
     public long getStructureVersion() {
-        return structureVersion;
+        return structureVersion.get();
     }
 
     @Override
@@ -180,7 +181,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
 
         loadSequencerMetadata(roMetaMem);
-        structureVersion = roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
+        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
@@ -202,7 +203,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
 
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
@@ -216,7 +217,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnNameIndexMap.removeEntry(columnName);
         columnNameIndexMap.put(newNameStr, columnIndex);
 
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     void syncToMetaFile() {
@@ -224,7 +225,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         // Size of metadata
         metaMem.putInt(0);
         metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion);
+        metaMem.putLong(structureVersion.get());
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);

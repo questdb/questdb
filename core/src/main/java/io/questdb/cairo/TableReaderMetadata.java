@@ -147,6 +147,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public void clear() {
+        super.clear();
         Misc.free(metaMem);
         Misc.free(transitionMeta);
     }
@@ -241,7 +242,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public void toReaderIndexes() {
-        // Do nothing, already reading indexes
+        throw new UnsupportedOperationException();
     }
 
     @Override

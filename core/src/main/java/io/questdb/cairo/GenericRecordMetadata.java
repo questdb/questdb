@@ -134,13 +134,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         throw CairoException.duplicateColumn(meta.getName());
     }
 
-    public void clear() {
-        columnMetadata.clear();
-        columnNameIndexMap.clear();
-        columnCount = 0;
-        timestampIndex = -1;
-    }
-
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final int index = columnNameIndexMap.keyIndex(columnName, lo, hi);

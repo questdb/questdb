@@ -71,7 +71,7 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
 
     @Override
     public void toReaderIndexes() {
-        // todo: what is this for?
+        throw new UnsupportedOperationException();
     }
 
     @Override

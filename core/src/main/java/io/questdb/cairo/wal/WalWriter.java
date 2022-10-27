@@ -123,7 +123,7 @@ public class WalWriter implements TableWriterAPI {
 
             metadata = new WalWriterMetadata(ff);
 
-            tableSequencerAPI.getTableMetadata(tableName, metadata);
+            tableSequencerAPI.getTableMetadata(tableName, metadata, false);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);

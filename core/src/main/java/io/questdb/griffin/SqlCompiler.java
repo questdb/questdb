@@ -440,7 +440,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             String tableName = Chars.toString(tok);
-            try (TableRecordMetadata tableMetadata = engine.getMetadata(
+            try (TableRecordMetadata tableMetadata = engine.getCompressedMetadata(
                     executionContext.getCairoSecurityContext(),
                     tableName
             )) {
@@ -1123,7 +1123,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 try (
-                        TableRecordMetadata metadata = engine.getMetadata(
+                        TableRecordMetadata metadata = engine.getCompressedMetadata(
                                 executionContext.getCairoSecurityContext(),
                                 queryModel.getTableName().token
                         )) {
@@ -1213,7 +1213,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 try (
-                        TableRecordMetadata metadata = engine.getMetadata(
+                        TableRecordMetadata metadata = engine.getUncompressedMetadata(
                                 executionContext.getCairoSecurityContext(),
                                 updateQueryModel.getTableName().token
                         )
@@ -1772,11 +1772,10 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableRecordMetadata metadata = engine.getMetadata(
+        try (TableRecordMetadata metadata = engine.getCompressedMetadata(
                 executionContext.getCairoSecurityContext(),
                 name.token
         )) {
-            metadata.toReaderIndexes();
             final long structureVersion = metadata.getStructureVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableName(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();

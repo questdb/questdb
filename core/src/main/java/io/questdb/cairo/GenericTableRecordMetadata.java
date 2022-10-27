@@ -39,7 +39,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             long columnHash,
             boolean columnIndexed,
             int indexValueBlockCapacity,
-            boolean symbolTableStatic
+            boolean symbolTableStatic,
+            int writerIndex
     ) {
         add(
                 new TableColumnMetadata(
@@ -50,14 +51,13 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
                         indexValueBlockCapacity,
                         symbolTableStatic,
                         null,
-                        -1
+                        writerIndex
                 )
         );
     }
 
     @Override
     public void of(String tableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        clear();
         this.tableName = tableName;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;

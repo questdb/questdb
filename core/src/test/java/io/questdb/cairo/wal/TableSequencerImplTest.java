@@ -57,7 +57,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         TestUtils.await(barrier);
 
                         do {
-                            engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
+                            engine.getTableSequencerAPI().getTableMetadata(tableName, metadata, false);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {

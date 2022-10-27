@@ -62,7 +62,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
-    private final MetadataPool metadataPool;
+    private final UncompressedMetadataPool uncompressedMetadataPool;
+    private final CompressedMetadataPool compressedMetadataPool;
     private final CairoConfiguration configuration;
     private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -91,7 +92,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
-        this.metadataPool = new MetadataPool(configuration, tableSequencerAPI);
+        this.uncompressedMetadataPool = new UncompressedMetadataPool(configuration, tableSequencerAPI);
+        this.compressedMetadataPool = new CompressedMetadataPool(configuration, tableSequencerAPI);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
@@ -133,8 +135,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
+        boolean b4 = compressedMetadataPool.releaseAll();
+        boolean b5 = uncompressedMetadataPool.releaseAll();
         messageBus.reset();
-        return b1 & b2 & b3;
+        return b1 & b2 & b3 & b4 & b5;
     }
 
     @TestOnly
@@ -146,7 +150,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-        Misc.free(metadataPool);
+        Misc.free(uncompressedMetadataPool);
+        Misc.free(compressedMetadataPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
@@ -251,23 +256,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return messageBus;
     }
 
-    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName) {
-        return metadataPool.get(tableName);
+    public TableRecordMetadata getUncompressedMetadata(CairoSecurityContext securityContext, CharSequence tableName) {
+        return uncompressedMetadataPool.get(tableName);
+    }
 
-//        if (tableSequencerAPI.hasSequencer(tableNameStr)) {
-//            // This is WAL table because sequencer exists
-//            final SequencerMetadata sequencerMetadata = metadataFactory.getSequencerMetadata();
-//            tableSequencerAPI.getTableMetadata(tableName, sequencerMetadata);
-//            return sequencerMetadata;
-//        }
-//
-//        try {
-//            return metadataFactory.openTableReaderMetadata(tableNameStr);
-//        } catch (CairoException e) {
-//            try (TableReader reader = tryGetReaderRepairWithWriter(securityContext, tableName, e)) {
-//                return metadataFactory.openTableReaderMetadata(reader);
-//            }
-//        }
+    public TableRecordMetadata getCompressedMetadata(CairoSecurityContext securityContext, CharSequence tableName) {
+        return compressedMetadataPool.get(tableName);
     }
 
     public Metrics getMetrics() {
@@ -438,11 +432,16 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
         checkTableName(tableName);
         String lockedReason = writerPool.lock(tableName, lockReason);
-        if (lockedReason == OWNERSHIP_REASON_NONE) {
-            boolean locked = readerPool.lock(tableName);
-            if (locked) {
-                LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                return null;
+        if (lockedReason == null) { // not locked
+            if (readerPool.lock(tableName)) {
+                if (compressedMetadataPool.lock(tableName)) {
+                    if (uncompressedMetadataPool.lock(tableName)) {
+                        LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
+                        return null;
+                    }
+                    compressedMetadataPool.unlock(tableName);
+                }
+                readerPool.unlock(tableName);
             }
             writerPool.unlock(tableName);
             return BUSY_READER;
@@ -487,7 +486,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean releaseAllReaders() {
-        return readerPool.releaseAll();
+        boolean b1 = compressedMetadataPool.releaseAll();
+        boolean b2 = uncompressedMetadataPool.releaseAll();
+        return readerPool.releaseAll() & b1 & b2;
     }
 
     @TestOnly
@@ -499,7 +500,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         boolean useful = writerPool.releaseInactive();
         useful |= readerPool.releaseInactive();
         useful |= tableSequencerAPI.releaseInactive();
-        useful |= metadataPool.releaseInactive();
+        useful |= uncompressedMetadataPool.releaseInactive();
+        useful |= compressedMetadataPool.releaseInactive();
         return useful;
     }
 
@@ -567,6 +569,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         checkTableName(tableName);
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer, newTable);
+        compressedMetadataPool.unlock(tableName);
+        uncompressedMetadataPool.unlock(tableName);
         LOG.info().$("unlocked [table=`").utf8(tableName).$("`]").$();
     }
 
@@ -613,6 +617,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
             int error = ff.errno();
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).I$();
+            // todo: add table names
             throw CairoException.critical(error).put("Rename failed");
         }
     }

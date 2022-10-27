@@ -58,9 +58,9 @@ public class TableSequencerAPI extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), "TableSequencerAPI", PoolListener.EV_POOL_OPEN);
     }
 
-    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink, boolean compress) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            tableSequencer.getTableMetadata(sink);
+            tableSequencer.getTableMetadata(sink, compress);
         }
     }
 
@@ -143,6 +143,19 @@ public class TableSequencerAPI extends AbstractPool {
     public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
         try (TableSequencer tableSequencer = openSequencer(tableName)) {
             return tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+        }
+    }
+
+    public void reloadMetadataConditionally(
+            final CharSequence tableName,
+            long expectedStructureVersion,
+            TableRecordMetadataSink sink,
+            boolean compress
+    ) {
+        try (TableSequencer tableSequencer = openSequencer(tableName)) {
+            if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
+                tableSequencer.getTableMetadata(sink, compress);
+            }
         }
     }
 

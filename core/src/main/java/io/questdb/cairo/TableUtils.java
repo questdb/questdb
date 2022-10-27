@@ -183,7 +183,7 @@ public final class TableUtils {
             @NotNull QueryModel model,
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
-        final Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
+        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
         if (!ColumnType.isCursor(function.getType())) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }

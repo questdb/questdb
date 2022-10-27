@@ -93,35 +93,6 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void getTableMetadata(@NotNull TableRecordMetadataSink sink) {
-        schemaLock.readLock().lock();
-        try {
-
-            int columnCount;
-            sink.of(
-                    tableName,
-                    metadata.getTableId(),
-                    metadata.getTimestampIndex(),
-                    metadata.isSuspended(),
-                    metadata.getStructureVersion(),
-                    columnCount = metadata.getColumnCount()
-            );
-
-            for (int i = 0, n = columnCount; i < n; i++) {
-                sink.addColumn(
-                        metadata.getColumnName(i),
-                        metadata.getColumnType(i),
-                        metadata.getColumnHash(i), metadata.isColumnIndexed(i),
-                        metadata.getIndexValueBlockCapacity(i),
-                        metadata.isSymbolTableStatic(i)
-                );
-            }
-        } finally {
-            schemaLock.readLock().unlock();
-        }
-    }
-
-    @Override
     public TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo) {
         checkDistressed();
         if (metadata.getStructureVersion() == structureVersionLo) {
@@ -132,19 +103,76 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
+    public int getNextWalId() {
+        return (int) walIdGenerator.getNextId();
+    }
+
+    @Override
+    public long getStructureVersion() {
+        return metadata.getStructureVersion();
+    }
+
+    @Override
+    public int getTableId() {
+        return metadata.getTableId();
+    }
+
+    @Override
+    public void getTableMetadata(@NotNull TableRecordMetadataSink sink, boolean compress) {
+        schemaLock.readLock().lock();
+        try {
+
+            int columnCount = metadata.getColumnCount();
+            int timestampIndex = metadata.getTimestampIndex();
+            int compressedTimestampIndex = -1;
+            sink.clear();
+
+            int compressedColumnCount = 0;
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (columnType > -1 || !compress) {
+                    sink.addColumn(
+                            metadata.getColumnName(i),
+                            columnType,
+                            metadata.getColumnHash(i), metadata.isColumnIndexed(i),
+                            metadata.getIndexValueBlockCapacity(i),
+                            metadata.isSymbolTableStatic(i),
+                            i
+                    );
+                    if (i == timestampIndex) {
+                        compressedTimestampIndex = compressedColumnCount;
+                    }
+                    compressedColumnCount++;
+                }
+            }
+
+            sink.of(
+                    tableName,
+                    metadata.getTableId(),
+                    compressedTimestampIndex,
+                    metadata.isSuspended(),
+                    metadata.getStructureVersion(),
+                    compressedColumnCount
+            );
+        } finally {
+            schemaLock.readLock().unlock();
+        }
+    }
+
+    @Override
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         checkDistressed();
         return tableTransactionLog.getCursor(seqTxn);
     }
 
     @Override
-    public int getNextWalId() {
-        return (int) walIdGenerator.getNextId();
+    public boolean isSuspended() {
+        return metadata.isSuspended();
     }
 
     @Override
-    public int getTableId() {
-        return metadata.getTableId();
+    public long lastTxn() {
+        return tableTransactionLog.lastTxn();
     }
 
     @Override
@@ -210,11 +238,6 @@ public class TableSequencerImpl implements TableSequencer {
         metadata.suspendTable();
     }
 
-    @Override
-    public boolean isSuspended() {
-        return metadata.isSuspended();
-    }
-
     public String getTableName() {
         return tableName;
     }
@@ -225,11 +248,6 @@ public class TableSequencerImpl implements TableSequencer {
 
     public boolean isOpen() {
         return open;
-    }
-
-    @Override
-    public long lastTxn() {
-        return tableTransactionLog.lastTxn();
     }
 
     public void open() {
