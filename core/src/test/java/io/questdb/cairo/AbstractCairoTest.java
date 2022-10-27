@@ -76,6 +76,7 @@ public abstract class AbstractCairoTest {
     public static long spinLockTimeout = -1;
     public static long dataAppendPageSize = -1;
     public static int walTxnNotificationQueueCapacity = -1;
+    public static boolean mangleTableSystemName = true;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -134,8 +135,6 @@ public abstract class AbstractCairoTest {
             LogFactory.getInstance().flushJobs();
         }
     };
-    public static boolean mangleTableSystemName = true;
-
     @Rule
     public TestName testName = new TestName();
     @Rule
@@ -378,6 +377,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean mangleTableSystemNames() {
+                return mangleTableSystemName;
+            }
+
+            @Override
             public int getSqlCopyLogRetentionDays() {
                 return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
             }
@@ -495,11 +499,6 @@ public abstract class AbstractCairoTest {
             @Override
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return mangleTableSystemName;
             }
         };
         metrics = Metrics.enabled();
@@ -652,10 +651,6 @@ public abstract class AbstractCairoTest {
         return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
     }
 
-    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
-        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
-    }
-
     protected static void drainWalQueue() {
         try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
@@ -699,6 +694,10 @@ public abstract class AbstractCairoTest {
         while ((seq = engine.getMessageBus().getWalTxnNotificationSubSequence().next()) > -1) {
             engine.getMessageBus().getWalTxnNotificationSubSequence().done(seq);
         }
+    }
+
+    protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
+        return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
     }
 
     private static class X implements MicrosecondClock {

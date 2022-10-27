@@ -283,10 +283,6 @@ public class WalWriter implements TableWriterFrontend {
         return tableName;
     }
 
-    public String getSystemTableName() {
-        return systemTableName;
-    }
-
     public TableWriter.Row newRow() {
         // Only partitioned tables with timestamps are supported atm.
         throw new UnsupportedOperationException();
@@ -355,6 +351,10 @@ public class WalWriter implements TableWriterFrontend {
 
     public int getSegmentId() {
         return segmentId;
+    }
+
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     public int getWalId() {
@@ -927,34 +927,20 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    private void releaseSegmentLock() {
-        if (segmentLockFd != -1L) {
-            ff.close(segmentLockFd);
-            segmentLockFd = -1L;
-        }
-    }
-
-    private void rolloverSegmentLock() {
-        releaseSegmentLock();
-        final int segmentPathLen = path.length();
-        try {
-            lockName(path);
-            segmentLockFd = TableUtils.lock(ff, path);
-            if (segmentLockFd == -1L) {
-                path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
-            }
-        } finally {
-            path.trimTo(segmentPathLen);
-        }
-    }
-
     private void markColumnRemoved(int columnIndex) {
         final int pi = getPrimaryColumnIndex(columnIndex);
         final int si = getSecondaryColumnIndex(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
         rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
+    }
+
+    private void mkWalDir() {
+        final int walDirLength = path.length();
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
+        }
+        path.trimTo(walDirLength);
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
@@ -986,14 +972,6 @@ public class WalWriter implements TableWriterFrontend {
         } finally {
             path.trimTo(pathTrimToLen);
         }
-    }
-
-    private void mkWalDir() {
-        final int walDirLength = path.length();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
-        }
-        path.trimTo(walDirLength);
     }
 
     private void openNewSegment() {
@@ -1029,6 +1007,13 @@ public class WalWriter implements TableWriterFrontend {
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void releaseSegmentLock() {
+        if (segmentLockFd != -1L) {
+            ff.close(segmentLockFd);
+            segmentLockFd = -1L;
         }
     }
 
@@ -1090,6 +1075,21 @@ public class WalWriter implements TableWriterFrontend {
         } catch (Throwable e) {
             distressed = true;
             throw e;
+        }
+    }
+
+    private void rolloverSegmentLock() {
+        releaseSegmentLock();
+        final int segmentPathLen = path.length();
+        try {
+            lockName(path);
+            segmentLockFd = TableUtils.lock(ff, path);
+            if (segmentLockFd == -1L) {
+                path.trimTo(segmentPathLen);
+                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
+            }
+        } finally {
+            path.trimTo(segmentPathLen);
         }
     }
 
@@ -1412,6 +1412,20 @@ public class WalWriter implements TableWriterFrontend {
             }
         }
 
+        @Override
+        public void putSym(int columnIndex, char value) {
+            CharSequence str = SingleCharCharSequence.get(value);
+            putSym(columnIndex, str);
+        }
+
+        private MemoryA getPrimaryColumn(int columnIndex) {
+            return columns.getQuick(getPrimaryColumnIndex(columnIndex));
+        }
+
+        private MemoryA getSecondaryColumn(int columnIndex) {
+            return columns.getQuick(getSecondaryColumnIndex(columnIndex));
+        }
+
         private void putSym0(int columnIndex, CharSequence value) {
             int key;
             if (value != null) {
@@ -1429,20 +1443,6 @@ public class WalWriter implements TableWriterFrontend {
             }
             getPrimaryColumn(columnIndex).putInt(key);
             setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putSym(int columnIndex, char value) {
-            CharSequence str = SingleCharCharSequence.get(value);
-            putSym(columnIndex, str);
-        }
-
-        private MemoryA getPrimaryColumn(int columnIndex) {
-            return columns.getQuick(getPrimaryColumnIndex(columnIndex));
-        }
-
-        private MemoryA getSecondaryColumn(int columnIndex) {
-            return columns.getQuick(getSecondaryColumnIndex(columnIndex));
         }
     }
 

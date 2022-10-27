@@ -2631,18 +2631,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
-                    public IOURingFacade getIOURingFacade() {
-                        return ioURingFacade;
-                    }
-
-                    @Override
-                    public int getSqlCopyQueueCapacity() {
-                        return queueCapacity;
-                    }
-
-                    @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
+                    }
+
+                    @Override
+                    public IOURingFacade getIOURingFacade() {
+                        return ioURingFacade;
                     }
 
                     @Override
@@ -2656,13 +2651,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
 
                     @Override
+                    public int getSqlCopyBufferSize() {
+                        return sqlCopyBufferSize;
+                    }
+
+                    @Override
                     public boolean mangleTableSystemNames() {
                         return AbstractGriffinTest.configuration.mangleTableSystemNames();
                     }
 
                     @Override
-                    public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
+                    public int getSqlCopyQueueCapacity() {
+                        return queueCapacity;
                     }
                 };
 
@@ -2671,8 +2671,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
-                    public IOURingFacade getIOURingFacade() {
-                        return ioURingFacade;
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+
+                    @Override
+                    public int getSqlCopyBufferSize() {
+                        return sqlCopyBufferSize;
                     }
 
                     @Override
@@ -2681,18 +2686,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-
-                    @Override
                     public boolean mangleTableSystemNames() {
                         return AbstractGriffinTest.configuration.mangleTableSystemNames();
                     }
 
                     @Override
-                    public int getSqlCopyBufferSize() {
-                        return sqlCopyBufferSize;
+                    public IOURingFacade getIOURingFacade() {
+                        return ioURingFacade;
                     }
                 };
                 execute(null, runnable, configuration1);

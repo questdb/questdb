@@ -116,6 +116,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        CharSequence systemTableName;
+        int tableId;
+        long txn;
+
+        try {
+            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
+            tableId = walTxnNotificationTask.getTableId();
+            systemTableName = walTxnNotificationTask.getSystemTableName();
+            txn = walTxnNotificationTask.getTxn();
+        } finally {
+            // Don't hold the queue until the all the transactions applied to the table
+            subSeq.done(cursor);
+        }
+
+        if (localCommittedTransactions.get(tableId) < txn) {
+            // Check, maybe we already processed this table to higher txn.
+            long committedTxn = processWalTxnNotification(systemTableName, tableId, engine, sqlToOperation);
+            if (committedTxn > -1) {
+                localCommittedTransactions.put(tableId, committedTxn);
+            }
+        } else {
+            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(systemTableName).$(", txn=").$(txn).I$();
+        }
+        return true;
+    }
+
     private static SequencerStructureChangeCursor applyOutstandingWalTransactions(
             CharSequence systemTableName,
             TableWriter writer,
@@ -214,33 +242,5 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
             engine.notifyWalTxnFailed();
         }
-    }
-
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        CharSequence systemTableName;
-        int tableId;
-        long txn;
-
-        try {
-            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableId = walTxnNotificationTask.getTableId();
-            systemTableName = walTxnNotificationTask.getSystemTableName();
-            txn = walTxnNotificationTask.getTxn();
-        } finally {
-            // Don't hold the queue until the all the transactions applied to the table
-            subSeq.done(cursor);
-        }
-
-        if (localCommittedTransactions.get(tableId) < txn) {
-            // Check, maybe we already processed this table to higher txn.
-            long committedTxn = processWalTxnNotification(systemTableName, tableId, engine, sqlToOperation);
-            if (committedTxn > -1) {
-                localCommittedTransactions.put(tableId, committedTxn);
-            }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(systemTableName).$(", txn=").$(txn).I$();
-        }
-        return true;
     }
 }

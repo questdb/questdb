@@ -3774,16 +3774,16 @@ nodejs code:
                         () -> assertEventually(() -> {
                             try (
                                     final PreparedStatement select = connection.prepareStatement("select * from x");
-                                            final ResultSet rs = select.executeQuery()
-                                    ) {
-                                        sink.clear();
-                                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                                                + "CDE,bb,b,sentence 1\n"
-                                                + "sentence 2,12\n", sink, rs);
-                                    } catch (IOException | SQLException e) {
-                                        throw new AssertionError(e);
-                                    }
+                                    final ResultSet rs = select.executeQuery()
+                            ) {
+                                sink.clear();
+                                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                        + "CDE,bb,b,sentence 1\n"
+                                        + "sentence 2,12\n", sink, rs);
+                            } catch (IOException | SQLException e) {
+                                throw new AssertionError(e);
+                            }
                                 }
                         ));
             }

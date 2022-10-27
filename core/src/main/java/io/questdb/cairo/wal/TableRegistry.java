@@ -66,82 +66,6 @@ public class TableRegistry extends AbstractPool {
         Misc.free(tableNameRegistry);
     }
 
-    public void copyMetadataTo(final String tableName, final CharSequence systemTableName, final SequencerMetadata metadata) {
-        try (Sequencer sequencer = openSequencer(systemTableName)) {
-            sequencer.copyMetadataTo(metadata, tableName);
-        }
-    }
-
-    public void forAllWalTables(final RegisteredTable callback) {
-        for (CharSequence tableName : tableNameRegistry.getTableNames()) {
-            String systemTableName = tableNameRegistry.getSystemName(tableName);
-            long lastTxn;
-            int tableId;
-            try (SequencerImpl sequencer = openSequencer(systemTableName)) {
-                lastTxn = sequencer.lastTxn();
-                tableId = sequencer.getTableId();
-            }
-            callback.onTable(tableId, systemTableName, lastTxn);
-        }
-    }
-
-    public CharSequence getSystemTableName(final CharSequence tableName) {
-        return tableNameRegistry.getTableSystemName(tableName);
-    }
-
-    @NotNull
-    public CharSequence getDefaultTableName(CharSequence tableName) {
-        if (!mangleTableSystemNames) {
-            return tableName;
-        }
-        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-    }
-
-    public void registerTable(int tableId, final TableStructure tableStructure) {
-        CharSequence tableSystemName = registerTableName(tableStructure.getTableName(), tableId);
-        if (tableSystemName != null) {
-            //noinspection EmptyTryBlock
-            try (SequencerImpl ignore = createSequencer(tableId, tableStructure, tableSystemName)) {
-            }
-        }
-    }
-
-    public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
-        final String systemName = tableNameRegistry.getSystemName(tableName);
-        if (systemName != null) {
-            return systemName;
-        }
-
-        return getDefaultTableName(tableName);
-    }
-
-    public long lastTxn(final CharSequence systemTableName) {
-        try (SequencerImpl sequencer = openSequencer(systemTableName)) {
-            return sequencer.lastTxn();
-        }
-    }
-
-    public String getTableNameBySystemName(CharSequence systemTableName) {
-        return tableNameRegistry.getTableNameBySystemName(systemTableName);
-    }
-
-    @Nullable
-    public CharSequence registerTableName(final CharSequence tableName, int tableId) {
-        CharSequence str = tableNameRegistry.getSystemName(tableName);
-        if (str != null) {
-            return str;
-        }
-
-        StringSink sink = Misc.getThreadLocalBuilder();
-        sink.put(tableName).put(TableUtils.SYSTEM_TABLE_NAME_SUFFIX).put(tableId);
-        return tableNameRegistry.registerName(Chars.toString(tableName), sink.toString());
-    }
-
-    @FunctionalInterface
-    public interface RegisteredTable {
-        void onTable(int tableId, final CharSequence tableName, long lastTxn);
-    }
-
     public void dropTable(String tableName, String systemTableName) {
         if (tableNameRegistry.remove(tableName, systemTableName)) {
             try (Sequencer seq = seqRegistry.get(systemTableName)) {
@@ -160,10 +84,43 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
+    public void copyMetadataTo(final String tableName, final CharSequence systemTableName, final SequencerMetadata metadata) {
+        try (Sequencer sequencer = openSequencer(systemTableName)) {
+            sequencer.copyMetadataTo(metadata, tableName);
+        }
+    }
+
     public @NotNull SequencerCursor getCursor(final CharSequence tableName, long lastCommittedTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
             return sequencer.getCursor(lastCommittedTxn);
         }
+    }
+
+    public void forAllWalTables(final RegisteredTable callback) {
+        for (CharSequence tableName : tableNameRegistry.getTableNames()) {
+            String systemTableName = tableNameRegistry.getSystemName(tableName);
+            long lastTxn;
+            int tableId;
+            try (SequencerImpl sequencer = openSequencer(systemTableName)) {
+                lastTxn = sequencer.lastTxn();
+                tableId = sequencer.getTableId();
+            }
+            callback.onTable(tableId, systemTableName, lastTxn);
+        }
+    }
+
+    public int getNextWalId(final CharSequence tableName) {
+        try (Sequencer sequencer = openSequencer(tableName)) {
+            return sequencer.getNextWalId();
+        }
+    }
+
+    @NotNull
+    public CharSequence getDefaultTableName(CharSequence tableName) {
+        if (!mangleTableSystemNames) {
+            return tableName;
+        }
+        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
     }
 
     public SequencerStructureChangeCursor getStructureChangeCursor(
@@ -176,8 +133,25 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
-    public void rename(CharSequence tableName, CharSequence newName, String toString) {
-        tableNameRegistry.rename(tableName, newName, toString);
+    public CharSequence getSystemTableName(final CharSequence tableName) {
+        return tableNameRegistry.getTableSystemName(tableName);
+    }
+
+    public String getTableNameBySystemName(CharSequence systemTableName) {
+        return tableNameRegistry.getTableNameBySystemName(systemTableName);
+    }
+
+    public CharSequence getSystemTableNameOrDefault(final CharSequence tableName) {
+        final String systemName = tableNameRegistry.getSystemName(tableName);
+        if (systemName != null) {
+            return systemName;
+        }
+
+        return getDefaultTableName(tableName);
+    }
+
+    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
+        return getWalPool(tableName).get();
     }
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
@@ -186,10 +160,54 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
+    public long lastTxn(final CharSequence systemTableName) {
+        try (SequencerImpl sequencer = openSequencer(systemTableName)) {
+            return sequencer.lastTxn();
+        }
+    }
+
     public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
         try (Sequencer sequencer = openSequencer(tableName)) {
             return sequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
         }
+    }
+
+    public void registerTable(int tableId, final TableStructure tableStructure) {
+        CharSequence tableSystemName = registerTableName(tableStructure.getTableName(), tableId);
+        if (tableSystemName != null) {
+            //noinspection EmptyTryBlock
+            try (SequencerImpl ignore = createSequencer(tableId, tableStructure, tableSystemName)) {
+            }
+        }
+    }
+
+    @TestOnly
+    public void reopen() {
+        tableNameRegistry.reloadTableNameCache(getConfiguration());
+        Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, 1, 0);
+    }
+
+    @Nullable
+    public CharSequence registerTableName(final CharSequence tableName, int tableId) {
+        CharSequence str = tableNameRegistry.getSystemName(tableName);
+        if (str != null) {
+            return str;
+        }
+
+        StringSink sink = Misc.getThreadLocalBuilder();
+        sink.put(tableName).put(TableUtils.SYSTEM_TABLE_NAME_SUFFIX).put(tableId);
+        return tableNameRegistry.registerName(Chars.toString(tableName), sink.toString());
+    }
+
+    public void rename(CharSequence tableName, CharSequence newName, String toString) {
+        tableNameRegistry.rename(tableName, newName, toString);
+    }
+
+    private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
+        throwIfClosed();
+        final String tableNameStr = Chars.toString(tableName);
+        return walRegistry.computeIfAbsent(tableNameStr, key
+                -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
     }
 
     private @NotNull SequencerImpl createSequencer(int tableId, final TableStructure tableStructure, CharSequence tableSystemName) {
@@ -206,22 +224,6 @@ public class TableRegistry extends AbstractPool {
         });
     }
 
-    public int getNextWalId(final CharSequence tableName) {
-        try (Sequencer sequencer = openSequencer(tableName)) {
-            return sequencer.getNextWalId();
-        }
-    }
-
-    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
-        return getWalPool(tableName).get();
-    }
-
-    @TestOnly
-    public void reopen() {
-        tableNameRegistry.reloadTableNameCache(getConfiguration());
-        Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, 1, 0);
-    }
-
     private boolean isWalTable(final CharSequence systemTableName, final Path root, final FilesFacade ff) {
         root.concat(systemTableName).concat(SEQ_DIR);
         return ff.exists(root.$());
@@ -231,6 +233,13 @@ public class TableRegistry extends AbstractPool {
     private boolean isWalTable(final CharSequence systemTableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(systemTableName, path, ff);
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        boolean r0 = releaseWalWriters(deadline);
+        boolean r1 = releaseEntries(deadline);
+        return r0 || r1;
     }
 
     private @NotNull SequencerImpl openSequencer(final CharSequence systemTableName) {
@@ -263,20 +272,6 @@ public class TableRegistry extends AbstractPool {
         return entry;
     }
 
-    private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
-        throwIfClosed();
-        final String tableNameStr = Chars.toString(tableName);
-        return walRegistry.computeIfAbsent(tableNameStr, key
-                -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
-    }
-
-    @Override
-    protected boolean releaseAll(long deadline) {
-        boolean r0 = releaseWalWriters(deadline);
-        boolean r1 = releaseEntries(deadline);
-        return  r0 || r1;
-    }
-
     private boolean releaseEntries(long deadline) {
         if (seqRegistry.size() == 0) {
             // nothing to release
@@ -288,7 +283,7 @@ public class TableRegistry extends AbstractPool {
             final SequencerEntry sequencer = iterator.next();
             if (deadline >= sequencer.releaseTime) {
                 sequencer.pool = null;
-                sequencer. close();
+                sequencer.close();
                 removed = true;
                 iterator.remove();
             }
@@ -328,6 +323,11 @@ public class TableRegistry extends AbstractPool {
         }
     }
 
+    @FunctionalInterface
+    public interface RegisteredTable {
+        void onTable(int tableId, final CharSequence tableName, long lastTxn);
+    }
+
     private static class SequencerEntry extends SequencerImpl {
         private TableRegistry pool;
         private volatile long releaseTime = Long.MAX_VALUE;
@@ -335,10 +335,6 @@ public class TableRegistry extends AbstractPool {
         SequencerEntry(TableRegistry pool, CairoEngine engine, String tableName) {
             super(engine, tableName);
             this.pool = pool;
-        }
-
-        public void reset() {
-            this.releaseTime = Long.MAX_VALUE;
         }
 
         @Override
@@ -354,6 +350,10 @@ public class TableRegistry extends AbstractPool {
                 }
                 super.close();
             }
+        }
+
+        public void reset() {
+            this.releaseTime = Long.MAX_VALUE;
         }
     }
 
@@ -429,27 +429,27 @@ public class TableRegistry extends AbstractPool {
             }
         }
 
-       protected boolean releaseAll(long deadline) {
-           boolean removed = false;
-           lock.lock();
-           try {
-               Iterator<Entry> iterator = cache.iterator();
-               while (iterator.hasNext()) {
-                   final Entry e = iterator.next();
-                   if (deadline >= e.releaseTime) {
-                       removed = true;
-                       e.doClose(true);
-                       e.pool = null;
-                       iterator.remove();
-                   }
-               }
-               if (deadline == Long.MAX_VALUE) {
-                   this.closed = true;
-               }
-           } finally {
-              lock.unlock();
-           }
-           return removed;
+        protected boolean releaseAll(long deadline) {
+            boolean removed = false;
+            lock.lock();
+            try {
+                Iterator<Entry> iterator = cache.iterator();
+                while (iterator.hasNext()) {
+                    final Entry e = iterator.next();
+                    if (deadline >= e.releaseTime) {
+                        removed = true;
+                        e.doClose(true);
+                        e.pool = null;
+                        iterator.remove();
+                    }
+                }
+                if (deadline == Long.MAX_VALUE) {
+                    this.closed = true;
+                }
+            } finally {
+                lock.unlock();
+            }
+            return removed;
         }
 
         public static class Entry extends WalWriter {
@@ -459,10 +459,6 @@ public class TableRegistry extends AbstractPool {
             public Entry(String systemTableName, TableRegistry tableRegistry, CairoConfiguration configuration, WalWriterPool pool) {
                 super(systemTableName, tableRegistry.getTableNameBySystemName(systemTableName), tableRegistry, configuration);
                 this.pool = pool;
-            }
-
-            public void reset() {
-                this.releaseTime = Long.MAX_VALUE;
             }
 
             @Override
@@ -475,6 +471,10 @@ public class TableRegistry extends AbstractPool {
                     }
                     super.close();
                 }
+            }
+
+            public void reset() {
+                this.releaseTime = Long.MAX_VALUE;
             }
         }
     }

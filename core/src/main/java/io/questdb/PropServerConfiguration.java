@@ -278,6 +278,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walTxnNotificationQueueCapacity;
     private final String cairoAttachPartitionSuffix;
     private final boolean cairoAttachPartitionCopy;
+    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final int[] walApplyWorkerAffinity;
+    private final int walApplyWorkerCount;
+    private final boolean walApplyWorkerHaltOnError;
+    private final long walApplyWorkerYieldThreshold;
+    private final long walApplyWorkerSleepThreshold;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -415,12 +421,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
-    private final int[] walApplyWorkerAffinity;
-    private final int walApplyWorkerCount;
-    private final boolean walApplyWorkerHaltOnError;
-    private final long walApplyWorkerYieldThreshold;
-    private final long walApplyWorkerSleepThreshold;
 
     public PropServerConfiguration(
             String root,
@@ -697,7 +697,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0);
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
-            this.walApplyWorkerSleepThreshold  = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10000);
+            this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10000);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 10);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
@@ -1846,11 +1846,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isEnabled() {
-            return httpServerEnabled;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return httpWorkerAffinity;
         }
@@ -1883,6 +1878,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepTimeout() {
             return httpWorkerSleepTimeout;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return httpServerEnabled;
         }
     }
 
@@ -2064,11 +2064,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMetadataPoolCapacity() {
-            return sqlModelPoolCapacity;
-        }
-
-        @Override
         public int getDoubleToStrCastScale() {
             return sqlDoubleToStrCastScale;
         }
@@ -2151,6 +2146,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows;
+        }
+
+        @Override
+        public int getMetadataPoolCapacity() {
+            return sqlModelPoolCapacity;
         }
 
         @Override

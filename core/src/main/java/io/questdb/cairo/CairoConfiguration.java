@@ -127,8 +127,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    int getMetadataPoolCapacity();
-
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();
@@ -166,6 +164,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 

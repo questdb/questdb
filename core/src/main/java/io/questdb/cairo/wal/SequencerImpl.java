@@ -198,12 +198,6 @@ public class SequencerImpl implements Sequencer {
         return txn;
     }
 
-    private void checkDropped() {
-        if (metadata.isDropped()) {
-            throw TableDroppedException.instance().put("table is dropped [table=").put(metadata.getTableName()).put(']');
-        }
-    }
-
     @Override
     public SequencerCursor getCursor(long lastCommittedTxn) {
         schemaLock.writeLock().lock();
@@ -277,6 +271,12 @@ public class SequencerImpl implements Sequencer {
     private void checkDistressed() {
         if (isDistressed) {
             throw CairoException.critical(0).put("sequencer is distressed [table=").put(systemTableName).put(']');
+        }
+    }
+
+    private void checkDropped() {
+        if (metadata.isDropped()) {
+            throw TableDroppedException.instance().put("table is dropped [table=").put(metadata.getTableName()).put(']');
         }
     }
 

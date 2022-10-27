@@ -169,11 +169,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         }
     }
 
-    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
-        return new Path().of(root).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
-    }
-
     @Test
     public void testDeleteTwoAddOneColumn() throws Exception {
         final String expected = "int:INT\n" +
@@ -388,6 +383,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n";
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
+    }
+
+    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
+        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        return new Path().of(root).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
