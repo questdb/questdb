@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -106,6 +105,7 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final IndexBuilder rebuildIndex = new IndexBuilder();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final MetadataFactory metadataFactory;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -113,7 +113,6 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final MetadataFactory metadataFactory;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -1103,6 +1102,15 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofCommit();
     }
 
+    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        return compiledQuery.ofDeallocate(statementName);
+    }
+
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
@@ -1177,15 +1185,6 @@ public class SqlCompiler implements Closeable {
                 Chars.toString(fileName),
                 model
         );
-    }
-
-    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
-        }
-        return compiledQuery.ofDeallocate(statementName);
     }
 
     @NotNull
@@ -1447,6 +1446,33 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
+        ExpressionNode likeTableName = model.getLikeTableName();
+        CharSequence likeTableNameToken = likeTableName.token;
+        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
+            model.setCommitLag(rdr.getCommitLag());
+            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
+            TableReaderMetadata rdrMetadata = rdr.getMetadata();
+            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
+                int columnType = rdrMetadata.getColumnType(i);
+                boolean isSymbol = ColumnType.isSymbol(columnType);
+                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (isSymbol) {
+                    model.cached(rdr.getSymbolMapReader(i).isCached());
+                }
+                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+            }
+            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
+            if (rdrMetadata.getTimestampIndex() != -1) {
+                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
+            }
+            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
+        }
+        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
+    }
+
     /**
      * Returns number of copied rows.
      */
@@ -1523,33 +1549,6 @@ public class SqlCompiler implements Closeable {
         } else {
             return compiledQuery.ofCreateTableAsSelect(insertCount);
         }
-    }
-
-    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
-        ExpressionNode likeTableName = model.getLikeTableName();
-        CharSequence likeTableNameToken = likeTableName.token;
-        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
-        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
-            model.setCommitLag(rdr.getCommitLag());
-            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
-            TableReaderMetadata rdrMetadata = rdr.getMetadata();
-            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
-                int columnType = rdrMetadata.getColumnType(i);
-                boolean isSymbol = ColumnType.isSymbol(columnType);
-                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
-                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
-                if (isSymbol) {
-                    model.cached(rdr.getSymbolMapReader(i).isCached());
-                }
-                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
-            }
-            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
-            if (rdrMetadata.getTimestampIndex() != -1) {
-                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
-            }
-            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
-        }
-        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
 
     @Nullable
@@ -2582,6 +2581,11 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        @Override
         public long getCommitLag() {
             return model.getCommitLag();
         }
@@ -2623,11 +2627,6 @@ public class SqlCompiler implements Closeable {
         @Override
         public CharSequence getTableName() {
             return model.getTableName();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampIndex;
         }
 
         @Override

@@ -73,6 +73,7 @@ public abstract class AbstractCairoTest {
     public static long spinLockTimeout = -1;
     public static long dataAppendPageSize = -1;
     public static int walTxnNotificationQueueCapacity = -1;
+    public static int recreateDistressedSequencerAttempts = 3;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -136,7 +137,6 @@ public abstract class AbstractCairoTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-    public static int recreateDistressedSequencerAttempts = 3;
 
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
@@ -301,6 +301,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public long getInactiveWalWriterTTL() {
+                return -10000;
+            }
+
+            @Override
             public int getMetadataPoolCapacity() {
                 return 1;
             }
@@ -357,6 +362,11 @@ public abstract class AbstractCairoTest {
             @Override
             public boolean isSqlParallelFilterPreTouchEnabled() {
                 return enableColumnPreTouch != null ? enableColumnPreTouch : super.isSqlParallelFilterPreTouchEnabled();
+            }
+
+            @Override
+            public int getWalRecreateDistressedSequencerAttempts() {
+                return recreateDistressedSequencerAttempts;
             }
 
             @Override
@@ -445,6 +455,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean isWalSupported() {
+                return true;
+            }
+
+            @Override
             public boolean isO3QuickSortEnabled() {
                 return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
             }
@@ -462,21 +477,6 @@ public abstract class AbstractCairoTest {
             @Override
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
-            }
-
-            @Override
-            public boolean isWalSupported() {
-                return true;
-            }
-
-            @Override
-            public int getWalRecreateDistressedSequencerAttempts() {
-                return recreateDistressedSequencerAttempts;
-            }
-
-            @Override
-            public long getInactiveWalWriterTTL() {
-                return -10000;
             }
         };
         metrics = Metrics.enabled();

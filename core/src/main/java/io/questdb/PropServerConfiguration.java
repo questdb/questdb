@@ -276,6 +276,16 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int walTxnNotificationQueueCapacity;
     private final String cairoAttachPartitionSuffix;
     private final boolean cairoAttachPartitionCopy;
+    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
+    private final int[] walApplyWorkerAffinity;
+    private final int walApplyWorkerCount;
+    private final boolean walApplyWorkerHaltOnError;
+    private final long walApplyWorkerYieldThreshold;
+    private final long walApplyWorkerSleepThreshold;
+    private final long walApplySleepTimeout;
+    private final boolean isWalSupported;
+    private final int walRecreateDistressedSequencerAttempts;
+    private final long inactiveWalWriterTTL;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -413,16 +423,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new PropWalApplyPoolConfiguration();
-    private final int[] walApplyWorkerAffinity;
-    private final int walApplyWorkerCount;
-    private final boolean walApplyWorkerHaltOnError;
-    private final long walApplyWorkerYieldThreshold;
-    private final long walApplyWorkerSleepThreshold;
-    private final long walApplySleepTimeout;
-    private final boolean isWalSupported;
-    private final int walRecreateDistressedSequencerAttempts;
-    private final long inactiveWalWriterTTL;
 
     public PropServerConfiguration(
             String root,
@@ -1852,11 +1852,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isEnabled() {
-            return httpServerEnabled;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return httpWorkerAffinity;
         }
@@ -1889,6 +1884,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepTimeout() {
             return httpWorkerSleepTimeout;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return httpServerEnabled;
         }
     }
 
@@ -2070,16 +2070,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getInactiveWalWriterTTL() {
-            return inactiveWalWriterTTL;
-        }
-
-        @Override
-        public int getMetadataPoolCapacity() {
-            return sqlModelPoolCapacity;
-        }
-
-        @Override
         public int getDoubleToStrCastScale() {
             return sqlDoubleToStrCastScale;
         }
@@ -2117,6 +2107,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getInactiveReaderTTL() {
             return inactiveReaderTTL;
+        }
+
+        @Override
+        public long getInactiveWalWriterTTL() {
+            return inactiveWalWriterTTL;
         }
 
         @Override
@@ -2162,6 +2157,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows;
+        }
+
+        @Override
+        public int getMetadataPoolCapacity() {
+            return sqlModelPoolCapacity;
         }
 
         @Override
@@ -2262,11 +2262,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRenameTableModelPoolCapacity() {
             return sqlRenameTableModelPoolCapacity;
-        }
-
-        @Override
-        public int getStrFunctionMaxBufferLength() {
-            return sqlStrFunctionBufferMaxSize;
         }
 
         @Override
@@ -2565,6 +2560,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getStrFunctionMaxBufferLength() {
+            return sqlStrFunctionBufferMaxSize;
+        }
+
+        @Override
         public CharSequence getSystemTableNamePrefix() {
             return systemTableNamePrefix;
         }
@@ -2596,6 +2596,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalPurgeInterval() {
             return walPurgeInterval;
+        }
+
+        @Override
+        public int getWalRecreateDistressedSequencerAttempts() {
+            return walRecreateDistressedSequencerAttempts;
         }
 
         @Override
@@ -2641,11 +2646,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
-        }
-
-        @Override
-        public int getWalRecreateDistressedSequencerAttempts() {
-            return walRecreateDistressedSequencerAttempts;
         }
 
         @Override

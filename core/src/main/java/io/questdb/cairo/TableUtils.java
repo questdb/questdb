@@ -162,6 +162,14 @@ public final class TableUtils {
         return path.$();
     }
 
+    public static long checkMemSize(MemoryMR metaMem, long minSize) {
+        final long memSize = metaMem.size();
+        if (memSize < minSize) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+        }
+        return memSize;
+    }
+
     public static void createColumnVersionFile(MemoryMARW mem) {
         // Create page of 0s for Column Version file "_cv"
         mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
@@ -438,8 +446,24 @@ public final class TableUtils {
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
     }
 
+    public static int getColumnCount(MemoryMR metaMem, long offset) {
+        final int columnCount = metaMem.getInt(offset);
+        if (columnCount < 0) {
+            throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+        }
+        return columnCount;
+    }
+
     public static long getColumnHash(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 16);
+    }
+
+    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int strLength = getInt(metaMem, memSize, offset);
+        if (strLength == TableUtils.NULL_LEN) {
+            throw validationException(metaMem).put("NULL column name at [").put(columnIndex).put(']');
+        }
+        return getCharSequence(metaMem, memSize, offset, strLength);
     }
 
     public static long getColumnNameOffset(int columnCount) {
@@ -448,6 +472,14 @@ public final class TableUtils {
 
     public static int getColumnType(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+    }
+
+    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int type = getInt(metaMem, memSize, offset);
+        if (type >= 0 && ColumnType.sizeOf(type) == -1) {
+            throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
+        }
+        return type;
     }
 
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
@@ -468,6 +500,31 @@ public final class TableUtils {
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
         return getSymbolWriterIndexOffset(index) + Integer.BYTES;
+    }
+
+    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+        final int timestampIndex = metaMem.getInt(offset);
+        if (timestampIndex < -1 || timestampIndex >= columnCount) {
+            throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
+        }
+        return timestampIndex;
+    }
+
+    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
+        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+        if (isMetaFileMissingFileSystemError(ex)) {
+            if (millisecondClock.getTicks() < deadline) {
+                LOG.info().$("error reloading metadata [table=").$(tableName)
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                Os.pause();
+            } else {
+                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
+                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+            }
+        } else {
+            throw ex;
+        }
     }
 
     public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
@@ -618,12 +675,6 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static void removeOrException(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path) && !ff.remove(path)) {
-            throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
-        }
-    }
-
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
@@ -761,6 +812,15 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
     }
 
+    public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
+        path.concat(fileName).$();
+        try {
+            metaMem.smallFile(ff, path, memoryTag);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
@@ -785,6 +845,12 @@ public final class TableUtils {
             throw CairoException.critical(ff.errno()).put("could not read long [fd=").put(fd).put(", offset=").put(offset);
         }
         return Unsafe.getUnsafe().getLong(tempMem8b);
+    }
+
+    public static void removeOrException(FilesFacade ff, LPSZ path) {
+        if (ff.exists(path) && !ff.remove(path)) {
+            throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
+        }
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
@@ -989,6 +1055,15 @@ public final class TableUtils {
         }
     }
 
+    public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
+        if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
+            throw SqlException.$(position, "min index block capacity is ").put(MIN_INDEX_VALUE_BLOCK_SIZE);
+        }
+        if (indexValueBlockSize > MAX_INDEX_VALUE_BLOCK_SIZE) {
+            throw SqlException.$(position, "max index block capacity is ").put(MAX_INDEX_VALUE_BLOCK_SIZE);
+        }
+    }
+
     public static void validateMeta(
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
@@ -1047,14 +1122,6 @@ public final class TableUtils {
         }
     }
 
-    public static long checkMemSize(MemoryMR metaMem, long minSize) {
-        final long memSize = metaMem.size();
-        if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
-        }
-        return memSize;
-    }
-
     public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
@@ -1062,66 +1129,6 @@ public final class TableUtils {
                     .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
                     .put(", actual=").put(metaVersion)
                     .put(']');
-        }
-    }
-
-    public static int getColumnCount(MemoryMR metaMem, long offset) {
-        final int columnCount = metaMem.getInt(offset);
-        if (columnCount < 0) {
-            throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
-        }
-        return columnCount;
-    }
-
-    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
-        final int timestampIndex = metaMem.getInt(offset);
-        if (timestampIndex < -1 || timestampIndex >= columnCount) {
-            throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
-        }
-        return timestampIndex;
-    }
-
-    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
-        final int type = getInt(metaMem, memSize, offset);
-        if (type >= 0 && ColumnType.sizeOf(type) == -1) {
-            throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
-        }
-        return type;
-    }
-
-    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
-        final int strLength = getInt(metaMem, memSize, offset);
-        if (strLength == TableUtils.NULL_LEN) {
-            throw validationException(metaMem).put("NULL column name at [").put(columnIndex).put(']');
-        }
-        return getCharSequence(metaMem, memSize, offset, strLength);
-    }
-
-    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
-        if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
-        }
-        return metaMem.getInt(offset);
-    }
-
-    private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
-        if (strLength < 1 || strLength > 255) {
-            // EXT4 and many others do not allow file name length > 255 bytes
-            throw validationException(metaMem).put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
-        }
-        final long storageLength = Vm.getStorageLength(strLength);
-        if (offset + storageLength > memSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
-        }
-        return metaMem.getStr(offset);
-    }
-
-    public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
-        if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
-            throw SqlException.$(position, "min index block capacity is ").put(MIN_INDEX_VALUE_BLOCK_SIZE);
-        }
-        if (indexValueBlockSize > MAX_INDEX_VALUE_BLOCK_SIZE) {
-            throw SqlException.$(position, "max index block capacity is ").put(MAX_INDEX_VALUE_BLOCK_SIZE);
         }
     }
 
@@ -1138,6 +1145,10 @@ public final class TableUtils {
         if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
             throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
         }
+    }
+
+    public static CairoException validationException(MemoryMR mem) {
+        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
@@ -1162,6 +1173,25 @@ public final class TableUtils {
                     .put(", value=").put(value)
                     .put(']');
         }
+    }
+
+    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
+        if (memSize < offset + Integer.BYTES) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+        }
+        return metaMem.getInt(offset);
+    }
+
+    private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
+        if (strLength < 1 || strLength > 255) {
+            // EXT4 and many others do not allow file name length > 255 bytes
+            throw validationException(metaMem).put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
+        }
+        final long storageLength = Vm.getStorageLength(strLength);
+        if (offset + storageLength > memSize) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+        }
+        return metaMem.getStr(offset);
     }
 
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
@@ -1229,48 +1259,18 @@ public final class TableUtils {
         }
     }
 
-    public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
-        path.concat(fileName).$();
-        try {
-            metaMem.smallFile(ff, path, memoryTag);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    public static CairoException validationException(MemoryMR mem) {
-        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
-    }
-
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
         if (ff.mkdirs(path, mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }
 
-    public interface FailureCloseable {
-        void close(long prevSize);
-    }
-
-    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
-        // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
-            if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
-                        .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
-                Os.pause();
-            } else {
-                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
-                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
-            }
-        } else {
-            throw ex;
-        }
-    }
-
     private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
         int errno = ex.getErrno();
         return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
+    }
+
+    public interface FailureCloseable {
+        void close(long prevSize);
     }
 }

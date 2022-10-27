@@ -127,10 +127,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    long getInactiveWalWriterTTL();
-
-    int getMetadataPoolCapacity();
-
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();
@@ -151,6 +147,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -168,6 +166,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -228,8 +228,6 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
-
-    int getStrFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -366,6 +364,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
@@ -379,6 +379,8 @@ public interface CairoConfiguration {
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -397,8 +399,6 @@ public interface CairoConfiguration {
     long getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
-
-    int getWalRecreateDistressedSequencerAttempts();
 
     boolean isIOURingEnabled();
 

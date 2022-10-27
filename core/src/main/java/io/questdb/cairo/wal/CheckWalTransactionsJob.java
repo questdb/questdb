@@ -40,8 +40,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CharSequence dbRoot;
     private final MillisecondClock milliseconClock;
     private final long spinLockTimeout;
-    private long lastProcessed = 0;
     private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
+    private long lastProcessed = 0;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;

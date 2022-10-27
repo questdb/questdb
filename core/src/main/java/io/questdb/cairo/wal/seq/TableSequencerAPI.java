@@ -155,16 +155,16 @@ public class TableSequencerAPI implements Closeable {
         }
     }
 
+    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
+        return getWalPool(tableName).get();
+    }
+
     public boolean hasSequencer(final CharSequence tableName) {
         TableSequencer tableSequencer = seqRegistry.get(tableName);
         if (tableSequencer != null) {
             return true;
         }
         return isWalTable(tableName, configuration.getRoot(), configuration.getFilesFacade());
-    }
-
-    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
-        return getWalPool(tableName).get();
     }
 
     public boolean isSuspended(final CharSequence tableName) {
@@ -215,14 +215,14 @@ public class TableSequencerAPI implements Closeable {
         }
     }
 
-    public boolean releaseAll() {
-        return releaseAll(Long.MAX_VALUE);
-    }
-
     public void registerTable(int tableId, final TableStructure tableStructure) {
         //noinspection EmptyTryBlock
         try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
         }
+    }
+
+    public boolean releaseAll() {
+        return releaseAll(Long.MAX_VALUE);
     }
 
     public boolean releaseInactive() {
@@ -350,14 +350,6 @@ public class TableSequencerAPI implements Closeable {
         return getTableSequencerEntryLocked(tableName, lock);
     }
 
-    private boolean returnToPool(final TableSequencerEntry entry) {
-        if (closed) {
-            return false;
-        }
-        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
-        return true;
-    }
-
     protected boolean releaseAll(long deadline) {
         boolean r0 = releaseWalWriters(deadline);
         boolean r1 = releaseEntries(deadline);
@@ -398,6 +390,14 @@ public class TableSequencerAPI implements Closeable {
             }
         }
         return removed;
+    }
+
+    private boolean returnToPool(final TableSequencerEntry entry) {
+        if (closed) {
+            return false;
+        }
+        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
+        return true;
     }
 
     private void throwIfClosed() {

@@ -537,20 +537,6 @@ public class WalWriter implements TableWriterAPI {
         nullSetters.setQuick(columnIndex, NOOP);
     }
 
-    private long applyNonStructuralOperation(AbstractOperation operation) {
-        if (operation.getSqlExecutionContext() == null) {
-            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
-        }
-        try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
-            return getSequencerTxn();
-        } catch (Throwable th) {
-            // perhaps half record was written to WAL-e, better to not use this WAL writer instance
-            distressed = true;
-            throw th;
-        }
-    }
-
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, getStructureVersion())) {
             long metadataVersion = getStructureVersion();
@@ -571,6 +557,20 @@ public class WalWriter implements TableWriterAPI {
                             .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
+        }
+    }
+
+    private long applyNonStructuralOperation(AbstractOperation operation) {
+        if (operation.getSqlExecutionContext() == null) {
+            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
+        }
+        try {
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            // perhaps half record was written to WAL-e, better to not use this WAL writer instance
+            distressed = true;
+            throw th;
         }
     }
 
@@ -850,10 +850,6 @@ public class WalWriter implements TableWriterAPI {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
     private long getSequencerTxn() {
         long seqTxn;
         do {
@@ -863,6 +859,10 @@ public class WalWriter implements TableWriterAPI {
             }
         } while (seqTxn == NO_TXN);
         return seqTxn;
+    }
+
+    SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {

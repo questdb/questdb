@@ -58,10 +58,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
     private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
     private final StringSink debugBuffer = new StringSink();
-    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
     private int walId;
-    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
+    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
     private int walsLatestSegmentId;
+    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
     private final FindVisitor broadSweepIterFunc = this::broadSweepIter;
     private long last = 0;
 
