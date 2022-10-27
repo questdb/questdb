@@ -106,7 +106,68 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testIsoWeekOfYear() throws Exception {
-        assertThat("ww, YYYY", "2010-01-01T00:00:00.000Z", "06, 2010");
+        assertThat("ww, YYYY", "2010-02-08T00:00:00.000Z", "06, 2010");
+    }
+
+    @Test
+    public void testParseMicros6Small() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.100000Z", "2022-02-02 02:02:02.1");
+    }
+
+    @Test
+    public void testParseMicros6Mid() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z", "2022-02-02 02:02:02.123");
+    }
+
+    @Test
+    public void testParseMicros6Mid2() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123700Z", "2022-02-02 02:02:02.1237");
+    }
+
+    @Test
+    public void testFormatMicros6Milli() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.123000", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z");
+    }
+
+    @Test
+    public void testFormatMicros6One() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000002", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatMicros6Two() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000012", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000012Z");
+    }
+
+    @Test
+    public void testFormatMicros6Three() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Four() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.004812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.004812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Five() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.074812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.074812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Six() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatMicros3Micros() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000 2", "y-MM-dd HH:mm:ss.SSS U", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatISOWeek() throws NumericException {
+        assertFormat("05", "ww", "2022-01-31T02:02:02.000012Z");
+        assertMicros("yyyy-ww HH:mm:ss.SSS U", "2022-01-31T02:02:02.001002Z", "2022-05 02:02:02.001 002");
     }
 
     @Test

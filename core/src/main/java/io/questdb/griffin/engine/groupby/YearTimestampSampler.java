@@ -77,7 +77,7 @@ class YearTimestampSampler implements TimestampSampler {
         this.startMin = Timestamps.getMinuteOfHour(timestamp);
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
-        this.startMicros = Timestamps.getMicrosOfSecond(timestamp);
+        this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
     }
 
     private long addYears(long timestamp, int bucket) {

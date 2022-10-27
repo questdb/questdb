@@ -66,7 +66,7 @@ public class MicrosOfSecondFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMicrosOfSecond(value);
+                return Timestamps.getMicrosOfMilli(value);
             }
             return Numbers.INT_NaN;
         }

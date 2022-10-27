@@ -30,6 +30,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 
 public class GenericDateFormat extends AbstractDateFormat {
@@ -324,7 +325,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                         year = Dates.getYear(datetime);
                         leap = Dates.isLeapYear(year);
                     }
-                    DateFormatUtils.append000(sink, year);
+                    TimestampFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA
