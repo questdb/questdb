@@ -33,12 +33,10 @@ import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TableWriterTask;
 
 import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
@@ -143,7 +141,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .$(e2.getFlyweightMessage())
                     .$();
 
-            throw e2;
+            // To rewrite message in CairoException we have to stash it first
+            // because it can be same exception instance
+            StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(e2.getFlyweightMessage());
+            throw CairoException.critical(e2.getErrno()).put("table '")
+                    .put(tableName)
+                    .put("' could not be altered [error=")
+                    .put(sink)
+                    .put(']');
         }
         return 0;
     }

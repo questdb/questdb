@@ -810,7 +810,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 // attempt to reattach
                 assertFailureCairo(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                        "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
+                        "Detached column [index=3, name=l, attribute=type] does not match current table metadata"
                 );
             }
         });
@@ -833,7 +833,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "x l " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenTableId2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [table_id] is not compatible with current table metadata"
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 
@@ -854,7 +854,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [timestamp_index] is not compatible with current table metadata"
+                "Detached partition metadata [timestamp_index] is not compatible with current table metadata"
         );
     }
 
@@ -1502,7 +1502,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "x l " +
                         "from long_sequence(100))",
                 "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
-                "[-100] Detached partition metadata [table_id] is not compatible with current table metadata"
+                "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
     }
 

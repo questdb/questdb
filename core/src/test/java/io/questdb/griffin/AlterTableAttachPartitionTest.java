@@ -481,7 +481,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[2] could not open read-only"
+                            "could not open read-only"
                     );
                     TestUtils.assertContains(e.getFlyweightMessage(),
                             "ts1.d"
