@@ -1028,7 +1028,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         countedDown = true;
 
                         alterFinished.await();
-                        assertEquals(0, walWriter.size());
+                        assertEquals(0, walWriter.getSegmentRowCount());
                         for (int n = 0; n < numOfRows; n++) {
                             row = walWriter.newRow(0);
                             row.putByte(0, (byte) 1);
@@ -2257,119 +2257,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRollSegmentByInterval() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 57;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setRollInterval(20000L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(18L);
-            expectedRowCounts.add(15L);
-            expectedRowCounts.add(20L);
-            expectedRowCounts.add(4L);
-
-            final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-            rollStrategyUpdates.put(10, strategy -> currentMicros += 2000_000L);
-            rollStrategyUpdates.put(22, strategy -> currentMicros += 5000_000L);
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
-        });
-    }
-
-    @Test
-    public void testRollSegmentByRowCount() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 55;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxRowCount(15L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(15L);
-            expectedRowCounts.add(15L);
-            expectedRowCounts.add(15L);
-            expectedRowCounts.add(10L);
-
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts);
-        });
-    }
-
-    @Test
-    public void testRollSegmentByRowCountThenByStorageSize() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 70;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxRowCount(8L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(22L);
-            expectedRowCounts.add(16L);
-
-            final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-            rollStrategyUpdates.put(23, strategy -> strategy.setMaxSegmentSize(4096L));
-            rollStrategyUpdates.put(33, strategy -> strategy.setMaxRowCount(100L));
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
-        });
-    }
-
-    @Test
-    public void testRollSegmentByRowCountThenByStorageSizeThenByInterval() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 70;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxRowCount(8L);
-            rollStrategy.setRollInterval(30000L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(8L);
-            expectedRowCounts.add(24L);
-            expectedRowCounts.add(11L);
-            expectedRowCounts.add(19L);
-
-            final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-            rollStrategyUpdates.put(7, strategy -> strategy.setMaxSegmentSize(4096L));
-            rollStrategyUpdates.put(17, strategy -> strategy.setMaxRowCount(100L));
-            rollStrategyUpdates.put(50, strategy -> currentMicros += 20_000_000L);
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
-        });
-    }
-
-    @Test
-    public void testRollSegmentByStorageSize() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 50;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxSegmentSize(2048L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(14L);
-            expectedRowCounts.add(13L);
-            expectedRowCounts.add(12L);
-            expectedRowCounts.add(11L);
-
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts);
-        });
-    }
-
-    @Test
-    public void testRollSegmentByStorageSizeThenByRowCount() throws Exception {
-        assertMemoryLeak(() -> {
-            final int rowsToInsertTotal = 50;
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxSegmentSize(2048L);
-            final LongList expectedRowCounts = new LongList();
-            expectedRowCounts.add(14L);
-            expectedRowCounts.add(13L);
-            expectedRowCounts.add(10L);
-            expectedRowCounts.add(10L);
-            expectedRowCounts.add(3L);
-
-            final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-            rollStrategyUpdates.put(30, strategy -> strategy.setMaxRowCount(10L));
-            testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
-        });
-    }
-
-    @Test
     public void testRollToNextSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
@@ -2898,11 +2785,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    interface RowInserter {
-        void insertRow();
-        long getCount();
-    }
-
     @Test
     public void testLargeSegmentRollover() throws Exception {
         currentMicros = -1;  // Don't mock MicrosecondClock.
@@ -2922,6 +2804,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 final RowInserter ins = new RowInserter() {
                     private long count;
                     private long ts = 1000000000L;
+
                     @Override
                     public void insertRow() {
                         TableWriter.Row row = walWriter.newRow(ts);
@@ -2979,10 +2862,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
+    interface RowInserter {
+        void insertRow();
+
+        long getCount();
     }
 
     static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
