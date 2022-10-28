@@ -55,8 +55,6 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
-
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -68,7 +66,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final CairoConfiguration configuration;
     private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
-    private final MessageBus messageBus;
+    private final MessageBusImpl messageBus;
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
@@ -602,6 +600,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public void unlockReaders(CharSequence tableName) {
         checkTableName(tableName);
         readerPool.unlock(tableName);
+    }
+
+    @TestOnly
+    public void releaseInactiveCompilers() {
+        sqlCompilerPool.releaseInactive();
     }
 
     public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {

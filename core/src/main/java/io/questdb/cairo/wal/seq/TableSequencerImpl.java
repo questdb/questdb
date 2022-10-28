@@ -103,11 +103,6 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
-        return tableTransactionLog.getCursor(seqTxn);
-    }
-
-    @Override
     public int getNextWalId() {
         return (int) walIdGenerator.getNextId();
     }
@@ -124,44 +119,53 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public void getTableMetadata(@NotNull TableRecordMetadataSink sink, boolean compress) {
-        schemaLock.readLock().lock();
-        try {
+        int columnCount = metadata.getColumnCount();
+        int timestampIndex = metadata.getTimestampIndex();
+        int compressedTimestampIndex = -1;
+        sink.clear();
 
-            int columnCount = metadata.getColumnCount();
-            int timestampIndex = metadata.getTimestampIndex();
-            int compressedTimestampIndex = -1;
-            sink.clear();
-
-            int compressedColumnCount = 0;
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (columnType > -1 || !compress) {
-                    sink.addColumn(
-                            metadata.getColumnName(i),
-                            columnType,
-                            metadata.getColumnHash(i), metadata.isColumnIndexed(i),
-                            metadata.getIndexValueBlockCapacity(i),
-                            metadata.isSymbolTableStatic(i),
-                            i
-                    );
-                    if (i == timestampIndex) {
-                        compressedTimestampIndex = compressedColumnCount;
-                    }
-                    compressedColumnCount++;
+        int compressedColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType > -1 || !compress) {
+                sink.addColumn(
+                        metadata.getColumnName(i),
+                        columnType,
+                        metadata.getColumnHash(i), metadata.isColumnIndexed(i),
+                        metadata.getIndexValueBlockCapacity(i),
+                        metadata.isSymbolTableStatic(i),
+                        i
+                );
+                if (i == timestampIndex) {
+                    compressedTimestampIndex = compressedColumnCount;
                 }
+                compressedColumnCount++;
             }
-
-            sink.of(
-                    tableName,
-                    metadata.getTableId(),
-                    compressedTimestampIndex,
-                    metadata.isSuspended(),
-                    metadata.getStructureVersion(),
-                    compressedColumnCount
-            );
-        } finally {
-            schemaLock.readLock().unlock();
         }
+
+        sink.of(
+                tableName,
+                metadata.getTableId(),
+                compressedTimestampIndex,
+                metadata.isSuspended(),
+                metadata.getStructureVersion(),
+                compressedColumnCount
+        );
+    }
+
+    @Override
+    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
+        return tableTransactionLog.getCursor(seqTxn);
+    }
+
+    @Override
+    public boolean isSuspended() {
+        return metadata.isSuspended();
+    }
+
+    @Override
+    public long lastTxn() {
+        return tableTransactionLog.lastTxn();
     }
 
     @Override
@@ -223,18 +227,8 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long lastTxn() {
-        return tableTransactionLog.lastTxn();
-    }
-
-    @Override
     public void suspendTable() {
         metadata.suspendTable();
-    }
-
-    @Override
-    public boolean isSuspended() {
-        return metadata.isSuspended();
     }
 
     public String getTableName() {

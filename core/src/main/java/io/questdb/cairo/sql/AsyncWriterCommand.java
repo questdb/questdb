@@ -31,7 +31,6 @@ import java.io.Closeable;
 
 public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
 
-
     AsyncWriterCommand deserialize(TableWriterTask task);
 
     int getCommandType();

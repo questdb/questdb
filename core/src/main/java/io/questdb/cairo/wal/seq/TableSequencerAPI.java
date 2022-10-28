@@ -38,10 +38,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-import java.util.ArrayDeque;
 import java.util.Iterator;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -72,7 +69,11 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink, boolean compress) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
-            tableSequencer.getTableMetadata(sink, compress);
+            try {
+                tableSequencer.getTableMetadata(sink, compress);
+            } finally {
+                tableSequencer.unlockRead();
+            }
         }
     }
 
@@ -213,9 +214,13 @@ public class TableSequencerAPI implements QuietCloseable {
             TableRecordMetadataSink sink,
             boolean compress
     ) {
-        try (TableSequencer tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
-            if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
-                tableSequencer.getTableMetadata(sink, compress);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            try {
+                if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
+                    tableSequencer.getTableMetadata(sink, compress);
+                }
+            } finally {
+                tableSequencer.unlockRead();
             }
         }
     }
