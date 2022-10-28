@@ -52,7 +52,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -64,7 +63,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMicros = 0L;
     }
 
     @After
@@ -802,26 +800,26 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                assertEquals(0, walWriter.size());
+                assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
-                assertEquals(1, walWriter.size());
+                assertEquals(1, walWriter.getSegmentRowCount());
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 11);
                 row.append();
-                assertEquals(2, walWriter.size());
+                assertEquals(2, walWriter.getSegmentRowCount());
                 row = walWriter.newRow(0);
 
                 row.putByte(0, (byte) 111);
-                assertEquals(2, walWriter.size());
+                assertEquals(2, walWriter.getSegmentRowCount());
                 row.cancel();
 
-                assertEquals(2, walWriter.size());
+                assertEquals(2, walWriter.getSegmentRowCount());
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 112);
                 row.append();
-                assertEquals(3, walWriter.size());
+                assertEquals(3, walWriter.getSegmentRowCount());
                 walWriter.commit();
             }
 
@@ -1148,13 +1146,12 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final int numOfRows = 4000;
             final int maxRowCount = 500;
+            walSegmentRolloverRowCount = maxRowCount;
+            Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
             final int numOfTxn = numOfThreads * numOfSegments;
             final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
-
-            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-            rollStrategy.setMaxRowCount(maxRowCount);
 
             // map<walId, numOfThreadsUsedThisWalWriter>
             final ConcurrentMap<Integer, AtomicInteger> counters = new ConcurrentHashMap<>(numOfThreads);
@@ -1165,15 +1162,22 @@ public class WalWriterTest extends AbstractGriffinTest {
                         final Integer walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
                         counter.incrementAndGet();
-                        walWriter.setRollStrategy(rollStrategy);
-                        assertEquals(0, walWriter.size());
+                        assertEquals(0, walWriter.getSegmentRowCount());
                         for (int n = 0; n < numOfRows; n++) {
                             row = walWriter.newRow(0);
                             row.putInt(0, n);
                             row.putSym(1, "test" + n);
                             row.append();
-                            walWriter.rollSegmentIfLimitReached();
+                            if ((n + 1) % maxRowCount == 0) {
+                                walWriter.commit();
+                            }
                         }
+                        walWriter.commit();
+                        assertWalExistence(true, tableName, walId);
+                        for (int n = 0; n < numOfSegments; n++) {
+                            assertSegmentExistence(true, tableName, walId, n);
+                        }
+                        assertSegmentExistence(false, tableName, walId, numOfSegments);
                     } catch (Exception e) {
                         e.printStackTrace();
                         Assert.fail("Write failed [e=" + e + "]");
@@ -1300,35 +1304,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
-            }
-        });
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long getPageSize() {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
-                        throw e;
-                    }
-                }
-                return Files.PAGE_SIZE;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch (Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertEquals("Test failure", e.getMessage());
             }
         });
     }
@@ -1564,7 +1539,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walSymbolCounts.add(walWriter.getSymbolMapReader(24).getSymbolCount());
                     walSymbolCounts.add(walWriter.getSymbolMapReader(25).getSymbolCount());
 
-                    assertEquals(rowsToInsertTotal, walWriter.size());
+                    assertEquals(rowsToInsertTotal, walWriter.getSegmentRowCount());
                     assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
                     walWriter.commit();
                 }
@@ -2403,24 +2378,24 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                assertEquals(0, walWriter.size());
+                assertEquals(0, walWriter.getSegmentRowCount());
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
-                assertEquals(1, walWriter.size());
+                assertEquals(1, walWriter.getSegmentRowCount());
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 11);
                 row.append();
-                assertEquals(2, walWriter.size());
+                assertEquals(2, walWriter.getSegmentRowCount());
 
                 walWriter.commit();
                 walWriter.rollSegment();
-                assertEquals(0, walWriter.size());
+                assertEquals(0, walWriter.getSegmentRowCount());
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 112);
                 row.append();
                 walWriter.commit();
-                assertEquals(1, walWriter.size());
+                assertEquals(1, walWriter.getSegmentRowCount());
             }
 
             try (TableModel model = defaultModel(tableName)) {
@@ -2923,6 +2898,93 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
+    interface RowInserter {
+        void insertRow();
+        long getCount();
+    }
+
+    @Test
+    public void testLargeSegmentRollover() throws Exception {
+        currentMicros = -1;  // Don't mock MicrosecondClock.
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            // Schema with 8 columns, 8 bytes each = 64 bytes per row
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .timestamp("ts")
+                    .col("a", ColumnType.LONG)
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                final RowInserter ins = new RowInserter() {
+                    private long count;
+                    private long ts = 1000000000L;
+                    @Override
+                    public void insertRow() {
+                        TableWriter.Row row = walWriter.newRow(ts);
+                        row.putLong(1, count);
+                        row.append();
+                        ts += 1000;
+                        ++count;
+                    }
+
+                    @Override
+                    public long getCount() {
+                        return count;
+                    }
+                };
+
+                ins.insertRow();
+                walWriter.commit();
+                Assert.assertEquals(ins.getCount(), 1);
+
+                // Just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertWalExistence(false, tableName, 2);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                while (ins.getCount() < configuration.getWalSegmentRolloverRowCount()) {
+                    ins.insertRow();
+                    if (ins.getCount() % 1000 == 0) {  // Committing occasionally to avoid too many log messages.
+                        walWriter.commit();
+                    }
+                }
+                walWriter.commit();
+
+                // Still just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                ins.insertRow();
+                walWriter.commit();
+
+                // Rolled over to second segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(true, tableName, 1, 1);
+                assertSegmentExistence(false, tableName, 1, 2);
+
+                assertSegmentLockEngagement(false, tableName, 1, 0);
+
+                drainWalQueue();
+                runWalPurgeJob();
+
+                assertSegmentExistence(false, tableName, 1, 0);
+            }
+        });
+    }
+
+    static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
+    }
+
     static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
         AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
         removeColumnOperation.ofDropColumn(columnName);
@@ -3136,128 +3198,5 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
-    }
-
-    private void testRollSegment(int rowsToInsertTotal, WalWriterRollStrategy rollStrategy, LongList expectedRowCounts) {
-        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
-        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
-    }
-
-    private void testRollSegment(int rowsToInsertTotal, WalWriterRollStrategy rollStrategy, LongList expectedRowCounts,
-                                 IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates) {
-        final String tableName = testName.getMethodName();
-        createRollSegmentTestTable(tableName);
-
-        final long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
-        try {
-            final String walName;
-            final long ts = Os.currentTimeMicros();
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-            final LongList rowCounts = new LongList();
-            final ObjList<IntList> walSymbolCounts = new ObjList<>();
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walWriter.setRollStrategy(rollStrategy);
-                assertEquals(tableName, walWriter.getTableName());
-                walName = walWriter.getWalName();
-                for (int i = 0; i < rowsToInsertTotal; i++) {
-                    TableWriter.Row row = walWriter.newRow(ts);
-                    row.putInt(0, i);
-                    row.putByte(1, (byte) i);
-                    row.putLong(2, i);
-                    row.putLong256(3, i, i + 1, i + 2, i + 3);
-                    row.putDouble(4, i + .5);
-                    row.putFloat(5, i + .5f);
-                    row.putShort(6, (short) i);
-                    row.putTimestamp(7, i);
-                    row.putChar(8, (char) i);
-                    row.putBool(9, i % 2 == 0);
-                    row.putDate(10, i);
-                    row.putStr(11, String.valueOf(i));
-                    row.putGeoHash(12, i); // geo byte
-                    row.putGeoHash(13, i); // geo int
-                    row.putGeoHash(14, i); // geo short
-                    row.putGeoHash(15, i); // geo long
-                    prepareBinPayload(pointer, i);
-                    row.putBin(16, binSeq.of(pointer, i));
-                    row.putSym(17, String.valueOf(i));
-                    row.append();
-
-                    currentMicros += 1000_000L;
-                    final Consumer<WalWriterRollStrategy> rollStrategyUpdate = rollStrategyUpdates.get(i);
-                    if (rollStrategyUpdate != null) {
-                        rollStrategyUpdate.accept(rollStrategy);
-                    }
-
-                    final long rolledRowCount = walWriter.rollSegmentIfLimitReached();
-                    if (rolledRowCount != 0 || i == rowsToInsertTotal - 1) {
-                        rowCounts.add(rolledRowCount == 0 ? walWriter.size() : rolledRowCount);
-                        final IntList symbolCounts = new IntList();
-                        walSymbolCounts.add(symbolCounts);
-                        symbolCounts.add(walWriter.getSymbolMapReader(17).getSymbolCount());
-                    }
-                }
-
-                assertEquals("WalWriter{name=" + walName + ", table=" + tableName + "}", walWriter.toString());
-                walWriter.commit();
-            }
-
-            assertEquals(expectedRowCounts, rowCounts);
-
-            int i = 0;
-            for (int segmentId = 0; segmentId < rowCounts.size(); segmentId++) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName,
-                        segmentId, rowCounts.get(segmentId))) {
-                    assertEquals(19, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(rowCounts.get(segmentId), reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    final Long256Impl long256 = new Long256Impl();
-                    while (cursor.hasNext()) {
-                        assertEquals(i, record.getInt(0));
-                        assertEquals(i, record.getByte(1));
-                        assertEquals(i, record.getLong(2));
-                        long256.setAll(i, i + 1, i + 2, i + 3);
-                        assertEquals(long256, record.getLong256A(3));
-                        assertEquals(long256, record.getLong256B(3));
-                        assertEquals(i + 0.5, record.getDouble(4), 0.1);
-                        assertEquals(i + 0.5, record.getFloat(5), 0.1);
-                        assertEquals(i, record.getShort(6));
-                        assertEquals(i, record.getTimestamp(7));
-                        assertEquals(i, record.getChar(8));
-                        assertEquals(i % 2 == 0, record.getBool(9));
-                        assertEquals(i, record.getDate(10));
-                        assertEquals(String.valueOf(i), record.getStr(11).toString());
-                        assertEquals(record.getStr(11).toString(), record.getStrB(11).toString());
-                        assertEquals(String.valueOf(i).length(), record.getStrLen(11));
-                        assertEquals(i, record.getGeoByte(12));
-                        assertEquals(i, record.getGeoInt(13));
-                        assertEquals(i, record.getGeoShort(14));
-                        assertEquals(i, record.getGeoLong(15));
-                        prepareBinPayload(pointer, i);
-                        assertBinSeqEquals(binSeq.of(pointer, i), record.getBin(16));
-                        assertEquals(String.valueOf(i), record.getSym(17));
-                        assertEquals(ts, record.getTimestamp(18));
-
-                        long rowId = i;
-                        for (int x = 0; x < segmentId; x++) {
-                            rowId -= rowCounts.getQuick(x);
-                        }
-                        assertEquals(rowId, record.getRowId());
-                        sink.clear();
-                        ((Sinkable) record).toSink(sink);
-                        assertEquals("WalReaderRecord [recordIndex=" + rowId + "]", sink.toString());
-                        i++;
-                    }
-                    assertEquals(rowCounts.get(segmentId), cursor.size());
-                    assertEquals(rowCounts.get(segmentId), reader.size());
-                }
-            }
-        } finally {
-            Unsafe.getUnsafe().freeMemory(pointer);
-        }
     }
 }

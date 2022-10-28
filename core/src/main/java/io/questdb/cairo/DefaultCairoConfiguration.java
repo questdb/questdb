@@ -239,6 +239,19 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
+    }
+
+    @Override
+    public int getMetadataPoolCapacity() {
+        return getSqlModelPoolCapacity();
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() { return 200000; }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }
@@ -276,11 +289,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
-    }
-
-    @Override
-    public long getInactiveWalWriterTTL() {
-        return 60_000;
     }
 
     @Override
@@ -326,11 +334,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return 1000;
-    }
-
-    @Override
-    public int getMetadataPoolCapacity() {
-        return getSqlModelPoolCapacity();
     }
 
     @Override
