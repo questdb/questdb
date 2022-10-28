@@ -218,6 +218,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return conf.getMetadataPoolCapacity();
     }
@@ -228,7 +233,10 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWalPurgeInterval() {return conf.getWalPurgeInterval(); }
+    public long getWalPurgeInterval() { return conf.getWalPurgeInterval(); }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() { return conf.getWalSegmentRolloverRowCount(); }
 
     @Override
     public int getWalTxnNotificationQueueCapacity() {
@@ -773,6 +781,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return conf.getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
     }
 
     @Override

@@ -55,6 +55,8 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
+
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
@@ -75,15 +77,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final TextImportExecutionContext textImportExecutionContext;
     private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
+    // initial value of unpublishedWalTxnCount is 1 because we want to scan for unapplied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
+    // Defaults WAL Apply threads set to 2, this is the upper limit of number of parallel compilations when applying WAL segments.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled(), 5);
+        this(configuration, Metrics.disabled(), 2);
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalIoThreads) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalWALApplyThreads) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -127,7 +131,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw e;
         }
 
-        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalIoThreads);
+        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalWALApplyThreads);
     }
 
     @TestOnly
@@ -158,6 +162,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(messageBus);
         Misc.free(tableSequencerAPI);
         Misc.free(telemetryQueue);
+        if (sqlCompilerPool != null) {
+            sqlCompilerPool.releaseAll();
+        }
     }
 
     public void createTable(

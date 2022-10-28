@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.ClosableInstance;
+
 import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
@@ -38,10 +39,13 @@ public class SqlToOperation implements Closeable {
     private final SqlExecutionContext sqlExecutionContext;
     private final CairoEngine engine;
 
-    public SqlToOperation(CairoEngine engine) {
+    public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine,
+                workerCount,
+                sharedWorkerCount
+        ).with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
@@ -52,8 +56,17 @@ public class SqlToOperation implements Closeable {
         this.engine = engine;
     }
 
+    @Override
+    public void close() {
+        sqlExecutionContext.close();
+    }
+
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
+    }
+
     public AlterOperation toAlterOperation(CharSequence alterStatement) throws SqlException {
-        try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()){
+        try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()) {
             final CompiledQuery compiledQuery = sqlCompiler.instance().compile(alterStatement, sqlExecutionContext);
             final AlterOperation alterOperation = compiledQuery.getAlterOperation();
             alterOperation.withContext(sqlExecutionContext);
@@ -68,14 +81,5 @@ public class SqlToOperation implements Closeable {
             updateOperation.withContext(sqlExecutionContext);
             return updateOperation;
         }
-    }
-
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
-    }
-
-    @Override
-    public void close() {
-        sqlExecutionContext.close();
     }
 }

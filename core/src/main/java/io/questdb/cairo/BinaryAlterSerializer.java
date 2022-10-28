@@ -22,31 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-public interface WalWriterRollStrategy {
-    default void setMaxSegmentSize(long maxSegmentSize) {
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.griffin.engine.ops.AlterOperation;
+
+public class BinaryAlterSerializer implements MemorySerializer {
+    @Override
+    public void toSink(Object obj, MemoryA sink) {
+        ((AlterOperation) obj).serializeBody(sink);
     }
 
-    default void setMaxRowCount(long maxRowCount) {
-    }
-
-    default void setRollInterval(long rollInterval) {
-    }
-
-    default boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
-        return false;
-    }
-
-    default boolean isMaxSegmentSizeSet() {
-        return false;
-    }
-
-    default boolean isMaxRowCountSet() {
-        return false;
-    }
-
-    default boolean isRollIntervalSet() {
-        return false;
+    @Override
+    public void fromSink(Object instance, MemoryCR memory, long offset) {
+        ((AlterOperation) instance).deserializeBody(memory, offset);
     }
 }

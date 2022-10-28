@@ -1,76 +1,62 @@
 <div align="center">
-  <img
-    alt="QuestDB Logo"
-    src="https://raw.githubusercontent.com/questdb/questdb/master/.github/logo-readme.png"
-    width="305px"
-  />
+  <img alt="QuestDB Logo" src="https://questdb.io/img/questdb-logo-themed.svg" width="305px"/>
 </div>
 <p>&nbsp;</p>
 
 <p align="center">
   <a href="https://slack.questdb.io">
-    <img
-      src="https://slack.questdb.io/badge.svg"
-      alt="QuestDB community Slack channel"
-    />
+    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img
-      src="https://img.shields.io/github/all-contributors/questdb/questdb"
-      alt="QuestDB open source contributors"
-    />
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img
-      src="https://img.shields.io/maven-central/v/org.questdb/questdb"
-      alt="QuestDB on Apache Maven"
-    />
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README-PT.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md) | [Italiano](./i18n/README.it-it.md) | [Українська](./i18n/README.ua-ua.md) | [Español](./i18n/README.es-es.md) | [Português](./i18n/README-PT.md) | 日本
+
 # QuestDB
 
-QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
-应用场景包括金融市场数据、传感器数据、实时分析、数据仪表板和基础设施监控。它兼容
-InfluxDB 行协议以提供不受数据库模式影响的高吞吐数据获取能力，也兼容 PostgreSQL
-的线路协议，並提供 REST API 以便于批量导入和导出。
+QuestDB は、アプリケーション向けの高性能なオープンソース SQL データベースです。
+金融サービス、IoT、機械学習、DevOps、可観測性。 それが含まれています
+PostgreSQL ワイヤ プロトコルのエンドポイント、高スループットのスキーマに依存しない
+InfluxDB Line Protocol を使用した取り込み、およびクエリ用の REST API、バルク
+輸入、および輸出。
 
-QuestDB 使用 ANSI SQL ，並包含时间导向的 SQL 语义。这些 SQL 语义能更简单的连接
-（JOIN）不同来源的关联数据以及时间序列数据。QuestDB 通过列导向的存储模型、大规模
-并行的矢量执行、SIMD 指令和各种低延迟技术实现了高性能。整个代码库是用 Java 和
-C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾回收的影响。
+QuestDB は、時間指向言語のネイティブ拡張を使用して ANSI SQL を実装します
+特徴。 これらの拡張機能により、複数のデータを簡単に関連付けることができます
+リレーショナル結合と時系列結合を使用したソース。 QuestDB は高い成果を上げています
+列指向のストレージ モデル、大規模並列化ベクトルによるパフォーマンス
+実行、SIMD 命令、およびさまざまな低レイテンシ技術。 全体
+コードベースは Java と C++ でゼロから構築されており、依存関係はありません。
+ガベージ コレクションから 100% 解放されます。
+
 
 <div align="center">
   <a href="https://demo.questdb.io">
-    <img
-      alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart"
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png"
-      width="600"
-    />
+    <img alt="QuestDB Web Console showing multiple SQL statements and visualizing a query as a chart" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="600" />
   </a>
 </div>
 
-## 尝试 QuestDB
+## 試す QuestDB
 
-我们提供了一个[在线演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
-和几个样本数据集：
+最新の [ライブ デモ](https://demo.questdb.io/)
+QuestDB リリースとサンプル データセット:
 
-- 一个 16 亿行的数据集，包括近 10 年的纽约市出租车行程轨迹。
-- 一个即時的加密货币（比特币、以太坊）交易数据集。
-- 一个包括 25 万艘船的时序地理数据集。
+- 16 億行の 10 年間の NYC タクシー旅行
+- 暗号通貨取引所からのライブ取引データ
+- 250,000 隻のユニークな船の経時的なジオロケーション
 
-## 如何開始
+## インストール QuestDB
 
-### 安裝 QuestDB
-
-你可以使用 Docker 来快速启动一个 QuestDB 实例：
+QuestDB を実行するには、Docker を使用してすぐに開始できます。
 
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
-
-macOS 用户可以使用 Homebrew 来启动：
+macOS ユーザーは Homebrew を使用できます。
 
 ```bash
 brew install questdb
@@ -80,112 +66,106 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-[QuestDB 下载页面](https://questdb.io/get-questdb/) 提供二进制文件的直接下载，并
-提供其他安装和部署方法的详细信息。
+[QuestDB ダウンロード ページ](https://questdb.io/get-questdb/) では、直接
+バイナリのダウンロード、およびその他のインストールと展開の詳細があります
+メソッド。
 
-### 连接到 QuestDB
+### に接続します QuestDB
 
-你可以使用以下接口与 QuestDB 进行交互。
+次のインターフェイスを使用して QuestDB とやり取りできます。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 将会启动一个 web
-  控制台，默认运行在 `9000` 端口
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/): 支
-  持高性能、高吞吐量单向数据插入，默认运行在 `9009` 端口
-- [REST API](https://questdb.io/docs/reference/api/rest/) : 使用 REST API 来进行
-  交互，默认需要使用 `9000` 端口进行访问
-- [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/):
-  默认运行在 `8812` 端口
+- [Web コンソール](https://questdb.io/docs/develop/web-console/) ポートでリッスン
+   `9000`
+- [REST API](https://questdb.io/docs/reference/api/rest/) ポート `9000` で
+- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) ワイヤー プロトコル
+   ポート「8812」
+- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) の回線プロトコル
+   ポート「9009」での高スループット取り込み
+   
+## QuestDB と他のオープンソース TSDB との比較
 
-### 获取数据
+ここに高カーディナリティがあります
+[時系列ベンチマーク スイート](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用した結果:
 
-以下是我們官方开发的 InfluxDB line protocol 客户端，支持多种编程语言：
-
-- [.NET](https://github.com/questdb/net-questdb-client)
-- [C/C++](https://github.com/questdb/c-questdb-client)
-- [Go](https://pkg.go.dev/github.com/questdb/go-questdb-client)
-- [Java](https://questdb.io/docs/reference/clients/java_ilp/)
-- [NodeJS](https://questdb.github.io/nodejs-questdb-client)
-- [Python](https://py-questdb-client.readthedocs.io/en/latest/)
-- [Rust](https://docs.rs/crate/questdb-rs/latest)
-
-## QuestDB 与其他开源 TSDB 的对比情况
-
-参考[我们的文章](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)，
-其中在功能、性能和成熟度上比较了 QuestDB 和其他的开源时序资料库。
-
-以下是 [时间序列基准测试套件](https://github.com/timescale/tsbs) 运行 `cpu-only`
-用例的测试结果，基于 6 个 worker 的 AMD Ryzen 3970X 上测试对比得到：
 
 <div align="center">
-  <a href="https://questdb.io/time-series-benchmark-suite/">
-    <img
-      alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB."
-      src="https://raw.githubusercontent.com/questdb/questdb/master/.github/tsbs-results.png"
-    />
+  <a href="https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/">
+<!--     <img  src=".github/tsbs-results.png"/> -->
+    <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." width="1042" alt="tsbs-results" src="https://user-images.githubusercontent.com/91843271/197382161-e5f3f5b0-18bf-439a-94e4-83ab4bf91d7c.png">
   </a>
 </div>
 
-下表显示了在 `c5.metal` 实例上使用 96 个线程中的 16 个线程运行 10 亿条记录的查询
-执行时间。
 
-| 查询                                                      | 运行时间   |
-| --------------------------------------------------------- | ---------- |
-| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
 
-## 相关资源
+次の表は、1 つのサーバーで実行された 10 億行のクエリ実行時間を示しています。
+利用可能な 96 個のスレッドのうち 16 個を使用する `c5.metal` インスタンス:
 
-### 📚 阅读文档
+| クエリ                                                       | ランタイム   |
+| ------------------------------------------------------------ | ---------- |
+| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
+| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
+| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
-- [QuestDB documentation:](https://questdb.io/docs/introduction/) 描述了如何运行
-  和配置 QuestDB 的技术参考。
-- 由我们的社区成员编写的[教程](https://questdb.io/tutorial/)展示了 QuestDB 的可
-  能应用。
-- [产品路线图](https://github.com/questdb/questdb/projects/3)列出了我们目前正在
-  进行的任务和功能。
+## 資力
 
-### ❓ 寻求支持
 
-- [Community Slack:](https://slack.questdb.io) 是一个进行技术讨论和认识其他用户
-  的好地方。👋
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 报告 QuestDB 缺陷
-  、功能建议或是反馈问题。
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 寻找常见
-  问题的解决方法。
+### 📚 ドキュメントを読む
 
-### 🚢 部署 QuestDB
+- [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) 方法を理解する
+   QuestDB を実行および構成します。
+- [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何ができるかを学ぶ
+   一歩一歩。
+- [製品ロードマップ:](https://github.com/questdb/questdb/projects) チェックアウト
+   今後のリリースの計画。
+   
+
+### ❓ 支持を得ます
+
+- [Community Slack:](https://slack.questdb.io) 技術的な議論に参加し、質問してください
+   質問して、他のユーザーに会いましょう！
+- [GitHub の問題:](https://github.com/questdb/questdb/issues) バグを報告するか、
+   QuestDB の問題。
+- [GitHub ディスカッション:](https://github.com/questdb/questdb/discussions) 提案
+   新しい機能を紹介したり、作成したものを表示したりできます。
+- [スタック オーバーフロー:](https://stackoverflow.com/questions/tagged/questdb) 探します
+   一般的なトラブルシューティング ソリューション。
+   
+
+### 🚢 QuestDB をデプロイする
 
 - [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
+- [Google クラウド プラットフォーム](https://questdb.io/docs/guides/google-cloud-platform)
+- [公式 Docker イメージ](https://questdb.io/docs/get-started/docker)
+- [DigitalOcean ドロップレット](https://questdb.io/docs/guides/digitalocean)
+- [Kubernetes Helm チャート](https://questdb.io/docs/guides/kubernetes)
 
-## 贡献
+## 助ける
 
-我们总是乐于接受对项目的贡献，无论是源代码、文档、错误报告、功能请求还是反馈。如
-果要开始贡献：
+それがソースであるかどうかにかかわらず、私たちは常にプロジェクトへの貢献を喜んでいます
+コード、ドキュメント、バグ レポート、機能のリクエスト、またはフィードバック。 始めるには
+貢献して：
 
-- 请看一下 GitHub 上标有
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  的问题。
-- 阅
-  读[贡献指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有关构建 QuestDB 的详细信息，请参
-  见[构建说明](https://github.com/questdb/questdb/blob/master/core/README.md)。
-- [创建 QuestDB 的一个分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
-  并提交一个 pull request，说明你的修改建议。
+- ラベルが付けられた GitHub の問題に目を通してください。
+   「[良い初号](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)」.
+- 読む
+   [貢献ガイド](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
+- QuestDB の構築の詳細については、
+   [ビルド手順](https://github.com/questdb/questdb/blob/master/core/README.md)。
+- [フォークを作成する](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
+   QuestDB の を作成し、提案された変更を含むプル リクエストを送信してください。
+   
+✨ 感謝の印として、**QuestDB グッズ** を
+貢献者。 [ここであなたのスワッグを請求してください。](https://questdb.io/community)
 
-✨ 为了表示感谢，我们将向贡献者发送一些我们的 QuestDB 礼品，如贴纸和 T 恤衫
-[在这里申领](https://questdb.io/community)
+貢献してくれた次の素晴らしい人々に感謝します
+QuestDB: ([絵文字キー](https://allcontributors.org/docs/en/emoji-key)):
 
-衷心感谢以下为 QuestDB 作出贡献的优秀人士：
-（[表情符号键](https://allcontributors.org/docs/en/emoji-key)）：
 
-<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
-<!-- prettier-ignore-start -->
+<!-- ALL-CONTRIBUTORS-LIST:START - このセクションを削除または変更しないでください -->
+<!-- きれいに無視して開始 -->
 <!-- markdownlint-disable -->
+
 <table>
   <tr>
     <td align="center"><a href="https://github.com/clickingbuttons"><img src="https://avatars1.githubusercontent.com/u/43246297?v=4" width="100px;" alt=""/><br /><sub><b>clickingbuttons</b></sub></a><br /><a href="https://github.com/questdb/questdb/commits?author=clickingbuttons" title="Code">💻</a> <a href="#ideas-clickingbuttons" title="Ideas, Planning, & Feedback">🤔</a> <a href="#userTesting-clickingbuttons" title="User Testing">📓</a></td>
@@ -322,13 +302,21 @@ questdb stop  // To stop questdb
     <td align="center"><a href="https://clickhouse.com/"><img src="https://avatars.githubusercontent.com/u/18581488?v=4" width="100px;" alt=""/><br /><sub><b>alexey-milovidov</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Aalexey-milovidov" title="Bug reports">🐛</a></td>
     <td align="center"><a href="http://blog.suconghou.cn"><img src="https://avatars.githubusercontent.com/u/4580719?v=4" width="100px;" alt=""/><br /><sub><b>suconghou</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3Asuconghou" title="Bug reports">🐛</a></td>
   </tr>
+   <tr>
+    <td align="center"><a href="https://github.com/TheZal"><img src="https://avatars.githubusercontent.com/TheZal?v=4" width="100px;" alt=""/><br /><sub><b>TheZal</b></sub></a><br /><a href="https://github.com/questdb/questdb/issues?q=author%3ATheZal" title="Documentation">📖</a></td>
+  </tr>
 </table>
 
 <!-- markdownlint-restore -->
-<!-- prettier-ignore-end -->
+<!-- きれいに無視して終了 -->
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-本项目遵循
-[all-contributors](https://github.com/all-contributors/all-contributors) 标准.
-欢迎任何形式的贡献！
+このプロジェクトは、
+[すべての貢献者](https://github.com/all-contributors/all-contributors)
+仕様。 あらゆる種類の貢献を歓迎します!
+ 
+
+
+
+

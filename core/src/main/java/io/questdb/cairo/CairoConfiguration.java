@@ -127,6 +127,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    long getInactiveWalWriterTTL();
+
     int getMetadataPoolCapacity();
 
     int getDoubleToStrCastScale();
@@ -240,6 +242,8 @@ public interface CairoConfiguration {
     }
 
     int getSampleByIndexSearchPageSize();
+
+    long getWalSegmentRolloverRowCount();
 
     boolean getSimulateCrashEnabled();
 
@@ -395,6 +399,8 @@ public interface CairoConfiguration {
     long getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
+
+    int getWalRecreateDistressedSequencerAttempts();
 
     boolean isIOURingEnabled();
 

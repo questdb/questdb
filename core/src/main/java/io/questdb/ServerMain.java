@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
-import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -76,7 +76,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getTotalWorkerCount(config)));
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getWalApplyWorkerCount(config)));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -103,21 +103,17 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new ColumnIndexerJob(messageBus));
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
+
                     if (walSupported) {
                         sharedPool.assign(new CheckWalTransactionsJob(engine));
-                    }
-
-                    if (walSupported && !config.getWalApplyPoolConfiguration().isEnabled()) {
-                        final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
-                        sharedPool.assign(applyWal2TableJob);
-                        sharedPool.freeOnExit(applyWal2TableJob);
-                    }
-
-                    if (walSupported) {
                         final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
                         walPurgeJob.delayByHalfInterval();
                         sharedPool.assign(walPurgeJob);
                         sharedPool.freeOnExit(walPurgeJob);
+
+                        if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                            WalUtils.setupWorkerPool(sharedPool, engine, workerPoolManager.getSharedWorkerCount());
+                        }
                     }
 
                     // text import
@@ -148,14 +144,12 @@ public class ServerMain implements Closeable {
         };
 
         if (walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
-            WorkerPool workerPool = workerPoolManager.getInstance(
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
                     config.getWalApplyPoolConfiguration(),
                     metrics.health(),
                     WorkerPoolManager.Requester.WAL_APPLY
             );
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine);
-            workerPool.assign(applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
+            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
 
         // snapshots
@@ -206,13 +200,6 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         log.advisoryW().$("bootstrap complete").$();
-    }
-
-    private static int getTotalWorkerCount(PropServerConfiguration config) {
-        return Math.min(1, config.getWorkerPoolConfiguration().getWorkerCount()
-                + config.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount()
-                + config.getHttpServerConfiguration().getWorkerCount()
-                + config.getPGWireConfiguration().getWorkerCount());
     }
 
     public static void main(String[] args) throws Exception {
@@ -277,6 +264,16 @@ public class ServerMain implements Closeable {
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
+    }
+
+    private static int getWalApplyWorkerCount(PropServerConfiguration config) {
+        final int walApplyThreads;
+        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+            walApplyThreads = config.getWalApplyPoolConfiguration().getWorkerCount();
+        } else {
+            walApplyThreads = config.getWorkerPoolConfiguration().getWorkerCount();
+        }
+        return Math.max(1, walApplyThreads);
     }
 
     private void addShutdownHook() {

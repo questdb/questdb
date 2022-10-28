@@ -167,6 +167,22 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    copy
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
+        (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    copyData
+ * Signature: (JJJJ)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    munmap0
  * Signature: (JJ)I
  */

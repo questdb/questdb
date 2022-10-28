@@ -633,7 +633,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault();
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

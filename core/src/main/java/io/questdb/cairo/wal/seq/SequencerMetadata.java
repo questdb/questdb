@@ -47,7 +47,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private int tableId;
     private String tableName;
-    private boolean suspended;
+    private volatile boolean suspended;
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);

@@ -173,10 +173,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     const char* from = (const char *) lpszFrom;
     const char* to = (const char *) lpszTo;
 
-    char buf[4096];
-    size_t read_sz;
-    off_t wrt_off = 0;
-
     const int input = open(from, O_RDONLY);
     if (-1 ==  (input)) {
         return -1;

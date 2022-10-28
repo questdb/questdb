@@ -31,18 +31,27 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.Matchers;
+import org.hamcrest.number.OrderingComparison;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TableSequencerImplTest extends AbstractCairoTest {
+    @BeforeClass
+    public static void setUpStatic() {
+        recreateDistressedSequencerAttempts = Integer.MAX_VALUE;
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
-    public void testCopyMetadataRace() throws InterruptedException {
+    public void testCopyMetadataRace() throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
         final String tableName = testName.getMethodName();
         AtomicReference<Throwable> exception = new AtomicReference<>();
@@ -61,12 +70,57 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                 });
     }
 
     @Test
-    public void testGetTxnRace() throws InterruptedException {
+    public void testGetCursorDistressedSequencerRace() throws Exception {
+        int readerCount = 2;
+        CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
+        final String tableName = testName.getMethodName();
+        AtomicReference<Throwable> exception = new AtomicReference<>();
+        int iterations = 50;
+
+        AtomicInteger threadId = new AtomicInteger();
+
+        runAddColumnRace(
+                barrier, tableName, iterations, readerCount,
+                () -> {
+                    try {
+                        TestUtils.await(barrier);
+                        int threadIdValue = threadId.getAndIncrement();
+                        long sv = 0;
+                        do {
+                            long sv2 = engine.getTableSequencerAPI().lastTxn(tableName);
+                            if (threadIdValue != 0) {
+                                engine.getTableSequencerAPI().setDistressed(tableName);
+                                if (sv != sv2) {
+                                    sv = sv2;
+                                    LOG.info().$("destroyed sv ").$(sv).$();
+                                }
+                            } else {
+                                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableName, 0)) {
+                                    long transactions = 0;
+                                    while (cursor.hasNext()) {
+                                        transactions++;
+                                    }
+                                    MatcherAssert.assertThat(transactions, OrderingComparison.greaterThanOrEqualTo(sv2));
+                                }
+                            }
+                        } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
+                    } catch (Throwable e) {
+                        exception.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+    }
+
+    @Test
+    public void testGetTxnRace() throws Exception {
         CyclicBarrier barrier = new CyclicBarrier(2);
         final String tableName = testName.getMethodName();
         AtomicReference<Throwable> exception = new AtomicReference<>();
@@ -82,12 +136,14 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                 });
     }
 
     @Test
-    public void testTxnCursorRace() throws InterruptedException {
+    public void testTxnDistressedCursorRace() throws Exception {
         int readers = 3;
         CyclicBarrier barrier = new CyclicBarrier(readers + 1);
         final String tableName = testName.getMethodName();
@@ -106,10 +162,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                                     lastTxn = cursor.getTxn();
                                 }
                             }
-
                         } while (engine.getTableSequencerAPI().lastTxn(tableName) < iterations && exception.get() == null);
                     } catch (Throwable e) {
                         exception.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                 });
     }
@@ -120,35 +177,37 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         writer.apply(addColumnC.build(), true);
     }
 
-    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, Runnable runnable) throws InterruptedException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("int", ColumnType.INT)
-                .timestamp("ts")
-                .wal()) {
-            engine.createTableUnsafe(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model
-            );
-        }
-        AtomicReference<Throwable> exception = new AtomicReference<>();
-        ObjList<Thread> readerThreadList = new ObjList<>();
-        for (int i = 0; i < readerThreads; i++) {
-            Thread t = new Thread(runnable);
-            readerThreadList.add(t);
-            t.start();
-        }
+    private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, Runnable runnable) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("int", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()) {
+                engine.createTableUnsafe(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        model.getMem(),
+                        model.getPath(),
+                        model
+                );
+            }
+            AtomicReference<Throwable> exception = new AtomicReference<>();
+            ObjList<Thread> readerThreadList = new ObjList<>();
+            for (int i = 0; i < readerThreads; i++) {
+                Thread t = new Thread(runnable);
+                readerThreadList.add(t);
+                t.start();
+            }
 
-        runColumnAdd(barrier, tableName, exception, iterations);
+            runColumnAdd(barrier, tableName, exception, iterations);
 
-        for (int i = 0; i < readerThreads; i++) {
-            readerThreadList.get(i).join();
-        }
+            for (int i = 0; i < readerThreads; i++) {
+                readerThreadList.get(i).join();
+            }
 
-        if (exception.get() != null) {
-            throw new AssertionError(exception.get());
-        }
+            if (exception.get() != null) {
+                throw new AssertionError(exception.get());
+            }
+        });
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {

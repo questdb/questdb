@@ -208,7 +208,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
-    private final String tmpRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -420,7 +419,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean walApplyWorkerHaltOnError;
     private final long walApplyWorkerYieldThreshold;
     private final long walApplyWorkerSleepThreshold;
+    private final long walApplySleepTimeout;
     private final boolean isWalSupported;
+    private final long walSegmentRolloverRowCount;
+    private final int walRecreateDistressedSequencerAttempts;
+    private final long inactiveWalWriterTTL;
 
     public PropServerConfiguration(
             String root,
@@ -438,21 +441,24 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
-        this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 300000);
-        this.walTxnNotificationQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
+        this.walPurgeInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
+        this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
+        this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.isWalSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, false);
+        this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+        String tmpRoot;
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
-            this.tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
+            tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
-            this.tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+            tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, ".attachable");
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -698,7 +704,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, 0);
             this.walApplyWorkerAffinity = getAffinity(properties, env, PropertyKey.WAL_APPLY_WORKER_AFFINITY, walApplyWorkerCount);
             this.walApplyWorkerHaltOnError = getBoolean(properties, env, PropertyKey.WAL_APPLY_WORKER_HALT_ON_ERROR, false);
-            this.walApplyWorkerSleepThreshold  = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10000);
+            this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10000);
+            this.walApplySleepTimeout = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 100);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 10);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
@@ -710,6 +717,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.idleCheckInterval = getLong(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
             this.inactiveReaderTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
+            this.inactiveWalWriterTTL = getLong(properties, env, PropertyKey.CAIRO_INACTIVE_WAL_WRITER_TTL, 60_000);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
@@ -826,7 +834,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.tmpRoot);
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
             if (cairoSqlCopyRoot != null) {
                 this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
             } else {
@@ -1189,17 +1197,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         registerReplacements(DEPRECATED_SETTINGS, old, replacements);
     }
 
-    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int httpWorkerCount) throws ServerConfigurationException {
-        final int[] result = new int[httpWorkerCount];
+    private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int workerCount) throws ServerConfigurationException {
+        final int[] result = new int[workerCount];
         String value = overrideWithEnv(properties, env, key);
         if (value == null) {
             Arrays.fill(result, -1);
         } else {
             String[] affinity = value.split(",");
-            if (affinity.length != httpWorkerCount) {
+            if (affinity.length != workerCount) {
                 throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
             }
-            for (int i = 0; i < httpWorkerCount; i++) {
+            for (int i = 0; i < workerCount; i++) {
                 try {
                     result[i] = Numbers.parseInt(affinity[i]);
                 } catch (NumericException e) {
@@ -2064,6 +2072,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getInactiveWalWriterTTL() {
+            return inactiveWalWriterTTL;
+        }
+
+        @Override
         public int getMetadataPoolCapacity() {
             return sqlModelPoolCapacity;
         }
@@ -2277,6 +2290,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
         }
+
+        @Override
+        public long getWalSegmentRolloverRowCount() { return walSegmentRolloverRowCount; }
 
         @Override
         public boolean getSimulateCrashEnabled() {
@@ -2630,6 +2646,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public int getWalRecreateDistressedSequencerAttempts() {
+            return walRecreateDistressedSequencerAttempts;
         }
 
         @Override
@@ -3533,6 +3554,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return walApplyWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return walApplySleepTimeout;
         }
 
         @Override

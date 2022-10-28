@@ -187,7 +187,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             try {
                 compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
-            } catch (SqlException expected) {
+            } catch (CairoException expected) {
                 TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
                 TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);

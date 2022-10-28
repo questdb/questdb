@@ -264,6 +264,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
     }
@@ -275,8 +280,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalPurgeInterval() {
-        return 300000;
+        return 30_000;
     }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() { return 200000; }
 
     @Override
     public int getWalTxnNotificationQueueCapacity() {
@@ -807,6 +815,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
     }
 
     @Override
