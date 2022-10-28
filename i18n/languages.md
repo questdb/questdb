@@ -10,4 +10,4 @@
 - [Portuguese / Português](README-PT.md)
 - [Japanese / 日本](./README.ja-ja.md)
 - [French / Français](./README.fr-fr.md)
-- [German / Deutsch](./README.du-du.md)
+- [German / Deutsch](./README.de-de.md)
