@@ -630,7 +630,20 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyIntoNewTable() throws Exception {
         CopyRunnable stmt = () -> runAndFetchImportId(
                 "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                sqlExecutionContext
+        );
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTableNoTsFormat() throws Exception {
+        CopyRunnable stmt = () -> runAndFetchImportId(
+                "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "partition by MONTH on error ABORT;",
                 sqlExecutionContext
         );
 
@@ -908,6 +921,19 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testParallelCopyIntoExistingTableWithoutExplicitTimestampAndFormatInCOPY() throws Exception {
+        CopyRunnable stmt = () -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
+                    "on error SKIP_ROW; ", sqlExecutionContext);
+        };
+
+        CopyRunnable test = this::assertQuotesTableContent;
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testSerialCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
             compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);", sqlExecutionContext);
@@ -973,6 +999,26 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyWithSkipAllAtomicityImportsNothing() throws Exception {
         testCopyWithAtomicity(true, "ABORT", 0);
+    }
+
+    @Test
+    public void testParallelCopyFileWithRawLongTsIntoExistingTable() throws Exception {
+        CopyRunnable stmt = () -> {
+            compiler.compile("CREATE TABLE reading (\n" +
+                    "  readingTypeId SYMBOL,\n" +
+                    "  value FLOAT,\n" +
+                    "  readingDate TIMESTAMP\n" +
+                    ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext);
+            runAndFetchImportId("copy reading from 'test-quotes-rawts.csv';", sqlExecutionContext);
+        };
+
+        CopyRunnable test = () -> assertQuery(
+                "cnt\n3\n", "select count(*) cnt from reading",
+                null,
+                false
+        );
+
+        testCopy(stmt, test);
     }
 
     private void testCopyWithAtomicity(boolean parallel, String atomicity, int expectedCount) throws Exception {

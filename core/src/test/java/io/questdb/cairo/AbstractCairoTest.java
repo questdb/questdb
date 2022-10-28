@@ -31,8 +31,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -109,8 +109,6 @@ public abstract class AbstractCairoTest {
     protected static RostiAllocFacade rostiAllocFacade = null;
     protected static int parallelImportStatusLogKeepNDays = -1;
     protected static Boolean ioURingEnabled = null;
-    protected static String stackFailureClass;
-    protected static String stackFailureMethod;
     protected static boolean hideTelemetryTable = false;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
@@ -139,6 +137,7 @@ public abstract class AbstractCairoTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+    public static int recreateDistressedSequencerAttempts = 3;
 
     //ignores:
     // o3, mmap - because they're usually linked with table readers that are kept in pool
@@ -150,18 +149,6 @@ public abstract class AbstractCairoTest {
 
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (FACTORY_TAGS[i]) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
                 memUsed += Unsafe.getMemUsedByTag(i);
             }
         }
@@ -235,21 +222,6 @@ public abstract class AbstractCairoTest {
             @Override
             public String getAttachPartitionSuffix() {
                 return attachableDirSuffix == null ? super.getAttachPartitionSuffix() : attachableDirSuffix;
-            }
-
-            @Override
-            public long getDatabaseIdHi() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw CairoException.nonCritical().put(e.getMessage());
-                        }
-                    }
-                }
-                return super.getDatabaseIdHi();
             }
 
             @Override
@@ -411,21 +383,6 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getRoot() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw e;
-                        }
-                    }
-                }
-                return root;
-            }
-
-            @Override
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
@@ -516,6 +473,16 @@ public abstract class AbstractCairoTest {
             @Override
             public long getWalSegmentRolloverRowCount() {
                 return walSegmentRolloverRowCount < 0 ? super.getWalSegmentRolloverRowCount() : walSegmentRolloverRowCount;
+            }
+
+            @Override
+            public int getWalRecreateDistressedSequencerAttempts() {
+                return recreateDistressedSequencerAttempts;
+            }
+
+            @Override
+            public long getInactiveWalWriterTTL() {
+                return -10000;
             }
         };
         metrics = Metrics.enabled();
@@ -637,7 +604,7 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                engine.clearPools();
+                engine.releaseInactiveCompilers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
@@ -654,7 +621,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine);
+        return new ApplyWal2TableJob(engine, 1, 1);
     }
 
     protected static void drainWalQueue() {

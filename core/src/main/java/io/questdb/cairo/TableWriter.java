@@ -40,6 +40,7 @@ import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -67,8 +68,6 @@ import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
-import static io.questdb.cairo.wal.WalTxnType.*;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
@@ -214,7 +213,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private long commitInterval;
     private UpdateOperatorImpl updateOperatorImpl;
     private DropIndexOperator dropIndexOperator;
-    private final WalEventReader walEventReader;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -332,7 +330,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
             walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
-            walEventReader = new WalEventReader(ff);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -759,6 +756,36 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txnScoreboard.getMin() != lastCommittedTxn;
     }
 
+    public long apply(AbstractOperation operation, long seqTxn) throws SqlException {
+        try {
+            setSeqTxn(seqTxn);
+            long txnBefore = getTxn();
+            operation.apply(this, true);
+            if (txnBefore == getTxn()) {
+                // Commit to update seqTxn
+                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            }
+            return 0;
+        } catch (SqlException ex) {
+            // This is non-critical error, we can mark seqTxn as processed
+            try {
+                rollback(); // rollback in case on any dirty state
+                setSeqTxn(seqTxn);
+                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            } catch (Throwable th2) {
+                LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+            }
+            throw ex;
+        } catch (Throwable th) {
+            try {
+                rollback(); // rollback seqTxn
+            } catch (Throwable th2) {
+                LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+            }
+            throw th;
+        }
+    }
+
     @Override
     public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
         return operation.apply(this, contextAllowsAnyStructureChanges);
@@ -766,7 +793,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
     @Override
     public long apply(UpdateOperation operation) throws SqlException {
-        return operation.apply(this, false);
+        return operation.apply(this, true);
     }
 
     @Override
@@ -1258,7 +1285,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    public boolean processWalBlock(
+    public void processWalBlock(
             @Transient Path walPath,
             int timestampIndex,
             boolean ordered,
@@ -1313,7 +1340,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 closeWalColumns();
             }
 
-            return finishO3Commit(partitionTimestampHiLimit);
+            finishO3Commit(partitionTimestampHiLimit);
         } finally {
             walPath.trimTo(walRootPathLen);
         }
@@ -1329,56 +1356,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    public void processWalCommit(@Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation) {
-        try (WalEventReader eventReader = walEventReader) {
-            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
-            final byte walTxnType = walEventCursor.getType();
-            switch (walTxnType) {
-                case DATA:
-                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
-                    processWalData(
-                            walPath,
-                            !dataInfo.isOutOfOrder(),
-                            dataInfo.getStartRowID(),
-                            dataInfo.getEndRowID(),
-                            dataInfo.getMinTimestamp(),
-                            dataInfo.getMaxTimestamp(),
-                            dataInfo
-                    );
-                    break;
-                case SQL:
-                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    processWalSql(sqlInfo, sqlToOperation);
-                    break;
-                case TRUNCATE:
-                    truncate();
-                    break;
-                default:
-                    throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
-            }
-        }
-    }
-
-    private void processWalSql(WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation) {
-        final int cmdType = sqlInfo.getCmdType();
-        final CharSequence sql = sqlInfo.getSql();
-        sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
-        try {
-            switch (cmdType) {
-                case CMD_ALTER_TABLE:
-                    apply(sqlToOperation.toAlterOperation(sql), false);
-                    break;
-                case CMD_UPDATE_TABLE:
-                    apply(sqlToOperation.toUpdateOperation(sql));
-                    break;
-                default:
-                    throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
-            }
-        } catch (SqlException e) {
-            throw CairoException.critical(0).put("cannot apply SQL txn from WAL to table. ").put(e.getFlyweightMessage());
-        }
-    }
-
     public void processWalData(
             @Transient Path walPath,
             boolean inOrder,
@@ -1386,7 +1363,8 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             long rowHi,
             long o3TimestampMin,
             long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor
+            SymbolMapDiffCursor mapDiffCursor,
+            long seqTxn
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1403,16 +1381,13 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             // table truncated, open partition file.
             openFirstPartition(o3TimestampMin);
         }
-
-        if (processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
-            return;
-        }
-
+        processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor);
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
         updateIndexes();
         columnVersionWriter.commit();
+        txWriter.setSeqTxn(seqTxn);
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
 
@@ -1532,34 +1507,38 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             return false;
         }
 
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+
         if (timestamp == getPartitionLo(maxTimestamp)) {
 
             // removing active partition
 
+            // calculate new transient row count, min/max timestamps and find the partition to open next
+            final long nextMaxTimestamp;
+            final long newTransientRowCount;
+            final long prevTimestamp;
             if (index == 0) {
-                // removing the very last partition is equivalent to truncating the table
-                truncate();
-                return true;
-            }
-
-            // calculate new transient row count and max timestamp
-            final int prevIndex = index - 1;
-            final long prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
-            final long newTransientRowCount = txWriter.getPartitionSize(prevIndex);
-            try {
-                setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
-                TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
-                readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
-            }
-            finally {
-                path.trimTo(rootLen);
+                nextMaxTimestamp = Long.MIN_VALUE;
+                newTransientRowCount = 0L;
+                prevTimestamp = 0L; // meaningless
+            } else {
+                final int prevIndex = index - 1;
+                prevTimestamp = txWriter.getPartitionTimestamp(prevIndex);
+                newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                try {
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, prevTimestamp, false);
+                    TableUtils.txnPartitionConditionally(path, txWriter.getPartitionNameTxn(prevIndex));
+                    readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    nextMaxTimestamp = attachMaxTimestamp;
+                } finally {
+                    path.trimTo(rootLen);
+                }
             }
 
             columnVersionWriter.removePartition(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
-            // max is updated upon finishing the transaction, the value was loaded by readPartitionMinMax
-            txWriter.finishPartitionSizeUpdate(txWriter.getMinTimestamp(), attachMaxTimestamp);
+            txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();
@@ -1567,8 +1546,13 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
             closeActivePartition(true);
-            openPartition(prevTimestamp);
-            setAppendPosition(newTransientRowCount, false);
+
+            if (index != 0) {
+                openPartition(prevTimestamp);
+                setAppendPosition(newTransientRowCount, false);
+            } else {
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+            }
         } else {
 
             // when we want to delete first partition we must find out minTimestamp from
@@ -1584,7 +1568,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
             }
 
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
             columnVersionWriter.removePartition(timestamp);
 
             txWriter.beginPartitionSizeUpdate();
@@ -1596,11 +1579,10 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-
-            // Call O3 methods to remove check TxnScoreboard and remove partition directly
-            safeDeletePartitionDir(timestamp, partitionNameTxn);
         }
 
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        safeDeletePartitionDir(timestamp, partitionNameTxn);
         return true;
     }
 
@@ -2872,7 +2854,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
-        Misc.free(walEventReader);
         updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         freeColumns(truncate & !distressed);
@@ -2942,7 +2923,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    private boolean finishO3Commit(long partitionTimestampHiLimit) {
+    private void finishO3Commit(long partitionTimestampHiLimit) {
         if (!o3InError) {
             updateO3ColumnTops();
         }
@@ -2963,8 +2944,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         metrics.tableWriter().incrementO3Commits();
-
-        return false;
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -3383,7 +3362,8 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             finishO3Append(o3LagRowCount);
         }
 
-        return finishO3Commit(partitionTimestampHiLimit);
+        finishO3Commit(partitionTimestampHiLimit);
+        return false;
     }
 
     private void o3CommitPartitionAsync(

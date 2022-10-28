@@ -948,7 +948,7 @@ public class SqlCompiler implements Closeable {
             final CharSequence unquoted = GenericLexer.unquote(tok);
 
             // reader == null means it's compilation for WAL table
-            // before applyting to WAL writer
+            // before applying to WAL writer
             if (reader != null) {
                 final long timestamp;
                 try {
@@ -1667,9 +1667,6 @@ public class SqlCompiler implements Closeable {
                 if (model.getTimestampColumnName() == null &&
                         ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
                     throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getTimestampFormat() == null) {
-                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                 }
                 if (model.getDelimiter() < 0) {
                     model.setDelimiter((byte) ',');

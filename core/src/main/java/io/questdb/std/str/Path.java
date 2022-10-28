@@ -94,10 +94,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         Unsafe.getUnsafe().putByte(ptr + index, (byte) 0);
     }
 
-    public void put(int index, char c) {
-        Unsafe.getUnsafe().putByte(ptr + index, (byte) c);
-    }
-
     @Override
     public long address() {
         return ptr;
@@ -122,7 +118,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public void close() {
         if (ptr != 0) {
             Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_PATH);
-//            new Exception("closed cap " + capacity + 1).printStackTrace();
             ptr = 0;
         }
     }
@@ -290,6 +285,29 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, from, to);
     }
 
+    public Path parent() {
+        if (len > 0) {
+            int idx = len - 1;
+            char last = (char) Unsafe.getUnsafe().getByte(ptr + idx);
+            if (last == Files.SEPARATOR || last == '\0') {
+                if (idx < 2) {
+                    return this;
+                }
+                idx--;
+            }
+            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(ptr + idx) != Files.SEPARATOR) {
+                idx--;
+            }
+            len = idx;
+            wptr = ptr + len;
+        }
+        return this;
+    }
+
+    public void put(int index, char c) {
+        Unsafe.getUnsafe().putByte(ptr + index, (byte) c);
+    }
+
     public Path seekZ() {
         int count = 0;
         while (count < capacity + 1) {
@@ -313,16 +331,20 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return $();
     }
 
+    public void toSink(CharSink sink) {
+        if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
+            Chars.utf8Decode(ptr, wptr - 1, sink);
+        } else {
+            Chars.utf8Decode(ptr, wptr, sink);
+        }
+    }
+
     @Override
     @NotNull
     public String toString() {
         if (ptr != 0) {
             final CharSink b = Misc.getThreadLocalBuilder();
-            if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
-                Chars.utf8Decode(ptr, wptr - 1, b);
-            } else {
-                Chars.utf8Decode(ptr, wptr, b);
-            }
+            toSink(b);
             return b.toString();
         }
         return "";
@@ -331,25 +353,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
-        return this;
-    }
-
-    public Path parent() {
-        if (len > 0) {
-            int idx = len - 1;
-            char last = (char) Unsafe.getUnsafe().getByte(ptr + idx);
-            if (last == Files.SEPARATOR || last == '\0') {
-                if (idx < 2) {
-                    return this;
-                }
-                idx--;
-            }
-            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(ptr + idx) != Files.SEPARATOR) {
-                idx--;
-            }
-            len = idx;
-            wptr = ptr + len;
-        }
         return this;
     }
 

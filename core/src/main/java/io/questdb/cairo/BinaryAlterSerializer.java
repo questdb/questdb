@@ -28,10 +28,10 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.engine.ops.AlterOperation;
 
-public class BinaryAlterFormatter implements MemorySerializer {
+public class BinaryAlterSerializer implements MemorySerializer {
     @Override
     public void toSink(Object obj, MemoryA sink) {
-        ((AlterOperation)obj).serializeBody(sink);
+        ((AlterOperation) obj).serializeBody(sink);
     }
 
     @Override

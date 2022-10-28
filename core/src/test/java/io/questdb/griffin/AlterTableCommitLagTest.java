@@ -223,7 +223,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
-                } catch (SqlException e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
                 }
 

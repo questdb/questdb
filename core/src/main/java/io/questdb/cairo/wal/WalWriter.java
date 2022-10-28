@@ -48,8 +48,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
@@ -405,7 +405,7 @@ public class WalWriter implements TableWriterAPI {
                         final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         final String columnName = metadata.getColumnName(columnIndex);
 
-                        CopySegmentFileJob.rollColumnToSegment(ff,
+                        CopyWalSegmentUtils.rollColumnToSegment(ff,
                                 configuration.getWriterFileOpenOpts(),
                                 primaryColumn,
                                 secondaryColumn,
@@ -534,12 +534,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(tableName, getStructureVersion())) {
-            if (structureChangeCursor == null) {
-                // nothing to do
-                return;
-            }
             long metadataVersion = getStructureVersion();
-
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();
                 try {

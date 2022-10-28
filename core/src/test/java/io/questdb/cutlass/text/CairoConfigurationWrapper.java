@@ -218,6 +218,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public int getMetadataPoolCapacity() {
         return conf.getMetadataPoolCapacity();
     }
@@ -776,6 +781,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return conf.getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
     }
 
     @Override

@@ -26,22 +26,27 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.IntLongHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
+import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
@@ -50,14 +55,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final CairoEngine engine;
     private final SqlToOperation sqlToOperation;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final WalEventReader walEventReader;
 
-    public ApplyWal2TableJob(CairoEngine engine) {
+    public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
-        this.sqlToOperation = new SqlToOperation(engine);
+        this.sqlToOperation = new SqlToOperation(engine, workerCount, sharedWorkerCount);
+        walEventReader = new WalEventReader(engine.getConfiguration().getFilesFacade());
     }
 
-    public static long processWalTxnNotification(
+    @Override
+    public void close() {
+        Misc.free(sqlToOperation);
+        Misc.free(walEventReader);
+    }
+
+    public long processWalTxnNotification(
             CharSequence tableName,
             int tableId,
             CairoEngine engine,
@@ -93,11 +106,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         assert lastAppliedSeqTxn == lastSeqTxn;
 
         return lastAppliedSeqTxn;
-    }
-
-    @Override
-    public void close() {
-        sqlToOperation.close();
     }
 
     @Override
@@ -142,7 +150,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return true;
     }
 
-    private static void applyOutstandingWalTransactions(
+    private void applyOutstandingWalTransactions(
             TableWriter writer,
             CairoEngine engine,
             SqlToOperation sqlToOperation
@@ -160,14 +168,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
-                        throw CairoException.critical(0).put("Unexpected sequencer transaction ").put(seqTxn).put(" expected ").put((writer.getSeqTxn() + 1));
+                        throw CairoException.critical(0).put("Unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1).put(" but was ").put(seqTxn);
                     }
-                    writer.setSeqTxn(seqTxn);
 
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
                         // Always set full path when using thread static path
                         tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                        writer.processWalCommit(tempPath, segmentTxn, sqlToOperation);
+                        processWalCommit(writer, tempPath, segmentTxn, sqlToOperation, seqTxn);
                     } else {
                         // This is metadata change
                         // to be taken from TableSequencer directly
@@ -184,12 +191,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                             Misc.free(structuralChangeCursor);
                             structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(writer.getTableName(), newStructureVersion - 1);
-                            hasNext = structuralChangeCursor != null && structuralChangeCursor.hasNext();
+                            hasNext = structuralChangeCursor.hasNext();
                         }
 
                         if (hasNext) {
                             try {
                                 structuralChangeCursor.next().apply(writer, true);
+                                writer.setSeqTxn(seqTxn);
                             } catch (SqlException e) {
                                 throw CairoException.critical(0)
                                         .put("cannot apply structure change from WAL to table [error=")
@@ -210,6 +218,60 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } finally {
                 Misc.free(structuralChangeCursor);
             }
+        }
+    }
+
+    private void processWalCommit(TableWriter writer, @Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation, long seqTxn) {
+        try (WalEventReader eventReader = walEventReader) {
+            final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+            final byte walTxnType = walEventCursor.getType();
+            switch (walTxnType) {
+                case DATA:
+                    final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                    writer.processWalData(
+                            walPath,
+                            !dataInfo.isOutOfOrder(),
+                            dataInfo.getStartRowID(),
+                            dataInfo.getEndRowID(),
+                            dataInfo.getMinTimestamp(),
+                            dataInfo.getMaxTimestamp(),
+                            dataInfo,
+                            seqTxn
+                    );
+                    break;
+                case SQL:
+                    final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
+                    processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
+                    break;
+                case TRUNCATE:
+                    writer.setSeqTxn(seqTxn);
+                    writer.truncate();
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
+            }
+        }
+    }
+
+    private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation, long seqTxn) {
+        final int cmdType = sqlInfo.getCmdType();
+        final CharSequence sql = sqlInfo.getSql();
+        sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
+        try {
+            switch (cmdType) {
+                case CMD_ALTER_TABLE:
+                    tableWriter.apply(sqlToOperation.toAlterOperation(sql), seqTxn);
+                    break;
+                case CMD_UPDATE_TABLE:
+                    tableWriter.apply(sqlToOperation.toUpdateOperation(sql), seqTxn);
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
+            }
+        } catch (SqlException ex) {
+            LOG.error().$("error applying UPDATE SQL to wal table [table=")
+                    .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
+            // This is fine, some syntax error, we should block WAL processing if SQL is not valid
         }
     }
 }

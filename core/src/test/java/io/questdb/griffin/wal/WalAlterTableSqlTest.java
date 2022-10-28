@@ -30,7 +30,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -137,7 +136,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     @Test
     public void createWalAndDropPartitionsWithWhere22() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 22, 1, 1, "x\tsym\tts\tsym2\n" +
+        createWalAndDropPartitionsWithWhere(tableName, 22, 2, 2, "x\tsym\tts\tsym2\n" +
                 "1\tAB\t2022-02-23T00:00:00.000000Z\tEF\n" +
                 "2\tBC\t2022-02-23T06:00:00.000000Z\tFG\n" +
                 "3\tCD\t2022-02-23T12:00:00.000000Z\tFG\n" +
@@ -156,7 +155,7 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     @Test
     public void createWalAndDropPartitionsWithWhere23() throws Exception {
         final String tableName = testName.getMethodName();
-        createWalAndDropPartitionsWithWhere(tableName, 23, 1, 1, "x\tsym\tts\tsym2\n" +
+        createWalAndDropPartitionsWithWhere(tableName, 23, 2, 2, "x\tsym\tts\tsym2\n" +
                 "1\tAB\t2022-02-23T00:00:00.000000Z\tEF\n" +
                 "2\tBC\t2022-02-23T06:00:00.000000Z\tFG\n" +
                 "3\tCD\t2022-02-23T12:00:00.000000Z\tFG\n" +

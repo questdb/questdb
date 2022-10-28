@@ -52,6 +52,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.*;
@@ -147,7 +148,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void tesWalWritersUnknownTable() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "NotExist";
+            final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.SYMBOL)
@@ -157,8 +158,9 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 Assert.fail();
-            } catch (CairoError e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Unknown table [name=`" + tableName + "`]"));
+            } catch (CairoException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not open read-write"));
+                MatcherAssert.assertThat(e.getMessage(), containsString(tableName));
             }
         });
     }
@@ -1569,20 +1571,23 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
         assertMemoryLeak(() -> {
-            stackFailureClass = "TableSequencerImpl";
-            stackFailureMethod = "<init>";
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        return -1;
+                    }
+                    return Files.openRW(name, opts);
+                }
+            };
 
             final String tableName = testName.getMethodName();
             try {
                 createTable(tableName);
                 fail("Exception expected");
-            } catch(Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertEquals("Test failure", e.getMessage());
+            } catch(CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
-
-            stackFailureClass = null;
-            stackFailureMethod = null;
         });
     }
 

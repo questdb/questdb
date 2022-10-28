@@ -29,20 +29,19 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterOperation extends AbstractOperation implements Mutable, TableMetadataChange {
+import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
+
+public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
@@ -142,12 +141,15 @@ public class AlterOperation extends AbstractOperation implements Mutable, TableM
                     .$(e2.getFlyweightMessage())
                     .$();
 
-            throw SqlException.$(tableNamePosition, "table '")
+            // To rewrite message in CairoException we have to stash it first
+            // because it can be same exception instance
+            StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(e2.getFlyweightMessage());
+            throw CairoException.critical(e2.getErrno()).put("table '")
                     .put(tableName)
-                    .put("' could not be altered: [")
-                    .put(e2.getErrno())
-                    .put("] ")
-                    .put(e2.getFlyweightMessage());
+                    .put("' could not be altered [error=")
+                    .put(sink)
+                    .put(']');
         }
         return 0;
     }
@@ -374,11 +376,14 @@ public class AlterOperation extends AbstractOperation implements Mutable, TableM
         try {
             tableWriter.dropIndex(columnName);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition)
-                    .put(e.getFlyweightMessage())
-                    .put("[errno=")
-                    .put(e.getErrno())
-                    .put(']');
+            if (e.getErrno() == METADATA_VALIDATION) {
+                throw SqlException.position(tableNamePosition)
+                        .put(e.getFlyweightMessage())
+                        .put("[errno=")
+                        .put(e.getErrno())
+                        .put(']');
+            }
+            throw e;
         }
     }
 

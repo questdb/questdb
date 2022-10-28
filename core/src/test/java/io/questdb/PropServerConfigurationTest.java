@@ -347,6 +347,20 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachPartitionSuffix());
         Assert.assertFalse(configuration.getCairoConfiguration().attachPartitionCopy());
+
+        Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
+        Assert.assertEquals(3, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
+        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+        Assert.assertEquals(4096, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
+        Assert.assertFalse(configuration.getCairoConfiguration().isWalSupported());
+        Assert.assertFalse(configuration.getCairoConfiguration().getWalEnabledDefault());
+        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
+        Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
+        Assert.assertEquals(0, configuration.getWalApplyPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(100, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
     }
 
     @Test
@@ -871,6 +885,21 @@ public class PropServerConfigurationTest {
 
             Assert.assertEquals(".detached", configuration.getCairoConfiguration().getAttachPartitionSuffix());
             Assert.assertTrue(configuration.getCairoConfiguration().attachPartitionCopy());
+
+            Assert.assertEquals(333, configuration.getCairoConfiguration().getWalPurgeInterval());
+            Assert.assertEquals(13, configuration.getCairoConfiguration().getWalRecreateDistressedSequencerAttempts());
+            Assert.assertEquals(333303, configuration.getCairoConfiguration().getInactiveWalWriterTTL());
+            Assert.assertEquals(128, configuration.getCairoConfiguration().getWalTxnNotificationQueueCapacity());
+            Assert.assertTrue(configuration.getCairoConfiguration().isWalSupported());
+            Assert.assertTrue(configuration.getCairoConfiguration().getWalEnabledDefault());
+            Assert.assertTrue(configuration.getWalApplyPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getWalApplyPoolConfiguration().haltOnError());
+            Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getWalApplyPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getWalApplyPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         }
     }
 

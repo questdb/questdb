@@ -28,9 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -410,6 +409,17 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropDesignatedTimestampFails() throws Exception {
+        String tableName = testName.getMethodName();
+        AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
+                .ofDropColumn(1, tableName, 0);
+        alterBuilder.ofDropColumn("ts");
+
+        AlterOperation alterOperation = alterBuilder.build();
+        failToApplyAlter(alterOperation, "cannot remove designated timestamp column");
+    }
+
+    @Test
     public void testFailToRollUncommittedToNewWalSegmentDesignatedTimestamp() throws Exception {
         String failToRollFile = "ts.d";
         failToCopyDataToFile(failToRollFile);
@@ -578,37 +588,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMainAndWalTableDropPartitionFailed() throws Exception {
-        stackFailureClass = "TableWriter";
-        stackFailureMethod = "truncate";
-
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            executeOperation(
-                    "alter table " + tableName + " drop partition list '2022-02-24'",
-                    CompiledQuery.ALTER
-            );
-
-            executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
-
-            drainWalQueue();
-
-            // because truncate failed in the middle we are in an inconsistent state!
-            // symbol tables have been cleared but the data files have not
-            // there is still data in the table but no symbols
-            // we will need a proper rollback for all alter operations which should be run in case of a failure to avoid inconsistency
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\t\t2022-02-24T00:00:00.000000Z\t\n");
-        });
-
-        stackFailureClass = null;
-        stackFailureMethod = null;
-    }
-
-    @Test
     public void testMainTableAddColumnFailed() throws Exception {
         AtomicBoolean fail = new AtomicBoolean(true);
 
@@ -687,17 +666,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropDesignatedTimestampFails() throws Exception {
-        String tableName = testName.getMethodName();
-        AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
-                .ofDropColumn(1, tableName, 0);
-        alterBuilder.ofDropColumn("ts");
-
-        AlterOperation alterOperation = alterBuilder.build();
-        failToApplyAlter(alterOperation, "cannot remove designated timestamp column");
-    }
-
-    @Test
     public void testTableWriterDirectAddColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -754,6 +722,73 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
+        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "sym5.c")) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        });
+    }
+
+    @Test
+    public void testWalTableAttachFailedDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " attach partition list '2022-02-25'";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
+    public void testWalTableDropNonExistingIndexDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " ALTER COLUMN sym DROP INDEX";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
+    public void testWalTableDropPartitionFailedDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " drop partition list '2022-02-25'";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
+    public void testWalTableEmptyUpdateDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "update " + tableName + " set x = 1 where x < 0";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
+    public void testWalTableIndexCachedFailedDoesNotSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " alter column sym NOCACHE";
+        runCheckTableNonSuspended(tableName, query);
+    }
+
+    @Test
+    public void testWalUpdateFailedSuspendsTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "update " + tableName + " set x = 1111";
+        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        });
+    }
+
+    @Test
     public void testWalTableMultiColumnAddNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -790,6 +825,28 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY WAL");
     }
 
+    private void failToApplyAlter(AlterOperation alterOperation, String error) throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                String tableName = testName.getMethodName();
+                createStandardWalTable(tableName);
+                drainWalQueue();
+
+                try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+
+                    try {
+                        alterWriter2.apply(alterOperation, true);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), error);
+                    }
+                }
+            });
+        } finally {
+            Misc.free(alterOperation);
+        }
+    }
+
     private void failToApplyDoubleAlter(AlterOperation alterOperation) throws Exception {
         try {
             assertMemoryLeak(() -> {
@@ -806,28 +863,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exists");
-                    }
-                }
-            });
-        } finally {
-            Misc.free(alterOperation);
-        }
-    }
-
-    private void failToApplyAlter(AlterOperation alterOperation, String error) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
-                String tableName = testName.getMethodName();
-                createStandardWalTable(tableName);
-                drainWalQueue();
-
-                try (TableWriterAPI alterWriter2 = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-
-                    try {
-                        alterWriter2.apply(alterOperation, true);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), error);
                     }
                 }
             });
@@ -895,6 +930,45 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
                     "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
                     "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n");
+        });
+    }
+
+    private void runCheckTableNonSuspended(String tableName, String query) throws Exception {
+        assertMemoryLeak(() -> {
+            createStandardWalTable(tableName);
+
+            // Drop partition which does not exist
+            compile(query);
+
+            // Table should not be suspended
+            executeInsert("insert into " + tableName +
+                    " values (101, 'dfd', '2022-02-25T01', 'asd')");
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "101\tdfd\t2022-02-25T01:00:00.000000Z\tasd\n");
+        });
+    }
+
+    private void runCheckTableSuspended(String tableName, String query, FilesFacade ff) throws Exception {
+        assertMemoryLeak(ff, () -> {
+            createStandardWalTable(tableName);
+
+            // Drop partition which does not exist
+            compile(query);
+
+            // Table should be suspended
+            compile("update " + tableName + " set x = 1111");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableName));
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+
         });
     }
 

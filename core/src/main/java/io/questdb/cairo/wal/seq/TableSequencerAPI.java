@@ -26,10 +26,8 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.pool.AbstractPool;
-import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -39,34 +37,56 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
-public class TableSequencerAPI extends AbstractPool {
+public class TableSequencerAPI implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
+    private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
+    private final Function<CharSequence, WalWriterPool> createWalPoolLambda;
+    private final CairoConfiguration configuration;
+    private final long inactiveTtlUs;
+    private final int recreateDistressedSequencerAttempts;
+    private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
-        super(configuration, configuration.getInactiveWriterTTL()); //todo: separate config option
+        this.configuration = configuration;
         this.engine = engine;
-        notifyListener(Thread.currentThread().getId(), "TableSequencerAPI", PoolListener.EV_POOL_OPEN);
+        this.createSequencerInstanceLambda = this::createSequencerInstance;
+        this.createWalPoolLambda = this::createWalPool;
+        this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
+        this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
+    }
+
+    @Override
+    public void close() {
+        closed = true;
+        releaseAll();
     }
 
     public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            tableSequencer.copyMetadataTo(metadata);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            try {
+                tableSequencer.copyMetadataTo(metadata);
+            } finally {
+                tableSequencer.unlockRead();
+            }
         }
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
-        final CharSequence root = getConfiguration().getRoot();
-        final FilesFacade ff = getConfiguration().getFilesFacade();
+        final CharSequence root = configuration.getRoot();
+        final FilesFacade ff = configuration.getFilesFacade();
 
         // todo: too much GC here
         // this will be replaced with table name registry when drop WAL table implemented
@@ -77,8 +97,21 @@ public class TableSequencerAPI extends AbstractPool {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
-                        try (TableSequencer sequencer = openSequencer(nameSink)) {
-                            callback.onTable(sequencer.getTableId(), nameSink, sequencer.lastTxn());
+                        long lastTxn;
+                        int tableId;
+                        try (TableSequencer tableSequencer = openSequencerLocked(nameSink, SequencerLockType.NONE)) {
+                            lastTxn = tableSequencer.lastTxn();
+                            tableId = tableSequencer.getTableId();
+                        } catch (CairoException ex) {
+                            LOG.critical().$("could not open table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
+                                    .$(", error=").$((Throwable) ex).I$();
+                            return;
+                        }
+                        try {
+                            callback.onTable(tableId, nameSink, lastTxn);
+                        } catch (CairoException ex) {
+                            LOG.critical().$("could not process table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
+                                    .$(", error=").$((Throwable) ex).I$();
                         }
                     }
                 }
@@ -87,25 +120,39 @@ public class TableSequencerAPI extends AbstractPool {
     }
 
     public @NotNull TransactionLogCursor getCursor(final CharSequence tableName, long seqTxn) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.getTransactionLogCursor(seqTxn);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            TransactionLogCursor cursor;
+            try {
+                cursor = tableSequencer.getTransactionLogCursor(seqTxn);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return cursor;
+        }
+    }
+
+    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
         }
     }
 
     public int getNextWalId(final CharSequence tableName) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.getNextWalId();
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            int walId;
+            try {
+                walId = tableSequencer.getNextWalId();
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return walId;
         }
-    }
-
-    public TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
-        }
-    }
-
-    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
-        return getWalPool(tableName).get();
     }
 
     public boolean hasSequencer(final CharSequence tableName) {
@@ -113,42 +160,97 @@ public class TableSequencerAPI extends AbstractPool {
         if (tableSequencer != null) {
             return true;
         }
-        return isWalTable(tableName, getConfiguration().getRoot(), getConfiguration().getFilesFacade());
+        return isWalTable(tableName, configuration.getRoot(), configuration.getFilesFacade());
     }
 
-    public long lastTxn(final CharSequence tableName) {
-        try (TableSequencer sequencer = openSequencer(tableName)) {
-            return sequencer.lastTxn();
-        }
+    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
+        return getWalPool(tableName).get();
     }
 
     public boolean isSuspended(final CharSequence tableName) {
-        try (TableSequencer sequencer = openSequencer(tableName)) {
-            return sequencer.isSuspended();
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            boolean isSuspended;
+            try {
+                isSuspended = sequencer.isSuspended();
+            } finally {
+                sequencer.unlockRead();
+            }
+            return isSuspended;
         }
     }
 
-    public void suspendTable(final CharSequence tableName) {
-        try (TableSequencer sequencer = openSequencer(tableName)) {
-            sequencer.suspendTable();
+    public long lastTxn(final CharSequence tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            long lastTxn;
+            try {
+                lastTxn = sequencer.lastTxn();
+            } finally {
+                sequencer.unlockRead();
+            }
+            return lastTxn;
         }
     }
 
     public long nextStructureTxn(final CharSequence tableName, long structureVersion, AlterOperation operation) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.nextStructureTxn(structureVersion, operation);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            long txn;
+            try {
+                txn = tableSequencer.nextStructureTxn(structureVersion, operation);
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+            return txn;
         }
     }
 
     public long nextTxn(final CharSequence tableName, int walId, long expectedSchemaVersion, int segmentId, long segmentTxn) {
-        try (TableSequencer tableSequencer = openSequencer(tableName)) {
-            return tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            long txn;
+            try {
+                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn);
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+            return txn;
         }
+    }
+
+    public boolean releaseAll() {
+        return releaseAll(Long.MAX_VALUE);
     }
 
     public void registerTable(int tableId, final TableStructure tableStructure) {
         //noinspection EmptyTryBlock
         try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
+        }
+    }
+
+    public boolean releaseInactive() {
+        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
+    }
+
+    public void reopen() {
+        closed = false;
+    }
+
+    @TestOnly
+    public void setDistressed(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.setDistressed();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
+    public void suspendTable(final CharSequence tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.suspendTable();
+            } finally {
+                sequencer.unlockWrite();
+            }
         }
     }
 
@@ -167,57 +269,95 @@ public class TableSequencerAPI extends AbstractPool {
         throwIfClosed();
         final String tableName = Chars.toString(tableStructure.getTableName());
         return seqRegistry.compute(tableName, (key, value) -> {
-            TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableName);
-            sequencer.create(tableId, tableStructure);
-            sequencer.open();
-            if (value != null) {
-                value.close();
+            if (value == null) {
+                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableName);
+                sequencer.create(tableId, tableStructure);
+                sequencer.open();
+                return sequencer;
             }
-            return sequencer;
+            return value;
         });
+    }
+
+    private TableSequencerEntry createSequencerInstance(CharSequence tableNameStr) {
+        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (String) tableNameStr);
+        sequencer.open();
+        return sequencer;
+    }
+
+    private WalWriterPool createWalPool(CharSequence charSequence) {
+        return new WalWriterPool((String) charSequence, this, engine.getConfiguration());
+    }
+
+    @NotNull
+    private TableSequencerEntry getTableSequencerEntryLocked(CharSequence tableName, SequencerLockType lock) {
+        String tableNameStr = Chars.toString(tableName);
+        int attempt = 0;
+        TableSequencerEntry entry;
+
+        while (attempt < recreateDistressedSequencerAttempts) {
+            throwIfClosed();
+            entry = seqRegistry.computeIfAbsent(tableNameStr, this.createSequencerInstanceLambda);
+            if (lock == SequencerLockType.READ) {
+                entry.readLock();
+            }
+            if (lock == SequencerLockType.WRITE) {
+                entry.writeLock();
+            }
+
+            if (!entry.isDistressed()) {
+                return entry;
+            } else {
+                if (lock == SequencerLockType.READ) {
+                    entry.unlockRead();
+                } else if (lock == SequencerLockType.WRITE) {
+                    entry.unlockWrite();
+                }
+            }
+            attempt++;
+        }
+
+        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
     }
 
     private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
         throwIfClosed();
-        // todo: GC again
-        final String tableNameStr = Chars.toString(tableName);
-        return walRegistry.computeIfAbsent(tableNameStr, key
-                -> new WalWriterPool(tableNameStr, this, engine.getConfiguration()));
+        return walRegistry.computeIfAbsent(Chars.toString(tableName), this.createWalPoolLambda);
     }
 
-    private @NotNull TableSequencerImpl openSequencer(final CharSequence tableName) {
+    private @NotNull TableSequencerImpl openSequencerLocked(final CharSequence tableName, SequencerLockType lock) {
         throwIfClosed();
 
-        // todo: too much GC
-        final String tableNameStr = Chars.toString(tableName);
-
-        TableSequencerEntry entry = seqRegistry.get(tableNameStr);
-        if (entry != null && !entry.isDistressed()) {
-            return entry;
-        }
-
+        TableSequencerEntry entry = seqRegistry.get(tableName);
         if (entry != null) {
-            // Remove distressed entry
-            seqRegistry.remove(tableNameStr, entry);
-        }
-
-        entry = seqRegistry.computeIfAbsent(tableNameStr, (key) -> {
-            if (isWalTable(tableNameStr, getConfiguration().getRoot(), getConfiguration().getFilesFacade())) {
-                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
-                sequencer.reset();
-                sequencer.open();
-                return sequencer;
+            if (lock == SequencerLockType.READ) {
+                entry.readLock();
+            } else if (lock == SequencerLockType.WRITE) {
+                entry.writeLock();
             }
-            return null;
-        });
 
-        if (entry == null) {
-            throw new CairoError("Unknown table [name=`" + tableNameStr + "`]");
+            if (!entry.isDistressed()) {
+                return entry;
+            } else {
+                if (lock == SequencerLockType.READ) {
+                    entry.unlockRead();
+                } else if (lock == SequencerLockType.WRITE) {
+                    entry.unlockWrite();
+                }
+            }
         }
-        return entry;
+
+        return getTableSequencerEntryLocked(tableName, lock);
     }
 
-    @Override
+    private boolean returnToPool(final TableSequencerEntry entry) {
+        if (closed) {
+            return false;
+        }
+        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
+        return true;
+    }
+
     protected boolean releaseAll(long deadline) {
         boolean r0 = releaseWalWriters(deadline);
         boolean r1 = releaseEntries(deadline);
@@ -260,19 +400,17 @@ public class TableSequencerAPI extends AbstractPool {
         return removed;
     }
 
-    private boolean returnToPool(final TableSequencerEntry entry) {
-        if (isClosed()) {
-            return false;
-        }
-        entry.releaseTime = getConfiguration().getMicrosecondClock().getTicks();
-        return true;
-    }
-
     private void throwIfClosed() {
-        if (isClosed()) {
+        if (closed) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
+    }
+
+    enum SequencerLockType {
+        WRITE,
+        READ,
+        NONE
     }
 
     @FunctionalInterface
@@ -291,21 +429,21 @@ public class TableSequencerAPI extends AbstractPool {
 
         @Override
         public void close() {
-            if (isOpen()) {
+            if (pool != null && !pool.closed) {
                 if (!isDistressed() && pool != null) {
                     if (pool.returnToPool(this)) {
                         return;
                     }
                 }
+
+                // Sequencer is distressed, close before removing from the pool.
+                super.close();
                 if (pool != null) {
                     pool.seqRegistry.remove(getTableName(), this);
                 }
+            } else {
                 super.close();
             }
-        }
-
-        public void reset() {
-            this.releaseTime = Long.MAX_VALUE;
         }
     }
 

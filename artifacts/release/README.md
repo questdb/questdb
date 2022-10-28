@@ -71,6 +71,12 @@ You need to SSH to the demo box. Either from your desktop, or AWS console via we
 
 https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
 
+## Release helm chart
+
+This can be done from a unit env, Linux or OSX:
+
+https://questdb.slab.com/posts/publish-helm-charts-zq0s8kj7
+
 ## Update pom.xml to snapshot
 
 Similar to initial release update, update same pom.xml files to next version's

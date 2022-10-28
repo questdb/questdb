@@ -178,6 +178,9 @@ public interface RecordMetadata extends ColumnTypes {
      */
     boolean isSymbolTableStatic(int columnIndex);
 
+    /**
+     * @return true if the record is from WAL enabled table, otherwise false.
+     */
     default boolean isWalEnabled() {
         return false;
     }
