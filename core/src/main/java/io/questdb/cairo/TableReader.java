@@ -489,7 +489,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (txnLocks == 0 && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
             // Last lock for this txn is released and this is not latest txn number
             // Schedule a job to clean up partition versions this reader may hold
-            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+            if (TableUtils.schedulePurgeO3Partitions(messageBus, systemTableName, partitionBy)) {
                 return;
             }
 

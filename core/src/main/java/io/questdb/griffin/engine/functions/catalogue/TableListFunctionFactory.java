@@ -89,6 +89,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         private final TableListRecordCursor cursor;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
+        private CairoEngine engine;
         private Path path;
         private TableReaderMetadata metaReader;
 
@@ -104,6 +105,7 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            this.engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -204,8 +206,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStr(int col) {
                     if (col == nameColumn) {
-                        TableUtils.convertSystemToTableName(sink);
-                        return sink;
+                        return engine.getTableNameBySystemName(sink);
                     }
                     if (col == partitionByColumn) {
                         return PartitionBy.toString(partitionBy);

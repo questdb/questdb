@@ -4090,7 +4090,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         if (scheduleAsyncPurge) {
             // Any more complicated case involve looking at what folders are present on disk before removing
             // do it async in O3PartitionPurgeJob
-            if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
+            if (schedulePurgeO3Partitions(messageBus, systemTableName, partitionBy)) {
                 LOG.info().$("scheduled to purge partitions").$(", table=").utf8(tableName).I$();
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableName).I$();

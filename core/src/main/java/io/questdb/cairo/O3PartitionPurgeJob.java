@@ -247,13 +247,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
-            CharSequence tableName,
+            CharSequence systemTableName,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
             int partitionBy) {
 
-        LOG.info().$("processing [table=").$(tableName).I$();
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        LOG.info().$("processing [table=").utf8(systemTableName).I$();
         Path path = Path.getThreadLocal(root).concat(systemTableName).slash$();
 
         sink.clear();
@@ -267,7 +266,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     long fileName = ff.findName(p);
                     if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
                         // extract txn, partition ts from name
-                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+                        parsePartitionDateVersion(fileNameSink, partitionList, systemTableName, partitionByFormat);
                     }
                 } while (ff.findNext(p) > 0);
             } finally {
@@ -332,7 +331,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // It is possible that table is dropped while this async job was in the queue.
             // so it can be not too bad. Log error and continue work on the queue
             LOG.error()
-                    .$("could not purge partition open [table=`").utf8(tableName)
+                    .$("could not purge partition open [table=`").utf8(systemTableName)
                     .$("`, ex=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();

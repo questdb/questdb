@@ -581,6 +581,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             assertSql(newTableName, "x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n");
 
+            assertSql("select name from tables()", "name\n" +
+                    newTableName + "\n");
+
             for (int i = 0; i < 2; i++) {
                 engine.releaseInactive();
                 engine.getTableSequencerAPI().reopen();
@@ -590,6 +593,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 assertSql(newTableName, "x\tsym2\tts\n" +
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n");
             }
+
+            assertSql("select name from tables()", "name\n" +
+                    newTableName + "\n");
         });
     }
 
