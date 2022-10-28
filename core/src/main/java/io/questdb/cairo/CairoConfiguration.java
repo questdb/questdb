@@ -243,6 +243,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    long getWalSegmentRolloverRowCount();
+
     boolean getSimulateCrashEnabled();
 
     /**

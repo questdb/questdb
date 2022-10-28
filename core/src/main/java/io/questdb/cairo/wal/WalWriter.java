@@ -84,15 +84,13 @@ public class WalWriter implements TableWriterAPI {
     private long segmentLockFd = -1;
     private int columnCount;
     private long currentTxnStartRowNum = -1;
-    private long rowCount = -1;
+    private long segmentRowCount = -1;
     private int segmentId = -1;
     private long segmentStartMillis;
     private boolean txnOutOfOrder = false;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private long txnMaxTimestamp = -1;
     private boolean rollSegmentOnNextRow = false;
-    private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
-    };
     private long lastSegmentTxn = -1L;
     private boolean open;
     private boolean distressed;
@@ -228,15 +226,22 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
+    private void mayRollSegmentOnNextRow() {
+        if (!rollSegmentOnNextRow && (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())) {
+            rollSegmentOnNextRow = true;
+        }
+    }
+
     // Returns sequencer transaction number
     public long commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
-                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(rowCount).I$();
-                lastSegmentTxn = events.data(currentTxnStartRowNum, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount).I$();
+                lastSegmentTxn = events.data(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
+                mayRollSegmentOnNextRow();
                 return seqTxn;
             }
         } catch (Throwable th) {
@@ -284,7 +289,7 @@ public class WalWriter implements TableWriterAPI {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLongLong(timestamp, rowCount);
+                primaryColumn.putLongLong(timestamp, segmentRowCount);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
@@ -300,7 +305,7 @@ public class WalWriter implements TableWriterAPI {
         try {
             if (inTransaction() || hasDirtyColumns(currentTxnStartRowNum)) {
                 setAppendPosition(currentTxnStartRowNum);
-                rowCount = currentTxnStartRowNum;
+                segmentRowCount = currentTxnStartRowNum;
                 txnMinTimestamp = Long.MAX_VALUE;
                 txnMaxTimestamp = -1;
                 txnOutOfOrder = false;
@@ -362,7 +367,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     public boolean inTransaction() {
-        return rowCount > currentTxnStartRowNum;
+        return segmentRowCount > currentTxnStartRowNum;
     }
 
     public boolean isDistressed() {
@@ -373,28 +378,8 @@ public class WalWriter implements TableWriterAPI {
         return this.open;
     }
 
-    public long rollSegmentIfLimitReached() {
-        long segmentSize = 0;
-        if (rollStrategy.isMaxSegmentSizeSet()) {
-            for (int i = 0; i < columnCount; i++) {
-                segmentSize = updateSegmentSize(segmentSize, i);
-            }
-        }
-
-        long segmentAge = 0;
-        if (rollStrategy.isRollIntervalSet()) {
-            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
-        }
-
-        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
-            commit();
-            return rollSegment();
-        }
-        return 0L;
-    }
-
     public void rollUncommittedToNewSegment() {
-        final long uncommittedRows = rowCount - currentTxnStartRowNum;
+        final long uncommittedRows = segmentRowCount - currentTxnStartRowNum;
         final int newSegmentId = segmentId + 1;
 
         path.trimTo(rootLen);
@@ -444,19 +429,15 @@ public class WalWriter implements TableWriterAPI {
             switchColumnsToNewSegment(newColumnFiles);
             rollLastWalEventRecord(newSegmentId, uncommittedRows);
             segmentId = newSegmentId;
-            rowCount = uncommittedRows;
+            segmentRowCount = uncommittedRows;
             currentTxnStartRowNum = 0;
-        } else if (rowCount > 0 && uncommittedRows == 0) {
+        } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
         }
     }
 
-    public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
-        this.rollStrategy = rollStrategy;
-    }
-
-    public long size() {
-        return rowCount;
+    public long getSegmentRowCount() {
+        return segmentRowCount;
     }
 
     @Override
@@ -959,7 +940,7 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
 
-            rowCount = 0;
+            segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
@@ -1013,7 +994,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void resetDataTxnProperties() {
-        currentTxnStartRowNum = rowCount;
+        currentTxnStartRowNum = segmentRowCount;
         txnMinTimestamp = Long.MAX_VALUE;
         txnMaxTimestamp = -1;
         txnOutOfOrder = false;
@@ -1029,7 +1010,7 @@ public class WalWriter implements TableWriterAPI {
 
     long rollSegment() {
         try {
-            final long rolledRowCount = rowCount;
+            final long rolledRowCount = segmentRowCount;
             openNewSegment();
             return rolledRowCount;
         } catch (Throwable e) {
@@ -1055,7 +1036,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
-            if (rowValueIsNotNull.getQuick(i) < rowCount) {
+            if (rowValueIsNotNull.getQuick(i) < segmentRowCount) {
                 activeNullSetters.getQuick(i).run();
             }
         }
@@ -1069,7 +1050,7 @@ public class WalWriter implements TableWriterAPI {
             txnMinTimestamp = rowTimestamp;
         }
 
-        rowCount++;
+        segmentRowCount++;
     }
 
     private void setAppendPosition(final long segmentRowCount) {
@@ -1143,8 +1124,8 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private void setRowValueNotNull(int columnIndex) {
-        assert rowValueIsNotNull.getQuick(columnIndex) != rowCount;
-        rowValueIsNotNull.setQuick(columnIndex, rowCount);
+        assert rowValueIsNotNull.getQuick(columnIndex) != segmentRowCount;
+        rowValueIsNotNull.setQuick(columnIndex, segmentRowCount);
     }
 
     private void setVarColumnFixedFileNull(int columnType, int columnIndex, long rowCount) {
@@ -1201,19 +1182,6 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private long updateSegmentSize(long segmentSize, int columnIndex) {
-        final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-        if (primaryColumn != null && primaryColumn != NullMemory.INSTANCE) {
-            segmentSize += primaryColumn.getAppendOffset();
-
-            final MemoryA secondaryColumn = getSecondaryColumn(columnIndex);
-            if (secondaryColumn != null && secondaryColumn != NullMemory.INSTANCE) {
-                segmentSize += secondaryColumn.getAppendOffset();
-            }
-        }
-        return segmentSize;
-    }
-
     private class RowImpl implements TableWriter.Row {
         private long timestamp;
 
@@ -1224,7 +1192,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void cancel() {
-            setAppendPosition(rowCount);
+            setAppendPosition(segmentRowCount);
         }
 
         @Override
@@ -1402,14 +1370,14 @@ public class WalWriter implements TableWriterAPI {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
-                long uncommittedRows = rowCount - currentTxnStartRowNum;
+                long uncommittedRows = segmentRowCount - currentTxnStartRowNum;
                 if (currentTxnStartRowNum > 0) {
                     // Roll last transaction to new segment
                     rollUncommittedToNewSegment();
                 }
 
-                if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
-                    long segmentRowCount = rowCount - currentTxnStartRowNum;
+                if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
+                    long segmentRowCount = WalWriter.this.segmentRowCount - currentTxnStartRowNum;
                     metadata.addColumn(columnName, columnType);
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
@@ -1469,7 +1437,7 @@ public class WalWriter implements TableWriterAPI {
                         rollUncommittedToNewSegment();
                     }
 
-                    if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
+                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                         int index = metadata.getColumnIndex(columnName);
                         metadata.removeColumn(columnName);
                         columnCount = metadata.getColumnCount();
@@ -1511,7 +1479,7 @@ public class WalWriter implements TableWriterAPI {
                         rollUncommittedToNewSegment();
                     }
 
-                    if (currentTxnStartRowNum == 0 || rowCount == currentTxnStartRowNum) {
+                    if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                         metadata.renameColumn(columnName, newColumnName);
                         // We are not going to do any special for symbol readers which point
                         // to the files in the root of the table.

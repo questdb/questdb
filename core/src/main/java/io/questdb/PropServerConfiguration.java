@@ -421,6 +421,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walApplyWorkerSleepThreshold;
     private final long walApplySleepTimeout;
     private final boolean isWalSupported;
+    private final long walSegmentRolloverRowCount;
     private final int walRecreateDistressedSequencerAttempts;
     private final long inactiveWalWriterTTL;
 
@@ -444,6 +445,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
         this.isWalSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, false);
+        this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
@@ -2288,6 +2290,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
         }
+
+        @Override
+        public long getWalSegmentRolloverRowCount() { return walSegmentRolloverRowCount; }
 
         @Override
         public boolean getSimulateCrashEnabled() {
