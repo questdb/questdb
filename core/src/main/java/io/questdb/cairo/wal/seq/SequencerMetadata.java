@@ -95,10 +95,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.tableName, metadata.tableId, metadata.structureVersion.get(), metadata.suspended);
-    }
-
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
         copyFrom(model, tableName, tableId, 0, false);
         switchTo(path, pathLen);

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -71,17 +72,17 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static class ReaderPoolCursor implements RecordCursor {
-        private Iterator<Map.Entry<CharSequence, ReaderPool.Entry>> iterator;
-        private ReaderPool.Entry poolEntry;
+        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
+        private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
         private int allocationIndex = 0;
         private CharSequence tableName;
         private long owner;
         private long timestamp;
         private long txn;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
-        private Map<CharSequence, ReaderPool.Entry> readerPoolEntries;
+        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
 
-        public void of(Map<CharSequence, ReaderPool.Entry> readerPoolEntries) {
+        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
             toTop();
         }
@@ -100,7 +101,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 // 'owner'. So what's the point of volatile read? It ensures we don't read arbitrary stale data.
                 owner = poolEntry.getOwnerVolatile(allocationIndex);
                 timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);
-                reader = poolEntry.getReader(allocationIndex);
+                reader = poolEntry.getTenant(allocationIndex);
                 allocationIndex++;
             } while (reader == null);
             txn = reader.getTxn();
@@ -116,7 +117,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     if (!iterator.hasNext()) {
                         return false;
                     }
-                    Map.Entry<CharSequence, ReaderPool.Entry> mapEntry = iterator.next();
+                    Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
                     tableName = mapEntry.getKey();
                     poolEntry = mapEntry.getValue();
                     return true;

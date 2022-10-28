@@ -273,7 +273,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 }
 
                 // Now try with success.
-                engine.releaseAllWriters();
+                engine.clear();
                 ff = new FilesFacadeImpl();
                 compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");

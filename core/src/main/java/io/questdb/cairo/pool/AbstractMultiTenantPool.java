@@ -24,47 +24,49 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Map;
 
-public class CompressedMetadataPool extends AbstractPool implements ResourcePool<TableRecordMetadata> {
-
+public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
-    private static final Log LOG = LogFactory.getLog(CompressedMetadataPool.class);
+    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private static final long UNLOCKED = -1L;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
-    private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
-    private final TableSequencerAPI tableSequencerAPI;
 
-    public CompressedMetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public AbstractMultiTenantPool(CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveReaderTTL());
         this.maxSegments = configuration.getReaderPoolMaxSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
-        this.tableSequencerAPI = tableSequencerAPI;
     }
 
-    @Override
-    public TableRecordMetadata get(CharSequence tableName) {
+    public Map<CharSequence, Entry<T>> entries() {
+        return entries;
+    }
 
-        Entry e = getEntry(tableName);
+    protected abstract T newTenant(String tableName, Entry<T> entry, int index);
+
+    @Override
+    public T get(CharSequence tableName) {
+
+        Entry<T> e = getEntry(tableName);
 
         long lockOwner = e.lockOwner;
         long thread = Thread.currentThread().getId();
@@ -79,34 +81,34 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
-                    R1 r = e.getReader(i);
-                    if (r == null) {
+                    T tenant = e.getTenant(i);
+                    if (tenant == null) {
                         try {
                             LOG.info()
                                     .$("open '").utf8(tableName)
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .$(']').$();
-                            r = newMetadataInstance(tableName, e, i);
+                            tenant = newTenant(Chars.toString(tableName), e, i);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
                         }
 
-                        e.setReader(i, r);
+                        e.assignTenant(i, tenant);
                         notifyListener(thread, tableName, PoolListener.EV_CREATE, e.index, i);
                     } else {
+                        tenant.refresh();
                         notifyListener(thread, tableName, PoolListener.EV_GET, e.index, i);
                     }
 
-                    r.tryReload();
-
                     if (isClosed()) {
-                        e.setReader(i, null);
+                        e.assignTenant(i, null);
+                        tenant.goodbye();
                         LOG.info().$('\'').utf8(tableName).$("' born free").$();
-                        return r;
+                        return tenant;
                     }
                     LOG.debug().$('\'').utf8(tableName).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
-                    return r;
+                    return tenant;
                 }
             }
 
@@ -115,7 +117,7 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1, clock.getTicks());
+                e.next = new Entry<T>(e.index + 1, clock.getTicks());
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -128,11 +130,11 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
 
     public int getBusyCount() {
         int count = 0;
-        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
-            Entry e = me.getValue();
+        for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+            Entry<T> e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.readers[i] != null) {
+                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.getTenant(i) != null) {
                         count++;
                     }
                 }
@@ -147,16 +149,16 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
     }
 
     public boolean lock(CharSequence name) {
-        Entry e = getEntry(name);
+        Entry<T> e = getEntry(name);
         final long thread = Thread.currentThread().getId();
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                        closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
+                        closeTenant(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
                         // same thread, don't need to order reads
-                        if (e.readers[i] != null) {
+                        if (e.getTenant(i) != null) {
                             // this thread has busy reader, it should close first
                             e.lockOwner = -1L;
                             return false;
@@ -186,7 +188,7 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
     }
 
     public void unlock(CharSequence name) {
-        Entry e = entries.get(name);
+        Entry<T> e = entries.get(name);
         long thread = Thread.currentThread().getId();
         if (e == null) {
             LOG.info().$("not found, cannot unlock [table=`").$(name).$("`]").$();
@@ -228,16 +230,16 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
         int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
-        for (Entry e : entries.values()) {
+        for (Entry<T> e : entries.values()) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    R1 r;
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getReader(i)) != null) {
+                    T r;
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getTenant(i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > e.releaseOrAcquireTimes[i]) {
                                 removed = true;
-                                closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                                closeTenant(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
@@ -263,46 +265,32 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
         }
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R1 r = entry.getReader(index);
-        if (r != null) {
-            r.goodbye();
-            r.close();
-            LOG.info().$("closed '").utf8(r.getTableName())
+    private void closeTenant(long thread, Entry<T> entry, int index, short ev, int reason) {
+        T tenant = entry.getTenant(index);
+        if (tenant != null) {
+            tenant.goodbye();
+            tenant.close();
+            LOG.info().$("closed '").utf8(tenant.getTableName())
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            entry.setReader(index, null);
+            notifyListener(thread, tenant.getTableName(), ev, entry.index, index);
+            entry.assignTenant(index, null);
         }
     }
 
-    Map<CharSequence, Entry> entries() {
-        return entries;
-    }
-
-    private Entry getEntry(CharSequence name) {
+    private Entry<T> getEntry(CharSequence name) {
         checkClosed();
 
-        Entry e = entries.get(name);
+        Entry<T> e = entries.get(name);
         if (e == null) {
-            e = new Entry(0, clock.getTicks());
-            Entry other = entries.putIfAbsent(name, e);
+            e = new Entry<T>(0, clock.getTicks());
+            Entry<T> other = entries.putIfAbsent(name, e);
             if (other != null) {
                 e = other;
             }
         }
         return e;
-    }
-
-    @NotNull
-    private R1 newMetadataInstance(CharSequence tableName, Entry e, int entryIndex) {
-        if (tableSequencerAPI.hasSequencer(tableName)) {
-            R r = new R(this, e, entryIndex);
-            tableSequencerAPI.getTableMetadata(tableName, r, true);
-            return r;
-        }
-        return new LegacyR(this, e, entryIndex, tableName);
     }
 
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
@@ -312,22 +300,20 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
         }
     }
 
-    private boolean returnToPool(R1 r) {
-        CharSequence name = r.getTableName();
-
-        long thread = Thread.currentThread().getId();
-
-        int index = r.getIndex();
-        final CompressedMetadataPool.Entry e = r.getEntry();
+    protected boolean returnToPool(T tenant) {
+        final Entry<T> e = tenant.getEntry();
         if (e == null) {
             return false;
         }
 
+        final CharSequence tableName = tenant.getTableName();
+        final long thread = Thread.currentThread().getId();
+        final int index = tenant.getIndex();
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
-        if (owner != UNALLOCATED) {
 
-            LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
+        if (owner != UNALLOCATED) {
+            LOG.debug().$('\'').$(tableName).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            notifyListener(thread, tableName, PoolListener.EV_RETURN, e.index, index);
 
             // release the entry for anyone to pick up
             e.releaseOrAcquireTimes[index] = clock.getTicks();
@@ -339,31 +325,19 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
             return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
-        throw CairoException.critical(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
+        throw CairoException.critical(0).put("double close [table=").put(tableName).put(", index=").put(index).put(']');
     }
 
-    private interface R1 extends TableRecordMetadata {
-
-        Entry getEntry();
-
-        int getIndex();
-
-        CompressedMetadataPool getPool();
-
-        void goodbye();
-
-        void tryReload();
-    }
-
-    private static final class Entry {
-        final long[] allocations = new long[ENTRY_SIZE];
-        final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
-        final Object[] readers = new Object[ENTRY_SIZE];
-        final int index;
-        volatile long lockOwner = -1L;
+    public static final class Entry<T> {
+        private final long[] allocations = new long[ENTRY_SIZE];
+        private final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
+        @SuppressWarnings("unchecked")
+        private final T[] tenants = (T[]) new Object[ENTRY_SIZE];
+        private final int index;
+        private volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         int nextStatus = 0;
-        volatile Entry next;
+        private volatile Entry<T> next;
 
         public Entry(int index, long currentMicros) {
             this.index = index;
@@ -371,122 +345,24 @@ public class CompressedMetadataPool extends AbstractPool implements ResourcePool
             Arrays.fill(releaseOrAcquireTimes, currentMicros);
         }
 
-        Entry getNext() {
-            return next;
-        }
-
-        long getOwnerVolatile(int pos) {
+        public long getOwnerVolatile(int pos) {
             return Unsafe.arrayGetVolatile(allocations, pos);
         }
 
-        R1 getReader(int pos) {
-            return (R1) readers[pos];
-        }
-
-        long getReleaseOrAcquireTime(int pos) {
+        public long getReleaseOrAcquireTime(int pos) {
             return releaseOrAcquireTimes[pos];
         }
 
-        void setReader(int pos, R1 reader) {
-            readers[pos] = reader;
-        }
-    }
-
-    private static class LegacyR extends DynamicTableReaderMetadata implements R1 {
-        private final int index;
-        private CompressedMetadataPool pool;
-        private Entry entry;
-
-        public LegacyR(CompressedMetadataPool pool, Entry entry, int index, CharSequence name) {
-            super(pool.getConfiguration(), Chars.toString(name));
-            load();
-            this.pool = pool;
-            this.entry = entry;
-            this.index = index;
+        public T getTenant(int pos) {
+            return tenants[pos];
         }
 
-        @Override
-        public void close() {
-            final CompressedMetadataPool pool = getPool();
-            if (pool != null && getEntry() != null) {
-                if (pool.returnToPool(this)) {
-                    return;
-                }
-            }
-            super.close();
+        public void assignTenant(int pos, T tenant) {
+            tenants[pos] = tenant;
         }
 
-        @Override
-        public Entry getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
-        }
-
-        @Override
-        public CompressedMetadataPool getPool() {
-            return pool;
-        }
-
-        public void goodbye() {
-            entry = null;
-            pool = null;
-        }
-
-        @Override
-        public void tryReload() {
-            reload();
-        }
-    }
-
-    private static class R extends GenericTableRecordMetadata implements R1 {
-        private final int index;
-        private CompressedMetadataPool pool;
-        private Entry entry;
-
-        public R(CompressedMetadataPool pool, Entry entry, int index) {
-            this.pool = pool;
-            this.entry = entry;
-            this.index = index;
-        }
-
-        @Override
-        public void close() {
-            final CompressedMetadataPool pool = getPool();
-            if (pool != null && getEntry() != null) {
-                if (pool.returnToPool(this)) {
-                    return;
-                }
-            }
-            super.close();
-        }
-
-        @Override
-        public Entry getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
-        }
-
-        @Override
-        public CompressedMetadataPool getPool() {
-            return pool;
-        }
-
-        public void goodbye() {
-            entry = null;
-            pool = null;
-        }
-
-        @Override
-        public void tryReload() {
-            pool.tableSequencerAPI.reloadMetadataConditionally(getTableName(), getStructureVersion(), this, true);
+        public Entry<T> getNext() {
+            return next;
         }
     }
 }

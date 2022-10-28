@@ -55,15 +55,13 @@ import java.io.Closeable;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
-
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
-    private final UncompressedMetadataPool uncompressedMetadataPool;
-    private final CompressedMetadataPool compressedMetadataPool;
+    private final MetadataPool uncompressedMetadataPool;
+    private final MetadataPool compressedMetadataPool;
     private final CairoConfiguration configuration;
     private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -92,8 +90,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
-        this.uncompressedMetadataPool = new UncompressedMetadataPool(configuration, tableSequencerAPI);
-        this.compressedMetadataPool = new CompressedMetadataPool(configuration, tableSequencerAPI);
+        this.uncompressedMetadataPool = new MetadataPool(configuration, tableSequencerAPI, false);
+        this.compressedMetadataPool = new MetadataPool(configuration, tableSequencerAPI, true);
         this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
         if (configuration.getTelemetryConfiguration().getEnabled()) {
             this.telemetryQueue = new RingQueue<>(TelemetryTask::new, configuration.getTelemetryConfiguration().getQueueCapacity());
@@ -301,7 +299,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return reader;
     }
 
-    public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
+    public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
 
