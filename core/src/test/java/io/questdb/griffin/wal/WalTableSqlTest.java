@@ -263,9 +263,46 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateDropWalReuseCreate() throws Exception {
+    public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            compile("drop table " + tableName);
+
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
+            MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
+
+            engine.releaseAllReaders();
+            drainWalQueue();
+
+            checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
+            checkWalFilesRemoved(sysTableName1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n");
+
+        });
+    }
+
+    @Test
+    public void testCreateDropWalReuseCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName() + "Â";
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -342,115 +379,6 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
-        });
-    }
-
-    @Test
-    public void testCreateDropCreate() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
-            compile("drop table " + tableName);
-
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
-            MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
-
-            engine.releaseAllReaders();
-            drainWalQueue();
-
-            checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");
-            checkWalFilesRemoved(sysTableName1);
-
-            assertSql(tableName, "x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n");
-
-        });
-    }
-
-    @Test
-    public void testDropTxnNotificationQueueOverflow() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + "1 as (" +
-                    "select x, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-            compile("create table " + tableName + "2 as (" +
-                    "select x, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            drainWalQueue();
-
-            for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
-                compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
-            }
-
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName + "2"));
-            compile("drop table " + tableName + "2");
-
-            drainWalQueue();
-
-            checkTableFilesDropped(table2SystemName, "2022-02-24", "x.d");
-        });
-    }
-
-    @Test
-    public void testRenameTable() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new";
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            drainWalQueue();
-
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
-            compile("rename table " + tableName + " to " + newTableName);
-
-            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
-            Assert.assertEquals(table2SystemName, newTableSystemName);
-
-            drainWalQueue();
-
-            assertSql(newTableName, "x\tsym2\tts\n" +
-                    "1\tDE\t2022-02-24T00:00:00.000000Z\n");
-
-            for (int i = 0; i < 2; i++) {
-                engine.releaseInactive();
-                engine.getTableSequencerAPI().reopen();
-
-                String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
-                Assert.assertEquals(newTableSystemName, newTableSystemName2);
-                assertSql(newTableName, "x\tsym2\tts\n" +
-                        "1\tDE\t2022-02-24T00:00:00.000000Z\n");
-            }
         });
     }
 
@@ -533,6 +461,40 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropTxnNotificationQueueOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + "1 as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            compile("create table " + tableName + "2 as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            drainWalQueue();
+
+            for (int i = 0; i < walTxnNotificationQueueCapacity; i++) {
+                compile("insert into " + tableName + "1 values (101, 'a1a1', '2022-02-24T01')");
+            }
+
+            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName + "2"));
+            compile("drop table " + tableName + "2");
+
+            drainWalQueue();
+
+            checkTableFilesDropped(table2SystemName, "2022-02-24", "x.d");
+        });
+    }
+
+    @Test
     public void testQueryNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -590,6 +552,44 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "101\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\n" +
                     "103\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\n");
 
+        });
+    }
+
+    @Test
+    public void testRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = testName.getMethodName() + "_new";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            drainWalQueue();
+
+            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            compile("rename table " + tableName + " to " + newTableName);
+
+            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            Assert.assertEquals(table2SystemName, newTableSystemName);
+
+            drainWalQueue();
+
+            assertSql(newTableName, "x\tsym2\tts\n" +
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+
+            for (int i = 0; i < 2; i++) {
+                engine.releaseInactive();
+                engine.getTableSequencerAPI().reopen();
+
+                String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
+                Assert.assertEquals(newTableSystemName, newTableSystemName2);
+                assertSql(newTableName, "x\tsym2\tts\n" +
+                        "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+            }
         });
     }
 
@@ -683,6 +683,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         }
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.SEQ_DIR);
         MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
     }
 }

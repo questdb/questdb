@@ -33,9 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -47,20 +45,18 @@ import java.util.Iterator;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
-import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
-
 public class TableSequencerAPI implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
-    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
-    private final CairoEngine engine;
+    private final CairoConfiguration configuration;
     private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
     private final Function<CharSequence, WalWriterPool> createWalPoolLambda;
-    private final CairoConfiguration configuration;
+    private final CairoEngine engine;
     private final long inactiveTtlUs;
-    private final int recreateDistressedSequencerAttempts;
     private final boolean mangleTableSystemNames;
+    private final int recreateDistressedSequencerAttempts;
+    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final TableNameRegistry tableNameRegistry = new TableNameRegistry();
+    private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
@@ -92,7 +88,7 @@ public class TableSequencerAPI implements Closeable {
     }
 
     public void dropTable(String tableName, String systemTableName, boolean failedCreate) {
-        if (tableNameRegistry.remove(tableName, systemTableName)) {
+        if (tableNameRegistry.removeName(tableName, systemTableName)) {
             try (TableSequencerImpl seq = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
                 try {
                     seq.dropTable();
@@ -114,18 +110,24 @@ public class TableSequencerAPI implements Closeable {
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
-        for (CharSequence tableName : tableNameRegistry.getTableNames()) {
-            String systemTableName = tableNameRegistry.getSystemName(tableName);
+        for (CharSequence systemTableName : tableNameRegistry.getTableSystemNames()) {
             long lastTxn;
             int tableId;
             try {
                 try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
                     lastTxn = sequencer.lastTxn();
                     tableId = sequencer.getTableId();
+                } catch (CairoException e) {
+                    LOG.critical().$("could not open sequencer for table [name=").utf8(systemTableName)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", error=").$(e.getFlyweightMessage()).I$();
+                    continue;
                 }
-                callback.onTable(tableId, systemTableName, lastTxn);
+                callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
             } catch (CairoException e) {
-                LOG.critical().$("could not open sequencer for table [name=").$(tableName).$(']').$();
+                LOG.error().$("failed process WAL table [name=").utf8(systemTableName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage()).I$();
             }
         }
     }
@@ -207,6 +209,10 @@ public class TableSequencerAPI implements Closeable {
         }
     }
 
+    public boolean isTableDropped(CharSequence systemTableName) {
+        return tableNameRegistry.isTableDropped(systemTableName);
+    }
+
     public long lastTxn(final CharSequence tableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             long lastTxn;
@@ -269,6 +275,10 @@ public class TableSequencerAPI implements Closeable {
         return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
     }
 
+    public void removeTableSystemName(CharSequence tableSystemName) {
+        tableNameRegistry.removeTableSystemName(tableSystemName);
+    }
+
     public void rename(CharSequence tableName, CharSequence newName, String toString) {
         tableNameRegistry.rename(tableName, newName, toString);
     }
@@ -297,17 +307,6 @@ public class TableSequencerAPI implements Closeable {
                 sequencer.unlockWrite();
             }
         }
-    }
-
-    // Check if sequencer files exist, e.g. is it WAL table sequencer must exist
-    private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
-        Path path = Path.getThreadLocal2(root);
-        return isWalTable(tableName, path, ff);
-    }
-
-    private static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
-        root.concat(tableName).concat(SEQ_DIR);
-        return ff.exists(root.$());
     }
 
     private @NotNull TableSequencerImpl createSequencer(int tableId, final TableStructure tableStructure, String tableSystemName) {
@@ -492,11 +491,11 @@ public class TableSequencerAPI implements Closeable {
     }
 
     public static class WalWriterPool {
-        private final ReentrantLock lock = new ReentrantLock();
         private final ArrayDeque<Entry> cache = new ArrayDeque<>();
+        private final CairoConfiguration configuration;
+        private final ReentrantLock lock = new ReentrantLock();
         private final String tableName;
         private final TableSequencerAPI tableSequencerAPI;
-        private final CairoConfiguration configuration;
         private volatile boolean closed;
 
         public WalWriterPool(String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration) {

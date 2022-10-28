@@ -91,14 +91,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } catch (EntryUnavailableException tableBusy) {
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                     // Oh, no, rogue writer
-                    LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(systemTableName)
+                    LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").utf8(systemTableName)
                             .$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;
                 }
                 // This is good, someone else will apply the data
                 break;
             } catch (CairoException ex) {
-                LOG.critical().$("failed to apply WAL transaction to table, will be moved to SUSPENDED state [table=").$(systemTableName)
+                LOG.critical().$("failed to apply WAL transaction to table, will be moved to SUSPENDED state [table=").utf8(systemTableName)
                         .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
@@ -165,6 +165,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (engine.isTableDropped(systemTableName)) {
             LOG.info().$("table '").utf8(systemTableName).$("' is dropped, skipping WAL application").$();
             tryDestroyDroppedTable(systemTableName, writer, engine);
+            return;
         }
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(systemTableName, writer.getSeqTxn())) {

@@ -659,7 +659,9 @@ public abstract class AbstractCairoTest {
         }
 
         final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        while (checkWalTransactionsJob.run(0)) {
+        checkWalTransactionsJob.run(0);
+
+        while (walApplyJob.run(0)) {
             // run until empty
         }
     }

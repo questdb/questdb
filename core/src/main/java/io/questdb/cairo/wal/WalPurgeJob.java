@@ -42,28 +42,28 @@ import java.util.PrimitiveIterator;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-    private final MillisecondClock millisecondClock;
-    private final long spinLockTimeout;
+    private final TableSequencerAPI.RegisteredTable broadSweepIter;
+    private final long checkInterval;
+    private final MicrosecondClock clock;
+    private final StringSink debugBuffer = new StringSink();
+    private final IntHashSet discoveredWalIds = new IntHashSet();
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final MicrosecondClock clock;
-    private final long checkInterval;
-    private final TxReader txReader;
+    private final MillisecondClock millisecondClock;
     private final Path path = new Path();
-    private final NativeLPSZ tableName = new NativeLPSZ();
-    private final NativeLPSZ walName = new NativeLPSZ();
     private final NativeLPSZ segmentName = new NativeLPSZ();
-    private final IntHashSet discoveredWalIds = new IntHashSet();
-    private final IntHashSet walsInUse = new IntHashSet();
-    private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
+    private final long spinLockTimeout;
+    private final TxReader txReader;
     private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
-    private final StringSink debugBuffer = new StringSink();
+    private final NativeLPSZ walName = new NativeLPSZ();
+    private final IntHashSet walsInUse = new IntHashSet();
+    private long last = 0;
+    private String tableName;
+    private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
     private int walId;
     private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
     private int walsLatestSegmentId;
     private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
-    private final FindVisitor broadSweepIterFunc = this::broadSweepIter;
-    private long last = 0;
 
     public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
@@ -73,6 +73,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.millisecondClock = engine.getConfiguration().getMillisecondClock();
         this.spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         this.txReader = new TxReader(ff);
+        this.broadSweepIter = this::broadSweep;
 
         // some code here assumes that WAL_NAME_BASE is "wal", this is to fail the tests if it is not
         assert WalUtils.WAL_NAME_BASE.equals("wal");
@@ -98,6 +99,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
+     * Validate equivalent of "^\d+$" regex.
+     */
+    private static boolean matchesSegmentName(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Validate equivalent of "^wal\d+$" regex.
      */
     private static boolean matchesWalNamePattern(CharSequence name) {
@@ -117,19 +131,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        return true;
-    }
-
-    /**
-     * Validate equivalent of "^\d+$" regex.
-     */
-    private static boolean matchesSegmentName(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
         return true;
     }
 
@@ -163,38 +164,42 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * WAL segments across the database and deletes any which are no longer needed.
      */
     private void broadSweep() {
-        path.of(engine.getConfiguration().getRoot()).slash$();
-        ff.iterateDir(path, broadSweepIterFunc);
+        engine.getTableSequencerAPI().forAllWalTables(broadSweepIter);
     }
 
-    private void broadSweepIter(long pUtf8NameZ, int type) {
-        if ((type == Files.DT_DIR) && isWalTable(tableName.of(pUtf8NameZ))) {
-            try {
-                discoveredWalIds.clear();
-                walsInUse.clear();
-                walInfoDataFrame.clear();
+    private void broadSweep(int tableId, final String tableName, long lastTxn) {
+        try {
+            this.tableName = tableName;
+            discoveredWalIds.clear();
+            walsInUse.clear();
+            walInfoDataFrame.clear();
 
-                discoverWalDirectories();
-                if (discoveredWalIds.size() == 0) {
-                    return;
-                }
-
-                populateWalInfoDataFrame();
-                accumDebugState();
-
-                deleteUnreachableSegments();
-
-                // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
-                // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
-                // pending segments that are yet to be applied to the table.
-                // Note that this also handles cases where a wal directory was created shortly before a crash and thus
-                // never recorded and tracked by the sequencer for that table.
-                deleteOutstandingWalDirectories();
-            } catch (CairoException ce) {
-                LOG.error().$("broad sweep failed [table=").$(tableName)
-                        .$(", msg=").$((Throwable) ce)
-                        .$(", errno=").$(ff.errno()).$(']').$();
+            discoverWalDirectories();
+            if (discoveredWalIds.size() == 0) {
+                return;
             }
+
+            populateWalInfoDataFrame();
+            accumDebugState();
+
+            deleteUnreachableSegments();
+
+            // Any of the calls above may leave outstanding `discoveredWalIds` that are still on the filesystem
+            // and don't have any active segments. Any unlocked walNNN directories may be deleted if they don't have
+            // pending segments that are yet to be applied to the table.
+            // Note that this also handles cases where a wal directory was created shortly before a crash and thus
+            // never recorded and tracked by the sequencer for that table.
+            deleteOutstandingWalDirectories();
+
+            if (engine.isTableDropped(tableName)) {
+                // Delete sequencer files
+                deleteTableSequencerFiles(tableName);
+                engine.removeTableSystemName(tableName);
+            }
+        } catch (CairoException ce) {
+            LOG.error().$("broad sweep failed [table=").$(tableName)
+                    .$(", msg=").$((Throwable) ce)
+                    .$(", errno=").$(ff.errno()).$(']').$();
         }
     }
 
@@ -259,6 +264,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    private void deleteTableSequencerFiles(CharSequence tableSystemName) {
+        setTableSequencerPath(tableSystemName);
+        LOG.info().$("table is dropped, deleting sequencer files [table=").$(tableSystemName).$(']').$();
+        recursiveDelete(path);
+    }
+
     private void deleteUnreachableSegments() {
         for (int index = 0; index < walInfoDataFrame.size(); ++index) {
             walId = walInfoDataFrame.walIds.get(index);
@@ -308,13 +319,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 walsInUse.add(walId);
             }
         }
-    }
-
-    private boolean isWalTable(CharSequence tableName) {
-        final int tableNameLen = tableName.length();
-        final boolean result = ff.exists(setSeqTxnPath(tableName));
-        path.trimTo(tableNameLen).$();
-        return result;
     }
 
     private void mayLogDebugInfo() {
@@ -387,15 +391,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId).$();
     }
 
-    private Path setSeqTxnPath(CharSequence tableName) {
-        return path.of(engine.getConfiguration().getRoot())
-                .concat(tableName)
-                .concat(WalUtils.SEQ_DIR).$();
-    }
-
     private Path setTablePath(CharSequence tableName) {
         return path.of(engine.getConfiguration().getRoot())
                 .concat(tableName).$();
+    }
+
+    private void setTableSequencerPath(CharSequence tableName) {
+        path.of(engine.getConfiguration().getRoot())
+                .concat(tableName).concat(WalUtils.SEQ_DIR).$();
     }
 
     private void setTxnPath(CharSequence tableName) {
@@ -424,8 +427,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * Table of columns grouping segment information. One row per walId.
      */
     private static class WalInfoDataFrame {
-        public IntList walIds = new IntList();
         public IntList segmentIds = new IntList();
+        public IntList walIds = new IntList();
 
         public void add(int walId, int segmentId) {
             walIds.add(walId);

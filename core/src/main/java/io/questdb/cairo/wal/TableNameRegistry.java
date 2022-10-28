@@ -39,13 +39,13 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 
 public class TableNameRegistry implements Closeable {
-    private static final int OPERATION_REMOVE = -1;
     private static final int OPERATION_ADD = 0;
+    private static final int OPERATION_REMOVE = -1;
+    private static final String TABLE_DROPPED_MARKER = "TABLE_DROPPED_MARKER:..";
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
-    private final ConcurrentHashMap<String> tableNameRegistry = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String> reverseTableNameRegistry = new ConcurrentHashMap<>();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
-
+    private final ConcurrentHashMap<String> tableNameRegistry = new ConcurrentHashMap<>();
 
     @Override
     public void close() {
@@ -62,12 +62,16 @@ public class TableNameRegistry implements Closeable {
         return reverseTableNameRegistry.get(systemTableName);
     }
 
-    public ConcurrentHashMap.KeySetView<String> getTableNames() {
-        return tableNameRegistry.keySet();
-    }
-
     public String getTableSystemName(CharSequence tableName) {
         return tableNameRegistry.get(tableName);
+    }
+
+    public ConcurrentHashMap.KeySetView<String> getTableSystemNames() {
+        return reverseTableNameRegistry.keySet();
+    }
+
+    public boolean isTableDropped(CharSequence systemTableName) {
+        return reverseTableNameRegistry.get(systemTableName) == TABLE_DROPPED_MARKER;
     }
 
     public String registerName(String tableName, String tableSystemName) {
@@ -130,13 +134,17 @@ public class TableNameRegistry implements Closeable {
         }
     }
 
-    public boolean remove(String tableName, String systemTableName) {
+    public boolean removeName(String tableName, String systemTableName) {
         if (tableNameRegistry.remove(tableName, systemTableName)) {
             removeEntry(tableName, systemTableName);
-            reverseTableNameRegistry.remove(systemTableName);
+            reverseTableNameRegistry.put(systemTableName, TABLE_DROPPED_MARKER);
             return true;
         }
         return false;
+    }
+
+    public void removeTableSystemName(CharSequence tableSystemName) {
+        reverseTableNameRegistry.remove(tableSystemName);
     }
 
     public void rename(CharSequence oldName, CharSequence newName, String systemTableName) {

@@ -30,7 +30,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
@@ -64,7 +63,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     public void checkNotifyOutstandingTxnInWal(int tableId, String systemTableName, long txn) {
         threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(threadLocalPath)) {
-            threadLocalPath.trimTo(dbRoot.length() + systemTableName.length() + 1).concat(TableUtils.TXN_FILE_NAME).$();
+            threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
             try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                 if (txReader2.getSeqTxn() < txn) {
@@ -73,9 +72,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                 }
             }
         } else {
-            String tableNameStr = Chars.toString(systemTableName);
-            // table is dropped, remove from registry
-            engine.notifyWalTxnCommitted(tableId, tableNameStr, Long.MAX_VALUE);
+            // table is dropped, notify the JOB to delete the data
+            engine.notifyWalTxnCommitted(tableId, systemTableName, Long.MAX_VALUE);
         }
     }
 

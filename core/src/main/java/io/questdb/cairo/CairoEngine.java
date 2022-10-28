@@ -315,7 +315,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public boolean isTableDropped(CharSequence systemTableName) {
-        return tableSequencerAPI.getTableNameBySystemName(systemTableName) == null;
+        return tableSequencerAPI.isTableDropped(systemTableName);
     }
 
     public Metrics getMetrics() {
@@ -325,6 +325,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    public void removeTableSystemName(CharSequence tableName) {
+        tableSequencerAPI.removeTableSystemName(tableName);
     }
 
 
