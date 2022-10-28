@@ -19,6 +19,10 @@
     {
       "format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz",
       "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.U+",
+      "utf8": false
     }
   ]
 }

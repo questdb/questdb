@@ -720,6 +720,52 @@ public final class Numbers {
         return encodeLowHighInts(negative ? val : -val, len);
     }
 
+    public static long parseInt000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
+
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 6 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 6) {
+            val *= 10;
+            i++;
+        }
+
+        return encodeLowHighInts(negative ? val : -val, len);
+    }
+
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
