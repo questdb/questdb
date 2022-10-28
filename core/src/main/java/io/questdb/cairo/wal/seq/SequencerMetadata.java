@@ -141,29 +141,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return suspended;
     }
 
-    @Override
-    public void toReaderIndexes() {
-        // Remove deleted columns from the metadata, e.g. make it reader metadata.
-        // Deleted columns have negative type.
-        int copyTo = 0;
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = columnMetadata.getQuick(i).getType();
-            if (columnType > 0) {
-                if (copyTo != i) {
-                    TableColumnMetadata columnMeta = columnMetadata.get(i);
-                    columnMetadata.set(copyTo, columnMeta);
-                    if (i == timestampIndex) {
-                        timestampIndex = copyTo;
-                    }
-                    columnNameIndexMap.put(columnMeta.getName(), copyTo);
-                }
-                copyTo++;
-            }
-        }
-        columnCount = copyTo;
-        columnMetadata.setPos(columnCount);
-    }
-
     public void open(String tableName, Path path, int pathLen) {
         reset();
         this.tableName = tableName;

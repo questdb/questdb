@@ -86,11 +86,6 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void toReaderIndexes() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean isWalEnabled() {
         // this class is only used for WAL-enabled tables
         return true;

@@ -117,11 +117,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void toReaderIndexes() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return true;
     }

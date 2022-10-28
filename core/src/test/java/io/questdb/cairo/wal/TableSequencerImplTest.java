@@ -26,7 +26,6 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -115,9 +114,9 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+    static void addColumn(TableWriterAPI writer, String columnName) throws SqlException {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
+        addColumnC.ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
 
@@ -153,11 +152,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getTableSequencerAPI().getWalWriter(tableName)) {
+        try (WalWriter ww = engine.getWalWriter(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {
-                addColumn(ww, "newCol" + i, ColumnType.INT);
+                addColumn(ww, "newCol" + i);
                 if (exception.get() != null) {
                     break;
                 }

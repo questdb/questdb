@@ -1,0 +1,96 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.pool;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
+
+public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
+
+    private final TableSequencerAPI tableSequencerAPI;
+
+    public WalWriterPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+        super(configuration);
+        this.tableSequencerAPI = tableSequencerAPI;
+    }
+
+    @Override
+    protected WalWriterTenant newTenant(String tableName, Entry<WalWriterTenant> entry, int index) {
+        return new WalWriterTenant(this, entry, index, tableName, tableSequencerAPI);
+    }
+
+    public static class WalWriterTenant extends WalWriter implements PoolTenant {
+        private final int index;
+        private AbstractMultiTenantPool<WalWriterTenant> pool;
+        private Entry<WalWriterTenant> entry;
+
+        public WalWriterTenant(AbstractMultiTenantPool<WalWriterTenant> pool, Entry<WalWriterTenant> entry, int index, String tableName, TableSequencerAPI tableSequencerAPI) {
+            super(pool.getConfiguration(), tableName, tableSequencerAPI);
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen()) {
+                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                if (pool != null && entry != null && !isDistressed()) {
+                    if (pool.returnToPool(this)) {
+                        return;
+                    }
+                }
+                super.close();
+            }
+        }
+
+        public void goodbye() {
+            entry = null;
+            pool = null;
+        }
+
+        @Override
+        public void refresh() {
+            try {
+                goActive();
+            } catch (Throwable ex) {
+                close();
+                throw ex;
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public Entry<WalWriterTenant> getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+    }
+}

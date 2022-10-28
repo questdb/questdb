@@ -34,8 +34,6 @@ public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
 
     String getTableName();
 
-    void toReaderIndexes();
-
     boolean isWalEnabled();
 
     default int getMaxUncommittedRows() {

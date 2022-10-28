@@ -70,11 +70,6 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public void toReaderIndexes() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }

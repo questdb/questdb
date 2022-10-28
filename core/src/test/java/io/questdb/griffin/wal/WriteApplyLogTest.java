@@ -44,6 +44,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     @Test
+    // todo: very slow test on Windows, over 3 min
     public void testApplyOutOfOrder100k() throws Exception {
         testApplyOutOfOrder(100_000);
     }

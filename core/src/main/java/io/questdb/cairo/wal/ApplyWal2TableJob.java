@@ -74,6 +74,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } catch (EntryUnavailableException tableBusy) {
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                     // Oh, no, rogue writer
+                    // todo: rephrase error message
+                    //   wal apply job could not lock table writer because something other than another wal apply job stole the writer
+                    //   this is not supposed to happen
+                    //   perhaps reject writer with WAL to anything other than WAL_2_TABLE_WRITE_REASON
                     LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
                             .$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;

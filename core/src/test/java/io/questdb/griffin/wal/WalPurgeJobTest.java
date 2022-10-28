@@ -214,6 +214,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
+            //noinspection EmptyTryBlock
             try (TableWriterAPI ignored = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 // No-op. We just want to create a WAL.
             }
@@ -520,7 +521,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
 
         compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
 
-        try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
             // Alter is committed.
             addColumn(walWriter1, "i1", ColumnType.INT);
 

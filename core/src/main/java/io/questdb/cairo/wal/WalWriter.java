@@ -102,7 +102,7 @@ public class WalWriter implements TableWriterAPI {
     private TxReader txReader;
     private ColumnVersionReader columnVersionReader;
 
-    public WalWriter(String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration) {
+    public WalWriter(CairoConfiguration configuration, String tableName, TableSequencerAPI tableSequencerAPI) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.tableSequencerAPI = tableSequencerAPI;
         this.configuration = configuration;
@@ -268,7 +268,7 @@ public class WalWriter implements TableWriterAPI {
         return metadata.getStructureVersion();
     }
 
-    public CharSequence getTableName() {
+    public String getTableName() {
         return tableName;
     }
 

@@ -46,11 +46,13 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private long structureVersion;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
+    private int plen;
 
     public TableReaderMetadata(CairoConfiguration configuration, String tableName) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.path = new Path().of(configuration.getRoot()).concat(tableName);
+        this.plen = path.length();
         this.tableName = tableName;
         this.metaMem = Vm.getMRInstance();
     }
@@ -241,11 +243,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public void toReaderIndexes() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -263,8 +260,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         final long timeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
         long deadline = configuration.getMillisecondClock().getTicks() + timeout;
-        int rootLen = this.path.length();
-        this.path.concat(TableUtils.META_FILE_NAME).$();
+        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
         boolean existenceChecked = false;
         while (true) {
             try {
@@ -272,11 +268,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
-                    path.trimTo(rootLen).slash$();
+                    path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
                         throw CairoException.critical(2).put("table does not exist [table=").put(tableName).put(']');
                     }
-                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
                 TableUtils.handleMetadataLoadException(tableName, deadline, ex, millisecondClock, timeout);
