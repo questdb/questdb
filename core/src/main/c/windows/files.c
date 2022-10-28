@@ -272,20 +272,22 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
 }
 
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
 
-    jlong fd = Java_io_questdb_std_Files_openRO(e, cl, pcharSoftLink);
+    jlong fd = Java_io_questdb_std_Files_openRO(e, cl, lpszSoftLink);
     if (fd < -1) {
-        return FALSE; // save last error already called ^ ^
+        // save last error already called
+        return FALSE;
     }
 
-    jboolean result = FALSE;
     FILE_BASIC_INFO info;
-    if (GetFileInformationByHandleEx((HANDLE) fd, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO))) {
-        result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
-    }
-    CloseHandle(fd);
+    jboolean result = GetFileInformationByHandleEx((HANDLE) fd, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO));
     SaveLastError();
+    result = result && info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+
+    int tmpErr = errno;
+    CloseHandle(fd);
+    errno = tmpErr;
     return result;
 }
 
