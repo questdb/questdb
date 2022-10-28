@@ -31,7 +31,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.std.*;
 
 public class PooledMetadataFactory implements MetadataFactory {
@@ -41,7 +41,6 @@ public class PooledMetadataFactory implements MetadataFactory {
     private final WeakClosableObjectPool<ReusableTableReaderMetadata> readerMetadataPool;
     private final WeakClosableObjectPool<ReusableSequencerMetadata> sequencerMetadataPool;
     private final CairoEngine engine;
-    CharSequenceObjHashMap<String> tableNamePool = new CharSequenceObjHashMap<>();
     private boolean isClosed = false;
 
     public PooledMetadataFactory(CairoEngine engine) {
@@ -63,12 +62,11 @@ public class PooledMetadataFactory implements MetadataFactory {
     }
 
     @Override
-    public TableRecordMetadata openTableReaderMetadata(CharSequence tableName) {
+    public TableRecordMetadata openTableReaderMetadata(String tableName) {
         TableReaderMetadata tableReaderMetadata = readerMetadataPool.pop();
-        String tableNameStr = resolveString(tableNamePool, tableName);
         try {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
-            tableReaderMetadata.readSafe(dbRoot, tableNameStr, systemTableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            tableReaderMetadata.readSafe(dbRoot, tableName, systemTableName, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
             return tableReaderMetadata;
         } catch (CairoException e) {
             Misc.free(tableReaderMetadata);
@@ -86,16 +84,6 @@ public class PooledMetadataFactory implements MetadataFactory {
     @Override
     public SequencerMetadata getSequencerMetadata() {
         return sequencerMetadataPool.pop();
-    }
-
-    private String resolveString(CharSequenceObjHashMap<String> tableNamePool, CharSequence tableName) {
-        String tableNameStr = tableNamePool.get(tableName);
-        if (tableNameStr != null) {
-            return tableNameStr;
-        }
-        tableNameStr = Chars.toString(tableName);
-        tableNamePool.put(tableNameStr, tableNameStr);
-        return tableNameStr;
     }
 
     private class ReusableTableReaderMetadata extends TableReaderMetadata {

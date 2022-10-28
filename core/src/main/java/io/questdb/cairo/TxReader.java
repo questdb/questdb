@@ -46,6 +46,7 @@ public class TxReader implements Closeable, Mutable {
     protected long minTimestamp;
     protected long maxTimestamp;
     protected long txn;
+    protected long seqTxn;
     protected int symbolColumnCount;
     protected long truncateVersion;
     protected long dataVersion;
@@ -97,11 +98,12 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -128,6 +130,10 @@ public class TxReader implements Closeable, Mutable {
 
     public long getColumnVersion() {
         return columnVersion;
+    }
+
+    public long getSeqTxn() {
+        return seqTxn;
     }
 
     public long getDataVersion() {
@@ -290,6 +296,7 @@ public class TxReader implements Closeable, Mutable {
             final long prevColumnVersion = this.columnVersion;
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+            this.seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             this.symbolColumnCount = this.symbolsSize / 8;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
@@ -361,6 +368,7 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.clear();
         version = -1;
         txn = -1;
+        seqTxn = -1;
     }
 
     private int findAttachedPartitionIndex(long ts) {

@@ -26,10 +26,10 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.UpdateOperator;
 
-public interface TableWriterBackend {
+public interface TableWriterSPI {
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains

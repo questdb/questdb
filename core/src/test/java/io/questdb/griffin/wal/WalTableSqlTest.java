@@ -62,7 +62,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     @Test
     public void createWalAndInsertFromSql() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = testName.getMethodName() + "_लаблअца";
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -317,7 +317,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     AlterOperation dropAlter = dropPartition.build();
                     dropAlter.withContext(sqlExecutionContext);
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
-                    walWriter3.applyAlter(dropAlter, true);
+                    walWriter3.apply(dropAlter, true);
                     Assert.fail();
                 } catch (TableDroppedException e) {
                 }
@@ -444,7 +444,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             for (int i = 0; i < 2; i++) {
                 engine.releaseInactive();
-                engine.getTableRegistry().reopen();
+                engine.getTableSequencerAPI().reopen();
 
                 String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
                 Assert.assertEquals(newTableSystemName, newTableSystemName2);
@@ -608,32 +608,21 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             executeInsert("insert into " + tableName +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
-
             try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "Rogue")) {
                 drainWalQueue();
                 assertSql(tableName, "x\tsym\tts\tsym2\n");
             }
 
             drainWalQueue();
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
-
-            // Next insert should fix it
             executeInsert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-24T01', 'asd')");
-            drainWalQueue();
+                    " values (102, 'dfd', '2022-02-24T01', 'asd')");
+
             assertSql(tableName, "x\tsym\tts\tsym2\n" +
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
         });
     }
@@ -689,7 +678,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(true));
 
-        try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade())) {
+        try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
             job.run(0);
         }
 

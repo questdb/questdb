@@ -27,11 +27,13 @@ package io.questdb.griffin.wal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -221,6 +223,35 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInterval() {
+        TracingFilesFacade ff = new TracingFilesFacade();
+
+        MicrosecondClockMock clock = new MicrosecondClockMock();
+        final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
+        clock.timestamp = interval + 1;  // Set to some point in time that's not 0.
+
+        try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, clock)) {
+            walPurgeJob.delayByHalfInterval();
+            walPurgeJob.run(0);
+            Assert.assertEquals(0, TracingFilesFacade.iterateDirCount);
+            clock.timestamp += interval / 2 + 1;
+            walPurgeJob.run(0);
+            Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
+            clock.timestamp += interval / 2 + 1;
+            walPurgeJob.run(0);
+            walPurgeJob.run(0);
+            walPurgeJob.run(0);
+            Assert.assertEquals(1, TracingFilesFacade.iterateDirCount);
+            clock.timestamp += interval;
+            walPurgeJob.run(0);
+            Assert.assertEquals(2, TracingFilesFacade.iterateDirCount);
+            clock.timestamp += 10 * interval;
+            walPurgeJob.run(0);
+            Assert.assertEquals(3, TracingFilesFacade.iterateDirCount);
+        }
+    }
+
+    @Test
     public void testOneSegment() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -256,6 +287,91 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
         });
+    }
+
+    @Test
+    public void testRemoveWalLockFailure() throws Exception {
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+        drainWalQueue();
+
+        engine.releaseInactive();
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            private boolean firstDelete = true;
+            private boolean firstErrno = true;
+
+            @Override
+            public int errno() {
+                if (firstErrno) {
+                    firstErrno = false;
+                    return 5;  // Access denied.
+                } else {
+                    return super.errno();
+                }
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (firstDelete) {
+                    firstDelete = false;
+                    return false;
+                } else {
+                    return super.remove(name);
+                }
+            }
+        };
+
+        runWalPurgeJob(ff);
+
+        assertWalLockExistence(true, tableName, 1);
+
+        runWalPurgeJob(ff);
+
+        assertWalLockExistence(false, tableName, 1);
+    }
+
+    @Test
+    public void testRmWalDirFailure() throws Exception {
+        String tableName = testName.getMethodName();
+        compile("create table " + tableName + "("
+                + "x long,"
+                + "ts timestamp"
+                + ") timestamp(ts) partition by DAY WAL");
+
+        compile("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+
+        drainWalQueue();
+
+        engine.releaseInactive();
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            private boolean firstDelete = true;
+
+            @Override
+            public int rmdir(Path path) {
+                if (firstDelete) {
+                    firstDelete = false;
+                    return 5;  // Access denied.
+                } else {
+                    return super.rmdir(path);
+                }
+            }
+        };
+
+        runWalPurgeJob(ff);
+
+        assertWalExistence(true, tableName, 1);
+
+        runWalPurgeJob(ff);
+
+        assertWalExistence(false, tableName, 1);
     }
 
     @Test
@@ -417,7 +533,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                     + "ts timestamp"
                     + ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(false, tableName, 1);
-            try (TableWriterFrontend twf = engine.getTableWriterFrontEnd(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (TableWriterAPI ignored = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 // No-op. We just want to create a WAL.
             }
 
@@ -473,6 +589,38 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 runWalPurgeJob();
                 Assert.assertFalse(path.toString(), ff.exists(path));
             }
+        });
+    }
+
+    @Test
+    public void testWalPurgedAfterUpdateZeroRecordsTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            compile("update " + tableName + " set x = 1 where x < 0");
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            engine.releaseInactive();
+
+            runWalPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
         });
     }
 
@@ -535,6 +683,25 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             path.of(root).concat(systemTableName).concat("wal").put(walId).put(".lock").$();
             Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
+    static class MicrosecondClockMock implements MicrosecondClock {
+        public long timestamp = 0;
+
+        @Override
+        public long getTicks() {
+            return timestamp;
+        }
+    }
+
+    static class TracingFilesFacade extends FilesFacadeImpl {
+        public static long iterateDirCount = 0;
+
+        @Override
+        public void iterateDir(LPSZ path, FindVisitor func) {
+            ++iterateDirCount;
+            super.iterateDir(path, func);
         }
     }
 }

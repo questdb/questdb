@@ -35,8 +35,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.tools.TestUtils;
-import org.hamcrest.CoreMatchers;
-import org.hamcrest.MatcherAssert;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -63,39 +61,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testApplyWalUpdates() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
-
-            long tsIncrement = Timestamps.SECOND_MICROS;
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
-            int rowCount = (int) (Files.PAGE_SIZE / 32);
-            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
-            Rnd rnd = TestUtils.generateRandom(LOG);
-
-            try (
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-
-                long start = ts;
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-
-                start += rowCount * tsIncrement + 1;
-                addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
-
-                drainWalQueue(true);
-                new CheckWalTransactionsJob(engine).runSerially();
-                drainWalQueue(false);
-
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-            }
-        });
-    }
-
-    @Test
     public void testNonStructuralAlterViaWal() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -108,24 +73,21 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                updateMaxUncommittedRows(tableName, 60, tableId, sqlToOperation);
+                updateMaxUncommittedRows(tableName, 60, tableId);
                 assertMaxUncommittedRows(tableName, 60);
                 updateMaxUncommittedRows(tableCopyName, 60);
                 assertMaxUncommittedRows(tableCopyName, 60);
-                updateMaxUncommittedRows(tableName, 55, tableId, sqlToOperation);
+                updateMaxUncommittedRows(tableName, 55, tableId);
                 assertMaxUncommittedRows(tableName, 55);
                 updateMaxUncommittedRows(tableCopyName, 55);
                 assertMaxUncommittedRows(tableCopyName, 55);
-                updateMaxUncommittedRows(tableName, 50, tableId, sqlToOperation);
+                updateMaxUncommittedRows(tableName, 50, tableId);
                 assertMaxUncommittedRows(tableName, 50);
-                updateMaxUncommittedRows(tableName, 77, tableId, sqlToOperation);
+                updateMaxUncommittedRows(tableName, 77, tableId);
                 assertMaxUncommittedRows(tableName, 77);
 
                 // assert that data is not changed
@@ -147,14 +109,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 createTable(model);
             }
 
-            final int tableId;
-            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                tableId = tableWriter.getMetadata().getId();
-            }
-
-            try (
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 TableWriter.Row row = walWriter.newRow(1000);
                 row.putInt(0, 1);
                 row.append();
@@ -172,7 +127,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 row.append();
                 walWriter.commit();
 
-                applyWalToTable(walWriter.getSystemTableName(), tableId);
+                drainWalQueue();
             }
 
             assertSql(tableName, "i\tts\n" +
@@ -298,7 +253,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             LOG.info().$("now :").$(now).$();
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            int releaseWriterSeed = 3;
+            int releaseWriterSeed = 2;
             int overlapSeed = 3;
 
             try (
@@ -426,7 +381,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateViaWalCopyIntoDeletedColumn() throws Exception {
+    public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -454,8 +409,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                 executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
                 fail("Expected exception is missing");
-            } catch (SqlException e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.endsWith("Invalid column: b"));
+            } catch (Exception e) {
+                assertTrue(e.getMessage().endsWith("Invalid column: b"));
             }
         });
     }
@@ -473,15 +428,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 createTable(model);
             }
 
-            final int tableId;
-            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
-                tableId = tableWriter.getMetadata().getId();
-            }
-
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 TableWriter.Row row = walWriter.newRow(0);
                 row.putInt(0, 10);
                 row.append();
@@ -497,7 +444,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                 executeOperation("UPDATE " + tableName + " SET b = a", CompiledQuery.UPDATE);
                 executeOperation("UPDATE " + tableName + " SET c = a", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                drainWalQueue();
             }
 
             assertSql(tableName, "a\tb\tts\tc\n" +
@@ -525,11 +472,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             final DirectBinarySequence binSeq = new DirectBinarySequence();
             WalWriterTest.prepareBinPayload(pointer, binarySize);
 
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 sqlExecutionContext.getBindVariableService().setInt(0, 567890);
@@ -554,7 +498,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
                         "CHAR=$9, BOOLEAN=$10, STRING=$11, LABEL=$12, BIN=$13, GEOBYTE=$14, GEOSHORT=$15, GEOINT=$16, GEOLONG=$17 " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                drainWalQueue();
 
                 executeOperation("UPDATE " + tableCopyName + " SET " +
                         "INT=$1, BYTE=$2, SHORT=$3, LONG=$4, FLOAT=$5, DOUBLE=$6, TIMESTAMP=$7, DATE=$8, " +
@@ -613,11 +557,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             final DirectBinarySequence binSeq = new DirectBinarySequence();
             WalWriterTest.prepareBinPayload(pointer, binarySize);
 
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
@@ -644,7 +585,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                         "CHAR=:CHARVAL, BOOLEAN=:BOOLVAL, STRING=:STRVAL, LABEL=:SYMVAL, BIN=:BINVAL, " +
                         "GEOBYTE=:GEOBYTEVAL, GEOSHORT=:GEOSHORTVAL, GEOINT=:GEOINTVAL, GEOLONG=:GEOLONGVAL " +
                         "WHERE INT > 5", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                drainWalQueue();
 
                 executeOperation("UPDATE " + tableCopyName + " SET " +
                         "INT=:INTVAL, BYTE=:BYTEVAL, SHORT=:SHORTVAL, LONG=:LONGVAL, " +
@@ -670,15 +611,12 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 executeOperation("UPDATE " + tableName + " SET INT=12345678", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                drainWalQueue();
 
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678", CompiledQuery.UPDATE);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -699,17 +637,47 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
             Rnd rnd = TestUtils.generateRandom(LOG);
 
-            try (
-                    SqlToOperation sqlToOperation = new SqlToOperation(engine);
-                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-                final int tableId = addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 executeOperation("UPDATE " + tableName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
-                ApplyWal2TableJob.processWalTxnNotification(walWriter.getSystemTableName(), tableId, engine, sqlToOperation);
+                drainWalQueue();
 
                 executeOperation("UPDATE " + tableCopyName + " SET INT=12345678 WHERE INT > 5", CompiledQuery.UPDATE);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testWalTxnRepublishing() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                start += rowCount * tsIncrement + 1;
+                addRowsToWal(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+
+                drainWalQueue(true);
+                new CheckWalTransactionsJob(engine).runSerially();
+
+                drainWalQueue(false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -773,17 +741,11 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             }
         }
 
-        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine);
+        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
         while (job.run(0)) {
             // run until empty
         }
         ((Closeable) job).close();
-    }
-
-    private static void applyWalToTable(String tableName, int tableId) {
-        try (SqlToOperation sqlToOperation = new SqlToOperation(engine)) {
-            ApplyWal2TableJob.processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
-        }
     }
 
     private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
@@ -813,8 +775,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     private int addRowsToWal(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId;
         try (
-                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test");
-                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal")
+                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "copy");
+                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "wal")
         ) {
             tableId = tableWriter.getMetadata().getId();
             if (!inOrder) {
@@ -845,7 +807,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
     private int addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         final int tableId = addRowsToWal(iteration, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, startTs, rnd, walWriter, inOrder);
-        applyWalToTable(walWriter.getSystemTableName(), tableId);
+        drainWalQueue();
         return tableId;
     }
 
@@ -907,14 +869,14 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .timestamp("ts");
     }
 
-    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId, SqlToOperation sqlToOperation) throws SqlException {
-        executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
-        if (tableId > 0) {
-            ApplyWal2TableJob.processWalTxnNotification(engine.getSystemTableName(tableName), tableId, engine, sqlToOperation);
-        }
+    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
+        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1);
     }
 
-    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
-        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1, null);
+    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
+        executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
+        if (tableId > 0) {
+            drainWalQueue();
+        }
     }
 }

@@ -153,7 +153,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        circuitBreaker.resetTimer();
         return circuitBreaker;
     }
 
@@ -182,6 +181,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ordered,
                 baseSupportsRandomAccess
         );
+    }
+
+    @Override
+    public void clearAnalyticContext() {
+        analyticContext.clear();
     }
 
     @Override

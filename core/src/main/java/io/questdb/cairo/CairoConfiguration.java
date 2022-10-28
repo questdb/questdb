@@ -147,6 +147,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -189,8 +191,6 @@ public interface CairoConfiguration {
 
     int getO3PartitionQueueCapacity();
 
-    int getO3PartitionUpdateQueueCapacity();
-
     int getO3PurgeDiscoveryQueueCapacity();
 
     // the '+' is used to prevent overlap with table names
@@ -228,8 +228,6 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
-
-    int getReplaceFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -366,6 +364,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
@@ -379,6 +379,8 @@ public interface CairoConfiguration {
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -416,6 +418,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
 
     boolean mangleTableSystemNames();
 }

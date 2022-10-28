@@ -37,6 +37,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> placeholderFunctions,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -48,6 +49,7 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,

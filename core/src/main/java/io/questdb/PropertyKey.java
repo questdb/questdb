@@ -35,7 +35,6 @@ public enum PropertyKey {
     CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
     CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
-    CAIRO_SQL_APPEND_PAGE_SIZE("cairo.sql.append.page.size"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),
     CAIRO_WRITER_TICK_ROWS_COUNT("cairo.writer.tick.rows.count"),
@@ -43,7 +42,7 @@ public enum PropertyKey {
     CAIRO_SQL_BACKUP_DIR_DATETIME_FORMAT("cairo.sql.backup.dir.datetime.format"),
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
-    CAIRO_CREAT_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
+    CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
@@ -152,6 +151,7 @@ public enum PropertyKey {
     CAIRO_RND_MEMORY_PAGE_SIZE("cairo.rnd.memory.page.size"),
     CAIRO_RND_MEMORY_MAX_PAGES("cairo.rnd.memory.max.pages"),
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
+    CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
@@ -371,8 +371,12 @@ public enum PropertyKey {
     WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
     WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
     WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_SLEEP_TIMEOUT("wal.apply.worker.sleep.timeout"),
     WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
-    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity");
+    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
+    CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
+    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

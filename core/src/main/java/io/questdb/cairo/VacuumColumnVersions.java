@@ -104,7 +104,7 @@ public class VacuumColumnVersions implements Closeable {
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
         int columnIndex = -1;
         int writerIndex = -1;
-        int tableId = reader.getMetadata().getId();
+        int tableId = reader.getMetadata().getTableId();
         long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
         long updateTxn = reader.getTxn();

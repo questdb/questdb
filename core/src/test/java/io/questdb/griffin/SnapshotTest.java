@@ -138,7 +138,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
                             Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
-                            Assert.assertEquals(metadata0.getId(), metadata.getId());
+                            Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
                             Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());

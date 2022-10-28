@@ -33,6 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
     private final CairoConfiguration configuration;
@@ -207,6 +208,18 @@ public class MessageBusImpl implements MessageBus {
         // We need to close only queues with native backing memory.
         Misc.free(getTableWriterEventQueue());
         Misc.free(pageFrameReduceQueue);
+    }
+
+    @TestOnly
+    public void reset() {
+        clearQueue(walTxnNotificationSubSequence);
+    }
+
+    private void clearQueue(Sequence subSequence) {
+        long cursor;
+        while ((cursor = subSequence.next()) > -1) {
+            subSequence.done(cursor);
+        }
     }
 
     @Override

@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.cairo.wal.seq.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -48,10 +49,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.Sequencer.NO_TXN;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
-public class WalWriter implements TableWriterFrontend {
+public class WalWriter implements TableWriterAPI {
     public static final int NEW_COL_RECORD_SIZE = 6;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
@@ -75,11 +76,11 @@ public class WalWriter implements TableWriterFrontend {
     private final int walId;
     private final SequencerMetadata metadata;
     private final WalWriterEvents events;
-    private final TableRegistry tableRegistry; //todo: rename to something more appropriate
+    private final TableSequencerAPI tableSequencerAPI;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
-    private final TableWriterBackend walMetadataUpdater = new WalMetadataUpdaterBackend();
+    private final TableWriterSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
     private final String tableName;
     private long walLockFd = -1;
@@ -96,22 +97,21 @@ public class WalWriter implements TableWriterFrontend {
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
     private long lastSegmentTxn = -1L;
-    private SequencerStructureChangeCursor structureChangeCursor;
     private boolean open;
     private boolean distressed;
     private TxReader txReader;
     private ColumnVersionReader columnVersionReader;
 
-    public WalWriter(String systemTableName, String tableName, TableRegistry tableRegistry, CairoConfiguration configuration) {
+    public WalWriter(String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration) {
         this.tableName = tableName;
         LOG.info().$("open '").utf8(systemTableName).$('\'').$();
-        this.tableRegistry = tableRegistry;
+        this.tableSequencerAPI = tableSequencerAPI;
         this.configuration = configuration;
         this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.systemTableName = systemTableName;
-        final int walId = tableRegistry.getNextWalId(systemTableName);
+        final int walId = tableSequencerAPI.getNextWalId(systemTableName);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(systemTableName).concat(walName);
@@ -123,7 +123,7 @@ public class WalWriter implements TableWriterFrontend {
             mkWalDir();
 
             metadata = new SequencerMetadata(ff);
-            tableRegistry.copyMetadataTo(tableName, systemTableName, metadata);
+            tableSequencerAPI.copyMetadataTo(tableName, systemTableName, metadata);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -142,7 +142,7 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
-    public long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot alter table with uncommitted inserts [table=")
                     .put(tableName).put(']');
@@ -172,9 +172,9 @@ public class WalWriter implements TableWriterFrontend {
                 }
 
                 try {
-                    txn = tableRegistry.nextStructureTxn(systemTableName, getStructureVersion(), operation);
+                    txn = tableSequencerAPI.nextStructureTxn(systemTableName, getStructureVersion(), operation);
                     if (txn == NO_TXN) {
-                        applyStructureChanges(Long.MAX_VALUE);
+                        applyMetadataChangeLog(Long.MAX_VALUE);
                     }
                 } catch (CairoException e) {
                     distressed = true;
@@ -198,7 +198,7 @@ public class WalWriter implements TableWriterFrontend {
 
     // Returns table transaction number
     @Override
-    public long applyUpdate(UpdateOperation operation) {
+    public long apply(UpdateOperation operation) {
         // it is guaranteed that there is no join in UPDATE statement
         // because SqlCompiler rejects the UPDATE if it contains join
         return applyNonStructuralOperation(operation);
@@ -219,10 +219,10 @@ public class WalWriter implements TableWriterFrontend {
     }
 
     @Override
-    public long truncate() {
+    public void truncate() {
         try {
             lastSegmentTxn = events.truncate();
-            return getTableTxn();
+            getSequencerTxn();
         } catch (Throwable th) {
             rollback();
             throw th;
@@ -240,16 +240,16 @@ public class WalWriter implements TableWriterFrontend {
         }
     }
 
-    // Returns table transaction number.
+    // Returns sequencer transaction number
     public long commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
                 LOG.debug().$("committing data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId).$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(rowCount).I$();
                 lastSegmentTxn = events.data(currentTxnStartRowNum, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                final long tableTxn = getTableTxn();
+                final long seqTxn = getSequencerTxn();
                 resetDataTxnProperties();
-                return tableTxn;
+                return seqTxn;
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -372,7 +372,7 @@ public class WalWriter implements TableWriterFrontend {
     @TestOnly
     public boolean goActive(long maxStructureVersion) {
         try {
-            applyStructureChanges(maxStructureVersion);
+            applyMetadataChangeLog(maxStructureVersion);
             return true;
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, wal will be closed [table=").$(tableName)
@@ -443,7 +443,7 @@ public class WalWriter implements TableWriterFrontend {
                         final MemoryMA secondaryColumn = getSecondaryColumn(columnIndex);
                         final String columnName = metadata.getColumnName(columnIndex);
 
-                        CopySegmentFileJob.rollColumnToSegment(ff,
+                        CopyWalSegmentUtils.rollColumnToSegment(ff,
                                 configuration.getWriterFileOpenOpts(),
                                 primaryColumn,
                                 secondaryColumn,
@@ -560,48 +560,40 @@ public class WalWriter implements TableWriterFrontend {
         nullSetters.setQuick(columnIndex, NOOP);
     }
 
-    private long applyNonStructuralOperation(AbstractOperation operation) {
-        if (operation.getSqlExecutionContext() == null) {
-            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
-        }
-        try {
-            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
-            return getTableTxn();
-        } catch (Throwable th) {
-            // perhaps half record was written to WAL-e, better to not use this WAL writer instance
-            distressed = true;
-            throw th;
-        }
-    }
-
-    private void applyStructureChanges(long maxStructureVersion) {
-        try {
-            structureChangeCursor = tableRegistry.getStructureChangeCursor(systemTableName, structureChangeCursor, getStructureVersion());
-            if (structureChangeCursor == null) {
-                // nothing to do
-                return;
-            }
-            long metadataVersion;
-            while (structureChangeCursor.hasNext() && (metadataVersion = getStructureVersion()) < maxStructureVersion) {
-                AlterOperation alterOperation = structureChangeCursor.next();
+    private void applyMetadataChangeLog(long structureVersionHi) {
+        try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(systemTableName, getStructureVersion())) {
+            long metadataVersion = getStructureVersion();
+            while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
+                TableMetadataChange tableMetadataChange = structureChangeCursor.next();
                 try {
-                    alterOperation.apply(walMetadataUpdater, true);
+                    tableMetadataChange.apply(walMetadataUpdater, true);
                 } catch (SqlException e) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction. ")
                             .put(e.getFlyweightMessage());
                 }
-                if (metadataVersion >= getStructureVersion()) {
+
+                if (++metadataVersion != getStructureVersion()) {
                     distressed = true;
                     throw CairoException.critical(0)
                             .put("could not apply table definition changes to the current transaction, version unchanged");
                 }
             }
-        } finally {
-            if (structureChangeCursor != null) {
-                structureChangeCursor.reset();
-            }
+        }
+    }
+
+    private long applyNonStructuralOperation(AbstractOperation operation) {
+        if (operation.getSqlExecutionContext() == null) {
+            throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
+        }
+        try {
+            lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
+            return getSequencerTxn();
+        } catch (Throwable th) {
+            // perhaps half record was written to WAL-e, better to not use this WAL writer instance
+            distressed = true;
+            throw th;
         }
     }
 
@@ -884,24 +876,19 @@ public class WalWriter implements TableWriterFrontend {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
+    private long getSequencerTxn() {
+        long seqTxn;
+        do {
+            seqTxn = tableSequencerAPI.nextTxn(systemTableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
+            if (seqTxn == NO_TXN) {
+                applyMetadataChangeLog(Long.MAX_VALUE);
+            }
+        } while (seqTxn == NO_TXN);
+        return seqTxn;
     }
 
-    private long getTableTxn() {
-        long txn;
-        try {
-            do {
-                txn = tableRegistry.nextTxn(systemTableName, walId, metadata.getStructureVersion(), segmentId, lastSegmentTxn);
-                if (txn == NO_TXN) {
-                    applyStructureChanges(Long.MAX_VALUE);
-                }
-            } while (txn == NO_TXN);
-        } catch (CairoException ex) {
-            distressed = true;
-            throw ex;
-        }
-        return txn;
+    SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {
@@ -1030,7 +1017,7 @@ public class WalWriter implements TableWriterFrontend {
         cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
     }
 
-    private void renameColumFiles(int columnType, CharSequence columnName, CharSequence newName) {
+    private void renameColumnFiles(int columnType, CharSequence columnName, CharSequence newName) {
         path.trimTo(rootLen).slash().put(segmentId);
         final Path tempPath = Path.PATH.get().of(path);
 
@@ -1136,8 +1123,7 @@ public class WalWriter implements TableWriterFrontend {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
         int type = metadata.getColumnType(columnIndex);
         if (type > 0) { // Not deleted
-            final long pos = size;
-            if (pos > 0) {
+            if (size > 0) {
                 // subtract column top
                 final long m1pos;
                 switch (ColumnType.tagOf(type)) {
@@ -1145,16 +1131,16 @@ public class WalWriter implements TableWriterFrontend {
                     case ColumnType.STRING:
                         assert mem2 != null;
                         // Jump to the number of records written to read length of var column correctly
-                        mem2.jumpTo(pos * Long.BYTES);
+                        mem2.jumpTo(size * Long.BYTES);
                         m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
                         // Jump to the end of file to correctly trim the file
-                        mem2.jumpTo((pos + 1) * Long.BYTES);
+                        mem2.jumpTo((size + 1) * Long.BYTES);
                         break;
                     default:
                         if (columnIndex == metadata.getTimestampIndex()) {
-                            m1pos = pos << 4;
+                            m1pos = size << 4;
                         } else {
-                            m1pos = pos << ColumnType.pow2SizeOf(type);
+                            m1pos = size << ColumnType.pow2SizeOf(type);
                         }
                         break;
                 }
@@ -1576,13 +1562,13 @@ public class WalWriter implements TableWriterFrontend {
                             path.trimTo(rootLen).slash().put(segmentId);
                             // this will close old _meta file and create the new one
                             metadata.switchTo(path, path.length());
-                            renameColumFiles(columnType, columnName, newColumnName);
+                            renameColumnFiles(columnType, columnName, newColumnName);
                         }
                         // if we did not have to roll uncommitted rows to a new segment
                         // it will switch metadata file on next row write
                         // as part of rolling to a new segment
 
-                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumName=").$(newColumnName).I$();
+                        LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
                                 .put("' removed, cannot commit because of concurrent table definition change ");

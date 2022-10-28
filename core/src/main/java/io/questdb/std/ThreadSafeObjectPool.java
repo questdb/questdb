@@ -52,8 +52,14 @@ public class ThreadSafeObjectPool<T> {
         }
     }
 
+    public void releaseAll() {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).clear();
+        }
+    }
+
     public ClosableInstance<T> get() {
-        int start = (int)Thread.currentThread().getId() % capacity;
+        int start = (int) Thread.currentThread().getId() % capacity;
         while (true) {
             for (int i = 0; i < capacity; i++) {
                 int id = (i + start) % capacity;

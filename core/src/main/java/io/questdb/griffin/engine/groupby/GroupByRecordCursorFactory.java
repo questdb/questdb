@@ -51,10 +51,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordSink mapSink;
 
     public GroupByRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
@@ -68,7 +68,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.cursor = new GroupByRecordCursor(recordFunctions, keyTypes, valueTypes, configuration);
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            this.cursor = new GroupByRecordCursor(recordFunctions, updater, keyTypes, valueTypes, configuration);
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
@@ -84,7 +85,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
@@ -120,14 +120,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final Map dataMap;
+        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
         private boolean isOpen;
 
-        public GroupByRecordCursor(ObjList<Function> functions,
-                                   @Transient @NotNull ArrayColumnTypes keyTypes,
-                                   @Transient @NotNull ArrayColumnTypes valueTypes,
-                                   CairoConfiguration configuration) {
+        public GroupByRecordCursor(
+                ObjList<Function> functions,
+                GroupByFunctionsUpdater groupByFunctionsUpdater,
+                @Transient @NotNull ArrayColumnTypes keyTypes,
+                @Transient @NotNull ArrayColumnTypes valueTypes,
+                CairoConfiguration configuration
+        ) {
             super(functions);
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.isOpen = true;
         }
 
@@ -138,13 +143,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     dataMap.reopen();
                 }
                 final Record baseRecord = baseCursor.getRecord();
-                final int n = groupByFunctions.size();
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final MapKey key = dataMap.withKey();
                     mapSink.copy(baseRecord, key);
                     MapValue value = key.createValue();
-                    GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    }
                 }
                 super.of(baseCursor, dataMap.getCursor());
             } catch (Throwable e) {

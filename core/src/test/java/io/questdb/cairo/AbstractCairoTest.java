@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.TableWriterFrontend;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
@@ -77,6 +76,7 @@ public abstract class AbstractCairoTest {
     public static long dataAppendPageSize = -1;
     public static int walTxnNotificationQueueCapacity = -1;
     public static boolean mangleTableSystemName = true;
+    public static int recreateDistressedSequencerAttempts = 3;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -113,8 +113,6 @@ public abstract class AbstractCairoTest {
     protected static RostiAllocFacade rostiAllocFacade = null;
     protected static int parallelImportStatusLogKeepNDays = -1;
     protected static Boolean ioURingEnabled = null;
-    protected static String stackFailureClass;
-    protected static String stackFailureMethod;
     protected static boolean hideTelemetryTable = false;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
@@ -153,18 +151,6 @@ public abstract class AbstractCairoTest {
 
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (FACTORY_TAGS[i]) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
                 memUsed += Unsafe.getMemUsedByTag(i);
             }
         }
@@ -318,6 +304,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public long getInactiveWalWriterTTL() {
+                return -10000;
+            }
+
+            @Override
             public int getMetadataPoolCapacity() {
                 return 1;
             }
@@ -382,6 +373,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public int getWalRecreateDistressedSequencerAttempts() {
+                return recreateDistressedSequencerAttempts;
+            }
+
+            @Override
             public int getSqlCopyLogRetentionDays() {
                 return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
             }
@@ -401,21 +397,6 @@ public abstract class AbstractCairoTest {
                 // Bump it to high number so that test doesn't fail with memory leak if LongList
                 // re-allocates
                 return 512;
-            }
-
-            @Override
-            public CharSequence getRoot() {
-                if (stackFailureClass != null) {
-                    try {
-                        throw new RuntimeException("Test failure");
-                    } catch (Exception e) {
-                        final StackTraceElement[] stackTrace = e.getStackTrace();
-                        if (stackTrace[1].getClassName().endsWith(stackFailureClass) && stackTrace[1].getMethodName().equals(stackFailureMethod)) {
-                            throw e;
-                        }
-                    }
-                }
-                return root;
             }
 
             @Override
@@ -482,6 +463,11 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
+            public boolean isWalSupported() {
+                return true;
+            }
+
+            @Override
             public boolean isO3QuickSortEnabled() {
                 return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
             }
@@ -532,7 +518,7 @@ public abstract class AbstractCairoTest {
         TestUtils.createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
-        engine.getTableRegistry().reopen();
+        engine.getTableSequencerAPI().reopen();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
     }
@@ -540,7 +526,6 @@ public abstract class AbstractCairoTest {
     @After
     public void tearDown() {
         tearDown(true);
-        LogFactory.getInstance().flushJobs();
     }
 
     public void tearDown(boolean removeDir) {
@@ -621,7 +606,7 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                engine.clearPools();
+                engine.releaseInactiveCompilers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
@@ -637,10 +622,10 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void addColumn(TableWriterFrontend writer, String columnName, int columnType) throws SqlException {
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.applyAlter(addColumnC.build(), true);
+        writer.apply(addColumnC.build(), true);
     }
 
     protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
@@ -651,24 +636,29 @@ public abstract class AbstractCairoTest {
         return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
     }
 
-    protected static void drainWalQueue() {
-        try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine)) {
-            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            for (int i = 0; i < 1; i++) {
-                while (job.run(0)) {
-                    // run until empty
-                }
+    protected static ApplyWal2TableJob createWalApplyJob() {
+        return new ApplyWal2TableJob(engine, 1, 1);
+    }
 
-                if (!checkWalTransactionsJob.run(0)) {
-                    return;
-                }
-                // Do not go in re-try loop in tests. Try to re-process once
-            }
+    protected static void drainWalQueue() {
+        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+            drainWalQueue(walApplyJob);
+        }
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        while (walApplyJob.run(0)) {
+            // run until empty
+        }
+
+        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        while (checkWalTransactionsJob.run(0)) {
+            // run until empty
         }
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        WalPurgeJob job = new WalPurgeJob(engine, ff);
+        WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
         while (job.run(0)) {
             // run until empty
         }

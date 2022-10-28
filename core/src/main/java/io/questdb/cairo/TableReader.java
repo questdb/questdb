@@ -109,7 +109,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             LOG.debug()
-                    .$("open [id=").$(metadata.getId())
+                    .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(this.tableName)
                     .$(", systemName=").$(this.systemTableName)
                     .I$();

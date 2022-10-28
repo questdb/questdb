@@ -512,6 +512,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testManyPartitionsParallel() throws Exception {
+        executeWithPool(4, O3Test::testManyPartitionsParallel);
+    }
+
+    @Test
     public void testO3EdgeBugContended() throws Exception {
         executeWithPool(0, O3Test::testO3EdgeBug);
     }
@@ -1782,6 +1787,35 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "select max(ts) from y"
         );
+    }
+
+    private static void testManyPartitionsParallel(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " timestamp_sequence(0, 10* 1000000L) ts " +
+                        " from long_sequence(500)" +
+                        ") timestamp(ts) partition by HOUR",
+                sqlExecutionContext
+        );
+
+        for (int i = 0; i < 20; i++) {
+            compiler.compile(
+                    "insert into x select" +
+                            " cast(x as int) i," +
+                            " cast(abs(rnd_int(0, 400, 0) * 60 * 60 * 1000000L) as timestamp) ts" +
+                            " from long_sequence(200)",
+                    sqlExecutionContext
+            );
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select sum(i) from x", sink, "sum\n" +
+                "527250\n");
     }
 
     private static void testAppendOrderStability(

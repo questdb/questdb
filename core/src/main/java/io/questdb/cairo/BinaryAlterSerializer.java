@@ -22,40 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.griffin.engine.ops.AlterOperation;
 
-public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend {
-    private final SequencerMetadata metadata;
-    private final CharSequence tableName;
-
-    public SequencerMetadataUpdater(SequencerMetadata metadata, CharSequence tableName) {
-        this.metadata = metadata;
-        this.tableName = tableName;
+public class BinaryAlterSerializer implements MemorySerializer {
+    @Override
+    public void toSink(Object obj, MemoryA sink) {
+        ((AlterOperation) obj).serializeBody(sink);
     }
 
     @Override
-    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
-        metadata.addColumn(name, type);
-    }
-
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public void removeColumn(CharSequence columnName) {
-        metadata.removeColumn(columnName);
-    }
-
-    @Override
-    public void renameColumn(CharSequence columnName, CharSequence newName) {
-        metadata.renameColumn(columnName, newName);
+    public void fromSink(Object instance, MemoryCR memory, long offset) {
+        ((AlterOperation) instance).deserializeBody(memory, offset);
     }
 }

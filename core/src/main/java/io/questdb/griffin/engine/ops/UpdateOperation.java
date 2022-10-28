@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.wal.TableWriterBackend;
+import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -70,7 +70,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
+    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
@@ -149,6 +149,6 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
-        circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
+        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
     }
 }

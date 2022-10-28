@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -112,7 +114,7 @@ public class FuzzTransactionGenerator {
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, i, transactionCount);
+                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, rnd.nextLong(), transactionCount);
                rowCount -= blockRows;
                 lastTimestamp = stopTs;
             }
@@ -179,18 +181,22 @@ public class FuzzTransactionGenerator {
             double rollback,
             int strLen,
             String[] symbols,
-            int seed,
+            long seed,
             long tsRound
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
         long timestamp = minTimestamp;
         for (int i = 0; i < rowCount; i++) {
             if (o3) {
-                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + seed;
+                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + i;
             } else {
                 timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
             }
-            transaction.operationList.add(new FuzzInsertOperation(rnd, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            // Use stable random seeds which depends on the transaction index and timestamp
+            // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
+            long seed1 = seed + timestamp;
+            long seed2 = timestamp;
+            transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
         transaction.rollback = getZeroToOneDouble(rnd) < rollback;

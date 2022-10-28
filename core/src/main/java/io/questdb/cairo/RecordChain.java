@@ -48,6 +48,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
     public RecordChain(
@@ -109,6 +110,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public long getAddress(long recordOffset, int columnIndex) {
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
+    }
+
+    @Override
+    public Record getRecordAt(long recordOffset) {
+        if (recordC == null) {
+            recordC = new RecordChainRecord();
+        }
+        recordC.of(rowToDataOffset(recordOffset));
+        return recordC;
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {

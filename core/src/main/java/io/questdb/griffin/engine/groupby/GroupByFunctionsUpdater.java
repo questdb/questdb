@@ -22,21 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
 
-public class BinaryAlterFormatter implements MemorySerializer {
-    @Override
-    public void toSink(Object obj, MemoryA sink) {
-        ((AlterOperation)obj).serializeBody(sink);
-    }
+public interface GroupByFunctionsUpdater {
 
-    @Override
-    public Object fromSink(Object instance, MemoryCR memory, long offset) {
-        ((AlterOperation) instance).deserializeBody(memory, offset);
-        return instance;
-    }
+    void updateNew(MapValue value, Record record);
+
+    void updateExisting(MapValue value, Record record);
+
+    void updateEmpty(MapValue value);
 }

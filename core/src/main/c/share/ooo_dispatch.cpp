@@ -300,7 +300,7 @@ MULTI_VERSION_NAME (re_shuffle_int64)(const int64_t *src, int64_t *dest, const i
 // 32
 void
 MULTI_VERSION_NAME (re_shuffle_128bit)(const __int128 *src, __int128 *dest, const index_t *index, const int64_t count) {
-    // Let compile optimise copying 2 longs per every CPU.
+    // Let compiler optimise copying 2 longs per each CPU architecture.
     re_shuffle_vanilla(src, dest, index, count);
 }
 

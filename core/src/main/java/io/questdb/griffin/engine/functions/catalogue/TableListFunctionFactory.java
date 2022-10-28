@@ -250,7 +250,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
-                        tableId = metaReader.getId();
+                        tableId = metaReader.getTableId();
                         maxUncommittedRows = metaReader.getMaxUncommittedRows();
                         commitLag = metaReader.getCommitLag();
                         partitionBy = metaReader.getPartitionBy();

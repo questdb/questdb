@@ -463,7 +463,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return configuration.getWalEnabledDefault();
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

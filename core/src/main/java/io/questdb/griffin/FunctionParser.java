@@ -150,15 +150,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
-        if (name != null && name.length() > 0) {
-            switch (name.charAt(0)) {
-                case ':':
-                    return createNamedParameter(position, name);
-                case '$':
-                    return parseIndexedParameter(position, name);
-                default:
-                    return new StrConstant(name);
+        if (name != null) {
+            if(name.length() > 0) {
+                switch (name.charAt(0)) {
+                    case ':':
+                        return createNamedParameter(position, name);
+                    case '$':
+                        return parseIndexedParameter(position, name);
+                    default:
+                        return new StrConstant(name);
+                }
             }
+            else return StrConstant.EMPTY;
         }
         return NullConstant.NULL;
     }

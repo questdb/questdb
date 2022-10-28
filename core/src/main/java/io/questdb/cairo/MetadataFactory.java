@@ -25,14 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 
 import java.io.Closeable;
 
 public interface MetadataFactory extends Closeable {
-    TableRecordMetadata openTableReaderMetadata(CharSequence tableName);
+    TableRecordMetadata openTableReaderMetadata(String tableName);
 
-    TableRecordMetadata openTableReaderMetadata(TableReader tableName);
+    TableRecordMetadata openTableReaderMetadata(TableReader tableReader);
 
     SequencerMetadata getSequencerMetadata();
 }

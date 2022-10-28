@@ -279,6 +279,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return -10000;
     }
@@ -374,11 +379,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return 1024;
     }
@@ -431,11 +431,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return 8;
-    }
-
-    @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return 1024 * 1024;
     }
 
     @Override
@@ -736,6 +731,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public CharSequence getSystemTableNamePrefix() {
         return "__sys";
     }
@@ -767,7 +767,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWalPurgeInterval() {
-        return 300000;
+        return 30_000;
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
     }
 
     @Override
@@ -852,6 +857,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isWalSupported() {
+        return false;
     }
 
     @Override

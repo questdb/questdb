@@ -258,6 +258,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return conf.getInactiveWriterTTL();
     }
@@ -353,11 +358,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return conf.getO3PartitionUpdateQueueCapacity();
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return conf.getO3PurgeDiscoveryQueueCapacity();
     }
@@ -410,11 +410,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRenameTableModelPoolCapacity() {
         return conf.getRenameTableModelPoolCapacity();
-    }
-
-    @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return conf.getReplaceFunctionMaxBufferLength();
     }
 
     @Override
@@ -713,6 +708,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
+    }
+
+    @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
     }
@@ -745,6 +745,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return conf.getWalPurgeInterval();
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
     }
 
     @Override
@@ -825,6 +830,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return conf.isSqlParallelFilterPreTouchEnabled();
+    }
+
+    @Override
+    public boolean isWalSupported() {
+        return conf.isWalSupported();
     }
 
     @Override

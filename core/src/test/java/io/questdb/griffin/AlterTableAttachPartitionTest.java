@@ -422,7 +422,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-02");
                         Assert.fail();
-                    } catch (SqlException e) {
+                    } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column, invalid key");
                     }
                 }
@@ -481,9 +481,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[2] could not open read-only"
+                            "could not open read-only"
                     );
                     TestUtils.assertContains(e.getFlyweightMessage(),
                             "ts1.d"
@@ -846,7 +846,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
+                } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "Symbol index value file does not exist"
                     );
@@ -891,7 +891,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
+                } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(), "Symbol index key file does not exist");
                 }
             }
@@ -1170,7 +1170,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try {
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
                 Assert.fail("Expected exception with '" + errorMessage + "' message");
-            } catch (SqlException e) {
+            } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
             CharSequence systemTableName = engine.getSystemTableName(dstTableName);
@@ -1311,7 +1311,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2020-01-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException | SqlException e) {
                     for (String error : errorContains) {
                         TestUtils.assertContains(e.getFlyweightMessage(), error);
                     }

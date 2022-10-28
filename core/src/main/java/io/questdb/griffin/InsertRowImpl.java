@@ -27,7 +27,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.wal.TableWriterFrontend;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
@@ -60,11 +60,11 @@ public class InsertRowImpl {
         }
     }
 
-    private TableWriter.Row getRowWithTimestamp(TableWriterFrontend tableWriter) {
+    private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
         return tableWriter.newRow(timestampFunction.getTimestamp(null));
     }
 
-    private TableWriter.Row getRowWithStringTimestamp(TableWriterFrontend tableWriter) throws SqlException {
+    private TableWriter.Row getRowWithStringTimestamp(TableWriterAPI tableWriter) {
         return tableWriter.newRow(
                 SqlUtil.parseFloorPartialTimestamp(
                         timestampFunction.getStr(null),
@@ -74,7 +74,7 @@ public class InsertRowImpl {
         );
     }
 
-    private TableWriter.Row getRowWithoutTimestamp(TableWriterFrontend tableWriter) {
+    private TableWriter.Row getRowWithoutTimestamp(TableWriterAPI tableWriter) {
         return tableWriter.newRow();
     }
 
@@ -86,7 +86,7 @@ public class InsertRowImpl {
         }
     }
 
-    public void append(TableWriterFrontend writer) throws SqlException {
+    public void append(TableWriterAPI writer) throws SqlException {
         final TableWriter.Row row = rowFactory.getRow(writer);
         copier.copy(virtualRecord, row);
         row.append();
@@ -94,6 +94,6 @@ public class InsertRowImpl {
 
     @FunctionalInterface
     private interface RowFactory {
-        TableWriter.Row getRow(TableWriterFrontend tableWriter) throws SqlException;
+        TableWriter.Row getRow(TableWriterAPI tableWriter) throws SqlException;
     }
 }

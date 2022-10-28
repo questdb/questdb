@@ -28,9 +28,11 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
@@ -38,30 +40,36 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final TxReader txReader;
     private final CharSequence dbRoot;
     private final FilesFacade ff;
+    private final TableSequencerAPI.RegisteredTable checkNotifyOutstandingTxnInWal;
     private long lastProcessedCount = 0;
     private Path threadLocalPath;
+    private final MillisecondClock millisecondClock;
+    private final long spinLockTimeout;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;
         this.ff = engine.getConfiguration().getFilesFacade();
         this.txReader = new TxReader(engine.getConfiguration().getFilesFacade());
         this.dbRoot = engine.getConfiguration().getRoot();
+        this.millisecondClock = engine.getConfiguration().getMillisecondClock();
+        this.spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+        checkNotifyOutstandingTxnInWal = this::checkNotifyOutstandingTxnInWal;
     }
 
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
-        engine.getTableRegistry().forAllWalTables(this::checkNotifyOutstandingTxnInWal);
+        engine.getTableSequencerAPI().forAllWalTables(checkNotifyOutstandingTxnInWal);
     }
 
-    public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence systemTableName, long txn) {
-        threadLocalPath.trimTo(dbRoot.length()).concat(TableUtils.META_FILE_NAME).$();
+    public void checkNotifyOutstandingTxnInWal(int tableId, String systemTableName, long txn) {
+        threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$();
         if (ff.exists(threadLocalPath)) {
-            threadLocalPath.trimTo(dbRoot.length()).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$();
+            threadLocalPath.trimTo(dbRoot.length() + systemTableName.length() + 1).concat(TableUtils.TXN_FILE_NAME).$();
             try (TxReader txReader2 = txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
-                if (txReader2.unsafeReadTxn() < txn) {
+                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                if (txReader2.getSeqTxn() < txn) {
                     // table name should be immutable when in the notification message
-                    String tableNameStr = Chars.toString(systemTableName);
-                    engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);
+                    engine.notifyWalTxnCommitted(tableId, systemTableName, txn);
                 }
             }
         } else {
@@ -73,12 +81,12 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
 
     @Override
     protected boolean runSerially() {
-        long failedTxnCount = engine.getFailedWalTxnCount();
-        if (failedTxnCount == lastProcessedCount) {
+        long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
+        if (unpublishedWalTxnCount == lastProcessedCount) {
             return false;
         }
         checkMissingWalTransactions();
-        lastProcessedCount = failedTxnCount;
+        lastProcessedCount = unpublishedWalTxnCount;
         return true;
     }
 }

@@ -22,40 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.BaseRecordMetadata;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
-
-import java.io.Closeable;
-
-public interface TableWriterFrontend extends Closeable {
-    long applyAlter(AlterOperation operation, boolean contextAllowsAnyStructureChanges)  throws SqlException, AlterTableContextException;
-
-    long applyUpdate(UpdateOperation operation)  throws SqlException;
-
-    long truncate();
+public class EmptyOperationCursor implements TableMetadataChangeLog {
+    static final EmptyOperationCursor INSTANCE = new EmptyOperationCursor();
 
     @Override
-    void close();
+    public void close() {
+    }
 
-    long commit();
+    @Override
+    public boolean hasNext() {
+        return false;
+    }
 
-    long commitWithLag(long commitLag);
-
-    BaseRecordMetadata getMetadata();
-
-    long getStructureVersion();
-
-    CharSequence getTableName();
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
+    @Override
+    public TableMetadataChange next() {
+        throw new UnsupportedOperationException();
+    }
 }

@@ -231,10 +231,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return commitLag;
     }
 
-    public int getId() {
-        return tableId;
-    }
-
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -243,6 +239,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return partitionBy;
     }
 
+    @Override
     public long getStructureVersion() {
         return structureVersion;
     }

@@ -29,17 +29,17 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.wal.TableWriterBackend;
+import io.questdb.cairo.wal.TableWriterSPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TableWriterTask;
+
+import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
     public final static String CMD_NAME = "ALTER TABLE";
@@ -79,7 +79,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
-    public long apply(TableWriterBackend tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException {
+    // todo: supply bitset to indicate which ops are supported and which arent
+    //     "structural changes" doesn't cover is as "add column" is supported
+    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException {
         try {
             switch (command) {
                 case ADD_COLUMN:
@@ -139,12 +141,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .$(e2.getFlyweightMessage())
                     .$();
 
-            throw SqlException.$(tableNamePosition, "table '")
+            // To rewrite message in CairoException we have to stash it first
+            // because it can be same exception instance
+            StringSink sink = Misc.getThreadLocalBuilder();
+            sink.put(e2.getFlyweightMessage());
+            throw CairoException.critical(e2.getErrno()).put("table '")
                     .put(tableName)
-                    .put("' could not be altered: [")
-                    .put(e2.getErrno())
-                    .put("] ")
-                    .put(e2.getFlyweightMessage());
+                    .put("' could not be altered [error=")
+                    .put(sink)
+                    .put(']');
         }
         return 0;
     }
@@ -263,7 +268,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAddColumn(TableWriterBackend tableWriter) throws SqlException {
+    private void applyAddColumn(TableWriterSPI tableWriter) throws SqlException {
         int lParam = 0;
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
@@ -291,7 +296,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAddIndex(TableWriterBackend tableWriter) throws SqlException {
+    private void applyAddIndex(TableWriterSPI tableWriter) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
             int indexValueBlockSize = (int) longList.get(0);
@@ -302,7 +307,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyAttachPartition(TableWriterBackend tableWriter) throws SqlException {
+    private void applyAttachPartition(TableWriterSPI tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
@@ -325,7 +330,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDetachPartition(TableWriterBackend tableWriter) throws SqlException {
+    private void applyDetachPartition(TableWriterSPI tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
@@ -350,7 +355,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDropColumn(TableWriterBackend writer) throws SqlException {
+    private void applyDropColumn(TableWriterSPI writer) throws SqlException {
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
             RecordMetadata metadata = writer.getMetadata();
@@ -366,20 +371,23 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyDropIndex(TableWriterBackend tableWriter) throws SqlException {
+    private void applyDropIndex(TableWriterSPI tableWriter) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
             tableWriter.dropIndex(columnName);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition)
-                    .put(e.getFlyweightMessage())
-                    .put("[errno=")
-                    .put(e.getErrno())
-                    .put(']');
+            if (e.getErrno() == METADATA_VALIDATION) {
+                throw SqlException.position(tableNamePosition)
+                        .put(e.getFlyweightMessage())
+                        .put("[errno=")
+                        .put(e.getErrno())
+                        .put(']');
+            }
+            throw e;
         }
     }
 
-    private void applyDropPartition(TableWriterBackend tableWriter) throws SqlException {
+    private void applyDropPartition(TableWriterSPI tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
@@ -403,17 +411,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyParamCommitLag(TableWriterBackend tableWriter) {
+    private void applyParamCommitLag(TableWriterSPI tableWriter) {
         long commitLag = longList.get(0);
         tableWriter.setMetaCommitLag(commitLag);
     }
 
-    private void applyParamUncommittedRows(TableWriterBackend tableWriter) {
+    private void applyParamUncommittedRows(TableWriterSPI tableWriter) {
         int maxUncommittedRows = (int) longList.get(0);
         tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
     }
 
-    private void applyRenameColumn(TableWriterBackend writer) throws SqlException {
+    private void applyRenameColumn(TableWriterSPI writer) throws SqlException {
         // To not store 2 var len fields, store only new name as CharSequence
         // and index of existing column store as
         int i = 0, n = charSequenceList.size();
@@ -429,7 +437,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applySetSymbolCache(TableWriterBackend tableWriter, boolean isCacheOn) throws SqlException {
+    private void applySetSymbolCache(TableWriterSPI tableWriter, boolean isCacheOn) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         int columnIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {

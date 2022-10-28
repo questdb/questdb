@@ -98,6 +98,7 @@ open module io.questdb {
     exports io.questdb.client;
     exports io.questdb.griffin.engine.functions.long128;
     exports io.questdb.cairo.wal;
+    exports io.questdb.cairo.wal.seq;
 
     provides FunctionFactory with
             // test functions
@@ -641,13 +642,23 @@ open module io.questdb {
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
+            // Pad strings
+            io.questdb.griffin.engine.functions.str.LPadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
             //starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
+            // split_part
+            io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
 
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,
+            // this factory seems to corrupt memory, symptoms of which are visible on M1 CPU
+            //io.questdb.griffin.engine.functions.analytic.RankFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
