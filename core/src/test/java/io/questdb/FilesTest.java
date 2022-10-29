@@ -763,7 +763,12 @@ public class FilesTest {
         Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
         Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
         Assert.assertFalse(Files.isSoftLink(srcFilePath));
-        Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
+        try {
+            Assert.assertTrue(Files.isSoftLink(softLinkFilePath));
+        } catch (AssertionError err) {
+            System.out.printf("ERR [%d]: %s%n", Os.errno(), softLinkFilePath);
+            throw err;
+        }
     }
 
     private static void touch(File file) throws IOException {

@@ -274,21 +274,40 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
 
-    jlong fd = Java_io_questdb_std_Files_openRO(e, cl, lpszSoftLink);
-    if (fd < -1) {
-        // save last error already called
-        return FALSE;
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, buf, len);
+
+        HANDLE handle = CreateFileW(
+                    buf,
+                    GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_READONLY | FILE_FLAG_OPEN_REPARSE_POINT,
+                    NULL
+        );
+
+        if (handle == INVALID_HANDLE_VALUE) {
+            SaveLastError();
+            return FALSE;
+        }
+
+        FILE_BASIC_INFO info;
+        jboolean result = GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO));
+        if (!result) {
+            SaveLastError();
+        } else {
+            result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+        }
+
+        int tmpErr = errno;
+        CloseHandle(handle);
+        errno = tmpErr;
+        return result;
     }
-
-    FILE_BASIC_INFO info;
-    jboolean result = GetFileInformationByHandleEx((HANDLE) fd, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO));
-    SaveLastError();
-    result = result && info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
-
-    int tmpErr = errno;
-    CloseHandle(fd);
-    errno = tmpErr;
-    return result;
+    return FALSE;
 }
 
 
@@ -308,7 +327,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     wchar_t bufSoftLink[lenSoftLink];
     MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
 
-    if (CreateSymbolicLinkW(bufSoftLink, bufSrc, NULL)) {
+    if (CreateSymbolicLinkW(bufSoftLink, bufSrc, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
         return 0;
     }
     SaveLastError();
