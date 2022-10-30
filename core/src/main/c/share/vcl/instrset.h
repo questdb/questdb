@@ -203,7 +203,7 @@ Additional problem: The version number is not consistent across platforms. The A
 different version numbers. We have to rely on __apple_build_version__ on the Mac platform:
 http://llvm.org/bugs/show_bug.cgi?id=12643
 We have to make switches here when - hopefully - the error some day has been fixed.
-We need different version checks with and whithout __apple_build_version__
+We need different version checks with and without __apple_build_version__
 */
 #if (defined (__clang__) || defined(__apple_build_version__)) && !defined(__INTEL_COMPILER) 
 #define FIX_CLANG_VECTOR_ALIAS_AMBIGUITY  
