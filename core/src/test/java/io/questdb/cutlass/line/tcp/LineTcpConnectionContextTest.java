@@ -1422,10 +1422,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testFailure() throws Exception {
-        final AtomicInteger nCommitedLines = new AtomicInteger(4);
+        final AtomicInteger nCommittedLines = new AtomicInteger(4);
         String table = "failure1";
         Runnable onCommitNewEvent = () -> {
-            if (nCommitedLines.decrementAndGet() <= 0) {
+            if (nCommittedLines.decrementAndGet() <= 0) {
                 throw new RuntimeException("Failed");
             }
         };
