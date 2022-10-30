@@ -1232,7 +1232,7 @@ constexpr uint64_t blend_flags(int const (&a)[V::size()]) {
 // blend_perm_indexes: return an Indexlist for implementing a blend function as
 // two permutations. N = vector size. 
 // dozero = 0: let unused elements be don't care. The two permutation results must be blended
-// dozero = 1: zero unused elements in each permuation. The two permutation results can be OR'ed
+// dozero = 1: zero unused elements in each permutation. The two permutation results can be OR'ed
 // dozero = 2: indexes that are -1 or V_DC are preserved
 template <int N, int dozero>
 constexpr EList<int, 2*N> blend_perm_indexes(int const (&a)[N]) {
@@ -1328,7 +1328,7 @@ template <typename dummy> void blend32(){}
 // blend_half_indexes: return an Indexlist for emulating a blend function as
 // blends or permutations from multiple sources
 // dozero = 0: let unused elements be don't care. Multiple permutation results must be blended
-// dozero = 1: zero unused elements in each permuation. Multiple permutation results can be OR'ed
+// dozero = 1: zero unused elements in each permutation. Multiple permutation results can be OR'ed
 // dozero = 2: indexes that are -1 or V_DC are preserved
 // src1, src2: sources to blend in a partial implementation
 template <int N, int dozero, int src1, int src2>
