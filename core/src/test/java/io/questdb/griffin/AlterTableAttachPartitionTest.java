@@ -1303,7 +1303,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
-            final String tableName = "src49";
+            final String tableName = "src50";
             final String partitionName = "2022-10-17";
 
             int txn = 0;
@@ -1417,11 +1417,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 detachedPartitionName,
                 null
         );
-        path.of(configuration.getRoot())
+        Files.rmdir(path.of(configuration.getRoot())
                 .concat(tableName)
                 .concat(detachedPartitionName)
-                .$();
-        Assert.assertEquals(0, Files.rmdir(path));
+                .$());
         Assert.assertFalse(ff.exists(path));
 
         // create the .attachable link in the table's data folder
