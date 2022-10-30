@@ -486,7 +486,7 @@ constexpr auto get_inttype() {
 }
 
 
-// zero_mask: return a compact bit mask mask for zeroing using AVX512 mask.
+// zero_mask: return a compact bit mask for zeroing using AVX512 mask.
 // Parameter a is a reference to a constexpr int array of permutation indexes
 template <int N>
 constexpr auto zero_mask(int const (&a)[N]) {
