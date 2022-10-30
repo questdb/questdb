@@ -1479,7 +1479,8 @@ public class TableWriter implements Closeable {
                     readPartitionMinMax(ff, prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
-                path.trimTo(rootLen);}
+                    path.trimTo(rootLen);
+                }
             }
 
             columnVersionWriter.removePartition(timestamp);
@@ -3838,7 +3839,16 @@ public class TableWriter implements Closeable {
                             false
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
-                    long errno = ff.rmdir(other.$());
+                    other.$();
+                    if (ff.isSoftLink(other)) {
+                        if (ff.unlink(other) == 0) {
+                            LOG.info().$("purged by unlink [path=").$(other).I$();
+                            return;
+                        } else {
+                            LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
+                        }
+                    }
+                    long errno = ff.rmdir(other);
                     if (errno == 0 || errno == -1) {
                         // Successfully deleted or async purge has already swept it up
                         LOG.info().$("purged [path=").$(other).I$();

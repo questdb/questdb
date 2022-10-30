@@ -35,6 +35,9 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.AttachDetachStatus.*;
@@ -1121,43 +1124,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
 
-            // different location, another volume potentially
-            final CharSequence s3Buckets = temp.newFolder("S3").getAbsolutePath();
-
-            // copy .detached folder to the different location
-            final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
-            copyPartitionAndMetadata(
-                    configuration.getRoot(),
-                    tableName,
-                    detachedPartitionName,
-                    s3Buckets,
-                    tableName,
-                    detachedPartitionName,
-                    null
-            );
-
-            // then remove the original .detached folder
-            path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(detachedPartitionName)
-                    .$();
-            Assert.assertEquals(0, Files.rmdir(path));
-            Assert.assertFalse(ff.exists(path));
-
-            // create the .attachable link in the table's data folder
-            // with target the .detached folder in the different location
-            other.of(s3Buckets) // <-- the copy of the now lost .detached folder
-                    .concat(tableName)
-                    .concat(detachedPartitionName)
-                    .$();
-            path.of(configuration.getRoot()) // <-- soft link path
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(configuration.getAttachPartitionSuffix())
-                    .$();
-            Assert.assertEquals(0, ff.softLink(other, path));
-            Assert.assertFalse(ff.isSoftLink(other));
-            Assert.assertTrue(Os.type == Os.WINDOWS || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
 
             // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
@@ -1184,25 +1151,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             );
 
             // insert a row at the end of the partition
-            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '2022-10-17T23:59:59.500001Z')");
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
             txn++;
 
             // update a row toward the end of the partition
             executeOperation(
-                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T23:59:42.220100Z'",
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
                     CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
             );
             txn++;
 
             // insert a row at the beginning of the partition, this will result in the original folder being
-            // copied across to table data space (hot), with a new txn, the original folder's content are deleted,
-            // however the link remains dangling AND this is acceptable as cold partitions are supposed to be
-            // read-only, but if you insist in using them as if they where the norm, then you will need to be aware
-            // of the dangling link.
-            // TODO: implement isSoftLink via lstat, compatible with windows
-            //  implement unlink for soft links, and then ensure cold storage is COPY-ON-WRITE
-            //  rather than COPY/DELETE-ON-WRITE, plus the link can be disposed of.
-            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '2022-10-17T00:00:00.100005Z')");
+            // copied across to table data space (hot), with a new txn, the original folder's content are NOT
+            // removed, the link is.
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
 
             final String linkAbsolutePath = path.toString();
@@ -1214,18 +1176,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
 
-            // verify that the link continues to exist, as well as the original folder, but it is now empty
-            Assert.assertTrue(Files.exists(path.of(linkAbsolutePath).$()));
+            // verify that the link does not exist exist, but the cold storage folder does
+            Assert.assertFalse(Files.exists(path.of(linkAbsolutePath).$()));
+            Assert.assertFalse(ff.isSoftLink(path));
             Assert.assertTrue(Files.exists(other));
             Assert.assertFalse(ff.isSoftLink(other));
-            Assert.assertTrue(ff.isSoftLink(path));
-            if (Os.type != Os.WINDOWS) { // soft links are funny in windows
-                AtomicInteger fileCount = new AtomicInteger();
-                ff.walk(other, (file, type) -> {
-                    fileCount.incrementAndGet();
-                });
-                Assert.assertEquals(0, fileCount.get());
-            }
+
+            AtomicInteger fileCount = new AtomicInteger();
+            ff.walk(other, (file, type) -> {
+                fileCount.incrementAndGet();
+            });
+            Assert.assertTrue(fileCount.get() > 0);
 
             // update a row toward the beginning of the partition
             executeOperation(
@@ -1259,7 +1220,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        
+
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = "src49";
@@ -1280,42 +1241,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
 
             // different location, another volume potentially
-            final CharSequence snowBuckets = temp.newFolder("SNOW").getAbsolutePath();
-
-            // copy .detached folder to the different location
-            final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
-            copyPartitionAndMetadata(
-                    configuration.getRoot(),
-                    tableName,
-                    detachedPartitionName,
-                    snowBuckets,
-                    tableName,
-                    detachedPartitionName,
-                    null
-            );
-
-            // then remove the original .detached folder
-            path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(detachedPartitionName)
-                    .$();
-            Assert.assertEquals(0, Files.rmdir(path));
-            Assert.assertFalse(ff.exists(path));
-
-            // create the .attachable link in the table's data folder
-            // with target the .detached folder in the different location
-            other.of(snowBuckets) // <-- the copy of the now lost .detached folder
-                    .concat(tableName)
-                    .concat(detachedPartitionName)
-                    .$();
-            path.of(configuration.getRoot()) // <-- soft link path
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(configuration.getAttachPartitionSuffix())
-                    .$();
-            Assert.assertEquals(0, ff.softLink(other, path));
-            Assert.assertFalse(ff.isSoftLink(other));
-            Assert.assertTrue(ff.isSoftLink(path));
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "SNOW");
 
             // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
@@ -1334,7 +1260,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
 
             // insert a row at the end of the partition, the only row, which will create the partition
-            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '2022-10-17T23:59:59.500001Z')");
+            executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
 
             // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -1371,6 +1297,147 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
         });
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
+            final String tableName = "src49";
+            final String partitionName = "2022-10-17";
+
+            int txn = 0;
+
+            // create table
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        partitionName,
+                        2
+                );
+            }
+            txn++;
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+
+            // detach a partition
+            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            txn++;
+
+            // copy .detached folder to the different location
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "LEGEND");
+
+            // attach the partition via soft link
+            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            txn++;
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
+                    "l\ti\tts\n" +
+                            "1\t1\t2022-10-17T00:00:17.279900Z\n" +
+                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                            "4\t4\t2022-10-17T00:01:09.119600Z\n" +
+                            "5\t5\t2022-10-17T00:01:26.399500Z\n"
+            );
+
+            // collect last modified timestamps for files in cold storage
+            final Map<String, Long> lastModified = new HashMap<>();
+            path.of(other);
+            final int len = path.length();
+            ff.walk(other, (file, type) -> {
+                path.trimTo(len).concat(file).$();
+                lastModified.put(path.toString(), ff.getLastModified(path));
+            });
+
+            // execute an update directly on the cold storage partition
+            executeOperation(
+                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
+                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+            );
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
+                    "l\ti\tts\n" +
+                            "13\t1\t2022-10-17T00:00:17.279900Z\n" +
+                            "2\t2\t2022-10-17T00:00:34.559800Z\n" +
+                            "3\t3\t2022-10-17T00:00:51.839700Z\n" +
+                            "4\t4\t2022-10-17T00:01:09.119600Z\n" +
+                            "5\t5\t2022-10-17T00:01:26.399500Z\n"
+            );
+
+            // verify that no new partition folder has been created in the table data space (hot)
+            // but rather the files in cold storage have been modified
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName);
+            TableUtils.txnPartitionConditionally(path, txn - 1);
+            Assert.assertTrue(Files.exists(path.$()));
+            Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(path));
+            // in windows, detecting a soft link is tricky, and unnecessary. Removing
+            // a soft link does not remove the target's content, so we do not need to
+            // call unlink, thus we do not need isSoftLink. It has been implemented however
+            // and it does not seem to work.
+            path.of(other);
+            ff.walk(other, (file, type) -> {
+                // TODO: Update does not follow the usual path, like insert, and does things
+                //  its way. To be able to prevent modifications to cold storage we must
+                //  be able to detect whether the column files being versioned belong in a
+                //  folder that is soft linked, and then move first the data to hot storage
+                //  and take it from there. OR accept that UPDATE does act on cold storage,
+                //  OR simply provide the mechanism to flag a partition as RO/RW. The later
+                //  will be achieved in a later PR.
+                path.trimTo(len).concat(file).$();
+                Long lm = lastModified.get(path.toString());
+                Assert.assertTrue(lm == null || lm.longValue() == ff.getLastModified(path));
+            });
+        });
+    }
+
+    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
+        // copy .detached folder to the different location
+        // then remove the original .detached folder
+        final CharSequence s3Buckets = temp.newFolder(otherLocation).getAbsolutePath();
+        final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
+        copyPartitionAndMetadata(
+                configuration.getRoot(),
+                tableName,
+                detachedPartitionName,
+                s3Buckets,
+                tableName,
+                detachedPartitionName,
+                null
+        );
+        path.of(configuration.getRoot())
+                .concat(tableName)
+                .concat(detachedPartitionName)
+                .$();
+        Assert.assertEquals(0, Files.rmdir(path));
+        Assert.assertFalse(ff.exists(path));
+
+        // create the .attachable link in the table's data folder
+        // with target the .detached folder in the different location
+        other.of(s3Buckets) // <-- the copy of the now lost .detached folder
+                .concat(tableName)
+                .concat(detachedPartitionName)
+                .$();
+        path.of(configuration.getRoot()) // <-- soft link path
+                .concat(tableName)
+                .concat(partitionName)
+                .put(configuration.getAttachPartitionSuffix())
+                .$();
+        Assert.assertEquals(0, ff.softLink(other, path));
+        Assert.assertFalse(ff.isSoftLink(other));
+        Assert.assertTrue(Os.type == Os.WINDOWS || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
     }
 
     private void assertSchemaMatch(AddColumn tm, int idx) throws Exception {
