@@ -1162,15 +1162,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // removed, the link is.
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
-            final String linkAbsolutePath = path.toString();
+            // verify that the link does not exist
+            Assert.assertFalse(Files.exists(path));
             // verify that a new partition folder has been created in the table data space (hot)
             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
-            // verify that the link does not exist
-            Assert.assertFalse(Files.exists(path.of(linkAbsolutePath).$()));
+            // verify cold storage folder exists
             Assert.assertTrue(Files.exists(other));
-            // but the cold storage folder does
             AtomicInteger fileCount = new AtomicInteger();
             ff.walk(other, (file, type) -> {
                 fileCount.incrementAndGet();
@@ -1360,13 +1359,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // and it does not seem to work.
             path.of(other);
             ff.walk(other, (file, type) -> {
-                // TODO: Update does not follow the usual path, like insert, and does things
-                //  its way. To be able to prevent modifications to cold storage we must
-                //  be able to detect whether the column files being versioned belong in a
-                //  folder that is soft linked, and then move first the data to hot storage
-                //  and take it from there. OR accept that UPDATE does act on cold storage,
-                //  OR simply provide the mechanism to flag a partition as RO/RW. The later
-                //  will be achieved in a later PR.
+                // TODO: Update does not follow the usual path, like insert. To be able to
+                //  prevent modifications on cold storage we must be able to detect whether
+                //  the column files being versioned belong in a folder that is soft linked,
+                //  and then move first the data to hot storage and take it from there.
+                //  OR accept that UPDATE does modify cold storage, OR simply provide the
+                //  mechanism to flag a partition as RO/RW and fail updates on RO partitions.
+                //  The later will be achieved in a later PR.
                 path.trimTo(len).concat(file).$();
                 Long lm = lastModified.get(path.toString());
                 Assert.assertTrue(lm == null || lm.longValue() == ff.getLastModified(path));
@@ -1375,6 +1374,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
         // copy .detached folder to the different location
         // then remove the original .detached folder
         final CharSequence s3Buckets = temp.newFolder(otherLocation).getAbsolutePath();
