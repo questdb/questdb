@@ -7,5 +7,5 @@
 - [Italian / Italiano](README.it-it.md) 
 - [Ukranian / Українська](README.ua-ua.md) 
 - [Spanish / Español](./README.es-es.md)
-- [Portuguese / Português](README-PT.md)
+- [Portuguese / Português](README.pt.md)
 - [Japanese / 日本](./README.ja-ja.md)
