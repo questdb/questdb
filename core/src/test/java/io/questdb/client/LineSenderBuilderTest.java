@@ -309,7 +309,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConnectTls_TruststoreFile() throws Exception {
         URL trustStoreResource = LineSenderBuilderTest.class.getResource(TRUSTSTORE_PATH);
-        assertNotNull("Someone accidenteally deleted trust store?", trustStoreResource);
+        assertNotNull("Someone accidentally deleted trust store?", trustStoreResource);
         String truststore = trustStoreResource.getFile();
         runInContext(r -> {
             try (Sender sender = Sender.builder()
