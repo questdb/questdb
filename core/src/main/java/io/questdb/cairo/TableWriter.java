@@ -3841,6 +3841,10 @@ public class TableWriter implements Closeable {
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
                     if (ff.isSoftLink(other)) {
+                        // in windows ^ ^ will return false, but that is ok as the behaviour
+                        // is to delete the link, not the contents of the target. in *nix
+                        // systems we can simply unlink, which deletes the link and leaves
+                        // the contents of the target intact
                         if (ff.unlink(other) == 0) {
                             LOG.info().$("purged by unlink [path=").$(other).I$();
                             return;

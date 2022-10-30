@@ -1097,7 +1097,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             final String tableName = "src48";
             final String partitionName = "2022-10-17";
-
             int txn = 0; // keep track of the transaction
 
             // create table
@@ -1117,23 +1116,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
-            // detach a partition
+            // detach partition
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
 
+            // attach partition via soft link
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
-
-            // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
             // verify that the link has been renamed to what we expect
-            path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName);
+            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
 
@@ -1166,22 +1162,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // removed, the link is.
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
-
             final String linkAbsolutePath = path.toString();
-
             // verify that a new partition folder has been created in the table data space (hot)
-            path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName);
+            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
-
-            // verify that the link does not exist exist, but the cold storage folder does
+            // verify that the link does not exist
             Assert.assertFalse(Files.exists(path.of(linkAbsolutePath).$()));
-            Assert.assertFalse(ff.isSoftLink(path));
             Assert.assertTrue(Files.exists(other));
-            Assert.assertFalse(ff.isSoftLink(other));
-
+            // but the cold storage folder does
             AtomicInteger fileCount = new AtomicInteger();
             ff.walk(other, (file, type) -> {
                 fileCount.incrementAndGet();
@@ -1239,30 +1228,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-
-            // different location, another volume potentially
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "SNOW");
-
-            // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-
-            // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
             // detach the partition which was attached via soft link
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-
-            // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
 
             // insert a row at the end of the partition, the only row, which will create the partition
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
-
-            // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n");
@@ -1283,8 +1262,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .$();
             Assert.assertEquals(0, Files.rename(path, other));
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-
-            // verify content
             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                     "l\ti\tts\n" +
                             "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
@@ -1301,14 +1278,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = "src50";
             final String partitionName = "2022-10-17";
-
             int txn = 0;
 
-            // create table
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(
                         1,
@@ -1325,18 +1302,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
-            // detach a partition
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
-
-            // copy .detached folder to the different location
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "LEGEND");
-
-            // attach the partition via soft link
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
-            // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
