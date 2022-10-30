@@ -799,7 +799,7 @@ static inline Vec32c operator >> (Vec32c const a, int b) {
 #endif
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec32c & operator >>= (Vec32c & a, int b) {
     a = a >> b;
     return a;
@@ -1144,7 +1144,7 @@ static inline Vec32uc operator >> (Vec32uc const a, int32_t b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec32uc & operator >>= (Vec32uc & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -1992,7 +1992,7 @@ static inline Vec16us operator >> (Vec16us const a, int32_t b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec16us & operator >>= (Vec16us & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -3714,7 +3714,7 @@ static inline Vec4uq operator >> (Vec4uq const a, uint32_t b) {
 static inline Vec4uq operator >> (Vec4uq const a, int32_t b) {
     return a >> (uint32_t)b;
 }
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec4uq & operator >>= (Vec4uq & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -5280,7 +5280,7 @@ static inline Vec8i operator / (Vec8i const a, Divisor_i const d) {
     __m256i t4  = _mm256_mul_epi32(t3,m);                  // 32x32->64 bit signed multiplication of odd elements
     __m256i t7  = _mm256_blend_epi32(t2,t4,0xAA);
     __m256i t8  = _mm256_add_epi32(t7,a);                  // add
-    __m256i t9  = _mm256_sra_epi32(t8,d.gets1());          // shift right artihmetic
+    __m256i t9  = _mm256_sra_epi32(t8,d.gets1());          // shift right arithmetic
     __m256i t10 = _mm256_srai_epi32(a,31);                 // sign of a
     __m256i t11 = _mm256_sub_epi32(t10,sgn);               // sign of a - sign of d
     __m256i t12 = _mm256_sub_epi32(t9,t11);                // + 1 if a < 0, -1 if d < 0
@@ -5307,7 +5307,7 @@ static inline Vec16s operator / (Vec16s const a, Divisor_s const d) {
     __m256i sgn = _mm256_broadcastq_epi64(d.getsign());    // broadcast sign of d
     __m256i t1  = _mm256_mulhi_epi16(a, m);                // multiply high signed words
     __m256i t2  = _mm256_add_epi16(t1,a);                  // + a
-    __m256i t3  = _mm256_sra_epi16(t2,d.gets1());          // shift right artihmetic
+    __m256i t3  = _mm256_sra_epi16(t2,d.gets1());          // shift right arithmetic
     __m256i t4  = _mm256_srai_epi16(a,15);                 // sign of a
     __m256i t5  = _mm256_sub_epi16(t4,sgn);                // sign of a - sign of d
     __m256i t6  = _mm256_sub_epi16(t3,t5);                 // + 1 if a < 0, -1 if d < 0
