@@ -25,14 +25,17 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
-import io.questdb.cairo.wal.seq.*;
+import io.questdb.cairo.wal.seq.SequencerTableWriterSPI;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
+import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -74,7 +77,7 @@ public class WalWriter implements TableWriterAPI {
     private final String systemTableName;
     private final String walName;
     private final int walId;
-    private final SequencerMetadata metadata;
+    private final WalWriterMetadata metadata;
     private final WalWriterEvents events;
     private final TableSequencerAPI tableSequencerAPI;
     private final CairoConfiguration configuration;
@@ -100,7 +103,7 @@ public class WalWriter implements TableWriterAPI {
     private TxReader txReader;
     private ColumnVersionReader columnVersionReader;
 
-    public WalWriter(String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration) {
+    public WalWriter(CairoConfiguration configuration, String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI) {
         this.tableName = tableName;
         LOG.info().$("open '").utf8(systemTableName).$('\'').$();
         this.tableSequencerAPI = tableSequencerAPI;
@@ -120,8 +123,9 @@ public class WalWriter implements TableWriterAPI {
             lockWal();
             mkWalDir();
 
-            metadata = new SequencerMetadata(ff);
-            tableSequencerAPI.copyMetadataTo(tableName, systemTableName, metadata);
+            metadata = new WalWriterMetadata(ff);
+
+            tableSequencerAPI.getTableMetadata(systemTableName, metadata, false);
 
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
@@ -275,7 +279,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public BaseRecordMetadata getMetadata() {
+    public TableRecordMetadata getMetadata() {
         return metadata;
     }
 
@@ -1400,9 +1404,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class WalMetadataUpdaterBackend implements SequencerMetadataWriterBackend {
+    private class WalMetadataUpdaterBackend implements SequencerTableWriterSPI {
+
         @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+        public void addColumn(
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
+        ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
 
             if (columnIndex < 0 || metadata.getColumnType(columnIndex) < 0) {
@@ -1453,7 +1466,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public RecordMetadata getMetadata() {
+        public TableRecordMetadata getMetadata() {
             return metadata;
         }
 
@@ -1548,11 +1561,19 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private class AlterOperationValidationBackend implements SequencerMetadataWriterBackend {
+    private class AlterOperationValidationBackend implements SequencerTableWriterSPI {
         public long structureVersion;
 
         @Override
-        public void addColumn(CharSequence columnName, int columnType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential) {
+        public void addColumn(
+                CharSequence columnName,
+                int columnType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential
+        ) {
             if (!TableUtils.isValidColumnName(columnName, columnName.length())) {
                 throw CairoException.critical(0).put("invalid column name: ").put(columnName);
             }
@@ -1566,7 +1587,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public RecordMetadata getMetadata() {
+        public TableRecordMetadata getMetadata() {
             return metadata;
         }
 

@@ -314,7 +314,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             long masterId;
             try (TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test")) {
-                masterId = w1.getMetadata().getId();
+                masterId = w1.getMetadata().getTableId();
             }
 
             try (
@@ -514,7 +514,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 Assert.assertTrue(
                         client.publishSyncCmd(
                                 w1.getTableName(),
-                                w1.getMetadata().getId(),
+                                w1.getMetadata().getTableId(),
                                 w2,
                                 Net.parseIPv4("192.168.1.14"),
                                 0
@@ -547,7 +547,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
 
             long masterId;
             try (TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test")) {
-                masterId = w1.getMetadata().getId();
+                masterId = w1.getMetadata().getTableId();
             }
 
             try (

@@ -83,7 +83,7 @@ public class TableData {
         final ObjList<CharSequence> columns = new ObjList<>();
         final ObjList<CharSequence> defaults = new ObjList<>();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            TableColumnMetadata colMetaData = metadata.getColumnQuick(i);
+            TableColumnMetadata colMetaData = metadata.getColumnMetadata(i);
             CharSequence column = colMetaData.getName();
             columns.add(column);
             defaults.add(getDefaultValue((short) colMetaData.getType()));

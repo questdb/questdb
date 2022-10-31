@@ -4585,7 +4585,7 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -5873,8 +5873,7 @@ create table tab as (
         compiler.compile("create table tab2 (a double);", sqlExecutionContext);
         executeInsert("insert into 'tab2' values (0.7);");
         executeInsert("insert into 'tab2' values (0.2);");
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+        engine.clear();
 
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +

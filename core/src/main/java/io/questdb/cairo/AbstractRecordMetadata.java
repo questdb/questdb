@@ -25,19 +25,21 @@
 package io.questdb.cairo;
 
 
+import io.questdb.cairo.sql.ColumnMetadataCollection;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
-public abstract class BaseRecordMetadata implements RecordMetadata {
-    protected ObjList<TableColumnMetadata> columnMetadata;
-    protected LowerCaseCharSequenceIntHashMap columnNameIndexMap;
-    protected int timestampIndex;
+public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMetadataCollection, Mutable {
+    protected final ObjList<TableColumnMetadata> columnMetadata = new ObjList<>();
+    protected final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+    protected int timestampIndex = -1;
     protected int columnCount;
 
     public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
-        if (metadata instanceof BaseRecordMetadata) {
-            return ((BaseRecordMetadata) metadata).getColumnQuick(columnIndex);
+        if (metadata instanceof AbstractRecordMetadata) {
+            return ((AbstractRecordMetadata) metadata).getColumnMetadata(columnIndex);
         }
         return new TableColumnMetadata(
                 metadata.getColumnName(columnIndex),
@@ -57,7 +59,7 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
 
     @Override
     public int getColumnType(int columnIndex) {
-        return getColumnQuick(columnIndex).getType();
+        return getColumnMetadata(columnIndex).getType();
     }
 
     @Override
@@ -71,17 +73,17 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
 
     @Override
     public long getColumnHash(int columnIndex) {
-        return getColumnQuick(columnIndex).getHash();
+        return getColumnMetadata(columnIndex).getHash();
     }
 
     @Override
     public String getColumnName(int columnIndex) {
-        return getColumnQuick(columnIndex).getName();
+        return getColumnMetadata(columnIndex).getName();
     }
 
     @Override
     public int getIndexValueBlockCapacity(int columnIndex) {
-        return getColumnQuick(columnIndex).getIndexValueBlockCapacity();
+        return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
     }
 
     @Override
@@ -91,25 +93,34 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
 
     @Override
     public RecordMetadata getMetadata(int columnIndex) {
-        return getColumnQuick(columnIndex).getMetadata();
+        return getColumnMetadata(columnIndex).getMetadata();
     }
 
+    @Override
     public int getWriterIndex(int columnIndex) {
-        return getColumnQuick(columnIndex).getWriterIndex();
+        return getColumnMetadata(columnIndex).getWriterIndex();
     }
 
     @Override
     public boolean isColumnIndexed(int columnIndex) {
-        return getColumnQuick(columnIndex).isIndexed();
+        return getColumnMetadata(columnIndex).isIndexed();
     }
 
     @Override
     public boolean isSymbolTableStatic(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).isSymbolTableStatic();
+        return getColumnMetadata(columnIndex).isSymbolTableStatic();
     }
 
-    public TableColumnMetadata getColumnQuick(int index) {
+    @Override
+    public TableColumnMetadata getColumnMetadata(int index) {
         return columnMetadata.getQuick(index);
     }
 
+    @Override
+    public void clear() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
+        timestampIndex = -1;
+    }
 }

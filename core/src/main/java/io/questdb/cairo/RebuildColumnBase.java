@@ -169,7 +169,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             @Nullable CharSequence columnName // will reindex all columns if name is not provided
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-        try (TableReaderMetadata metadata = new TableReaderMetadata(ff, "<noname>", path.$())) {
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+            metadata.load0(path.$());
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {

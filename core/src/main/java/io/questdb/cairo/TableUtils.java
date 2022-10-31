@@ -26,13 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.AnyRecordMetadata;
-import io.questdb.griffin.FunctionParser;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -160,12 +158,14 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static long checkMemSize(MemoryMR metaMem, long minSize) {
-        final long memSize = metaMem.size();
-        if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+    public static int compressColumnCount(RecordMetadata metadata) {
+        int count = 0;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                count++;
+            }
         }
-        return memSize;
+        return count;
     }
 
     public static void convertSystemToTableName(StringSink systemTableName) {
@@ -340,7 +340,7 @@ public final class TableUtils {
 
     public static long createTransitionIndex(
             MemoryR masterMeta,
-            BaseRecordMetadata slaveMeta
+            AbstractRecordMetadata slaveMeta
     ) {
         int slaveColumnCount = slaveMeta.columnCount;
         int masterColumnCount = masterMeta.getInt(META_OFFSET_COUNT);
@@ -1144,6 +1144,14 @@ public final class TableUtils {
             nameIndex.clear();
             throw e;
         }
+    }
+
+    public static long checkMemSize(MemoryMR metaMem, long minSize) {
+        final long memSize = metaMem.size();
+        if (memSize < minSize) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+        }
+        return memSize;
     }
 
     public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {

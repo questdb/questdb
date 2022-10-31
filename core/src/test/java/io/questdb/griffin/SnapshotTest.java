@@ -132,7 +132,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                 try (TableReader tableReader = newTableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
-                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff, "t", path)) {
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                            metadata.load0(path);
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
@@ -144,8 +145,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
-                                TableColumnMetadata columnMetadata0 = metadata0.getColumnQuick(i);
-                                TableColumnMetadata columnMetadata1 = metadata0.getColumnQuick(i);
+                                TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
+                                TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
                                 Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
                                 Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
                                 Assert.assertEquals(columnMetadata0.getHash(), columnMetadata1.getHash());

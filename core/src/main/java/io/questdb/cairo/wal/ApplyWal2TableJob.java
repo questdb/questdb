@@ -69,7 +69,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     public long processWalTxnNotification(
-            CharSequence systemTableName,
+            String systemTableName,
             int tableId,
             CairoEngine engine,
             SqlToOperation sqlToOperation
@@ -85,12 +85,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
             // security context is checked on writing to the WAL and can be ignored here
             try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
-                assert writer.getMetadata().getId() == tableId;
+                assert writer.getMetadata().getTableId() == tableId;
                 applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, tempPath);
                 lastAppliedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
                     // Oh, no, rogue writer
+                    // todo: rephrase error message
+                    //   wal apply job could not lock table writer because something other than another wal apply job stole the writer
+                    //   this is not supposed to happen
+                    //   perhaps reject writer with WAL to anything other than WAL_2_TABLE_WRITE_REASON
                     LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").utf8(systemTableName)
                             .$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;
@@ -123,39 +127,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final CharSequence systemTableName;
-        final int tableId;
-        final long seqTxn;
-
-        try {
-            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableId = walTxnNotificationTask.getTableId();
-            systemTableName = walTxnNotificationTask.getSystemTableName();
-            seqTxn = walTxnNotificationTask.getTxn();
-        } finally {
-            // Don't hold the queue until the all the transactions applied to the table
-            subSeq.done(cursor);
-        }
-
-        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
-            // Check, maybe we already processed this table to higher txn.
-            final long lastAppliedSeqTxn = processWalTxnNotification(systemTableName, tableId, engine, sqlToOperation);
-            if (lastAppliedSeqTxn > -1L) {
-                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
-            } else if (lastAppliedSeqTxn != -1L) {
-                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
-                engine.getTableSequencerAPI().suspendTable(systemTableName);
-            }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(systemTableName).$(", txn=").$(seqTxn).I$();
-        }
-        return true;
-    }
-
     private void applyOutstandingWalTransactions(
-            CharSequence systemTableName,
+            String systemTableName,
             TableWriter writer,
             CairoEngine engine,
             SqlToOperation sqlToOperation,
@@ -237,6 +210,37 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 Misc.free(structuralChangeCursor);
             }
         }
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        final String systemTableName;
+        final int tableId;
+        final long seqTxn;
+
+        try {
+            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
+            tableId = walTxnNotificationTask.getTableId();
+            systemTableName = walTxnNotificationTask.getSystemTableName();
+            seqTxn = walTxnNotificationTask.getTxn();
+        } finally {
+            // Don't hold the queue until the all the transactions applied to the table
+            subSeq.done(cursor);
+        }
+
+        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
+            // Check, maybe we already processed this table to higher txn.
+            final long lastAppliedSeqTxn = processWalTxnNotification(systemTableName, tableId, engine, sqlToOperation);
+            if (lastAppliedSeqTxn > -1L) {
+                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
+            } else if (lastAppliedSeqTxn != -1L) {
+                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
+                engine.getTableSequencerAPI().suspendTable(systemTableName);
+            }
+        } else {
+            LOG.debug().$("Skipping WAL processing for table, already processed [table=").utf8(systemTableName).$(", txn=").$(seqTxn).I$();
+        }
+        return true;
     }
 
     private void processWalCommit(TableWriter writer, @Transient Path walPath, long segmentTxn, SqlToOperation sqlToOperation, long seqTxn) {

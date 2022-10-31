@@ -218,20 +218,33 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                 WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                 WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            IntHashSet walIdSet = new IntHashSet();
+
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
 
                 MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
                 MatcherAssert.assertThat(walWriter2.getWalId(), is(2));
                 MatcherAssert.assertThat(walWriter3.getWalId(), is(3));
+
+                walIdSet.add(walWriter1.getWalId());
+                walIdSet.add(walWriter2.getWalId());
+                walIdSet.add(walWriter3.getWalId());
             }
 
             AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
             AlterOperation alterOperation = alterBuilder.ofDropColumn("non_existing_column").build();
 
-            try (TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                 TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            int badWriterId;
+            try (
+                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
+            ) {
+
+                walIdSet.remove(badWriterId = ((WalWriter)insertWriter).getWalId());
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to other WAL writers
@@ -252,6 +265,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         alterOperation.serializeBody(sink);
                     }
                 };
+
                 alterWriter.apply(dodgyAlter, true);
 
                 TableWriter.Row row = insertWriter.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
@@ -269,15 +283,18 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             }
 
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
-                MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0));
+                Assert.assertTrue(walIdSet.contains(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
                 try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    MatcherAssert.assertThat(walWriter2.getWalId(), is(4));
-                    MatcherAssert.assertThat(walWriter1.getSegmentId(), is(0));
+                    Assert.assertTrue(walIdSet.contains(walWriter2.getWalId()));
+
+                    try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        Assert.assertTrue(walIdSet.excludes(walWriter3.getWalId()));
+                        Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
+                    }
                 }
             }
         });
@@ -322,8 +339,10 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             drainWalQueue();
 
             AlterOperation alterOperation = null;
-            try (TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
-                 TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
+            try (
+                    TableWriterAPI alterWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test");
+                    TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
+            ) {
 
                 AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofRenameColumn(1, tableName, 0);
                 alterBuilder.ofRenameColumn("x", "x2");

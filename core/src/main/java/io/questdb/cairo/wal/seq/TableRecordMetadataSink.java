@@ -22,25 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.wal.seq;
 
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.Mutable;
 
-public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
+public interface TableRecordMetadataSink extends Mutable {
 
-    long getStructureVersion();
+    void addColumn(
+            String columnName,
+            int columnType,
+            long columnHash,
+            boolean columnIndexed,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            int writerIndex
+    );
 
-    int getTableId();
-
-    String getTableName();
-
-    boolean isWalEnabled();
-
-    default int getMaxUncommittedRows() {
-        return Integer.MAX_VALUE;
-    }
-
-    default long getCommitLag() {
-        return 0;
-    }
+    void of(
+            String tableName,
+            int tableId,
+            int timestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount
+    );
 }

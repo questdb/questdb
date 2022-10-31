@@ -74,12 +74,12 @@ public class TableNameRegistry implements Closeable {
         return reverseTableNameRegistry.get(systemTableName) == TABLE_DROPPED_MARKER;
     }
 
-    public String registerName(String tableName, String tableSystemName) {
-        String str = tableNameRegistry.putIfAbsent(tableName, tableSystemName);
+    public String registerName(String tableName, String systemTableName) {
+        String str = tableNameRegistry.putIfAbsent(tableName, systemTableName);
         if (str == null) {
-            appendEntry(tableName, tableSystemName);
-            reverseTableNameRegistry.put(tableSystemName, tableName);
-            return tableSystemName;
+            appendEntry(tableName, systemTableName);
+            reverseTableNameRegistry.put(systemTableName, tableName);
+            return systemTableName;
         } else {
             return null;
         }
@@ -143,8 +143,8 @@ public class TableNameRegistry implements Closeable {
         return false;
     }
 
-    public void removeTableSystemName(CharSequence tableSystemName) {
-        reverseTableNameRegistry.remove(tableSystemName);
+    public void removeTableSystemName(CharSequence systemTableName) {
+        reverseTableNameRegistry.remove(systemTableName);
     }
 
     public void rename(CharSequence oldName, CharSequence newName, String systemTableName) {

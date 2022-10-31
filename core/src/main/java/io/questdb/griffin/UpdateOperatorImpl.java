@@ -86,11 +86,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                 tableWriter.commit();
             }
 
-            final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
+            final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
-            if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
-                throw ReaderOutOfDateException.of(tableName, tableId, writerMetadata.getId(),
+            if (tableMetadata.getTableId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
+                throw ReaderOutOfDateException.of(tableName, tableId, tableMetadata.getTableId(),
                         tableVersion, tableWriter.getStructureVersion());
             }
 
@@ -102,13 +102,13 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             updateColumnIndexes.clear();
             for (int i = 0; i < affectedColumnCount; i++) {
                 CharSequence columnName = updateMetadata.getColumnName(i);
-                int tableColumnIndex = writerMetadata.getColumnIndex(columnName);
+                int tableColumnIndex = tableMetadata.getColumnIndex(columnName);
                 assert tableColumnIndex >= 0;
                 updateColumnIndexes.add(tableColumnIndex);
             }
 
             // Create update memory list of all columns to be updated
-            configureColumns(writerMetadata, affectedColumnCount);
+            configureColumns(tableMetadata, affectedColumnCount);
 
             // Start execution frame by frame
             // Partition to update
@@ -168,7 +168,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                                     minRow
                             );
 
-                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), writerMetadata, tableWriter);
+                            rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
                         }
 
                         openColumns(srcColumns, rowPartitionIndex, false);
@@ -205,7 +205,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                             minRow
                     );
 
-                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), writerMetadata, tableWriter);
+                    rebuildIndexes(tableWriter.getPartitionTimestamp(partitionIndex), tableMetadata, tableWriter);
                 }
             } finally {
                 Misc.freeObjList(srcColumns);
@@ -315,7 +315,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             Record masterRecord,
             long firstUpdatedRowId
     ) throws SqlException {
-        final TableWriterMetadata metadata = tableWriter.getMetadata();
+        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(rowPartitionIndex);
         for (int i = 0; i < affectedColumnCount; i++) {
             MemoryCMR srcFixMem = srcColumns.get(2 * i);
@@ -326,7 +326,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             final int columnIndex = updateColumnIndexes.get(i);
             final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
             final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
-            final int columnType = metadata.getColumnType(columnIndex);
+            final int columnType = tableMetadata.getColumnType(columnIndex);
 
             if (currentRow > prevRow) {
                 copyColumn(
@@ -519,7 +519,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
     }
 
     private void copyColumns(int partitionIndex, int affectedColumnCount, long prevRow, long minRow) {
-        final TableWriterMetadata metadata = tableWriter.getMetadata();
+        final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
         for (int i = 0; i < affectedColumnCount; i++) {
@@ -531,7 +531,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             final int columnIndex = updateColumnIndexes.getQuick(i);
             final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
             final long newColumnTop = calculatedEffectiveColumnTop(minRow, oldColumnTop);
-            final int columnType = metadata.getColumnType(columnIndex);
+            final int columnType = tableMetadata.getColumnType(columnIndex);
 
             if (maxRow > prevRow) {
                 copyColumn(
@@ -665,15 +665,15 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
 
     private void rebuildIndexes(
             long partitionTimestamp,
-            TableWriterMetadata writerMetadata,
+            TableRecordMetadata tableMetadata,
             TableWriter tableWriter
     ) {
         int pathTrimToLen = path.length();
         indexBuilder.of(path.trimTo(rootLen), configuration);
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
-            if (writerMetadata.isColumnIndexed(columnIndex)) {
-                CharSequence colName = writerMetadata.getColumnName(columnIndex);
+            if (tableMetadata.isColumnIndexed(columnIndex)) {
+                CharSequence colName = tableMetadata.getColumnName(columnIndex);
                 indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);
             }
         }

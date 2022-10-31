@@ -156,30 +156,32 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testNonPartitionedWithColumnTopAddedLast() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ");" +
-                "alter table xxx add column sym1 symbol index;" +
-                "alter table xxx add column sym2 symbol index";
+        assertMemoryLeak(() -> {
+            String createAlterInsertSql = "create table xxx as (" +
+                    "select " +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ");" +
+                    "alter table xxx add column sym1 symbol index;" +
+                    "alter table xxx add column sym2 symbol index";
 
-        checkRebuildIndexes(createAlterInsertSql,
-                tablePath -> {
-                },
-                IndexBuilder::rebuildAll);
+            checkRebuildIndexes(createAlterInsertSql,
+                    tablePath -> {
+                    },
+                    IndexBuilder::rebuildAll);
 
-        engine.releaseAllWriters();
-        compiler
-                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
-                .getInsertOperation()
-                .execute(sqlExecutionContext)
-                .await();
-        int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
-        Assert.assertEquals(1, sym1D);
-        int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
-        Assert.assertEquals(1, sym2I2);
+            engine.releaseAllWriters();
+            compiler
+                    .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                    .getInsertOperation()
+                    .execute(sqlExecutionContext)
+                    .await();
+            int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
+            Assert.assertEquals(1, sym1D);
+            int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
+            Assert.assertEquals(1, sym2I2);
+        });
     }
 
     @Test

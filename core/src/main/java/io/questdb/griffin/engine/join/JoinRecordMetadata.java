@@ -35,7 +35,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable {
+public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
@@ -46,8 +46,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
         this.timestampIndex = -1;
         this.columnCount = 0;
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap(columnCount);
-        this.columnMetadata = new ObjList<>(columnCount);
         this.refCount = 1;
     }
 
@@ -117,9 +115,9 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
     }
 
     public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
-        if (fromMetadata instanceof BaseRecordMetadata) {
+        if (fromMetadata instanceof AbstractRecordMetadata) {
             for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
-                add(alias, ((BaseRecordMetadata) fromMetadata).getColumnQuick(i));
+                add(alias, ((AbstractRecordMetadata) fromMetadata).getColumnMetadata(i));
             }
         } else {
             for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {

@@ -24,12 +24,8 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -62,12 +58,12 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         runAddColumnRace(
                 barrier, tableName, iterations, 1, exception,
                 () -> {
-                    try (SequencerMetadata metadata = new SequencerMetadata(engine.getConfiguration().getFilesFacade())) {
+                    try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata()) {
                         TestUtils.await(barrier);
 
                         String systemName = engine.getSystemTableName(tableName);
                         do {
-                            engine.getTableSequencerAPI().copyMetadataTo(tableName, systemName, metadata);
+                            engine.getTableSequencerAPI().getTableMetadata(systemName, metadata, false);
                             MatcherAssert.assertThat((int) metadata.getStructureVersion(), Matchers.equalTo(metadata.getColumnCount() - initialColumnCount));
                         } while (metadata.getColumnCount() < initialColumnCount + iterations && exception.get() == null);
                     } catch (Throwable e) {

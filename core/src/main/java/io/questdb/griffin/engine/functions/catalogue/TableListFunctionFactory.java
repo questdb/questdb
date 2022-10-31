@@ -70,13 +70,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(
-                new TableListCursorFactory(
-                        configuration.getFilesFacade(),
-                        configuration.getRoot(),
-                        configuration.getTelemetryConfiguration().hideTables(),
-                        configuration.getSystemTableNamePrefix())
-        ) {
+        return new CursorFunction(new TableListCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -91,16 +85,16 @@ public class TableListFunctionFactory implements FunctionFactory {
         private final CharSequence sysTablePrefix;
         private CairoEngine engine;
         private Path path;
-        private TableReaderMetadata metaReader;
+        private TableReaderMetadata tableReaderMetadata;
 
-        public TableListCursorFactory(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables, CharSequence sysTablePrefix) {
+        public TableListCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
-            this.ff = ff;
-            path = new Path().of(dbRoot).$();
-            this.sysTablePrefix = sysTablePrefix;
+            this.ff = configuration.getFilesFacade();
+            path = new Path().of(configuration.getRoot()).$();
+            this.sysTablePrefix = configuration.getSystemTableNamePrefix();
             cursor = new TableListRecordCursor();
-            this.hideTelemetryTables = hideTelemetryTables;
-            this.metaReader = new TableReaderMetadata(ff, "<noname>");
+            this.hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
+            this.tableReaderMetadata = new TableReaderMetadata(configuration);
         }
 
         @Override
@@ -118,7 +112,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             path = Misc.free(path);
-            metaReader = Misc.free(metaReader);
+            tableReaderMetadata = Misc.free(tableReaderMetadata);
         }
 
         private class TableListRecordCursor implements RecordCursor {
@@ -129,7 +123,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 findPtr = ff.findClose(findPtr);
-                metaReader.clear();//release FD of last table on the list
+                tableReaderMetadata.clear();//release FD of last table on the list
             }
 
             @Override
@@ -185,6 +179,14 @@ public class TableListFunctionFactory implements FunctionFactory {
                 private int partitionBy;
 
                 @Override
+                public boolean getBool(int col) {
+                    if (col == writeModeColumn) {
+                        return tableReaderMetadata.isWalEnabled();
+                    }
+                    return false;
+                }
+
+                @Override
                 public int getInt(int col) {
                     if (col == idColumn) {
                         return tableId;
@@ -212,19 +214,11 @@ public class TableListFunctionFactory implements FunctionFactory {
                         return PartitionBy.toString(partitionBy);
                     }
                     if (col == designatedTimestampColumn) {
-                        if (metaReader.getTimestampIndex() > -1) {
-                            return metaReader.getColumnName(metaReader.getTimestampIndex());
+                        if (tableReaderMetadata.getTimestampIndex() > -1) {
+                            return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
                         }
                     }
                     return null;
-                }
-
-                @Override
-                public boolean getBool(int col) {
-                    if (col == writeModeColumn) {
-                        return metaReader.isWalEnabled();
-                    }
-                    return false;
                 }
 
                 @Override
@@ -248,13 +242,13 @@ public class TableListFunctionFactory implements FunctionFactory {
                     int pathLen = path.length();
                     try {
                         path.chop$().concat(systemTableName).concat(META_FILE_NAME).$();
-                        metaReader.deferredInit(path.$(), "<noname>", ColumnType.VERSION);
+                        tableReaderMetadata.load0(path.$());
 
                         // Pre-read as much as possible to skip record instead of failing on column fetch
-                        tableId = metaReader.getTableId();
-                        maxUncommittedRows = metaReader.getMaxUncommittedRows();
-                        commitLag = metaReader.getCommitLag();
-                        partitionBy = metaReader.getPartitionBy();
+                        tableId = tableReaderMetadata.getTableId();
+                        maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
+                        commitLag = tableReaderMetadata.getCommitLag();
+                        partitionBy = tableReaderMetadata.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table
                         // remove it from the result set

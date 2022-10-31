@@ -264,9 +264,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void deleteTableSequencerFiles(CharSequence tableSystemName) {
-        setTableSequencerPath(tableSystemName);
-        LOG.info().$("table is dropped, deleting sequencer files [table=").$(tableSystemName).$(']').$();
+    private void deleteTableSequencerFiles(CharSequence systemTableName) {
+        setTableSequencerPath(systemTableName);
+        LOG.info().$("table is dropped, deleting sequencer files [table=").$(systemTableName).$(']').$();
         recursiveDelete(path);
     }
 

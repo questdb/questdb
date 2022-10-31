@@ -24,39 +24,36 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
-public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
+public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
 
-    private final MessageBus messageBus;
-    private final CairoEngine engine;
+    private final TableSequencerAPI tableSequencerAPI;
 
-    public ReaderPool(CairoConfiguration configuration, CairoEngine engine) {
+    public WalWriterPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
         super(configuration);
-        this.messageBus = engine.getMessageBus();
-        this.engine = engine;
+        this.tableSequencerAPI = tableSequencerAPI;
     }
 
     @Override
     protected byte getListenerSrc() {
-        return PoolListener.SRC_READER;
+        return PoolListener.SRC_WRITER;
     }
 
     @Override
-    protected R newTenant(String systemTableName, Entry<R> entry, int index) {
-        return new R(this, entry, index, engine.getTableNameBySystemName(systemTableName), systemTableName, messageBus);
+    protected WalWriterTenant newTenant(String systemtableName, Entry<WalWriterTenant> entry, int index) {
+        return new WalWriterTenant(this, entry, index, systemtableName, tableSequencerAPI.getTableNameBySystemName(systemtableName), tableSequencerAPI);
     }
 
-    public static class R extends TableReader implements PoolTenant {
+    public static class WalWriterTenant extends WalWriter implements PoolTenant {
         private final int index;
-        private AbstractMultiTenantPool<R> pool;
-        private Entry<R> entry;
+        private AbstractMultiTenantPool<WalWriterTenant> pool;
+        private Entry<WalWriterTenant> entry;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, CharSequence name, CharSequence systemName, MessageBus messageBus) {
-            super(pool.getConfiguration(), name, systemName, messageBus);
+        public WalWriterTenant(AbstractMultiTenantPool<WalWriterTenant> pool, Entry<WalWriterTenant> entry, int index, String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI) {
+            super(pool.getConfiguration(), systemTableName, tableName, tableSequencerAPI);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -65,9 +62,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         @Override
         public void close() {
             if (isOpen()) {
-                goPassive();
-                final AbstractMultiTenantPool<R> pool = this.pool;
-                if (pool != null && entry != null) {
+                final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
+                if (pool != null && entry != null && !isDistressed()) {
                     if (pool.returnToPool(this)) {
                         return;
                     }
@@ -93,7 +89,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
         @SuppressWarnings("unchecked")
         @Override
-        public Entry<R> getEntry() {
+        public Entry<WalWriterTenant> getEntry() {
             return entry;
         }
 

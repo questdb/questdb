@@ -24,23 +24,8 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.QuietCloseable;
+import io.questdb.cairo.TableColumnMetadata;
 
-public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
-
-    long getStructureVersion();
-
-    int getTableId();
-
-    String getTableName();
-
-    boolean isWalEnabled();
-
-    default int getMaxUncommittedRows() {
-        return Integer.MAX_VALUE;
-    }
-
-    default long getCommitLag() {
-        return 0;
-    }
+public interface ColumnMetadataCollection {
+    TableColumnMetadata getColumnMetadata(int columnIndex);
 }

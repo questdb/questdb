@@ -894,7 +894,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ReaderPool pool = new ReaderPool(engine, configuration)) {
+            try (ReaderPool pool = new ReaderPool(configuration, engine)) {
                 code.run(pool);
             }
         });

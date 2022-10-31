@@ -287,7 +287,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             String sysTableName2 = Chars.toString(engine.getSystemTableName(tableName));
             MatcherAssert.assertThat(sysTableName1, Matchers.not(Matchers.equalTo(sysTableName2)));
 
-            engine.releaseAllReaders();
+            engine.releaseInactive();
             drainWalQueue();
 
             checkTableFilesDropped(sysTableName1, "2022-02-24", "x.d");

@@ -305,7 +305,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Rename failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 assertReader(engine, "x");

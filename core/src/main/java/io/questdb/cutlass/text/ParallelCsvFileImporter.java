@@ -29,6 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -1109,11 +1110,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         int queuedCount = 0;
         int collectedCount = 0;
-        TableWriterMetadata metadata = writer.getMetadata();
+        TableRecordMetadata tableMetadata = writer.getMetadata();
 
-        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
+        for (int columnIndex = 0, size = tableMetadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            if (ColumnType.isSymbol(tableMetadata.getColumnType(columnIndex))) {
+                final CharSequence symbolColumnName = tableMetadata.getColumnName(columnIndex);
                 int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
 
                 while (true) {
@@ -1166,16 +1167,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata tableMetadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
 
                     if (partitionSize == 0) {
                         continue;
                     }
 
-                    for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
-                        if (ColumnType.isSymbol(metadata.getColumnType(c))) {
-                            final CharSequence symbolColumnName = metadata.getColumnName(c);
+                    for (int c = 0, size = tableMetadata.getColumnCount(); c < size; c++) {
+                        if (ColumnType.isSymbol(tableMetadata.getColumnType(c))) {
+                            final CharSequence symbolColumnName = tableMetadata.getColumnName(c);
                             final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
 
                             while (true) {
