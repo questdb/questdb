@@ -97,168 +97,184 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
     @Test
     public void testNonPartitionedWithColumnTop() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                "); " +
+        assertMemoryLeak(() -> {
+            String createAlterInsertSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    "); " +
 
-                "alter table xxx add column str2 string; " +
+                    "alter table xxx add column str2 string; " +
 
-                "insert into xxx " +
-                "select " +
-                "rnd_str('A', 'B', 'C') as str1," +
-                "x," +
-                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
-                "rnd_str(4,4,4,2) as str2 " +
-                "from long_sequence(5000)";
+                    "insert into xxx " +
+                    "select " +
+                    "rnd_str('A', 'B', 'C') as str1," +
+                    "x," +
+                    "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                    "rnd_str(4,4,4,2) as str2 " +
+                    "from long_sequence(5000)";
 
-        checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+            checkRecoverVarIndex(createAlterInsertSql,
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+        });
     }
 
     @Test
     public void testNonPartitionedWithColumnTopAddedLast() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ");" +
-                "alter table xxx add column str1 string;" +
-                "alter table xxx add column str2 string";
+        assertMemoryLeak(() -> {
+            String createAlterInsertSql = "create table xxx as (" +
+                    "select " +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ");" +
+                    "alter table xxx add column str1 string;" +
+                    "alter table xxx add column str2 string";
 
-        checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> {
-                },
-                RecoverVarIndex::rebuildAll);
+            checkRecoverVarIndex(createAlterInsertSql,
+                    tablePath -> {
+                    },
+                    RecoverVarIndex::rebuildAll);
 
-        engine.releaseAllWriters();
-        compiler
-                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
-                .getInsertOperation()
-                .execute(sqlExecutionContext)
-                .await();
-        int sym1D = countByFullScanWhereValueD();
-        Assert.assertEquals(1, sym1D);
+            engine.releaseAllWriters();
+            compiler
+                    .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                    .getInsertOperation()
+                    .execute(sqlExecutionContext)
+                    .await();
+            int sym1D = countByFullScanWhereValueD();
+            Assert.assertEquals(1, sym1D);
+        });
     }
 
     @Test
     public void testNonePartitionedOneColumn() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ")";
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ")";
 
-        checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+            checkRecoverVarIndex(createTableSql,
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+        });
     }
 
     @Test
     public void testPartitionedDaily() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
-        checkRecoverVarIndex(
-                createTableSql,
-                (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
-                    removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
-                },
-                RecoverVarIndex::rebuildAll
-        );
+            checkRecoverVarIndex(
+                    createTableSql,
+                    (tablePath) -> {
+                        removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L);
+                        removeFileAtPartition("str2.i", PartitionBy.DAY, tablePath, 0, -1L);
+                    },
+                    RecoverVarIndex::rebuildAll
+            );
+        });
     }
 
     @Test
     public void testPartitionedNone() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ")";
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ")";
 
-        checkRecoverVarIndex(
-                createTableSql,
-                (tablePath) -> {
-                    removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
-                    removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
-                },
-                RecoverVarIndex::rebuildAll
-        );
+            checkRecoverVarIndex(
+                    createTableSql,
+                    (tablePath) -> {
+                        removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L);
+                        removeFileAtPartition("str2.i", PartitionBy.NONE, tablePath, 0, -1L);
+                    },
+                    RecoverVarIndex::rebuildAll
+            );
+        });
     }
 
     @Test
     public void testPartitionedOneColumn() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
-        checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+            checkRecoverVarIndex(createTableSql,
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str1"));
+        });
     }
 
     @Test
     public void testPartitionedOneColumnFirstPartition() throws Exception {
-        String createTableSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(10000)" +
-                ") timestamp(ts) PARTITION BY DAY";
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "rnd_str('A', 'Bbb', 'Ccccc', '412312', '2212321') as str2," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    ") timestamp(ts) PARTITION BY DAY";
 
-        checkRecoverVarIndex(createTableSql,
-                tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
+            checkRecoverVarIndex(createTableSql,
+                    tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
+                    rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
+        });
     }
 
     @Test
     public void testPartitionedWithColumnTop() throws Exception {
-        String createAlterInsertSql = "create table xxx as (" +
-                "select " +
-                "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
-                "x," +
-                "timestamp_sequence(0, 100000000) ts " +
-                "from long_sequence(5000)" +
-                ") timestamp(ts) PARTITION BY DAY; " +
+        assertMemoryLeak(() -> {
+            String createAlterInsertSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_str('A', 'Bbb', 'Ccccc') as str1," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(5000)" +
+                    ") timestamp(ts) PARTITION BY DAY; " +
 
-                "alter table xxx add column str2 string; " +
+                    "alter table xxx add column str2 string; " +
 
-                "insert into xxx " +
-                "select " +
-                "rnd_str('A', 'B', 'C') as str1," +
-                "x," +
-                "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
-                "rnd_str(4,4,4,2) as str2 " +
-                "from long_sequence(5000)";
+                    "insert into xxx " +
+                    "select " +
+                    "rnd_str('A', 'B', 'C') as str1," +
+                    "x," +
+                    "timestamp_sequence(100000000L * 5000L, 100000000) ts, " +
+                    "rnd_str(4,4,4,2) as str2 " +
+                    "from long_sequence(5000)";
 
-        checkRecoverVarIndex(createAlterInsertSql,
-                tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
-                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+            checkRecoverVarIndex(createAlterInsertSql,
+                    tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
+                    rebuildIndex -> rebuildIndex.reindexColumn("str2"));
+        });
     }
 
     @Test

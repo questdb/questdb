@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -81,11 +82,11 @@ public class TableUpdateDetails implements Closeable {
                     configuration, netIoJobs[i].getUnusedSymbolCaches(), writer.getMetadata().getColumnCount());
         }
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
-        TableWriterMetadata metadata = writer.getMetadata();
+        TableRecordMetadata tableMetadata = writer.getMetadata();
         this.millisecondClock = cairoConfiguration.getMillisecondClock();
         this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
         this.writer = writer;
-        this.timestampIndex = metadata.getTimestampIndex();
+        this.timestampIndex = tableMetadata.getTimestampIndex();
         this.tableNameUtf16 = writer.getTableName();
         writer.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
         this.nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();

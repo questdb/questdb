@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -99,7 +100,7 @@ public class MapFactory {
             return new CompactMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
-                    GenericRecordMetadata.EMPTY,
+                    EmptyRecordMetadata.INSTANCE,
                     configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),

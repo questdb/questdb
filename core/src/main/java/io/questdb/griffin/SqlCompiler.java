@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -113,7 +112,6 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final MetadataFactory metadataFactory;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -133,7 +131,6 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreCapacity(),
                 configuration.getSqlCharacterStoreSequencePoolCapacity());
 
-        this.metadataFactory = new PooledMetadataFactory(configuration);
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(
                 configuration,
@@ -256,7 +253,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(codeGenerator);
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
-        Misc.free(metadataFactory);
     }
 
     @NotNull
@@ -444,10 +440,9 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             String tableName = Chars.toString(tok);
-            try (TableRecordMetadata tableMetadata = engine.getMetadata(
+            try (TableRecordMetadata tableMetadata = engine.getCompressedMetadata(
                     executionContext.getCairoSecurityContext(),
-                    tableName,
-                    metadataFactory
+                    tableName
             )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -591,7 +586,8 @@ public class SqlCompiler implements Closeable {
         AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
                 tableNamePosition,
                 tableName,
-                tableMetadata.getTableId());
+                tableMetadata.getTableId()
+        );
 
         int semicolonPos = -1;
         do {
@@ -629,7 +625,7 @@ public class SqlCompiler implements Closeable {
 
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && tok.charAt(0) != ')') {
-                    int geosizeBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
+                    int geoHashBits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, tok);
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || tok.charAt(0) != ')') {
                         if (tok != null) {
@@ -640,7 +636,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition())
                                 .put("invalid GEOHASH type literal, expected ')'");
                     }
-                    type = ColumnType.getGeoHashTypeWithBits(geosizeBits);
+                    type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
                 } else {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("missing GEOHASH precision");
@@ -1103,6 +1099,15 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofCommit();
     }
 
+    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
+        }
+        return compiledQuery.ofDeallocate(statementName);
+    }
+
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
@@ -1117,11 +1122,11 @@ public class SqlCompiler implements Closeable {
                 }
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
-                try (TableRecordMetadata metadata = engine.getMetadata(
-                        executionContext.getCairoSecurityContext(),
-                        queryModel.getTableName().token,
-                        metadataFactory
-                )) {
+                try (
+                        TableRecordMetadata metadata = engine.getCompressedMetadata(
+                                executionContext.getCairoSecurityContext(),
+                                queryModel.getTableName().token
+                        )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
                         optimiser.optimiseUpdate(queryModel, executionContext, metadata);
                     } else {
@@ -1179,15 +1184,6 @@ public class SqlCompiler implements Closeable {
         );
     }
 
-    private CompiledQuery compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
-        }
-        return compiledQuery.ofDeallocate(statementName);
-    }
-
     @NotNull
     private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
@@ -1216,11 +1212,12 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.ofRenameTable();
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                try (TableRecordMetadata metadata = engine.getMetadata(
-                        executionContext.getCairoSecurityContext(),
-                        updateQueryModel.getTableName().token,
-                        metadataFactory
-                )) {
+                try (
+                        TableRecordMetadata metadata = engine.getUncompressedMetadata(
+                                executionContext.getCairoSecurityContext(),
+                                updateQueryModel.getTableName().token
+                        )
+                ) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                     return compiledQuery.ofUpdate(updateOperation);
                 }
@@ -1447,6 +1444,33 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
+        ExpressionNode likeTableName = model.getLikeTableName();
+        CharSequence likeTableNameToken = likeTableName.token;
+        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
+        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
+            model.setCommitLag(rdr.getCommitLag());
+            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
+            TableReaderMetadata rdrMetadata = rdr.getMetadata();
+            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
+                int columnType = rdrMetadata.getColumnType(i);
+                boolean isSymbol = ColumnType.isSymbol(columnType);
+                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                if (isSymbol) {
+                    model.cached(rdr.getSymbolMapReader(i).isCached());
+                }
+                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
+            }
+            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
+            if (rdrMetadata.getTimestampIndex() != -1) {
+                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
+            }
+            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
+        }
+        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
+    }
+
     /**
      * Returns number of copied rows.
      */
@@ -1523,33 +1547,6 @@ public class SqlCompiler implements Closeable {
         } else {
             return compiledQuery.ofCreateTableAsSelect(insertCount);
         }
-    }
-
-    private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
-        ExpressionNode likeTableName = model.getLikeTableName();
-        CharSequence likeTableNameToken = likeTableName.token;
-        tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
-        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
-            model.setCommitLag(rdr.getCommitLag());
-            model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
-            TableReaderMetadata rdrMetadata = rdr.getMetadata();
-            for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
-                int columnType = rdrMetadata.getColumnType(i);
-                boolean isSymbol = ColumnType.isSymbol(columnType);
-                int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
-                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
-                if (isSymbol) {
-                    model.cached(rdr.getSymbolMapReader(i).isCached());
-                }
-                model.setIndexFlags(rdrMetadata.isColumnIndexed(i), rdrMetadata.getIndexValueBlockCapacity(i));
-            }
-            model.setPartitionBy(SqlUtil.nextLiteral(sqlNodePool, PartitionBy.toString(rdr.getPartitionedBy()), 0));
-            if (rdrMetadata.getTimestampIndex() != -1) {
-                model.setTimestamp(SqlUtil.nextLiteral(sqlNodePool, rdrMetadata.getColumnName(rdrMetadata.getTimestampIndex()), 0));
-            }
-            model.setWalEnabled(configuration.isWalSupported() && rdrMetadata.isWalEnabled());
-        }
-        model.setLikeTableName(null); // resetting like table name as the metadata is copied already at this point.
     }
 
     @Nullable
@@ -1772,12 +1769,10 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableRecordMetadata metadata = engine.getMetadata(
+        try (TableRecordMetadata metadata = engine.getCompressedMetadata(
                 executionContext.getCairoSecurityContext(),
-                name.token,
-                metadataFactory
+                name.token
         )) {
-            metadata.toReaderIndexes();
             final long structureVersion = metadata.getStructureVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableName(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
@@ -1794,7 +1789,7 @@ public class SqlCompiler implements Closeable {
                             final ExpressionNode node = model.getRowTupleValues(tupleIndex).getQuick(i);
                             final Function function = functionParser.parseFunction(
                                     node,
-                                    GenericRecordMetadata.EMPTY,
+                                    EmptyRecordMetadata.INSTANCE,
                                     executionContext
                             );
 
@@ -2563,8 +2558,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
+        public int getTimestampIndex() {
+            return timestampIndex;
         }
 
         @Override
@@ -2579,6 +2574,11 @@ public class SqlCompiler implements Closeable {
                 return typeCast.valueAt(castIndex);
             }
             return metadata.getColumnType(columnIndex);
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return metadata.getColumnHash(columnIndex);
         }
 
         @Override
@@ -2623,11 +2623,6 @@ public class SqlCompiler implements Closeable {
         @Override
         public CharSequence getTableName() {
             return model.getTableName();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampIndex;
         }
 
         @Override

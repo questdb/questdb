@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -44,7 +45,7 @@ public interface TableWriterAPI extends Closeable {
 
     long commitWithLag(long commitLag);
 
-    BaseRecordMetadata getMetadata();
+    TableRecordMetadata getMetadata();
 
     long getStructureVersion();
 

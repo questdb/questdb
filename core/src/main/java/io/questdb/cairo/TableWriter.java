@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
@@ -267,7 +268,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
 
             openMetaFile(ff, path, rootLen, metaMem);
-            this.metadata = new TableWriterMetadata(metaMem);
+            this.metadata = new TableWriterMetadata(this.tableName, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -572,7 +573,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
-        TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
@@ -638,7 +639,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         try {
             if (ff.exists(detachedPath)) {
                 // detached metadata files validation
-                CharSequence timestampColName = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
+                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
                     readPartitionMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
@@ -1011,7 +1012,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName); // bumps structure version, this is in effect a commit
             // refresh metadata
-            TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setIndexed(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             // remove indexer
@@ -1069,7 +1070,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
-    public TableWriterMetadata getMetadata() {
+    public TableRecordMetadata getMetadata() {
         return metadata;
     }
 
@@ -1257,7 +1258,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
-        if (cmd.getTableId() == getMetadata().getId()) {
+        if (cmd.getTableId() == getMetadata().getTableId()) {
             switch (cmd.getType()) {
                 case CMD_SLAVE_SYNC:
                     processReplSyncCommand(cmd, cursor, commandSubSeq);
@@ -1278,7 +1279,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             LOG.info()
                     .$("not my command [cmdTableId=").$(cmd.getTableId())
                     .$(", cmdTableName=").$(cmd.getTableName())
-                    .$(", myTableId=").$(getMetadata().getId())
+                    .$(", myTableId=").$(getMetadata().getTableId())
                     .$(", myTableName=").utf8(tableName)
                     .I$();
             commandSubSeq.done(cursor);
@@ -1478,7 +1479,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
         metadata.removeColumn(index);
         if (timestamp) {
-            metadata.setTimestampIndex(-1);
+            metadata.clearTimestampIndex();
         }
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
@@ -1761,12 +1762,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                         || isSlaveIndexed != metadata.isColumnIndexed(masterIndex)) {
                     model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, masterIndex, masterIndex);
                     if (metadata.getColumnType(masterIndex) > 0) {
-                        model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                        model.addColumnMetadata(metadata.getColumnMetadata(masterIndex));
                         model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
                     }
                 }
             } else {
-                model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                model.addColumnMetadata(metadata.getColumnMetadata(masterIndex));
                 model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
             }
         }
@@ -4401,13 +4402,13 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata = new TableWriterMetadata(attachMetaMem);
+                attachMetadata = new TableWriterMetadata(tableName, attachMetaMem);
             } else {
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
                 attachMetadata.reload(attachMetaMem);
             }
 
-            if (metadata.getId() != attachMetadata.getId()) {
+            if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
@@ -4715,7 +4716,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                             throw e;
                         }
 
-                        columnCounter.set(metadata.getDenseColumnCount());
+                        columnCounter.set(TableUtils.compressColumnCount(metadata));
                         Path pathToPartition = Path.getThreadLocal(this.path);
                         TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                         TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);

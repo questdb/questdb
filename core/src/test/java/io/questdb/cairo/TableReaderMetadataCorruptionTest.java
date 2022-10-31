@@ -284,8 +284,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     ff.close(fd);
                 }
 
-                try {
-                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path);
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)){
+                    metadata.load0(path);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -305,7 +305,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, tableName, path)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                    metadata.load();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);

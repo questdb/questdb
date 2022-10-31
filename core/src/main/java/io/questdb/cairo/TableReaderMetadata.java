@@ -32,11 +32,12 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-public class TableReaderMetadata extends BaseRecordMetadata implements TableRecordMetadata {
-    private Path path;
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private String tableName;
+    private final String tableName;
+    private final CairoConfiguration configuration;
+    private Path path;
     private MemoryMR metaMem;
     private int partitionBy;
     private int tableId;
@@ -45,32 +46,23 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
     private long structureVersion;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
+    private int plen;
 
-    public TableReaderMetadata(FilesFacade ff, String tableName) {
-        this.path = new Path();
+    public TableReaderMetadata(CairoConfiguration configuration, String tableName) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.path = new Path().of(configuration.getRoot()).concat(tableName);
+        this.plen = path.length();
         this.tableName = tableName;
-        this.ff = ff;
         this.metaMem = Vm.getMRInstance();
-        this.columnMetadata = new ObjList<>(columnCount);
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
-        this(ff, tableName);
-        try {
-            deferredInit(path, tableName, ColumnType.VERSION);
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
-    }
-
-    @Override
-    public void close() {
-        // TableReaderMetadata is re-usable after close, don't assign nulls
-        Misc.free(metaMem);
-        path = Misc.free(path);
-        Misc.free(transitionMeta);
+    // constructor used to read random metadata files
+    public TableReaderMetadata(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.tableName = null;
+        this.metaMem = Vm.getMRInstance();
     }
 
     public void applyTransitionIndex() {
@@ -155,12 +147,21 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         }
     }
 
+    @Override
     public void clear() {
+        super.clear();
         Misc.free(metaMem);
+        Misc.free(transitionMeta);
+    }
+
+    @Override
+    public void close() {
+        metaMem = Misc.free(metaMem);
+        path = Misc.free(path);
+        transitionMeta = Misc.free(transitionMeta);
     }
 
     public void copy(TableReaderMetadata metadata) {
-        tableName = metadata.tableName;
         partitionBy = metadata.partitionBy;
         tableId = metadata.tableId;
         maxUncommittedRows = metadata.maxUncommittedRows;
@@ -187,11 +188,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             ));
             columnNameIndexMap.put(columnMetadata.getName(), i);
         }
-    }
-
-    public void deferredInit(Path path, String tableName, int expectedVersion) {
-        this.path.of(path).$();
-        deferredInit(tableName, expectedVersion);
     }
 
     public long createTransitionIndex(long txnStructureVersion) {
@@ -227,14 +223,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return columnCount;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -254,23 +242,37 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         return tableName;
     }
 
-    public void readSafe(CharSequence dbRoot, String tableName, MillisecondClock millisecondClock, long timeout) {
-        long deadline = millisecondClock.getTicks() + timeout;
-        this.path.of(dbRoot).concat(tableName);
-        int rootLen = this.path.length();
-        this.path.concat(TableUtils.META_FILE_NAME).$();
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public boolean isWalEnabled() {
+        return walEnabled;
+    }
+
+    public void load() {
+        final long timeout = configuration.getSpinLockTimeout();
+        final MillisecondClock millisecondClock = configuration.getMillisecondClock();
+        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
+        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
         boolean existenceChecked = false;
         while (true) {
             try {
-                deferredInit(tableName, ColumnType.VERSION);
+                load0(path);
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
-                    path.trimTo(rootLen).slash$();
+                    path.trimTo(plen).slash$();
                     if (!ff.exists(path)) {
                         throw CairoException.critical(2).put("table does not exist [table=").put(tableName).put(']');
                     }
-                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
                 TableUtils.handleMetadataLoadException(tableName, deadline, ex, millisecondClock, timeout);
@@ -278,10 +280,13 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
         }
     }
 
-    private void deferredInit(String tableName, int expectedVersion) {
+    public void load0(Path path) {
+        load0(path, ColumnType.VERSION);
+    }
+
+    public void load0(Path path, int expectedVersion) {
         try {
-            this.tableName = tableName;
-            this.metaMem.smallFile(ff, this.path, MemoryTag.NATIVE_TABLE_READER);
+            this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             this.columnNameIndexMap.clear();
             TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -291,6 +296,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+            // todo: should be boolean
             this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
@@ -325,14 +331,5 @@ public class TableReaderMetadata extends BaseRecordMetadata implements TableReco
             clear();
             throw e;
         }
-    }
-
-    public boolean isWalEnabled() {
-        return walEnabled;
-    }
-
-    @Override
-    public void toReaderIndexes() {
-        // Do nothing, already reading indexes
     }
 }

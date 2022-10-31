@@ -777,7 +777,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "copy");
                 TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "wal")
         ) {
-            tableId = tableWriter.getMetadata().getId();
+            tableId = tableWriter.getMetadata().getTableId();
             if (!inOrder) {
                 startTs += (rowsToInsertTotal - 1) * tsIncrement;
                 tsIncrement = -tsIncrement;

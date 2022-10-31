@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -39,21 +38,16 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-import java.util.ArrayDeque;
 import java.util.Iterator;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
-public class TableSequencerAPI implements Closeable {
+public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<WalWriterPool> walRegistry = new ConcurrentHashMap<>();
     private final CairoEngine engine;
     private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
-    private final Function<CharSequence, WalWriterPool> createWalPoolLambda;
     private final CairoConfiguration configuration;
     private final long inactiveTtlUs;
     private final int recreateDistressedSequencerAttempts;
@@ -63,7 +57,6 @@ public class TableSequencerAPI implements Closeable {
         this.configuration = configuration;
         this.engine = engine;
         this.createSequencerInstanceLambda = this::createSequencerInstance;
-        this.createWalPoolLambda = this::createWalPool;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
     }
@@ -74,10 +67,10 @@ public class TableSequencerAPI implements Closeable {
         releaseAll();
     }
 
-    public void copyMetadataTo(final CharSequence tableName, final SequencerMetadata metadata) {
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink, boolean compress) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {
-                tableSequencer.copyMetadataTo(metadata);
+                tableSequencer.getTableMetadata(sink, compress);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -131,18 +124,6 @@ public class TableSequencerAPI implements Closeable {
         }
     }
 
-    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
-            TableMetadataChangeLog metadataChangeLog;
-            try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-            return metadataChangeLog;
-        }
-    }
-
     public int getNextWalId(final CharSequence tableName) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             int walId;
@@ -155,16 +136,24 @@ public class TableSequencerAPI implements Closeable {
         }
     }
 
+    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
+        }
+    }
+
     public boolean hasSequencer(final CharSequence tableName) {
         TableSequencer tableSequencer = seqRegistry.get(tableName);
         if (tableSequencer != null) {
             return true;
         }
         return isWalTable(tableName, configuration.getRoot(), configuration.getFilesFacade());
-    }
-
-    public @NotNull WalWriter getWalWriter(final CharSequence tableName) {
-        return getWalPool(tableName).get();
     }
 
     public boolean isSuspended(final CharSequence tableName) {
@@ -217,6 +206,23 @@ public class TableSequencerAPI implements Closeable {
 
     public boolean releaseAll() {
         return releaseAll(Long.MAX_VALUE);
+    }
+
+    public void reloadMetadataConditionally(
+            final CharSequence tableName,
+            long expectedStructureVersion,
+            TableRecordMetadataSink sink,
+            boolean compress
+    ) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            try {
+                if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
+                    tableSequencer.getTableMetadata(sink, compress);
+                }
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
     }
 
     public void registerTable(int tableId, final TableStructure tableStructure) {
@@ -285,10 +291,6 @@ public class TableSequencerAPI implements Closeable {
         return sequencer;
     }
 
-    private WalWriterPool createWalPool(CharSequence charSequence) {
-        return new WalWriterPool((String) charSequence, this, engine.getConfiguration());
-    }
-
     @NotNull
     private TableSequencerEntry getTableSequencerEntryLocked(CharSequence tableName, SequencerLockType lock) {
         String tableNameStr = Chars.toString(tableName);
@@ -318,11 +320,6 @@ public class TableSequencerAPI implements Closeable {
         }
 
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
-    }
-
-    private @NotNull WalWriterPool getWalPool(final CharSequence tableName) {
-        throwIfClosed();
-        return walRegistry.computeIfAbsent(Chars.toString(tableName), this.createWalPoolLambda);
     }
 
     private @NotNull TableSequencerImpl openSequencerLocked(final CharSequence tableName, SequencerLockType lock) {
@@ -359,9 +356,7 @@ public class TableSequencerAPI implements Closeable {
     }
 
     protected boolean releaseAll(long deadline) {
-        boolean r0 = releaseWalWriters(deadline);
-        boolean r1 = releaseEntries(deadline);
-        return r0 || r1;
+        return releaseEntries(deadline);
     }
 
     private boolean releaseEntries(long deadline) {
@@ -377,23 +372,6 @@ public class TableSequencerAPI implements Closeable {
                 sequencer.pool = null;
                 sequencer.close();
                 removed = true;
-                iterator.remove();
-            }
-        }
-        return removed;
-    }
-
-    private boolean releaseWalWriters(long deadline) {
-        if (walRegistry.size() == 0) {
-            // nothing to release
-            return true;
-        }
-        boolean removed = false;
-        final Iterator<WalWriterPool> iterator = walRegistry.values().iterator();
-        while (iterator.hasNext()) {
-            final WalWriterPool pool = iterator.next();
-            removed = pool.releaseAll(deadline);
-            if (deadline == Long.MAX_VALUE && pool.size() == 0) {
                 iterator.remove();
             }
         }
@@ -443,128 +421,6 @@ public class TableSequencerAPI implements Closeable {
                 }
             } else {
                 super.close();
-            }
-        }
-    }
-
-    public static class WalWriterPool {
-        private final ReentrantLock lock = new ReentrantLock();
-        private final ArrayDeque<Entry> cache = new ArrayDeque<>();
-        private final String tableName;
-        private final TableSequencerAPI tableSequencerAPI;
-        private final CairoConfiguration configuration;
-        private volatile boolean closed;
-
-        public WalWriterPool(String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration) {
-            this.tableName = tableName;
-            this.tableSequencerAPI = tableSequencerAPI;
-            this.configuration = configuration;
-        }
-
-        public Entry get() {
-            lock.lock();
-            try {
-                Entry obj;
-                do {
-                    obj = cache.poll();
-
-                    if (obj == null) {
-                        obj = new Entry(tableName, tableSequencerAPI, configuration, this);
-                    } else {
-                        if (!obj.goActive()) {
-                            obj = Misc.free(obj);
-                        } else {
-                            obj.reset();
-                        }
-                    }
-                } while (obj == null);
-
-                return obj;
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        public boolean returnToPool(Entry obj) {
-            assert obj != null;
-            lock.lock();
-            try {
-                if (closed) {
-                    return false;
-                } else {
-                    try {
-                        obj.rollback();
-                    } catch (Throwable e) {
-                        LOG.error().$("could not rollback WAL writer [table=").$(obj.getTableName())
-                                .$(", walId=").$(obj.getWalId())
-                                .$(", error=").$(e).$();
-                        obj.close();
-                        throw e;
-                    }
-                    cache.push(obj);
-                    obj.releaseTime = configuration.getMicrosecondClock().getTicks();
-                    return true;
-                }
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        public int size() {
-            lock.lock();
-            try {
-                return cache.size();
-            } finally {
-                lock.unlock();
-            }
-        }
-
-        protected boolean releaseAll(long deadline) {
-            boolean removed = false;
-            lock.lock();
-            try {
-                Iterator<Entry> iterator = cache.iterator();
-                while (iterator.hasNext()) {
-                    final Entry e = iterator.next();
-                    if (deadline >= e.releaseTime) {
-                        removed = true;
-                        e.doClose(true);
-                        e.pool = null;
-                        iterator.remove();
-                    }
-                }
-                if (deadline == Long.MAX_VALUE) {
-                    this.closed = true;
-                }
-            } finally {
-                lock.unlock();
-            }
-            return removed;
-        }
-
-        public static class Entry extends WalWriter {
-            private WalWriterPool pool;
-            private volatile long releaseTime = Long.MAX_VALUE;
-
-            public Entry(String tableName, TableSequencerAPI tableSequencerAPI, CairoConfiguration configuration, WalWriterPool pool) {
-                super(tableName, tableSequencerAPI, configuration);
-                this.pool = pool;
-            }
-
-            @Override
-            public void close() {
-                if (isOpen()) {
-                    if (!isDistressed() && pool != null) {
-                        if (pool.returnToPool(this)) {
-                            return;
-                        }
-                    }
-                    super.close();
-                }
-            }
-
-            public void reset() {
-                this.releaseTime = Long.MAX_VALUE;
             }
         }
     }

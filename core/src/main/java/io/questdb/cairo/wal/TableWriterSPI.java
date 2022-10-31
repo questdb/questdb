@@ -27,7 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.UpdateOperator;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 
 public interface TableWriterSPI {
     /**
@@ -80,7 +80,7 @@ public interface TableWriterSPI {
 
     void dropIndex(CharSequence columnName);
 
-    RecordMetadata getMetadata();
+    TableRecordMetadata getMetadata();
 
     int getPartitionBy();
 

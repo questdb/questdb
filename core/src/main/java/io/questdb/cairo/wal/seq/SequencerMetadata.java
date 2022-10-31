@@ -33,17 +33,18 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class SequencerMetadata extends BaseRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
+public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final boolean readonly;
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
 
-    private long structureVersion = -1;
+    private final AtomicLong structureVersion = new AtomicLong(-1);
     private int tableId;
     private String tableName;
     private volatile boolean suspended;
@@ -61,13 +62,11 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
             metaMem = null;
             roMetaMem = Vm.getMRInstance();
         }
-        columnMetadata = new ObjList<>();
-        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     @Override
@@ -92,12 +91,8 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
             addColumn0(name, type);
         }
 
-        this.structureVersion = structureVersion;
+        this.structureVersion.set(structureVersion);
         columnCount = columnMetadata.size();
-    }
-
-    public void copyFrom(SequencerMetadata metadata) {
-        copyFrom(metadata, metadata.tableName, metadata.tableId, metadata.structureVersion, metadata.suspended);
     }
 
     public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
@@ -119,7 +114,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
 
     @Override
     public long getStructureVersion() {
-        return structureVersion;
+        return structureVersion.get();
     }
 
     @Override
@@ -146,29 +141,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         return suspended;
     }
 
-    @Override
-    public void toReaderIndexes() {
-        // Remove deleted columns from the metadata, e.g. make it reader metadata.
-        // Deleted columns have negative type.
-        int copyTo = 0;
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = columnMetadata.getQuick(i).getType();
-            if (columnType > 0) {
-                if (copyTo != i) {
-                    TableColumnMetadata columnMeta = columnMetadata.get(i);
-                    columnMetadata.set(copyTo, columnMeta);
-                    if (i == timestampIndex) {
-                        timestampIndex = copyTo;
-                    }
-                    columnNameIndexMap.put(columnMeta.getName(), copyTo);
-                }
-                copyTo++;
-            }
-        }
-        columnCount = copyTo;
-        columnMetadata.setPos(columnCount);
-    }
-
     public void open(String tableName, Path path, int pathLen) {
         reset();
         this.tableName = tableName;
@@ -182,7 +154,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         }
 
         loadSequencerMetadata(roMetaMem);
-        structureVersion = roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
+        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
@@ -204,7 +176,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
 
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
@@ -218,7 +190,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         columnNameIndexMap.removeEntry(columnName);
         columnNameIndexMap.put(newNameStr, columnIndex);
 
-        structureVersion++;
+        structureVersion.incrementAndGet();
     }
 
     void syncToMetaFile() {
@@ -226,7 +198,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         // Size of metadata
         metaMem.putInt(0);
         metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion);
+        metaMem.putLong(structureVersion.get());
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
@@ -290,7 +262,18 @@ public class SequencerMetadata extends BaseRecordMetadata implements TableRecord
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        name,
+                        -1L,
+                        columnType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnMetadata.size()
+                )
+        );
         columnCount++;
     }
 

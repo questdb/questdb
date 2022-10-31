@@ -94,11 +94,6 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void copyMetadataTo(@NotNull SequencerMetadata copyTo) {
-        copyTo.copyFrom(metadata);
-    }
-
-    @Override
     public TableMetadataChangeLog getMetadataChangeLogCursor(long structureVersionLo) {
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
@@ -108,18 +103,69 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
-        return tableTransactionLog.getCursor(seqTxn);
-    }
-
-    @Override
     public int getNextWalId() {
         return (int) walIdGenerator.getNextId();
     }
 
     @Override
+    public long getStructureVersion() {
+        return metadata.getStructureVersion();
+    }
+
+    @Override
     public int getTableId() {
         return metadata.getTableId();
+    }
+
+    @Override
+    public void getTableMetadata(@NotNull TableRecordMetadataSink sink, boolean compress) {
+        int columnCount = metadata.getColumnCount();
+        int timestampIndex = metadata.getTimestampIndex();
+        int compressedTimestampIndex = -1;
+        sink.clear();
+
+        int compressedColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType > -1 || !compress) {
+                sink.addColumn(
+                        metadata.getColumnName(i),
+                        columnType,
+                        metadata.getColumnHash(i), metadata.isColumnIndexed(i),
+                        metadata.getIndexValueBlockCapacity(i),
+                        metadata.isSymbolTableStatic(i),
+                        i
+                );
+                if (i == timestampIndex) {
+                    compressedTimestampIndex = compressedColumnCount;
+                }
+                compressedColumnCount++;
+            }
+        }
+
+        sink.of(
+                tableName,
+                metadata.getTableId(),
+                compressedTimestampIndex,
+                metadata.isSuspended(),
+                metadata.getStructureVersion(),
+                compressedColumnCount
+        );
+    }
+
+    @Override
+    public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
+        return tableTransactionLog.getCursor(seqTxn);
+    }
+
+    @Override
+    public boolean isSuspended() {
+        return metadata.isSuspended();
+    }
+
+    @Override
+    public long lastTxn() {
+        return tableTransactionLog.lastTxn();
     }
 
     @Override
@@ -181,18 +227,8 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public long lastTxn() {
-        return tableTransactionLog.lastTxn();
-    }
-
-    @Override
     public void suspendTable() {
         metadata.suspendTable();
-    }
-
-    @Override
-    public boolean isSuspended() {
-        return metadata.isSuspended();
     }
 
     public String getTableName() {

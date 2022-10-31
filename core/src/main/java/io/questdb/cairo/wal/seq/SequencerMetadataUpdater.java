@@ -24,9 +24,9 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 
-public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend {
+public class SequencerMetadataUpdater implements SequencerTableWriterSPI {
     private final SequencerMetadata metadata;
     private final CharSequence tableName;
 
@@ -48,7 +48,7 @@ public class SequencerMetadataUpdater implements SequencerMetadataWriterBackend 
         metadata.addColumn(name, type);
     }
 
-    public RecordMetadata getMetadata() {
+    public TableRecordMetadata getMetadata() {
         return metadata;
     }
 
