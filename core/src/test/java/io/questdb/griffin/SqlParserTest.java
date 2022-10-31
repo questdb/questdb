@@ -6983,7 +6983,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            CharSequence systemTableName = engine.getSystemTableName("tab");
+            String systemTableName = engine.getSystemTableName("tab");
             CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, systemTableName, "testing");
             Assert.assertNull(lockedReason);
             try {

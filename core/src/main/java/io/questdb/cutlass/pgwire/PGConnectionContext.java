@@ -30,7 +30,6 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -1381,7 +1380,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             op.withContext(sqlExecutionContext);
-            pendingWriters.valueAt(index).apply(op);
+            TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+            // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+            tableWriterAPI.commit();
+            tableWriterAPI.apply(op);
         } else {
             if (statementTimeout > 0) {
                 circuitBreaker.setTimeout(statementTimeout);

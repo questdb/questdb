@@ -201,6 +201,11 @@ public class WalWriter implements TableWriterAPI {
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        if (inTransaction()) {
+            throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
+                    .put(tableName).put(']');
+        }
+
         // it is guaranteed that there is no join in UPDATE statement
         // because SqlCompiler rejects the UPDATE if it contains join
         return applyNonStructuralOperation(operation);

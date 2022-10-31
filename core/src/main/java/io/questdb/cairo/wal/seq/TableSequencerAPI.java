@@ -34,7 +34,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -49,19 +48,17 @@ public class TableSequencerAPI implements QuietCloseable {
     private final CairoEngine engine;
     private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
     private final long inactiveTtlUs;
-    private final boolean mangleTableSystemNames;
     private final int recreateDistressedSequencerAttempts;
-    private final TableNameRegistry tableNameRegistry = new TableNameRegistry();
+    private final TableNameRegistry tableNameRegistry;
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
         this.configuration = configuration;
         this.engine = engine;
-        this.mangleTableSystemNames = configuration.mangleTableSystemNames();
         this.createSequencerInstanceLambda = this::createSequencerInstance;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
-        this.tableNameRegistry.reloadTableNameCache(configuration);
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
+        this.tableNameRegistry = new TableNameRegistry(configuration.mangleTableSystemNames());
     }
 
     @Override
@@ -71,7 +68,7 @@ public class TableSequencerAPI implements QuietCloseable {
         Misc.free(tableNameRegistry);
     }
 
-    public void dropTable(String tableName, String systemTableName, boolean failedCreate) {
+    public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
         if (tableNameRegistry.removeName(tableName, systemTableName)) {
             try (TableSequencerImpl seq = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
                 try {
@@ -136,10 +133,7 @@ public class TableSequencerAPI implements QuietCloseable {
 
     @NotNull
     public String getDefaultTableName(CharSequence tableName) {
-        if (!mangleTableSystemNames) {
-            return Chars.toString(tableName);
-        }
-        return tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        return tableNameRegistry.getDefaultSystemTableName(tableName);
     }
 
     public int getNextWalId(final String systemTableName) {
@@ -164,8 +158,8 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public String getSystemTableName(CharSequence tableName) {
-        return tableNameRegistry.getTableSystemName(tableName);
+    public String getWalSystemTableName(CharSequence tableName) {
+        return tableNameRegistry.getWalTableSystemName(tableName);
     }
 
     public String getSystemTableNameOrDefault(final CharSequence tableName) {
@@ -240,15 +234,14 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @Nullable
-    public String registerTableName(String tableName, int tableId) {
-        String str = tableNameRegistry.getSystemName(tableName);
+    public String registerTableName(CharSequence tableName, int tableId) {
+        String str = tableNameRegistry.getWalTableSystemName(tableName);
         if (str != null) {
             return str;
         }
 
-        StringSink sink = Misc.getThreadLocalBuilder();
-        sink.put(tableName).put(TableUtils.SYSTEM_TABLE_NAME_SUFFIX).put(tableId);
-        return tableNameRegistry.registerName(Chars.toString(tableName), sink.toString());
+        String systemTableName = Chars.toString(tableName) + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + tableId;
+        return tableNameRegistry.registerName(Chars.toString(tableName), systemTableName);
     }
 
     public boolean releaseAll() {

@@ -517,7 +517,7 @@ public class WriterPoolTest extends AbstractCairoTest {
         }
 
         assertWithPool(pool -> {
-            CharSequence xTableSystemName = engine.getSystemTableName("x");
+            String xTableSystemName = engine.getSystemTableName("x");
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(xTableSystemName, "testing"));
             pool.unlock(xTableSystemName);
             pool.get(xTableSystemName, "testing").close();

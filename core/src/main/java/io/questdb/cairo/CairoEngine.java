@@ -167,8 +167,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             boolean keepLock
     ) {
         securityContext.checkWritePermission();
-        // Helps to not create objects down the line
-        String tableName = Chars.toString(struct.getTableName());
+        CharSequence tableName = struct.getTableName();
         checkTableName(tableName);
 
         String systemTableName;
@@ -182,6 +181,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             systemTableName = getSystemTableName(tableName);
         }
 
+        String tableNameStr = null;
         try {
             String lockedReason = lock(securityContext, systemTableName, "createTable");
             if (null == lockedReason) {
@@ -191,6 +191,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                         // RESERVE is the same as if exists
                         throw EntryUnavailableException.instance("table exists");
                     }
+                    tableNameStr = Chars.toString(tableName);
                     createTableUnsafe(
                             securityContext,
                             mem,
@@ -202,15 +203,19 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                     newTable = true;
                 } finally {
                     if (!keepLock) {
-                        unlock(securityContext, tableName, null, newTable);
+                        readerPool.unlock(systemTableName);
+                        writerPool.unlock(systemTableName, null, newTable);
+                        compressedMetadataPool.unlock(systemTableName);
+                        uncompressedMetadataPool.unlock(systemTableName);
+                        LOG.info().$("unlocked [systemTableName=`").utf8(systemTableName).$("`]").$();
                     }
                 }
             } else {
                 throw EntryUnavailableException.instance(lockedReason);
             }
         } catch (Throwable th) {
-            if (struct.isWalEnabled()) {
-                tableSequencerAPI.dropTable(tableName, Chars.toString(systemTableName), true);
+            if (struct.isWalEnabled() && tableNameStr != null) {
+                tableSequencerAPI.dropTable(tableNameStr, systemTableName, true);
             }
             throw th;
         }
@@ -364,8 +369,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.entries();
     }
 
-    public boolean isWalTable(final CharSequence tableName) {
-        return tableSequencerAPI.getSystemTableName(tableName) != null;
+    public IDGenerator getTableIdGenerator() {
+        return tableIdGenerator;
     }
 
     public TableReader getReaderWithRepair(CairoSecurityContext securityContext, CharSequence tableName) {
@@ -401,16 +406,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public String getTableNameBySystemName(CharSequence systemTableName) {
-        String tableName = tableSequencerAPI.getTableNameBySystemName(systemTableName);
-        if (tableName != null) {
-            return tableName;
-        }
-
-        return TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
-    }
-
-    public IDGenerator getTableIdGenerator() {
-        return tableIdGenerator;
+        return tableSequencerAPI.getTableNameBySystemName(systemTableName);
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -425,7 +421,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        CharSequence systemTableName = tableSequencerAPI.getSystemTableName(tableName);
+        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
         if (systemTableName != null) {
             return walWriterPool.get(systemTableName);
         }
@@ -442,13 +438,17 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int segmentId,
             long walRowCount
     ) {
-        String systemTableName = tableSequencerAPI.getSystemTableName(tableName);
+        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
         if (systemTableName != null) {
             // This is WAL table because sequencer exists
             return new WalReader(configuration, tableName, systemTableName, walName, segmentId, walRowCount);
         }
 
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
+    }
+
+    public boolean isWalTable(final CharSequence tableName) {
+        return tableSequencerAPI.getWalSystemTableName(tableName) != null;
     }
 
     public Sequence getTelemetryPubSequence() {
@@ -526,7 +526,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public String lock(
             CairoSecurityContext securityContext,
-            CharSequence systemTableName,
+            String systemTableName,
             String lockReason
     ) {
         assert null != lockReason;
@@ -624,7 +624,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        CharSequence systemTableName = getSystemTableName(tableName);
+        String systemTableName = getSystemTableName(tableName);
 
         if (isWalTable(tableName)) {
             tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
@@ -665,7 +665,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         checkTableName(tableName);
         checkTableName(newName);
 
-        CharSequence systemTableName = tableSequencerAPI.getSystemTableName(tableName);
+        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
         if (systemTableName != null) {
             // WAL table
             tableSequencerAPI.rename(tableName, newName, Chars.toString(systemTableName));
@@ -692,7 +692,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             boolean newTable
     ) {
         checkTableName(tableName);
-        CharSequence systemTableName = getSystemTableName(tableName);
+        String systemTableName = getSystemTableName(tableName);
         readerPool.unlock(systemTableName);
         writerPool.unlock(systemTableName, writer, newTable);
         compressedMetadataPool.unlock(systemTableName);

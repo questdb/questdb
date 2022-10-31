@@ -51,7 +51,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
     @Override
     protected MetadataTenant newTenant(String tableName, Entry<MetadataTenant> entry, int index) {
-        String systemTableName = tableSequencerAPI.getSystemTableName(tableName);
+        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
         if (systemTableName != null) {
             return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI, compress);
         }

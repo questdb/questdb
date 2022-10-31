@@ -5452,7 +5452,7 @@ nodejs code:
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            maySkipOnWalRun(); // Alters do not wait for WAL tables
+            skipOnWalRun(); // Alters do not wait for WAL tables
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
@@ -7004,7 +7004,6 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
-        maySkipOnWalRun(); // TODO: handle empty update
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7026,7 +7025,7 @@ create table tab as (
 
                     try (Statement stmt = connection.createStatement()) {
                         stmt.executeUpdate("drop table update_after_drop");
-                        stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts)");
+                        stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
                     }
 
                     mayDrainWalQueue();
@@ -7046,8 +7045,6 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
-        // TODO: handle empty update
-        maySkipOnWalRun();
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7085,8 +7082,6 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
-        // TODO: handle empty update
-        maySkipOnWalRun();
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7217,7 +7212,6 @@ create table tab as (
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
-        maySkipOnWalRun(); // Handle updates which don't change data.
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);
@@ -7270,27 +7264,27 @@ create table tab as (
                         updateB.setInt(2, i + 10);
                         updateB.execute();
                     }
-                    connection.commit();
 
+                    connection.commit();
                     mayDrainWalQueue();
 
                     final String expected = "a[INTEGER],b[INTEGER],ts[TIMESTAMP]\n" +
-                            "10,1000,2022-03-17 00:00:00.0\n" +
-                            "11,1001,2022-03-17 00:00:00.0\n" +
-                            "12,1002,2022-03-17 00:00:00.0\n" +
-                            "13,13,2022-03-17 00:00:00.0\n" +
-                            "14,14,2022-03-17 00:00:00.0\n" +
                             "5,15,2022-03-17 00:00:00.0\n" +
                             "6,16,2022-03-17 00:00:00.0\n" +
                             "7,17,2022-03-17 00:00:00.0\n" +
                             "8,18,2022-03-17 00:00:00.0\n" +
                             "9,19,2022-03-17 00:00:00.0\n" +
+                            "10,1000,2022-03-17 00:00:00.0\n" +
+                            "11,1001,2022-03-17 00:00:00.0\n" +
+                            "12,1002,2022-03-17 00:00:00.0\n" +
+                            "13,13,2022-03-17 00:00:00.0\n" +
+                            "14,14,2022-03-17 00:00:00.0\n" +
                             "20,110,2022-03-17 00:00:00.0\n" +
                             "21,111,2022-03-17 00:00:00.0\n" +
                             "22,112,2022-03-17 00:00:00.0\n" +
                             "23,113,2022-03-17 00:00:00.0\n" +
                             "24,114,2022-03-17 00:00:00.0\n";
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    try (ResultSet resultSet = connection.prepareStatement("x order by a").executeQuery()) {
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
@@ -7563,22 +7557,10 @@ create table tab as (
         });
     }
 
-    private boolean isDisabledForWalRun() {
-        return SKIP_FAILING_WAL_TESTS && walEnabled;
-    }
-
     private void mayDrainWalQueue() {
         if (walEnabled) {
             drainWalQueue();
         }
-    }
-
-    /**
-     * Marker method for tests that don't quite work with the WAL yet.
-     * Disables and skips the test.
-     */
-    private void maySkipOnWalRun() {
-        Assume.assumeTrue("Test disabled during WAL run.", !walEnabled);
     }
 
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {

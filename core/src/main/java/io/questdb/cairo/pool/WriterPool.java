@@ -89,7 +89,7 @@ public class WriterPool extends AbstractPool {
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
-     * @param engine
+     * @param engine  CairoEngine instance
      * @param metrics metrics instance to be used by table writers.
      */
     public WriterPool(@NotNull CairoEngine engine, @NotNull Metrics metrics) {
@@ -225,11 +225,11 @@ public class WriterPool extends AbstractPool {
         return entries.size();
     }
 
-    public void unlock(CharSequence name) {
-        unlock(name, null, false);
+    public void unlock(String systemTableName) {
+        unlock(systemTableName, null, false);
     }
 
-    public void unlock(CharSequence systemTableName, @Nullable TableWriter writer, boolean newTable) {
+    public void unlock(String systemTableName, @Nullable TableWriter writer, boolean newTable) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(systemTableName);
