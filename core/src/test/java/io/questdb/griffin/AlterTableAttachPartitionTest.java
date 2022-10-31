@@ -1109,7 +1109,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         10000,
                         partitionName,
                         2
-                );
+                ); // -> creates partitions 2022-10-17 and 2022-10-18 with 5K rows each
             }
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -1121,7 +1121,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             txn++;
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
-                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n"); // 2022-10-17 is gone
 
             // attach partition via soft link
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
@@ -1164,7 +1164,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             txn++;
             // verify that the link does not exist
             if (Os.type != Os.WINDOWS) {
-                // in windows a the handle is held and cannot be deleted
+                // in windows the handle is held and cannot be deleted
                 Assert.assertFalse(Files.exists(path));
             }
             // verify that a new partition folder has been created in the table data space (hot)
@@ -1241,6 +1241,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+            // verify cold storage folder exists
+            Assert.assertTrue(Files.exists(other));
+            AtomicInteger fileCount = new AtomicInteger();
+            ff.walk(other, (file, type) -> {
+                fileCount.incrementAndGet();
+            });
+            Assert.assertTrue(fileCount.get() > 0);
 
             // insert a row at the end of the partition, the only row, which will create the partition
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
@@ -1376,14 +1383,58 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenDropIt() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+
+            final String tableName = "src51";
+            final String partitionName = "2022-10-17";
+
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        10000,
+                        partitionName,
+                        2
+                );
+            }
+
+            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "IGLU");
+            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+
+            // drop the partition which was attached via soft link
+            compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+            // verify cold storage folder exists
+            Assert.assertTrue(Files.exists(other));
+            AtomicInteger fileCount = new AtomicInteger();
+            ff.walk(other, (file, type) -> {
+                fileCount.incrementAndGet();
+            });
+            Assert.assertTrue(fileCount.get() > 0);
+        });
+    }
+
     private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+
         // copy .detached folder to the different location
         // then remove the original .detached folder
         final CharSequence s3Buckets = temp.newFolder(otherLocation).getAbsolutePath();
         final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
-        copyPartitionAndMetadata(
+        copyPartitionAndMetadata( // this creates s3Buckets
                 configuration.getRoot(),
                 tableName,
                 detachedPartitionName,
