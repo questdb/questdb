@@ -105,8 +105,69 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testWeekOfMonth() throws Exception {
-        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    public void testIsoWeekOfYear() throws Exception {
+        assertThat("ww, YYYY", "2010-02-08T00:00:00.000Z", "06, 2010");
+    }
+
+    @Test
+    public void testParseMicros6Small() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.100000Z", "2022-02-02 02:02:02.1");
+    }
+
+    @Test
+    public void testParseMicros6Mid() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z", "2022-02-02 02:02:02.123");
+    }
+
+    @Test
+    public void testParseMicros6Mid2() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123700Z", "2022-02-02 02:02:02.1237");
+    }
+
+    @Test
+    public void testFormatMicros6Milli() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.123000", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z");
+    }
+
+    @Test
+    public void testFormatMicros6One() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000002", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatMicros6Two() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000012", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000012Z");
+    }
+
+    @Test
+    public void testFormatMicros6Three() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Four() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.004812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.004812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Five() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.074812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.074812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Six() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatMicros3Micros() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000 2", "y-MM-dd HH:mm:ss.SSS U", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatISOWeek() throws NumericException {
+        assertFormat("05", "ww", "2022-01-31T02:02:02.000012Z");
+        assertMicros("yyyy-ww HH:mm:ss.SSS U", "2022-01-31T02:02:02.001002Z", "2022-05 02:02:02.001 002");
     }
 
     @Test
@@ -117,6 +178,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testDayMonthYearNoDelim() throws Exception {
         assertThat("yyyyddMM", "2010-03-10T00:00:00.000Z", "20101003");
+    }
+
+    @Test
+    public void testIsoYear() throws Exception {
+        assertThat("YYYY", "2010-01-01T00:00:00.000Z", "2010");
     }
 
     @Test
@@ -171,10 +237,10 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testFormatWeekOfMonth() throws Exception {
-        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
-        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
-        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
+    public void testFormatIsoWeekOfYear() throws Exception {
+        assertFormat("53", "ww", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "ww", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "ww", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
@@ -425,6 +491,13 @@ public class TimestampFormatCompilerTest {
 
         assertFormat("09, 0007", "dd, yyyy", "0007-04-09T00:00:00.000Z");
         assertFormat("0007", "yyyy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatYearIsoFourDigits() throws Exception {
+        assertFormat("2020", "YYYY", "2021-01-02T00:00:00.000Z");
+
+        assertFormat("1970", "YYYY", "1970-01-01T00:00:00.000Z");
     }
 
     @Test

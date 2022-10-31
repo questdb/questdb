@@ -214,14 +214,14 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testGetWeeks() throws Exception {
+    public void testGetWeeks() {
         Assert.assertEquals(52, Timestamps.getWeeks(2017));
         Assert.assertEquals(52, Timestamps.getWeeks(2021));
         Assert.assertEquals(53, Timestamps.getWeeks(2020));
     }
 
     @Test
-    public void testGetDayOfTheWeekOfEndOfYear() throws Exception {
+    public void testGetDayOfTheWeekOfEndOfYear() {
         Assert.assertEquals(0, Timestamps.getDayOfTheWeekOfEndOfYear(2017));
         Assert.assertEquals(1, Timestamps.getDayOfTheWeekOfEndOfYear(1984));
         Assert.assertEquals(2, Timestamps.getDayOfTheWeekOfEndOfYear(2019));
@@ -229,6 +229,36 @@ public class TimestampsTest {
         Assert.assertEquals(4, Timestamps.getDayOfTheWeekOfEndOfYear(2020));
         Assert.assertEquals(5, Timestamps.getDayOfTheWeekOfEndOfYear(2021));
         Assert.assertEquals(6, Timestamps.getDayOfTheWeekOfEndOfYear(1994));
+    }
+
+    @Test
+    public void testIsoWeekMicrosOffset() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2022-09-26T13:32:12.531Z");
+        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-09-27T13:32:12.531Z");
+        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-09-28T13:32:12.531Z");
+        Assert.assertEquals(4, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-09-29T13:32:12.531Z");
+        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-09-30T13:32:12.531Z");
+        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-10-01T13:32:12.531Z");
+        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+        micros = TimestampFormatUtils.parseTimestamp("2022-10-02T13:32:12.531Z");
+        Assert.assertEquals(-3, Timestamps.getIsoWeekMicrosOffset(micros) / Timestamps.DAY_MICROS);
+    }
+
+    @Test
+    public void testGetIsoYearDayOffset(){
+        Assert.assertEquals(-3, Timestamps.getIsoYearDayOffset(2015));
+        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2016));
+        Assert.assertEquals(1, Timestamps.getIsoYearDayOffset(2017));
+        Assert.assertEquals(0, Timestamps.getIsoYearDayOffset(2018));
+        Assert.assertEquals(-1, Timestamps.getIsoYearDayOffset(2019));
+        Assert.assertEquals(-2, Timestamps.getIsoYearDayOffset(2020));
+        Assert.assertEquals(3, Timestamps.getIsoYearDayOffset(2021));
+        Assert.assertEquals(2, Timestamps.getIsoYearDayOffset(2022));
     }
 
     @Test

@@ -52,8 +52,8 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put(addrLo, addrHi);
     }
 
-    public static SqlException ambiguousColumn(int position) {
-        return position(position).put("Ambiguous column name");
+    public static SqlException ambiguousColumn(int position, CharSequence columnName) {
+        return position(position).put("Ambiguous column [name=").put(columnName).put(']');
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName) {
