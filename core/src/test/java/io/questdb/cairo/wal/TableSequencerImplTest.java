@@ -220,7 +220,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
 
     static void addColumn(TableWriterAPI writer, String columnName) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.addColumnToList(columnName, ColumnType.INT, 0, false, false, 0);
+        addColumnC.ofAddColumn(columnName, 11, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
 }

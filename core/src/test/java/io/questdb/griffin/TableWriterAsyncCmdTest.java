@@ -178,8 +178,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
             try {
                 fut.await();
-            } catch (SqlException exception) {
-                TestUtils.assertContains(exception.getFlyweightMessage(), "Cannot rename");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
             } finally {
                 fut.close();
             }
@@ -194,7 +195,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.contains(name, "2020-01-01")) {
-                        throw CairoException.critical(11);
+                        throw CairoException.critical(11).put("could not remove [path=").put(name).put(']');
                     }
                     return super.rmdir(name);
                 }
@@ -214,7 +215,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 fut.close();
-                TestUtils.assertContains(ex.getFlyweightMessage(), "statement execution failed");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove [path");
             }
         });
     }
@@ -244,9 +245,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     try {
                         fut.await(Timestamps.SECOND_MILLIS);
                         Assert.fail();
-                    } catch (SqlException exception) {
-                        Assert.assertNotNull(exception);
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "Cannot rename");
+                    } catch (SqlException e) {
+                        Assert.assertNotNull(e);
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                     }
                 }
             } // Unblock table
@@ -462,8 +463,8 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     try {
                         fut.await();
                         Assert.fail();
-                    } catch (SqlException exception) {
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "could not remove partition 'default'");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not remove partition");
                     }
                 }
             }
@@ -488,8 +489,8 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     try {
                         fut.await();
                         Assert.fail();
-                    } catch (SqlException exception) {
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "invalid column: timestamp");
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "column 'timestamp' does not exist");
                     }
                 }
             }

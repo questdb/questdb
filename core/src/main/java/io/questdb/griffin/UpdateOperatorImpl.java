@@ -236,7 +236,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             throw e;
         } catch (SqlException e) {
             tableWriter.rollbackUpdate();
-            throw CairoException.nonCritical().put("could not update: ").put(e.getFlyweightMessage());
+            throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
         } catch (Throwable th) {
             LOG.error().$("could not update").$(th).$();
             tableWriter.rollbackUpdate();

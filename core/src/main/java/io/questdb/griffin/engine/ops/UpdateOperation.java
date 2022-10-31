@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
@@ -69,7 +69,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
+    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 

@@ -206,7 +206,7 @@ public class FuzzTransactionGenerator {
                 break;
             }
         }
-        transaction.operationList.add(new FuzzAddColumnOperation(tableMetadata, newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
+        transaction.operationList.add(new FuzzAddColumnOperation(newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
         transaction.structureVersion = metadataVersion;
         transactionList.add(transaction);
 

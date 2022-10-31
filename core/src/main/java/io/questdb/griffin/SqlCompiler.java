@@ -575,7 +575,11 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableRecordMetadata tableMetadata) throws SqlException {
+    private CompiledQuery alterTableAddColumn(
+            int tableNamePosition,
+            String tableName,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
@@ -605,6 +609,7 @@ public class SqlCompiler implements Closeable {
             }
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+            int columnNamePosition = lexer.lastTokenPosition();
 
             if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
@@ -649,8 +654,13 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.isSymbol(type) && tok != null &&
-                    !Chars.equals(tok, ',') && !Chars.equals(tok, ';')) {
+            if (
+                    ColumnType.isSymbol(type)
+                            && tok != null
+                            &&
+                            !Chars.equals(tok, ',')
+                            && !Chars.equals(tok, ';')
+            ) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -729,6 +739,7 @@ public class SqlCompiler implements Closeable {
 
             addColumn.addColumnToList(
                     columnName,
+                    columnNamePosition,
                     type,
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
@@ -807,7 +818,7 @@ public class SqlCompiler implements Closeable {
         }
         return compiledQuery.ofAlter(
                 alterOperationBuilder
-                        .ofDropIndex(tableNamePosition, tableName, metadata.getTableId(), columnName)
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getTableId(), columnName, columnNamePosition)
                         .build()
         );
     }

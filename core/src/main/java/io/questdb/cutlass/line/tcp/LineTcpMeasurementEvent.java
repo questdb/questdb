@@ -41,20 +41,20 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 
 class LineTcpMeasurementEvent implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementEvent.class);
-    private final MicrosecondClock clock;
-    private final LineProtoTimestampAdapter timestampAdapter;
+    private final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
+    private final boolean autoCreateNewColumns;
     private final LineTcpEventBuffer buffer;
+    private final MicrosecondClock clock;
     private final DefaultColumnTypes defaultColumnTypes;
+    private final boolean defaultSymbolCacheFlag;
+    private final int defaultSymbolCapacity;
+    private final int maxColumnNameLength;
     private final boolean stringToCharCastAllowed;
     private final boolean symbolAsFieldSupported;
-    private final int maxColumnNameLength;
-    private final boolean autoCreateNewColumns;
-    private final int defaultSymbolCapacity;
-    private final boolean defaultSymbolCacheFlag;
-    private int writerWorkerId;
-    private TableUpdateDetails tableUpdateDetails;
+    private final LineProtoTimestampAdapter timestampAdapter;
     private boolean commitOnWriterClose;
-    private final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
+    private TableUpdateDetails tableUpdateDetails;
+    private int writerWorkerId;
 
     LineTcpMeasurementEvent(
             long bufLo,
@@ -97,6 +97,37 @@ class LineTcpMeasurementEvent implements Closeable {
 
     public void releaseWriter() {
         tableUpdateDetails.releaseWriter(commitOnWriterClose);
+    }
+
+    private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
+        return CairoException.critical(0)
+                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
+                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
+                .put(", value=").put(entityValue)
+                .put(']');
+    }
+
+    private CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
+        return CairoException.critical(0)
+                .put("cast error for line protocol ").put(ilpType)
+                .put(" [columnWriterIndex=").put(columnWriterIndex)
+                .put(", columnType=").put(ColumnType.nameOf(colType))
+                .put(", name=").put(name)
+                .put(']');
+    }
+
+    private CairoException invalidColNameError(CharSequence colName) {
+        return CairoException.critical(0)
+                .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
+    }
+
+    private CairoException newColumnsNotAllowed(String colName) {
+        return CairoException.critical(0)
+                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
     }
 
     void append() throws CommitFailedException {
@@ -161,7 +192,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             alterOperationBuilder.clear();
                             alterOperationBuilder
                                     .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
-                                    .addColumnToList(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
+                                    .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
@@ -266,23 +297,6 @@ class LineTcpMeasurementEvent implements Closeable {
                 row.cancel();
             }
         }
-    }
-
-    private CairoException boundsError(long entityValue, int columnWriterIndex, int colType) {
-        return CairoException.critical(0)
-                .put("line protocol integer is out of ").put(ColumnType.nameOf(colType))
-                .put(" bounds [columnWriterIndex=").put(columnWriterIndex)
-                .put(", value=").put(entityValue)
-                .put(']');
-    }
-
-    private CairoException castError(String ilpType, int columnWriterIndex, int colType, CharSequence name) {
-        return CairoException.critical(0)
-                .put("cast error for line protocol ").put(ilpType)
-                .put(" [columnWriterIndex=").put(columnWriterIndex)
-                .put(", columnType=").put(ColumnType.nameOf(colType))
-                .put(", name=").put(name)
-                .put(']');
     }
 
     void createMeasurementEvent(
@@ -546,23 +560,9 @@ class LineTcpMeasurementEvent implements Closeable {
         writerWorkerId = tableUpdateDetails.getWriterThreadId();
     }
 
-    private CairoException newColumnsNotAllowed(String colName) {
-        return CairoException.critical(0)
-                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
-    }
-
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_RELEASE_WRITER;
         this.tableUpdateDetails = tableUpdateDetails;
         this.commitOnWriterClose = commitOnWriterClose;
-    }
-
-    private CairoException invalidColNameError(CharSequence colName) {
-        return CairoException.critical(0)
-                .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
-                .put(", columnName=").put(colName)
-                .put(']');
     }
 }

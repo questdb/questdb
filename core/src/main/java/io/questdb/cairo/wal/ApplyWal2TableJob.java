@@ -30,7 +30,6 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -164,16 +163,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
 
                         if (hasNext) {
-                            try {
+//                            try {
+                            // todo: we might need to handle cairo exception here
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
-                            } catch (CairoException e) {
-                                int errno = e.getErrno();
-                                LOG.error().$("could not apply structure change from WAL to table [table=").utf8(writer.getTableName())
-                                        .$("', error=").$(errno).I$();
-                                throw CairoException.critical(errno)
-                                        .put("could not apply structure change from WAL to table");
-                            }
+//                            } catch (SqlException e) {
+//                                throw CairoException.critical(0)
+//                                        .put("cannot apply structure change from WAL to table [error=")
+//                                        .put(e.getFlyweightMessage()).put(']');
+//                            }
                         } else {
                             // Something messed up in sequencer.
                             // There is a transaction in WAL but no structure change record.
@@ -241,18 +239,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
-        } catch (CairoException ex) {
-            if (ex.isWalTolerable()) {
+        } catch (CairoException e) {
+            if (e.isWALTolerable()) {
+                // This is fine, some syntax error, we should block WAL processing if SQL is not valid
                 LOG.error().$("error applying UPDATE SQL to wal table [table=")
-                        .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-                // This is fine, some non-critical or metadata validation error, we should block WAL processing if SQL is not valid.
+                        .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
             } else {
-                throw ex;
+                throw e;
             }
-        } catch (SqlException ex) {
-            LOG.error().$("error applying UPDATE SQL to wal table [table=")
-                    .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            // This is fine, some syntax error, we should block WAL processing if SQL is not valid.
         }
     }
 

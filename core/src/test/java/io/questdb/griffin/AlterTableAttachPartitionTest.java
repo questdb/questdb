@@ -40,7 +40,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.AttachDetachStatus.*;
+import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
@@ -254,8 +254,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[24] table 'dst9' could not be altered: [-1] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -274,8 +274,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] table 'dst10' could not be altered: [-1] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -308,8 +308,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] table 'dst11' could not be altered: [-1] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -921,8 +921,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] table 'dst42' could not be altered: [-1] failed to attach partition '2022-08-09': " + ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });

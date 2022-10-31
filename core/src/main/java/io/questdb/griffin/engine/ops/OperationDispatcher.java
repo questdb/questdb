@@ -36,8 +36,8 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
-    private final CairoEngine engine;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
     private final String lockReason;
 
@@ -88,5 +88,5 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         }
     }
 
-    protected abstract long apply(T operation, TableWriterAPI writerFronted) throws SqlException;
+    protected abstract long apply(T operation, TableWriterAPI writerFronted);
 }

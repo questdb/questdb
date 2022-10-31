@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
@@ -65,7 +65,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         if (counter.decrementAndGet() == 0) {
                             throw new IndexOutOfBoundsException();
                         }
@@ -106,7 +106,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
                         return 0;
                     }
@@ -183,7 +183,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.addColumn("new_column", ColumnType.INT, 0, false, false, 12, true);
                         return 0;
                     }
@@ -250,7 +250,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 // So that it will fail during application to other WAL writers
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         tableWriter.removeColumn("x");
                         return 0;
                     }
@@ -276,7 +276,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     insertWriter.commit();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
+                    TestUtils.assertContains("column 'non_existing_column' does not exists", e.getFlyweightMessage());
                 }
             } finally {
                 Misc.free(alterOperation);
@@ -357,7 +357,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     insertWriter.commit();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename WAL column file");
                 }
 
             } finally {
@@ -393,7 +393,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 AtomicInteger counter = new AtomicInteger(2);
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         if (counter.decrementAndGet() == 0) {
                             return 0;
                         }
@@ -465,7 +465,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try (TableWriterAPI twa = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")) {
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         return 0;
                     }
 
@@ -504,7 +504,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
                 AlterOperation dodgyAlter = new AlterOperation() {
                     @Override
-                    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+                    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
                         return 0;
                     }
 
@@ -939,7 +939,8 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 try {
                     insertMethod.commit();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
+                    // todo: check all assertContains() usages
+                    TestUtils.assertContains(e.getFlyweightMessage(), "failed to copy column file to new segment");
                 }
             }
 

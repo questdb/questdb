@@ -37,7 +37,6 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -69,7 +68,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -579,7 +578,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public long apply(AbstractOperation operation, long seqTxn) throws SqlException {
+    public long apply(AbstractOperation operation, long seqTxn) {
         try {
             setSeqTxn(seqTxn);
             long txnBefore = getTxn();
@@ -590,18 +589,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             }
             return 0;
         } catch (CairoException ex) {
-            if (ex.isWalTolerable()) {
-                // This is non-critical error, we can mark seqTxn as processed
+            // This is non-critical error, we can mark seqTxn as processed
+            if (ex.isWALTolerable()) {
                 try {
                     rollback(); // rollback in case on any dirty state
                     setSeqTxn(seqTxn);
                     txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-                } catch (Throwable th2) {
-                    LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
-                }
-            } else {
-                try {
-                    rollback(); // rollback seqTxn
                 } catch (Throwable th2) {
                     LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
                 }
@@ -5173,13 +5166,13 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    LOG.info().$("cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
 
                 if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
-                    LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
@@ -5188,7 +5181,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
             } while (index < retries);
 
-            throw CairoException.critical(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+            throw CairoException.critical(0).put("could not rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);

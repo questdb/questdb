@@ -65,21 +65,33 @@ public class SqlToOperation implements Closeable {
         return bindVariableService;
     }
 
-    public AlterOperation toAlterOperation(CharSequence alterStatement) throws SqlException {
+    public AlterOperation toAlterOperation(CharSequence alterStatement) {
         try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()) {
             final CompiledQuery compiledQuery = sqlCompiler.instance().compile(alterStatement, sqlExecutionContext);
             final AlterOperation alterOperation = compiledQuery.getAlterOperation();
             alterOperation.withContext(sqlExecutionContext);
             return alterOperation;
+        } catch (SqlException e) {
+            // we could not compile SQL query, but this should not stop us from
+            // processing other operations.
+            throw CairoException.nonCritical()
+                    .put(e.getFlyweightMessage())
+                    .position(e.getPosition());
         }
     }
 
-    public UpdateOperation toUpdateOperation(CharSequence updateStatement) throws SqlException {
+    public UpdateOperation toUpdateOperation(CharSequence updateStatement) {
         try (ClosableInstance<SqlCompiler> sqlCompiler = engine.getAdhocSqlCompiler()) {
             final CompiledQuery compiledQuery = sqlCompiler.instance().compile(updateStatement, sqlExecutionContext);
             final UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
             updateOperation.withContext(sqlExecutionContext);
             return updateOperation;
+        } catch (SqlException e) {
+            // we could not compile SQL query, but this should not stop us from
+            // processing other operations.
+            throw CairoException.nonCritical()
+                    .put(e.getFlyweightMessage())
+                    .position(e.getPosition());
         }
     }
 }

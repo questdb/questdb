@@ -45,7 +45,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
-
     private long structureVersion = -1;
     private boolean suspended;
     private int tableId;

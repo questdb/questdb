@@ -174,8 +174,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             assertFailure(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     null,
-                    12,
-                    "table 'підрахунок' could not be altered: [-100] Column is not indexed [name=колонка]"
+                    36,
+                    "Column is not indexed [name=колонка]"
             );
         });
     }

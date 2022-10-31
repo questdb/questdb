@@ -265,16 +265,8 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void applyToMetadata(TableMetadataChange change) {
-        try {
-            change.apply(sequencerMetadataUpdater, true);
-            metadata.syncToMetaFile();
-        } catch (CairoException e) {
-            int errno = e.getErrno();
-            LOG.error().$("could not apply structure change from WAL to table [table=").utf8(sequencerMetadataUpdater.getTableName())
-                    .$("', error=").$(errno).I$();
-            throw CairoException.critical(errno)
-                    .put("error applying alter command to sequencer metadata");
-        }
+        change.apply(sequencerMetadataUpdater, true);
+        metadata.syncToMetaFile();
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
