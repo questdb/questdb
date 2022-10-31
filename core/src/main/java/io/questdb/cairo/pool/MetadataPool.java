@@ -46,6 +46,11 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_METADATA;
+    }
+
+    @Override
     protected MetadataTenant newTenant(String tableName, Entry<MetadataTenant> entry, int index) {
         if (tableSequencerAPI.hasSequencer(tableName)) {
             return new SequencerMetadataTenant(this, entry, index, tableName, tableSequencerAPI, compress);

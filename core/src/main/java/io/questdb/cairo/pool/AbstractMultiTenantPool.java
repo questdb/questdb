@@ -293,10 +293,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         return e;
     }
 
+    protected abstract byte getListenerSrc();
+
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(PoolListener.SRC_READER, thread, name, event, (short) segment, (short) position);
+            listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
         }
     }
 

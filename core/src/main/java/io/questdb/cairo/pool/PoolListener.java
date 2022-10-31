@@ -28,6 +28,7 @@ package io.questdb.cairo.pool;
 public interface PoolListener {
     byte SRC_WRITER = 1;
     byte SRC_READER = 2;
+    byte SRC_METADATA = 3;
 
     short EV_RETURN = 1;
     short EV_OUT_OF_POOL_CLOSE = 2;

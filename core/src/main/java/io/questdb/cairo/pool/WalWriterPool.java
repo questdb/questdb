@@ -38,6 +38,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     }
 
     @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_WRITER;
+    }
+
+    @Override
     protected WalWriterTenant newTenant(String tableName, Entry<WalWriterTenant> entry, int index) {
         return new WalWriterTenant(this, entry, index, tableName, tableSequencerAPI);
     }

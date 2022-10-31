@@ -38,6 +38,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     }
 
     @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_READER;
+    }
+
+    @Override
     protected R newTenant(String tableName, Entry<R> entry, int index) {
         return new R(this, entry, index, tableName, messageBus);
     }
