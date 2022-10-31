@@ -1097,7 +1097,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             final String tableName = "src48";
             final String partitionName = "2022-10-17";
-            int txn = 0; // keep track of the transaction
+            int txn = 0; // keep track of the transaction number
 
             // create table
             try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
@@ -1163,7 +1163,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
             // verify that the link does not exist
-            Assert.assertFalse(Files.exists(path));
+            if (Os.type != Os.WINDOWS) {
+                // in windows a the handle is held and cannot be deleted
+                Assert.assertFalse(Files.exists(path));
+            }
             // verify that a new partition folder has been created in the table data space (hot)
             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
