@@ -371,7 +371,7 @@ public class LogFactory implements Closeable {
                         }
                     } else {
                         logFactory.configureDefaultWriter();
-                        System.err.println("Log configuration loaded loaded using factory defaults.");
+                        System.err.println("Log configuration loaded using factory defaults.");
                     }
                 }
             } catch (IOException e) {

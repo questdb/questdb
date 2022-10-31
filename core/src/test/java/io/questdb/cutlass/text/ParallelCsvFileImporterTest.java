@@ -2464,7 +2464,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTableFailesOnUniqueColumnNameGeneration() throws Exception {
+    public void testImportFileWithIncompleteHeaderWithForceHeaderIntoNewTableFailsOnUniqueColumnNameGeneration() throws Exception {
         assertColumnNameException("test-header-missing-long.csv", true, "Failed to generate unique name for column [no=22]");
     }
 

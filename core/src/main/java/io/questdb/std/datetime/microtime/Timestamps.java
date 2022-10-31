@@ -929,7 +929,7 @@ final public class Timestamps {
                     RESOLUTION_MICROS
             );
             offset = zoneRules.getOffset(timestampWithTimezone);
-            // getOffst really needs UTC date, not local
+            // getOffset really needs UTC date, not local
             offset = zoneRules.getOffset(timestampWithTimezone - offset);
             return timestampWithTimezone - offset;
 
