@@ -707,10 +707,10 @@ public class ImportIODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
-                    final String requestTemplate = reqeusts[0];
+                    final String requestTemplate = requests[0];
                     final String ddlCols = ddl[0];
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -735,10 +735,10 @@ public class ImportIODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
-                    final String requestTemplate = reqeusts[0];
+                    final String requestTemplate = requests[0];
                     final String ddlCols = ddl[0];
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -1011,14 +1011,14 @@ public class ImportIODispatcherTest {
                 .run((engine) -> {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] response = new String[]{ValidImportResponse1, ValidImportResponse2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
                     for (int i = 0; i < parallelCount; i++) {
                         final int thread = i;
                         final String respTemplate = response[i];
-                        final String requestTemplate = reqeusts[i];
+                        final String requestTemplate = requests[i];
                         final String ddlCols = ddl[i];
                         final String tableName = "trip" + i;
 
