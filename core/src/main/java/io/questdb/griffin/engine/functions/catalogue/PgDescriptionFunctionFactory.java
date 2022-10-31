@@ -30,7 +30,14 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 
 public class PgDescriptionFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private static final RecordMetadata METADATA;
+    private static final RecordMetadata METADATA = GenericRecordMetadata.of(
+        new TableColumnMetadata("objoid", 1, ColumnType.INT),
+        new TableColumnMetadata("classoid", 2, ColumnType.INT),
+        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
+        new TableColumnMetadata("objsubid", 3, ColumnType.SHORT),
+        new TableColumnMetadata("description", 4, ColumnType.STRING)
+    );
+
 
     public PgDescriptionFunctionFactory() {
         super("pg_description()", METADATA);
@@ -39,15 +46,5 @@ public class PgDescriptionFunctionFactory extends AbstractEmptyCatalogueFunction
     @Override
     public boolean isRuntimeConstant() {
         return true;
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
-        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", 3, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("description", 4, ColumnType.STRING));
-        METADATA = metadata;
     }
 }

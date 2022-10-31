@@ -102,6 +102,14 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         throw CairoException.duplicateColumn(meta.getName());
     }
 
+    public static GenericRecordMetadata of(TableColumnMetadata... metadataItems) {
+        GenericRecordMetadata genericRecordMetadata = new GenericRecordMetadata();
+        for (TableColumnMetadata metadata : metadataItems) {
+            genericRecordMetadata.add(metadata);
+        }
+        return genericRecordMetadata;
+    }
+
     public void clear() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
