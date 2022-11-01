@@ -122,10 +122,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 default:
                     LOG.error()
-                            .$("Invalid alter table command [code=").$(command)
+                            .$("invalid alter table command [code=").$(command)
                             .$(" ,table=").$(tableWriter.getTableName())
                             .I$();
-                    throw CairoException.critical(0).put("Invalid alter table command [code=").put(command).put(']');
+                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
             }
         } catch (EntryUnavailableException ex) {
             throw ex;
@@ -294,8 +294,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyAttachPartition(MetadataChangeSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            final long partitionTimestamp = longList.getQuick(i);
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
@@ -303,14 +303,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
                         .put(']')
-                        .position(tableNamePosition);
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
 
     private void applyDetachPartition(MetadataChangeSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            final long partitionTimestamp = longList.getQuick(i);
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            final long partitionTimestamp = longList.getQuick(i * 2);
             AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
             if (AttachDetachStatus.OK != attachDetachStatus) {
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
@@ -318,7 +318,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
                         .put(']')
-                        .position(tableNamePosition);
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
@@ -341,14 +341,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyDropPartition(MetadataChangeSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i);
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i * 2);
             if (!tableWriter.removePartition(partitionTimestamp)) {
                 throw CairoException.nonCritical()
                         .put("could not remove partition [table=").put(tableName)
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
-                        .put(']');
+                        .put(']')
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
@@ -371,10 +373,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
         } catch (CairoException e) {
-            LOG.error().$("could not change max uncommitted rows [table=").$(tableName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
+            e.position(tableNamePosition);
             throw e;
         }
     }

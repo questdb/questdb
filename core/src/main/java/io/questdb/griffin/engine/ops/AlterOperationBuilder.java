@@ -62,8 +62,9 @@ public class AlterOperationBuilder {
         longList.add(columnNamePosition);
     }
 
-    public void addPartitionToList(long timestamp) {
+    public void addPartitionToList(long timestamp, int timestampPosition) {
         longList.add(timestamp);
+        longList.add(timestampPosition);
     }
 
     public AlterOperation build() {
@@ -166,15 +167,6 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        this.command = DROP_INDEX;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
@@ -185,6 +177,11 @@ public class AlterOperationBuilder {
 
     public void ofPartition(long timestamp) {
         longList.add(timestamp);
+    }
+
+    public void ofPartition(long partitionTimestamp, int partitionNamePosition) {
+        longList.add(partitionTimestamp);
+        longList.add(partitionNamePosition);
     }
 
     public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
@@ -210,16 +207,18 @@ public class AlterOperationBuilder {
         objCharList.add(newName);
     }
 
-    public AlterOperationBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
+    public AlterOperationBuilder ofSetParamCommitLag(int tableNamePosition, String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(commitLag);
         this.tableId = tableId;
         return this;
     }
 
-    public AlterOperationBuilder ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
+    public AlterOperationBuilder ofSetParamUncommittedRows(int tableNamePosition, String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(maxUncommittedRows);
         this.tableId = tableId;

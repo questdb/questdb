@@ -149,7 +149,9 @@ public class WalWriter implements TableWriterAPI {
                     operation.apply(metadataValidator, true);
                     if (metadataValidator.structureVersion != metadata.getStructureVersion() + 1) {
                         retry = false;
-                        throw CairoException.nonCritical().put("table structure change did not contain 1 transaction [table=").put(tableName)
+                        throw CairoException.nonCritical()
+                                .put("statements containing multiple transactions, such as 'alter table add column col1, col2'" +
+                                        " are currently not supported for WAL tables [table=").put(tableName)
                                 .put(", oldStructureVersion=").put(metadata.getStructureVersion())
                                 .put(", newStructureVersion=").put(metadataValidator.structureVersion).put(']');
                     }

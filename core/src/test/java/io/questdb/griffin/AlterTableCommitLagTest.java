@@ -222,8 +222,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
+                } catch (CairoException e) {
+                    Assert.assertEquals(12, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {

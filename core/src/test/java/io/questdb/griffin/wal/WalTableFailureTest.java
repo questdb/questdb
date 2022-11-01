@@ -802,7 +802,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             try {
                 compile("alter table " + tableName + " add column jjj int, column2 long");
                 Assert.fail();
-            } catch (SqlException ex) {
+            } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(),
                         "statements containing multiple transactions, such as 'alter table add column col1, col2'" +
                                 " are currently not supported for WAL tables");
