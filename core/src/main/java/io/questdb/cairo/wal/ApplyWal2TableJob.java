@@ -42,7 +42,6 @@ import io.questdb.tasks.WalTxnNotificationTask;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
@@ -276,7 +275,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (CairoException ex) {
-            if (!ex.isCritical() || ex.getErrno() == METADATA_VALIDATION) {
+            if (ex.isWalTolerable()) {
                 LOG.error().$("error applying UPDATE SQL to wal table [table=")
                         .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
                 // This is fine, some non-critical or metadata validation error, we should block WAL processing if SQL is not valid.

@@ -66,7 +66,6 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
-import static io.questdb.cairo.CairoException.METADATA_VALIDATION;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -773,7 +772,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             }
             return 0;
         } catch (CairoException ex) {
-            if (!ex.isCritical() || ex.getErrno() == METADATA_VALIDATION) {
+            if (ex.isWalTolerable()) {
                 // This is non-critical error, we can mark seqTxn as processed
                 try {
                     rollback(); // rollback in case on any dirty state

@@ -140,6 +140,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL;
     }
 
+    public boolean isWalTolerable() {
+        return errno == NON_CRITICAL || errno == METADATA_VALIDATION;
+    }
+
     public boolean isCacheable() {
         return cacheable;
     }
