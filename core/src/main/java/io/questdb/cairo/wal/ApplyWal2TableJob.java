@@ -30,6 +30,8 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -275,6 +277,24 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
+        try {
+            return sqlToOperation.toAlterOperation(sql, tableWriter.getSystemTableName());
+        } catch (SqlException ex) {
+            tableWriter.markSeqTxnCommitted(seqTxn);
+            throw ex;
+        }
+    }
+
+    private static UpdateOperation compileUpdate(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
+        try {
+            return sqlToOperation.toUpdateOperation(sql, tableWriter.getSystemTableName());
+        } catch (SqlException ex) {
+            tableWriter.markSeqTxnCommitted(seqTxn);
+            throw ex;
+        }
+    }
+
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
@@ -282,10 +302,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             switch (cmdType) {
                 case CMD_ALTER_TABLE:
-                    tableWriter.apply(sqlToOperation.toAlterOperation(sql), seqTxn);
+                    AlterOperation alterOperation = compileAlter(tableWriter, sqlToOperation, sql, seqTxn);
+                    tableWriter.apply(alterOperation, seqTxn);
                     break;
                 case CMD_UPDATE_TABLE:
-                    tableWriter.apply(sqlToOperation.toUpdateOperation(sql), seqTxn);
+                    UpdateOperation updateOperation = compileUpdate(tableWriter, sqlToOperation, sql, seqTxn);
+                    tableWriter.apply(updateOperation, seqTxn);
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);

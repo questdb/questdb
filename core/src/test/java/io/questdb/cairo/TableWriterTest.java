@@ -3287,7 +3287,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = newTableReader(configuration, tableName)) {
+        try (TableReader reader = newTableReader(configuration, Chars.toString(tableName))) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }

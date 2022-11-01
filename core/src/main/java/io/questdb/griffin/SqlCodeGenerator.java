@@ -2864,7 +2864,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && twoDeepNested.getWhereClause() == null
         ) {
             CharSequence tableName = tableNameEn.token;
-            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+            try (TableReader reader = executionContext.getReader(tableName)) {
                 CharSequence columnName = model.getBottomUpColumnNames().get(0);
                 TableReaderMetadata readerMetadata = reader.getMetadata();
                 int columnIndex = readerMetadata.getColumnIndex(columnName);
@@ -3471,8 +3471,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
-        try (TableReader reader = engine.getReader(
-                executionContext.getCairoSecurityContext(),
+        try (TableReader reader = executionContext.getReader(
                 tab,
                 model.getTableId(),
                 model.getTableVersion())

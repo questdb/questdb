@@ -55,7 +55,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private AbstractMultiTenantPool<R> pool;
         private Entry<R> entry;
 
-        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, CharSequence name, CharSequence systemName, MessageBus messageBus) {
+        public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, String name, String systemName, MessageBus messageBus) {
             super(pool.getConfiguration(), name, systemName, messageBus);
             this.pool = pool;
             this.entry = entry;

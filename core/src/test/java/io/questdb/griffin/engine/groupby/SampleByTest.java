@@ -557,6 +557,11 @@ public class SampleByTest extends AbstractGriffinTest {
                 public FilesFacade getFilesFacade() {
                     return ff;
                 }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
+                }
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -3838,6 +3843,11 @@ public class SampleByTest extends AbstractGriffinTest {
                 public FilesFacade getFilesFacade() {
                     return ff;
                 }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
+                }
             };
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -3886,6 +3896,11 @@ public class SampleByTest extends AbstractGriffinTest {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
+                }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 

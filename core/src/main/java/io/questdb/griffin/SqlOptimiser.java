@@ -2093,7 +2093,7 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName, lo, hi);
+        int status = executionContext.getStatus(path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             try {
@@ -2110,8 +2110,7 @@ class SqlOptimiser {
         }
 
         try (
-                TableReader r = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
+                TableReader r = executionContext.getReader(
                         tableLookupSequence.of(tableName, lo, hi - lo),
                         TableUtils.ANY_TABLE_ID,
                         TableUtils.ANY_TABLE_VERSION

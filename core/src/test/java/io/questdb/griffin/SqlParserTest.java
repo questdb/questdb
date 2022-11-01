@@ -6939,6 +6939,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             public long getSpinLockTimeout() {
                 return 1000;
             }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
+            }
         };
 
         assertMemoryLeak(() -> {

@@ -852,6 +852,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     ) throws SqlException {
         snapshotMemoryUsage();
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        if (configuration.getWalEnabledDefault()) {
+            drainWalQueue();
+        }
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
             planSink.reset();
@@ -869,6 +872,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
             if (ddl2 != null) {
                 compile(ddl2, sqlExecutionContext);
+                if (configuration.getWalEnabledDefault()) {
+                    drainWalQueue();
+                }
 
                 int count = 3;
                 while (count > 0) {
@@ -904,6 +910,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compile(ddl, sqlExecutionContext);
+                if (configuration.getWalEnabledDefault()) {
+                    drainWalQueue();
+                }
             }
             printSqlResult(
                     expected,

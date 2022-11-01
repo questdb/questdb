@@ -442,9 +442,9 @@ public class SqlCompiler implements Closeable {
 
             String systemTableName = engine.getSystemTableName(tok);
             String tableName = engine.getTableNameBySystemName(systemTableName);
-            try (TableRecordMetadata tableMetadata = engine.getCompressedMetadata(
-                    executionContext.getCairoSecurityContext(),
-                    systemTableName
+            try (TableRecordMetadata tableMetadata = executionContext.getCompressedMetadata(
+                    engine,
+                    tok
             )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -857,7 +857,7 @@ public class SqlCompiler implements Closeable {
         final int pos = lexer.lastTokenPosition();
         TableReader reader = null;
         if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
-            reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName);
+            reader = executionContext.getReader(tableName);
         }
 
         try {
@@ -1125,9 +1125,8 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 try (
-                        TableRecordMetadata metadata = engine.getCompressedMetadata(
-                                executionContext.getCairoSecurityContext(),
-                                engine.getSystemTableName(queryModel.getTableName().token)
+                        TableRecordMetadata metadata = executionContext.getCompressedMetadata(
+                                engine, queryModel.getTableName().token
                         )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
                         optimiser.optimiseUpdate(queryModel, executionContext, metadata);
@@ -1215,9 +1214,9 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 try (
-                        TableRecordMetadata metadata = engine.getUncompressedMetadata(
-                                executionContext.getCairoSecurityContext(),
-                                engine.getSystemTableName(updateQueryModel.getTableName().token)
+                        TableRecordMetadata metadata = executionContext.getUncompressedMetadata(
+                                engine,
+                                updateQueryModel.getTableName().token
                         )
                 ) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
@@ -1462,7 +1461,7 @@ public class SqlCompiler implements Closeable {
         ExpressionNode likeTableName = model.getLikeTableName();
         CharSequence likeTableNameToken = likeTableName.token;
         tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
-        try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), likeTableNameToken)) {
+        try (TableReader rdr = executionContext.getReader(likeTableNameToken)) {
             model.setCommitLag(rdr.getCommitLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
             TableReaderMetadata rdrMetadata = rdr.getMetadata();
@@ -1509,12 +1508,13 @@ public class SqlCompiler implements Closeable {
         final ExpressionNode name = createTableModel.getName();
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        if (createTableModel.isIgnoreIfExists() && engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+        int status = executionContext.getStatus(path, name.token);
+        if (createTableModel.isIgnoreIfExists() && status != TableUtils.TABLE_DOES_NOT_EXIST) {
             return compiledQuery.ofCreateTable();
         }
 
         this.insertCount = -1;
-        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+        if (status != TableUtils.TABLE_DOES_NOT_EXIST) {
             if (createTableModel.isIgnoreIfExists()) {
                 return compiledQuery.ofCreateTable();
             }
@@ -1628,7 +1628,7 @@ public class SqlCompiler implements Closeable {
         if (tok != null && !Chars.equals(tok, ';')) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("]");
         }
-        if (TableUtils.TABLE_DOES_NOT_EXIST == engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName)) {
+        if (TableUtils.TABLE_DOES_NOT_EXIST == executionContext.getStatus(path, tableName)) {
             if (hasIfExists) {
                 return compiledQuery.ofDrop();
             }
@@ -2317,7 +2317,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put("expected a table name");
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-        int status = engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName);
+        int status = executionContext.getStatus(path, tableName);
         if (status != TableUtils.TABLE_EXISTS) {
             throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
         }
@@ -2337,7 +2337,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
-        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+        if (executionContext.getStatus(path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(position, "table does not exist [table=").put(tableName).put(']');
         }
     }
@@ -2456,7 +2456,7 @@ public class SqlCompiler implements Closeable {
             if (eol == null || Chars.equals(eol, ';')) {
                 executionContext.getCairoSecurityContext().checkWritePermission();
                 tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
-                try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
+                try (TableReader rdr = executionContext.getReader(tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         if (!TableUtils.schedulePurgeO3Partitions(messageBus, rdr.getSystemTableName(), partitionBy)) {
@@ -2748,7 +2748,7 @@ public class SqlCompiler implements Closeable {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             try {
                 CairoSecurityContext securityContext = executionContext.getCairoSecurityContext();
-                try (TableReader reader = engine.getReader(securityContext, tableName)) {
+                try (TableReader reader = executionContext.getReader(tableName)) {
                     cloneMetaData(tableName, cachedTmpBackupRoot, configuration.getBackupMkDirMode(), reader);
                     try (TableWriter backupWriter = engine.getBackupWriter(securityContext, tableName, cachedTmpBackupRoot)) {
                         RecordMetadata writerMetadata = backupWriter.getMetadata();
@@ -2919,7 +2919,7 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.position(lexer.getPosition()).put("expected a table name");
                     }
                     final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
-                    int status = engine.getStatus(executionContext.getCairoSecurityContext(), srcPath, tableName);
+                    int status = executionContext.getStatus(path, tableName);
                     if (status != TableUtils.TABLE_EXISTS) {
                         throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tableName).put(']');
                     }

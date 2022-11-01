@@ -349,7 +349,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
                 // Nonstructural change
                 try {
-                    AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableName, 0);
+                    AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableName, 1);
                     dropPartition.ofPartition(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
                     AlterOperation dropAlter = dropPartition.build();
                     dropAlter.withContext(sqlExecutionContext);
@@ -596,6 +596,33 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             assertSql("select name from tables()", "name\n" +
                     newTableName + "\n");
+        });
+    }
+
+    @Test
+    public void testDropPartitionRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = testName.getMethodName() + "_new";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            compile("alter table " + tableName + " drop partition list '2022-02-24'");
+            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            compile("rename table " + tableName + " to " + newTableName);
+
+            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            Assert.assertEquals(table2SystemName, newTableSystemName);
+
+            drainWalQueue();
+
+            assertSql(newTableName, "x\tsym2\tts\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n");
         });
     }
 

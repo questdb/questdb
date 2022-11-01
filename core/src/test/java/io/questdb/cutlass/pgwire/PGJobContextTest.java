@@ -3162,8 +3162,49 @@ nodejs code:
     }
 
     @Test
-    public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "could not open read-write");
+    public void testInsertPreparedRenameInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+                    try (PreparedStatement insert = connection.prepareStatement("INSERT INTO ts VALUES(?, ?)")) {
+                        insert.setInt(1, 0);
+                        insert.setTimestamp(2, new Timestamp(1632761103202L));
+                        insert.execute();
+                        connection.commit();
+
+                        connection.prepareStatement("rename table ts to ts2").execute();
+                        try {
+                            insert.execute();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
+                        }
+                        connection.commit();
+                    }
+
+                    mayDrainWalQueue();
+
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("ts2");
+                            ResultSet rs = ps.executeQuery()
+                    ) {
+                        assertResultSet(
+                                "id[INTEGER],ts[TIMESTAMP]\n" +
+                                        "0,2021-09-27 16:45:03.202\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -6785,6 +6826,60 @@ create table tab as (
     }
 
     @Test
+    public void testInsertTableDoesNotExistPrepared() throws Exception {
+        testInsertTableDoesNotExist(false, "table does not exist [table=x]");
+    }
+
+    @Test
+    public void testUpdatePreparedRenameUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE ts as" +
+                            " (select x, timestamp_sequence('2022-02-24T04', 1000000) ts from long_sequence(2) )" +
+                            " TIMESTAMP(ts) PARTITION BY MONTH").execute();
+
+                    try (PreparedStatement update = connection.prepareStatement("UPDATE ts set x = x + 10 WHERE x = ?")) {
+                        update.setInt(1, 1);
+                        update.execute();
+                        connection.commit();
+
+                        connection.prepareStatement("rename table ts to ts2").execute();
+                        try {
+                            update.execute();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
+                        }
+                        connection.commit();
+                    }
+
+                    mayDrainWalQueue();
+
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("ts2");
+                            ResultSet rs = ps.executeQuery()
+                    ) {
+                        assertResultSet(
+                                "x[BIGINT],ts[TIMESTAMP]\n" +
+                                        "11,2022-02-24 04:00:00.0\n" +
+                                        "2,2022-02-24 04:00:01.0\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTimestampSentEqualsReceived() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -7099,13 +7194,9 @@ create table tab as (
                         statement.executeUpdate();
                     }
 
-                    mayDrainWalQueue();
-
                     try (Statement stmt = connection.createStatement()) {
                         stmt.executeUpdate("alter table update_after_drop drop column id");
                     }
-
-                    mayDrainWalQueue();
 
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);

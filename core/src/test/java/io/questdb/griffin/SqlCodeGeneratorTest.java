@@ -529,6 +529,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 public boolean getDefaultSymbolCacheFlag() {
                     return false;
                 }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
+                }
             };
 
             try (
@@ -7630,7 +7635,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
+                }
+            };
+
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)

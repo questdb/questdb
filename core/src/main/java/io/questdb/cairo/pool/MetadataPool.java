@@ -122,7 +122,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         private AbstractMultiTenantPool<MetadataTenant> pool;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private final boolean compress;
-        String systemTableName;
+        private final String systemTableName;
 
         public SequencerMetadataTenant(
                 AbstractMultiTenantPool<MetadataTenant> pool,

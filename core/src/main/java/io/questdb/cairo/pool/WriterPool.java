@@ -32,6 +32,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -122,6 +123,7 @@ public class WriterPool extends AbstractPool {
      * <li>{@link CairoException}: When table is locked outside of pool, which includes same or different process.
      * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.</li>
      * </ul>
+     *
      * @param tableName  name of the table
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
@@ -441,10 +443,10 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.critical()
-                    .$("could not open [table=`").utf8(systemTableName)
+            LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
+            record.$("could not open [table=`").utf8(systemTableName)
                     .$("`, thread=").$(e.owner)
-                    .$(", ex=").$(ex.getFlyweightMessage())
+                    .$(", ex=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             e.ex = ex;

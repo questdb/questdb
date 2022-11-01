@@ -640,7 +640,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static TableReader newTableReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, tableName, engine.getSystemTableName(tableName));
+        return new TableReader(configuration, Chars.toString(tableName), engine.getSystemTableName(tableName));
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {

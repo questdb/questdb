@@ -61,8 +61,7 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        TableReader reader = executionContext.getCairoEngine()
-                .getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
+        TableReader reader = executionContext.getReader(tableName, tableId, tableVersion);
         cursor.of(reader);
         return cursor;
     }

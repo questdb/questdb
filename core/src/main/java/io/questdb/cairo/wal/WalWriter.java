@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -194,7 +195,7 @@ public class WalWriter implements TableWriterAPI {
             }
             return txn;
         } else {
-            return applyNonStructuralOperation(operation);
+            return applyNonStructuralOperation(operation, false);
         }
     }
 
@@ -208,7 +209,7 @@ public class WalWriter implements TableWriterAPI {
 
         // it is guaranteed that there is no join in UPDATE statement
         // because SqlCompiler rejects the UPDATE if it contains join
-        return applyNonStructuralOperation(operation);
+        return applyNonStructuralOperation(operation, true);
 
         // when join is allowed in UPDATE we have 2 options
         // 1. we could write the updated partitions into WAL.
@@ -573,10 +574,16 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private long applyNonStructuralOperation(AbstractOperation operation) {
+    private long applyNonStructuralOperation(AbstractOperation operation, boolean verifyStructureVersion) {
         if (operation.getSqlExecutionContext() == null) {
             throw CairoException.critical(0).put("failed to commit ALTER SQL to WAL, sql context is empty [table=").put(tableName).put(']');
         }
+        if (
+                (verifyStructureVersion && operation.getTableVersion() != getStructureVersion())
+                        || operation.getTableId() != metadata.getTableId()) {
+            throw ReaderOutOfDateException.of(tableName, metadata.getTableId(), operation.getTableId(), getStructureVersion(), operation.getTableVersion());
+        }
+
         try {
             lastSegmentTxn = events.sql(operation.getCommandType(), operation.getSqlStatement(), operation.getSqlExecutionContext());
             return getSequencerTxn();

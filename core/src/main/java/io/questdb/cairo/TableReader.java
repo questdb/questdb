@@ -82,19 +82,19 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean txnAcquired = false;
     private final MillisecondClock clock;
 
-    public TableReader(CairoConfiguration configuration, CharSequence tableName, CharSequence systemTableName) {
+    public TableReader(CairoConfiguration configuration, String tableName, String systemTableName) {
         this(configuration, tableName, systemTableName, null);
     }
 
     public TableReader(CairoConfiguration configuration,
-                       CharSequence tableName,
-                       CharSequence systemTableNameSequence,
+                       String tableName,
+                       String systemTableName,
                        @Nullable MessageBus messageBus
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
-        this.systemTableName = Chars.toString(systemTableNameSequence);
+        this.systemTableName = Chars.toString(systemTableName);
         this.tableName = Chars.toString(tableName);
         this.messageBus = messageBus;
         this.path = new Path();
@@ -110,8 +110,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
-                    .$(", table=").$(this.tableName)
-                    .$(", systemName=").$(this.systemTableName)
+                    .$(", table=").utf8(this.tableName)
+                    .$(", systemName=").utf8(this.systemTableName)
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
@@ -491,7 +491,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             LOG.error()
                     .$("could not queue purge partition task, queue is full [")
-                    .$("table=").$(this.tableName)
+                    .$("systemTableName=").utf8(this.systemTableName)
                     .$(", txn=").$(txn)
                     .$(']').$();
         }
@@ -512,7 +512,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
         if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+            LOG.debugW().$("close outdated partition files [table=").utf8(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             for (int i = 0; i < this.columnCount; i++) {
                 closePartitionColumnFile(oldBase, i);
@@ -598,7 +598,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnCountShl) {
-        LOG.debug().$("resizing columns file list [table=").$(tableName).I$();
+        LOG.debug().$("resizing columns file list [table=").utf8(tableName).I$();
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryMR> columns = new ObjList<>(capacity + 2);
         final LongList columnTops = new LongList(capacity / 2);
@@ -1207,7 +1207,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
-        LOG.debug().$("reshuffling columns file list [table=").$(tableName).I$();
+        LOG.debug().$("reshuffling columns file list [table=").utf8(tableName).I$();
         final long pIndexBase = pTransitionIndex + 8;
         int iterateCount = Math.max(columnCount, this.columnCount);
 

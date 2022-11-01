@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -95,6 +92,11 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public long getSqlSortLightValuePageSize() {
                 return 1024;
+            }
+
+            @Override
+            public boolean mangleTableSystemNames() {
+                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
 
         };

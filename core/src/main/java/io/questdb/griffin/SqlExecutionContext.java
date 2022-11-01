@@ -25,17 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -43,47 +42,11 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
-    QueryFutureUpdateListener getQueryFutureUpdateListener();
+    void clearAnalyticContext();
 
-    BindVariableService getBindVariableService();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    default @NotNull MessageBus getMessageBus() {
-        return getCairoEngine().getMessageBus();
+    @Override
+    default void close() {
     }
-
-    boolean isTimestampRequired();
-
-    boolean isWalApplication();
-
-    void popTimestampRequiredFlag();
-
-    void pushTimestampRequiredFlag(boolean flag);
-
-    int getWorkerCount();
-
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
-
-    Rnd getRandom();
-
-    default Rnd getAsyncRandom() {
-        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
-    }
-
-    void setRandom(Rnd rnd);
-
-    @NotNull CairoEngine getCairoEngine();
-
-    long getRequestFd();
-
-    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
-
-    void storeTelemetry(short event, short origin);
-
-    AnalyticContext getAnalyticContext();
 
     void configureAnalyticContext(
             @Nullable VirtualRecord partitionByRecord,
@@ -93,21 +56,87 @@ public interface SqlExecutionContext extends Closeable {
             boolean baseSupportsRandomAccess
     );
 
-    void clearAnalyticContext();
+    AnalyticContext getAnalyticContext();
 
-    void initNow();
+    default Rnd getAsyncRandom() {
+        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
+    }
 
-    long getNow();
+    BindVariableService getBindVariableService();
+
+    @NotNull CairoEngine getCairoEngine();
+
+    CairoSecurityContext getCairoSecurityContext();
+
+    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
+
+    boolean getCloneSymbolTables();
+
+    void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    default TableRecordMetadata getCompressedMetadata(CairoEngine engine, CharSequence tableName) {
+        return engine.getCompressedMetadata(
+                getCairoSecurityContext(),
+                engine.getSystemTableName(tableName)
+        );
+    }
 
     int getJitMode();
 
     void setJitMode(int jitMode);
 
-    @Override
-    default void close(){
+    long getNow();
+
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    default @NotNull MessageBus getMessageBus() {
+        return getCairoEngine().getMessageBus();
     }
 
-    void setCloneSymbolTables(boolean cloneSymbolTables);
+    Rnd getRandom();
 
-    boolean getCloneSymbolTables();
+    void setRandom(Rnd rnd);
+
+    default TableReader getReader(CharSequence tableName, int tableId, long version) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), tableName, tableId, version);
+    }
+
+    default TableReader getReader(CharSequence tableName) {
+        return getCairoEngine().getReader(getCairoSecurityContext(), tableName);
+    }
+
+    long getRequestFd();
+
+    default int getSharedWorkerCount() {
+        return getWorkerCount();
+    }
+
+    default int getStatus(Path path, CharSequence tableName, int lo, int hi) {
+        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName, lo, hi);
+    }
+
+    default int getStatus(Path path, CharSequence tableName) {
+        return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
+    }
+
+    default TableRecordMetadata getUncompressedMetadata(CairoEngine engine, CharSequence tableName) {
+        return engine.getUncompressedMetadata(
+                getCairoSecurityContext(),
+                engine.getSystemTableName(tableName)
+        );
+    }
+
+    int getWorkerCount();
+
+    void initNow();
+
+    boolean isTimestampRequired();
+
+    boolean isWalApplication();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
+
+    void storeTelemetry(short event, short origin);
 }

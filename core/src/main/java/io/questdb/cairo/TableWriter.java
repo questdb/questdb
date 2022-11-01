@@ -257,7 +257,17 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             } else {
                 this.lockFd = -1L;
             }
-            long todoCount = openTodoMem();
+            long todoCount;
+            try {
+                // This is first FS call to the table directory.
+                // If table is removed / renamed this should fail with table does not exist.
+                todoCount = openTodoMem();
+            } catch (CairoException ex) {
+                if (ex.errno == 2) {
+                    throw CairoException.nonCritical().put("table does not exist [table=").put(this.tableName).put(']');
+                }
+                throw ex;
+            }
             int todo;
             if (todoCount > 0) {
                 todo = (int) todoMem.getLong(40);
@@ -588,6 +598,11 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     public AttachDetachStatus attachPartition(long timestamp) {
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
+    }
+
+    public void markSeqTxnCommitted(long seqTxn) {
+        setSeqTxn(seqTxn);
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
     public AttachDetachStatus detachPartition(long timestamp) {

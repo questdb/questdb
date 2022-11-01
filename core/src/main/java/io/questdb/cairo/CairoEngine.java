@@ -386,6 +386,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    public TableReader getReaderBySystemName(CairoSecurityContext securityContext, String systemTableName) {
+        return readerPool.get(systemTableName);
+    }
+
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
@@ -505,7 +509,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterBySystemName(
             CairoSecurityContext securityContext,
-            CharSequence systemTableName,
+            String systemTableName,
             String lockReason
     ) {
         securityContext.checkWritePermission();

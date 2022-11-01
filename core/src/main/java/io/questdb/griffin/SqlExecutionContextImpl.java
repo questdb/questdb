@@ -61,7 +61,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long now;
     private int jitMode;
     private boolean cloneSymbolTables = false;
-    private boolean walApplication;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -79,7 +78,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
-        walApplication = false;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -108,7 +106,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public boolean isWalApplication() {
-        return walApplication;
+        return false;
     }
 
     @Override
@@ -216,7 +214,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        walApplication = false;
         return this;
     }
 
@@ -244,12 +241,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        walApplication = false;
-        return this;
-    }
-
-    public SqlExecutionContext withWalApplication() {
-        walApplication = true;
         return this;
     }
 

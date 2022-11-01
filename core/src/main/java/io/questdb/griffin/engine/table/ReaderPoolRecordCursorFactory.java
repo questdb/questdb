@@ -57,7 +57,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
+        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor(cairoEngine);
         readerPoolCursor.of(cairoEngine.getReaderPoolEntries());
         return readerPoolCursor;
     }
@@ -72,6 +72,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     private static class ReaderPoolCursor implements RecordCursor {
+        private final CairoEngine cairoEngine;
         private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
         private int allocationIndex = 0;
@@ -81,6 +82,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private long txn;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
+
+        public ReaderPoolCursor(CairoEngine cairoEngine) {
+            this.cairoEngine = cairoEngine;
+        }
 
         public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
@@ -174,7 +179,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
-                return tableName;
+                return cairoEngine.getTableNameBySystemName(tableName);
             }
 
             @Override

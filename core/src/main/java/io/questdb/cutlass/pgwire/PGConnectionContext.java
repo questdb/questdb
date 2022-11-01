@@ -361,7 +361,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     @Override
     public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason) {
-        final int index = pendingWriters.keyIndex(name);
+        String systemTableName = engine.getSystemTableName(name);
+        final int index = pendingWriters.keyIndex(systemTableName);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
@@ -1014,6 +1015,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         setStrBindVariable(j, lo, valueLen);
                         break;
                 }
+                typesAndUpdateIsCached = true;
+                typesAndSelectIsCached = true;
                 lo += valueLen;
             } else {
                 LOG.error()
@@ -1276,7 +1279,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     try {
                         rowCount = m.execute();
                         writer = m.popWriter();
-                        pendingWriters.put(writer.getTableName(), writer);
+                        pendingWriters.put(writer.getSystemTableName(), writer);
                     } catch (Throwable e) {
                         Misc.free(m);
                         throw e;
@@ -1377,7 +1380,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
-        final int index = pendingWriters.keyIndex(op.getTableName());
+        String tableName = op.getTableName();
+        String systemTableName = engine.getSystemTableName(tableName);
+        final int index = pendingWriters.keyIndex(systemTableName);
         if (index < 0) {
             op.withContext(sqlExecutionContext);
             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
