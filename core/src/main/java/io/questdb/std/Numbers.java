@@ -27,11 +27,7 @@ package io.questdb.std;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -611,6 +607,10 @@ public final class Numbers {
         return 63 - Long.numberOfLeadingZeros(value);
     }
 
+    public static boolean notDigit(char c) {
+        return c < '0' || c > '9';
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
         return FastDoubleParser.parseDouble(sequence, true);
     }
@@ -713,52 +713,6 @@ public final class Numbers {
         }
 
         while (i - p < 3) {
-            val *= 10;
-            i++;
-        }
-
-        return encodeLowHighInts(negative ? val : -val, len);
-    }
-
-    public static long parseInt000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
-
-        if (lim == p) {
-            throw NumericException.INSTANCE;
-        }
-
-        boolean negative = sequence.charAt(p) == '-';
-        int i = p;
-        if (negative) {
-            i++;
-        }
-
-        if (i >= lim || notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
-        }
-
-        int val = 0;
-        for (; i < lim; i++) {
-            char c = sequence.charAt(i);
-
-            if (notDigit(c)) {
-                break;
-            }
-
-            // val * 10 + (c - '0')
-            int r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
-        }
-
-        final int len = i - p;
-
-        if (len > 6 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
-        }
-
-        while (i - p < 6) {
             val *= 10;
             i++;
         }
@@ -890,6 +844,51 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseLong0(sequence, p, lim);
+    }
+
+    public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 6 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 6) {
+            val *= 10;
+            i++;
+        }
+
+        return encodeLowHighInts(negative ? val : -val, len);
     }
 
     @NotNull
@@ -1279,11 +1278,11 @@ public final class Numbers {
         sink.put(hexDigit);
     }
 
+    //////////////////////
+
     private static double roundHalfUp0(double value, int scale) {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
-
-    //////////////////////
 
     private static void appendInt10(CharSink sink, int i) {
         int c;
@@ -1447,10 +1446,6 @@ public final class Numbers {
         sink.put((char) ('0' + i / 100));
         sink.put((char) ('0' + (c = i % 100) / 10));
         sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static boolean notDigit(char c) {
-        return c < '0' || c > '9';
     }
 
     private static double roundHalfUp0PosScale(double value, int scale) {
