@@ -452,12 +452,4 @@ public class TimestampFormatUtils {
 
     public static void init() {
     }
-
-    public static void main(String[] args) throws NumericException {
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        DateFormat fmt = compiler.compile("yyyy-MM-ddTHH:mm:ss.U+");
-        DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
-        System.out.println(fmt.parse("2022-01-07T07:31:08.3264698", defaultLocale));
-
-    }
 }
