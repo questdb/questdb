@@ -31,6 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 
@@ -50,7 +51,7 @@ public class TxReader implements Closeable, Mutable {
     protected int symbolColumnCount;
     protected long truncateVersion;
     protected long dataVersion;
-    protected volatile long structureVersion;
+    protected final AtomicLong structureVersion = new AtomicLong();
     protected long fixedRowCount;
     protected long transientRowCount;
     protected int partitionBy;
@@ -98,7 +99,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
         mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
@@ -232,7 +233,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getStructureVersion() {
-        return structureVersion;
+        return structureVersion.get();
     }
 
     public int getSymbolColumnCount() {
@@ -290,7 +291,7 @@ public class TxReader implements Closeable, Mutable {
             this.minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
             this.maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
             this.dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            this.structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+            this.structureVersion.set(getLong(TX_OFFSET_STRUCT_VERSION_64));
             final long prevPartitionTableVersion = this.partitionTableVersion;
             this.partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
             final long prevColumnVersion = this.columnVersion;
