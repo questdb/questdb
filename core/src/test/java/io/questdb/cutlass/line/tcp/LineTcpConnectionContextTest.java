@@ -1422,10 +1422,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testFailure() throws Exception {
-        final AtomicInteger nCommitedLines = new AtomicInteger(4);
+        final AtomicInteger nCommittedLines = new AtomicInteger(4);
         String table = "failure1";
         Runnable onCommitNewEvent = () -> {
-            if (nCommitedLines.decrementAndGet() <= 0) {
+            if (nCommittedLines.decrementAndGet() <= 0) {
                 throw new RuntimeException("Failed");
             }
         };
@@ -1726,7 +1726,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testNewTableNullType() throws Exception {
         runInContext(() -> {
             recvBuffer =
-                    "vbw water_speed_longitudinal=0.07,water_speed_transveral=,water_speed_status=\"A\",ground_speed_longitudinal=0,ground_speed_transveral=0,ground_speed_status=\"A\",water_speed_stern_transversal=,water_speed_stern_transversal_status=\"V\",ground_speed_stern_transversal=0,ground_speed_stern_transversal_status=\"V\" 1627046637414969856\n";
+                    "vbw water_speed_longitudinal=0.07,water_speed_traversal=,water_speed_status=\"A\",ground_speed_longitudinal=0,ground_speed_traversal=0,ground_speed_status=\"A\",water_speed_stern_traversal=,water_speed_stern_traversal_status=\"V\",ground_speed_stern_traversal=0,ground_speed_stern_traversal_status=\"V\" 1627046637414969856\n";
             do {
                 handleContextIO();
                 Assert.assertFalse(disconnected);
