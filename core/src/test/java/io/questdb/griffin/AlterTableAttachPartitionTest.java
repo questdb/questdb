@@ -1236,7 +1236,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
-            // detach the partition which was attached via soft link
+            // detach the partition which was attached via soft link will result in the link being removed
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -1248,6 +1248,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 fileCount.incrementAndGet();
             });
             Assert.assertTrue(fileCount.get() > 0);
+            // verify the link was removed
+            other.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(configuration.getAttachPartitionSuffix())
+                    .$();
+            Assert.assertFalse(ff.exists(other));
+            // verify no copy was produced to hot space
+            path.of(configuration.getRoot())
+                    .concat(tableName)
+                    .concat(partitionName)
+                    .put(TableUtils.DETACHED_DIR_MARKER)
+                    .$();
+            Assert.assertFalse(ff.exists(path));
 
             // insert a row at the end of the partition, the only row, which will create the partition
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
@@ -1257,31 +1271,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // drop the partition
             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-
-            // rename the currently detached version, to attachable and attach it
-            path.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(TableUtils.DETACHED_DIR_MARKER)
-                    .$();
-            other.of(configuration.getRoot())
-                    .concat(tableName)
-                    .concat(partitionName)
-                    .put(configuration.getAttachPartitionSuffix())
-                    .$();
-            Assert.assertEquals(0, Files.rename(path, other));
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
-                    "l\ti\tts\n" +
-                            "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
-                            "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
-                            "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
-                            "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
-            );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
-                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                            "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
         });
     }
 
