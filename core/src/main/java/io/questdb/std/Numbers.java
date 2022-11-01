@@ -27,7 +27,11 @@ package io.questdb.std;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+//#if jdk.version==8
+//$import sun.misc.FDBigInteger;
+//#else
 import jdk.internal.math.FDBigInteger;
+//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -583,13 +587,6 @@ public final class Numbers {
 
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
-    }
-
-    public static double longToDouble(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
     }
 
     public static float longToFloat(long value) {
