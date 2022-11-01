@@ -1275,8 +1275,6 @@ public final class Numbers {
         sink.put(hexDigit);
     }
 
-    //////////////////////
-
     private static double roundHalfUp0(double value, int scale) {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
