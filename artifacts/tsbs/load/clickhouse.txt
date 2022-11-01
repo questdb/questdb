@@ -14,7 +14,7 @@ rpm -ql clickhouse-server-21.4.3.21-2
 # start clickhouse-server
 sudo systemctl start clickhouse-server
 
-# cli clieny
+# cli client
 clickhouse-client
 
 # data

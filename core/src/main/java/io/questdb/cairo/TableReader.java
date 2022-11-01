@@ -501,10 +501,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase, Path path) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
-        long exisingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
-        if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
+        if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             for (int i = 0; i < this.columnCount; i++) {
@@ -514,7 +514,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             return -1;
         }
         pathGenPartitioned(partitionIndex);
-        TableUtils.txnPartitionConditionally(path, exisingPartitionNameTxn);
+        TableUtils.txnPartitionConditionally(path, existingPartitionNameTxn);
         return newSize;
     }
 

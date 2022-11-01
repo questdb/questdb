@@ -53,7 +53,7 @@ public class DBeaverTest extends AbstractGriffinTest {
                         "    END AS ord\n" +
                         "FROM (\n" +
                         "    -- Arrays have typtype=b - this subquery identifies them by their typreceive and converts their typtype to a\n" +
-                        "    -- We first do this for the type (innerest-most subquery), and then for its element type\n" +
+                        "    -- We first do this for the type (innermost subquery), and then for its element type\n" +
                         "    -- This also returns the array element, range subtype and domain base type as elemtypoid\n" +
                         "    SELECT\n" +
                         "        typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind,\n" +

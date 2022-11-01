@@ -59,10 +59,6 @@ public class LineData {
         add(colName, colValue, false);
     }
 
-    public long getTimestamp() {
-        return timestampNanos;
-    }
-
     public void addTag(CharSequence tagName, CharSequence tagValue) {
         add(tagName, tagValue, true);
     }
@@ -94,14 +90,32 @@ public class LineData {
 
         double value = 5000.0 + rnd.nextInt(1000);
         String valueStr = String.valueOf(value);
-        values.set(fieldIndex, valueStr);
+        if (columnType == ColumnType.STRING) {
+            values.set(fieldIndex, '"' + valueStr + '"');
+        } else {
+            values.set(fieldIndex, valueStr);
+        }
 
-        boolean quote = columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL;
-        if (quote) {
+        if (columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL) {
             return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         } else {
             return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         }
+    }
+
+    public long getTimestamp() {
+        return timestampNanos;
+    }
+
+    public String toLine(final CharSequence tableName) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(tableName);
+        return toString(sb).append("\n").toString();
+    }
+
+    @Override
+    public String toString() {
+        return toString(new StringBuilder()).toString();
     }
 
     private String TimestampsToString(long uSecs) {
@@ -115,39 +129,6 @@ public class LineData {
         values.add(value);
         tagFlags.add(isTag);
         nameToIndex.putIfAbsent(name, names.size() - 1);
-    }
-
-    public String toLine(final CharSequence tableName) {
-        final StringBuilder sb = new StringBuilder();
-        sb.append(tableName);
-        return toString(sb).append("\n").toString();
-    }
-
-    StringBuilder toString(final StringBuilder sb) {
-        for (int i = 0, n = names.size(); i < n; i++) {
-            if (tagFlags.get(i)) {
-                sb.append(",").append(names.get(i)).append("=").append(values.get(i));
-            }
-        }
-
-        boolean firstColumn = true;
-        for (int i = 0, n = names.size(); i < n; i++) {
-            if (!tagFlags.get(i)) {
-                final CharSequence colName = names.get(i);
-                if (colName.equals("timestamp")) {
-                    continue;
-                }
-                if (firstColumn) {
-                    sb.append(" ");
-                    firstColumn = false;
-                }
-                sb.append(colName).append("=").append(values.get(i)).append(",");
-            }
-        }
-        if (!firstColumn) {
-            sb.setLength(sb.length() - 1);
-        }
-        return sb.append(" ").append(timestampNanos);
     }
 
     CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
@@ -176,8 +157,30 @@ public class LineData {
         return true;
     }
 
-    @Override
-    public String toString() {
-        return toString(new StringBuilder()).toString();
+    StringBuilder toString(final StringBuilder sb) {
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (tagFlags.get(i)) {
+                sb.append(",").append(names.get(i)).append("=").append(values.get(i));
+            }
+        }
+
+        boolean firstColumn = true;
+        for (int i = 0, n = names.size(); i < n; i++) {
+            if (!tagFlags.get(i)) {
+                final CharSequence colName = names.get(i);
+                if (colName.equals("timestamp")) {
+                    continue;
+                }
+                if (firstColumn) {
+                    sb.append(" ");
+                    firstColumn = false;
+                }
+                sb.append(colName).append("=").append(values.get(i)).append(",");
+            }
+        }
+        if (!firstColumn) {
+            sb.setLength(sb.length() - 1);
+        }
+        return sb.append(" ").append(timestampNanos);
     }
 }
