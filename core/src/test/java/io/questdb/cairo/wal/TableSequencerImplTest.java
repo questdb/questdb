@@ -171,7 +171,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName) throws SqlException {
+    static void addColumn(TableWriterAPI writer, String columnName) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);

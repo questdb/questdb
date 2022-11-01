@@ -4585,7 +4585,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             errorMsg = "async cmd cannot change table structure while writer is busy";
         } catch (CairoException ex) {
             errorCode = CAIRO_ERROR;
-            errorMsg = "async cmd failed: " + ex.getFlyweightMessage();
+            errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
                     .$(", tableName=").utf8(tableName)

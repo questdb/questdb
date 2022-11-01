@@ -28,9 +28,18 @@ import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
+/**
+ * Copy-on-write (COW) thread-safe int list. Basic semantics are same as in {@link IntList}
+ * with a few simplifications and lack of no entry values ({@link CowIntList#DEFAULT_VALUE}
+ * default value is assumed instead).
+ * <p>
+ * A COW list assumes a single writer that occasionally mutates the list and an arbitrary
+ * number of concurrent readers that perform frequent reads of the list's values.
+ */
 public class CowIntList {
 
-    private static final int DEFAULT_VALUE = -1;
+    public static final int DEFAULT_VALUE = -1;
+
     private volatile int[] data;
 
     public CowIntList() {

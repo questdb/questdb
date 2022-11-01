@@ -159,8 +159,9 @@ class LineTcpMeasurementEvent implements Closeable {
                         writer.commit();
                         try {
                             addColumnBuilder.clear();
-                            addColumnBuilder.ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0);
-                            addColumnBuilder.ofAddColumn(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
+                            addColumnBuilder
+                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
+                                    .ofAddColumn(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(addColumnBuilder.build(), true);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);

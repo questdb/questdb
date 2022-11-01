@@ -681,7 +681,6 @@ public class SqlCompiler implements Closeable {
                     symbolCapacity = configuration.getDefaultSymbolCapacity();
                 }
 
-
                 if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
                     cache = true;
                     tok = SqlUtil.fetchNext(lexer);
