@@ -35,10 +35,26 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
+
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
     protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
+    protected static final int PARTITION_MASK_OFFSET = 4;
+    protected static final int PARTITION_MASK_RO_BIT_OFFSET = 63;
+    // PARTITION_MASK_OFFSET is a 64bit mask with this layout:
+    //
+    // | RO    | Available bits |
+    // +-------+----------------+
+    // | 1 bit |    63 bits     |
+    // +-------+----------------+
+    // when RO bit is set, the partition is read only (cannot UPSERT)
+    //
+    // there are 3 available slots in the partition table for future use:
+    // protected static final int PARTITION_AVAILABLE0_OFFSET = 5;
+    // protected static final int PARTITION_AVAILABLE1_OFFSET = 6;
+    // protected static final int PARTITION_AVAILABLE2_OFFSET = 7;
+
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected final LongList attachedPartitions = new LongList();
     private final IntList symbolCountSnapshot = new IntList();
@@ -69,7 +85,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean attachedPartitionsContains(long ts) {
-        return findAttachedPartitionIndex(ts) > -1;
+        return findAttachedPartitionIndex(ts) > -1L;
     }
 
     @Override
@@ -171,6 +187,11 @@ public class TxReader implements Closeable, Mutable {
             return index / LONGS_PER_TX_ATTACHED_PARTITION;
         }
         return -1;
+    }
+
+    public boolean getPartitionIsRO(int i) {
+        long mask = attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET);
+        return ((mask >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
     }
 
     public long getPartitionNameTxn(int i) {

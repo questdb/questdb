@@ -297,6 +297,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionIsRO(int i, boolean isRO) {
+        int offset = i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET;
+        long mask = attachedPartitions.getQuick(offset);
+        if (isRO) {
+            mask |= 1L << PARTITION_MASK_RO_BIT_OFFSET;
+        } else {
+            mask &= ~(1L << PARTITION_MASK_RO_BIT_OFFSET);
+        }
+        attachedPartitions.setQuick(offset, mask);
+    }
+
     public void switchPartitions(long timestamp) {
         recordStructureVersion++;
         fixedRowCount += transientRowCount;

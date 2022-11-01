@@ -83,10 +83,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path $() {
-        if (1 + (wptr - ptr) >= capacity) {
-            extend((int) (16 + (wptr - ptr)));
+        if (Unsafe.getUnsafe().getByte(wptr) != (byte) 0) { // to avoid overflowing by accidental call lf .$() multiple times
+            if (1 + (wptr - ptr) >= capacity) {
+                extend((int) (16 + (wptr - ptr)));
+            }
+            Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         }
-        Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         return this;
     }
 
