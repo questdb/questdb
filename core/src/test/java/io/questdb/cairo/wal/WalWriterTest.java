@@ -271,7 +271,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Exception expected");
                 } catch(Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[0] could not apply table definition changes to the current transaction. [2] could not open read-write"));
+                    assertTrue(e.getMessage().startsWith("[2] could not apply table definition changes to the current transaction"));
                 }
             }
         });

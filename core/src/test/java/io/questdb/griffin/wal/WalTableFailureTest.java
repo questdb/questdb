@@ -276,7 +276,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     insertWriter.commit();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction. invalid column: non_existing_column");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
                 }
             } finally {
                 Misc.free(alterOperation);
@@ -357,7 +357,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     insertWriter.commit();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction. [2] cannot rename WAL column file");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
                 }
 
             } finally {
@@ -937,7 +937,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 try {
                     insertMethod.commit();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction. [2] failed to copy column file to new segment");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not apply table definition changes to the current transaction");
                 }
             }
 
