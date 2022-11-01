@@ -489,7 +489,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSymbolCountWatermark() throws Exception {
+    public void testSymbolCountNonZeroWatermark() throws Exception {
         String tableName = "tb1";
         FilesFacade ff = new FilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
@@ -561,6 +561,68 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                     rc = cache.keyOf("sym2");
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
                     Assert.assertEquals(1, cache.getCacheValueCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCountZeroWatermark() throws Exception {
+        String tableName = "tb1";
+        FilesFacade ff = new FilesFacadeImpl();
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        MemoryMR txMem = Vm.getMRInstance();
+                        TxReader txReader = new TxReader(ff).ofRO(
+                                path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$(),
+                                PartitionBy.DAY
+                        )
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+                    long transientSymCountOffset = TableUtils.getSymbolWriterTransientIndexOffset(symColIndex);
+
+                    txMem.of(
+                            configuration.getFilesFacade(),
+                            path,
+                            transientSymCountOffset + Integer.BYTES,
+                            transientSymCountOffset + Integer.BYTES,
+                            MemoryTag.MMAP_DEFAULT
+                    );
+
+                    TableWriter.Row r = writer.newRow();
+                    r.putSym(symColIndex, "sym1");
+                    r.append();
+                    writer.commit();
+                    txReader.unsafeLoadAll();
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolCount(0));
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
+
+                    cache.of(
+                            configuration,
+                            new TestTableWriterAPI(0),
+                            symColIndex,
+                            path.of(configuration.getRoot()).concat(tableName),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    int rc = cache.keyOf("sym1");
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    Assert.assertEquals(0, cache.getCacheValueCount());
                 }
             }
         });

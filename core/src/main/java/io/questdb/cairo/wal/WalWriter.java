@@ -868,6 +868,11 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public int getSymbolCountWatermark(int columnIndex) {
+        // It could be the case that ILP I/O thread has newer metadata version than
+        // the writer, so it may be requesting a watermark for a recently added column.
+        if (columnIndex > initialSymbolCounts.size() - 1) {
+            return 0;
+        }
         return initialSymbolCounts.get(columnIndex);
     }
 

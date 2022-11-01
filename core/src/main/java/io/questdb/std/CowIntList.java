@@ -36,6 +36,7 @@ import java.util.Arrays;
  * A COW list assumes a single writer that occasionally mutates the list and an arbitrary
  * number of concurrent readers that perform frequent reads of the list's values.
  */
+// TODO optimize
 public class CowIntList {
 
     public static final int DEFAULT_VALUE = -1;
