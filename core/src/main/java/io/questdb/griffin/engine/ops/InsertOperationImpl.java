@@ -29,17 +29,19 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertOperationImpl implements InsertOperation {
     private final long structureVersion;
     private final String tableName;
+    private final String systemTableName;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final CairoEngine engine;
@@ -48,10 +50,12 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertOperationImpl(
             CairoEngine engine,
             String tableName,
+            String systemTableName,
             long structureVersion
     ) {
         this.engine = engine;
         this.tableName = tableName;
+        this.systemTableName = systemTableName;
         this.structureVersion = structureVersion;
     }
 
@@ -65,18 +69,13 @@ public class InsertOperationImpl implements InsertOperation {
         initContext(executionContext);
         if (insertMethod.writer == null) {
             final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
-            if (writer.getStructureVersion() != structureVersion) {
+            if (writer.getStructureVersion() != structureVersion || !Chars.equals(systemTableName, writer.getSystemTableName())) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
             }
             insertMethod.writer = writer;
         }
         return insertMethod;
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
     }
 
     @Override

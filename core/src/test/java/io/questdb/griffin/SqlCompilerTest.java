@@ -3789,7 +3789,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
             }
         }
     }

@@ -191,6 +191,10 @@ public class TableSequencerAPI implements QuietCloseable {
         return tableNameRegistry.isTableDropped(systemTableName);
     }
 
+    public boolean isWalSystemName(String systemTableName) {
+        return tableNameRegistry.isWalSystemName(systemTableName);
+    }
+
     public long lastTxn(final String tableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             long lastTxn;

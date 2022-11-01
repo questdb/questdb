@@ -36,8 +36,6 @@ public interface InsertOperation extends Closeable {
 
     InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
-    CharSequence getTableName();
-
     void addInsertRow(InsertRowImpl row);
 
     OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException;

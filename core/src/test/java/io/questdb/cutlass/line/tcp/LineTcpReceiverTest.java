@@ -945,7 +945,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
 
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
@@ -968,7 +968,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
 
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,loc=us-midwest temp=85 1465839830102300200\n" +
                     "weather,loc=us-eastcoast temp=89 1465839830102400200\n" +
@@ -990,7 +990,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast,source=sensor2 temp=89 1465839830102400200\n" +

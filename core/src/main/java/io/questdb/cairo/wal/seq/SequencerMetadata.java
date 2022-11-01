@@ -47,7 +47,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private int tableId;
-    private String tableName;
+    private String systemTableName;
     private volatile boolean suspended;
 
     public SequencerMetadata(FilesFacade ff) {
@@ -79,10 +79,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         clear(truncateMode);
     }
 
-    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion, boolean suspended) {
+    public void copyFrom(TableDescriptor model, String systemTableName, int tableId, long structureVersion, boolean suspended) {
         reset();
-        this.tableName = tableName;
-        timestampIndex = model.getTimestampIndex();
+        this.systemTableName = systemTableName;
+        this.timestampIndex = model.getTimestampIndex();
         this.tableId = tableId;
         this.suspended = suspended;
 
@@ -96,8 +96,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    public void create(TableDescriptor model, String tableName, Path path, int pathLen, int tableId) {
-        copyFrom(model, tableName, tableId, 0, false);
+    public void create(TableDescriptor model, String systemTableName, Path path, int pathLen, int tableId) {
+        copyFrom(model, systemTableName, tableId, 0, false);
         switchTo(path, pathLen);
     }
 
@@ -133,8 +133,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     @Override
@@ -151,9 +151,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         return suspended;
     }
 
-    public void open(String tableName, Path path, int pathLen) {
+    public void open(Path path, int pathLen) {
         reset();
-        this.tableName = tableName;
         openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
 
         // get written data size
@@ -300,7 +299,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
-        tableName = null;
+        systemTableName = null;
         tableId = -1;
         suspended = false;
     }

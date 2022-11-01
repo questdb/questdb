@@ -543,7 +543,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void cleanUp() {
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.remove(securityContext, tmpPath, tableName);
+            cairoEngine.drop(securityContext, tmpPath, tableName);
         }
     }
 

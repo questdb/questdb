@@ -30,7 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
-    private final String tableName;
+    private final String systemTableName;
     private int tableId;
     private int metaFileSize;
     private int symbolMapCount;
@@ -40,8 +40,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     private long structureVersion;
     private boolean walEnabled;
 
-    public TableWriterMetadata(String tableName, MemoryMR metaMem) {
-        this.tableName = tableName;
+    public TableWriterMetadata(String systemTableName, MemoryMR metaMem) {
+        this.systemTableName = systemTableName;
         reload(metaMem);
     }
 
@@ -65,8 +65,8 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     @Override

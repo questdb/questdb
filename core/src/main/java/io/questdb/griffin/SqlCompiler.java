@@ -440,10 +440,11 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
-            String tableName = Chars.toString(tok);
+            String systemTableName = engine.getSystemTableName(tok);
+            String tableName = engine.getTableNameBySystemName(systemTableName);
             try (TableRecordMetadata tableMetadata = engine.getCompressedMetadata(
                     executionContext.getCairoSecurityContext(),
-                    tableName
+                    systemTableName
             )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
 
@@ -1126,7 +1127,7 @@ public class SqlCompiler implements Closeable {
                 try (
                         TableRecordMetadata metadata = engine.getCompressedMetadata(
                                 executionContext.getCairoSecurityContext(),
-                                queryModel.getTableName().token
+                                engine.getSystemTableName(queryModel.getTableName().token)
                         )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
                         optimiser.optimiseUpdate(queryModel, executionContext, metadata);
@@ -1216,7 +1217,7 @@ public class SqlCompiler implements Closeable {
                 try (
                         TableRecordMetadata metadata = engine.getUncompressedMetadata(
                                 executionContext.getCairoSecurityContext(),
-                                updateQueryModel.getTableName().token
+                                engine.getSystemTableName(updateQueryModel.getTableName().token)
                         )
                 ) {
                     final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
@@ -1404,7 +1405,7 @@ public class SqlCompiler implements Closeable {
                         configuration.getRoot(),
                         engine.getMetrics());
             } else {
-                writerAPI = engine.getWalWriter(securityContext, tableName);
+                writerAPI = engine.getTableWriterAPI(securityContext, tableName, "create as select");
             }
 
             RecordMetadata writerMetadata = writerAPI.getMetadata();
@@ -1633,7 +1634,7 @@ public class SqlCompiler implements Closeable {
             }
             throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
         }
-        engine.remove(executionContext.getCairoSecurityContext(), path, tableName);
+        engine.drop(executionContext.getCairoSecurityContext(), path, tableName);
         return compiledQuery.ofDrop();
     }
 
@@ -1764,12 +1765,14 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
+        String systemTableName = engine.getSystemTableName(name.token);
         try (TableRecordMetadata metadata = engine.getCompressedMetadata(
                 executionContext.getCairoSecurityContext(),
-                name.token
+                systemTableName
         )) {
             final long structureVersion = metadata.getStructureVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableName(), structureVersion);
+            String tableName = engine.getTableNameBySystemName(systemTableName);
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, tableName, metadata.getSystemTableName(), structureVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = model.getColumnNameList();
             final int columnSetSize = columnNameList.size();

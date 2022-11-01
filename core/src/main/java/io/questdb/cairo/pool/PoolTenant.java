@@ -34,7 +34,7 @@ public interface PoolTenant extends QuietCloseable {
      *
      * @return valid table name.
      */
-    String getTableName();
+    String getSystemTableName();
 
     /**
      * Pool informs the reader that it no longer belongs to the pool. Implementations must assume that

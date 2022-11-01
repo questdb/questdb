@@ -39,7 +39,6 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private int tableId;
     private long tableVersion;
     private long correlationId;
-
     String tableName;
     int tableNamePosition;
     @Nullable CharSequence sqlStatement;

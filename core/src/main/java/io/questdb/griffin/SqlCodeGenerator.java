@@ -3555,7 +3555,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, myMeta);
-            final String tableName = reader.getTableName();
+            final String tableName = engine.getTableNameBySystemName(reader.getSystemTableName());
 
             final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
                     model,

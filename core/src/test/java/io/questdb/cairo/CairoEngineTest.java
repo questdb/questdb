@@ -152,7 +152,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
-                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
 
                 try {
@@ -176,7 +176,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         createX();
 
         try (CairoEngine engine = new CairoEngine(configuration)) {
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
         }
     }
@@ -187,7 +187,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try {
-                    engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                    engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "remove failed");
@@ -205,7 +205,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                        engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -223,7 +223,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                        engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }

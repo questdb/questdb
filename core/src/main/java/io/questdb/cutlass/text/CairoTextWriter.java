@@ -339,7 +339,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
-                    engine.remove(cairoSecurityContext, path, tableName);
+                    engine.drop(cairoSecurityContext, path, tableName);
                     createTable(names, detectedTypes, cairoSecurityContext, path);
                     writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {

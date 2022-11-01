@@ -32,7 +32,7 @@ public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
 
     int getTableId();
 
-    String getTableName();
+    String getSystemTableName();
 
     boolean isWalEnabled();
 

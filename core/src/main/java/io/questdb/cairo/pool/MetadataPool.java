@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DynamicTableReaderMetadata;
 import io.questdb.cairo.GenericTableRecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -50,14 +51,15 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
-    protected MetadataTenant newTenant(String tableName, Entry<MetadataTenant> entry, int index) {
-        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
-        if (systemTableName != null) {
-            return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI, compress);
+    protected MetadataTenant newTenant(String systemTableName, Entry<MetadataTenant> entry, int index) {
+        String tableName = tableSequencerAPI.getTableNameBySystemName(systemTableName);
+        if (tableName != null) {
+            if (tableSequencerAPI.isWalSystemName(systemTableName)) {
+                return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI, compress);
+            }
+            return new TableReaderMetadataTenant(this, entry, index, tableName, systemTableName);
         }
-
-        systemTableName = tableSequencerAPI.getDefaultTableName(tableName);
-        return new TableReaderMetadataTenant(this, entry, index, tableName, systemTableName);
+        throw new CairoException().put("table does not exist [systemTableName=").put(systemTableName).put(']');
     }
 
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {

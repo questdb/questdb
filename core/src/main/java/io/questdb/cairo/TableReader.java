@@ -307,10 +307,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
-    public String getTableName() {
-        return tableName;
-    }
-
     public long getTransientRowCount() {
         return txFile.getTransientRowCount();
     }

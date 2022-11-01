@@ -161,7 +161,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
 
         sink.of(
-                tableName,
+                systemTableName,
                 metadata.getTableId(),
                 compressedTimestampIndex,
                 metadata.isSuspended(),
@@ -258,7 +258,7 @@ public class TableSequencerImpl implements TableSequencer {
     public void open() {
         try {
             walIdGenerator.open(path);
-            metadata.open(systemTableName, path, rootLen);
+            metadata.open(path, rootLen);
             tableTransactionLog.open(path);
         } catch (Throwable th) {
             LOG.critical().$("could not open sequencer [name=").utf8(systemTableName)
@@ -277,7 +277,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw TableDroppedException.instance().put("table is dropped [table=").put(metadata.getTableName()).put(']');
+            throw TableDroppedException.instance().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
         }
     }
 

@@ -45,11 +45,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
-
     private long structureVersion = -1;
     private int tableId;
-    private String tableName;
     private boolean suspended;
+    private String systemTableName;
 
     public WalWriterMetadata(FilesFacade ff) {
         this(ff, false);
@@ -79,12 +78,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.timestampIndex = timestampIndex;
-        this.suspended = suspended;
-        this.structureVersion = structureVersion;
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     public void addColumn(CharSequence columnName, int columnType) {
@@ -112,8 +107,12 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public void of(String systemTableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.systemTableName = systemTableName;
+        this.tableId = tableId;
+        this.timestampIndex = timestampIndex;
+        this.suspended = suspended;
+        this.structureVersion = structureVersion;
     }
 
     @Override
@@ -179,7 +178,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnNameIndexMap.clear();
         columnCount = 0;
         timestampIndex = -1;
-        tableName = null;
+        systemTableName = null;
         tableId = -1;
         suspended = false;
     }

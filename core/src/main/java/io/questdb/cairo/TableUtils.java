@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AnyRecordMetadata;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -524,9 +527,9 @@ public final class TableUtils {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (isMetaFileMissingFileSystemError(ex)) {
             if (millisecondClock.getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
+                LOG.info().$("error reloading metadata [table=").utf8(tableName)
                         .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                        .$(", error=").utf8(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
                 LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();

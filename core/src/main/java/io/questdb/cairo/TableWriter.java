@@ -272,7 +272,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
 
             openMetaFile(ff, path, rootLen, metaMem);
-            this.metadata = new TableWriterMetadata(this.tableName, metaMem);
+            this.metadata = new TableWriterMetadata(this.systemTableName, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -2422,7 +2422,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata = new TableWriterMetadata(tableName, attachMetaMem);
+                attachMetadata = new TableWriterMetadata(systemTableName, attachMetaMem);
             } else {
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
                 attachMetadata.reload(attachMetaMem);

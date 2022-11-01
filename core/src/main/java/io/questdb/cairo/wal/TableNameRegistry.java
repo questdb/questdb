@@ -101,6 +101,14 @@ public class TableNameRegistry implements Closeable {
         return reverseTableNameRegistry.get(systemTableName) == TABLE_DROPPED_MARKER;
     }
 
+    public boolean isWalSystemName(String systemTableName) {
+        String tableName = reverseTableNameRegistry.get(systemTableName);
+        if (tableName == null || tableName == TABLE_DROPPED_MARKER) {
+            return false;
+        }
+        return walSystemTableNameRegistry.get(tableName) != null;
+    }
+
     public String registerName(String tableName, String systemTableName) {
         String str = walSystemTableNameRegistry.putIfAbsent(tableName, systemTableName);
         if (str == null) {

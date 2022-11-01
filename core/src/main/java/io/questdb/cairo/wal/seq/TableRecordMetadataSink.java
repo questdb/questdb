@@ -39,7 +39,7 @@ public interface TableRecordMetadataSink extends Mutable {
     );
 
     void of(
-            String tableName,
+            String systemTableName,
             int tableId,
             int timestampIndex,
             boolean suspended,

@@ -34,6 +34,7 @@ import io.questdb.std.str.Path;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
     private final FilesFacade ff;
+    private final String systemTableName;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private final String tableName;
     private final CairoConfiguration configuration;
@@ -51,6 +52,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     public TableReaderMetadata(CairoConfiguration configuration, String tableName, String systemTableName) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.systemTableName = systemTableName;
         this.path = new Path().of(configuration.getRoot()).concat(systemTableName);
         this.plen = path.length();
         this.tableName = tableName;
@@ -62,6 +64,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = null;
+        this.systemTableName = null;
         this.metaMem = Vm.getMRInstance();
     }
 
@@ -238,8 +241,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
+    public String getSystemTableName() {
+        return systemTableName;
     }
 
     @Override

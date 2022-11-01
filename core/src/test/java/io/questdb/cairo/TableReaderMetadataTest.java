@@ -396,7 +396,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "all");
+            engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "all");
         }
         CairoTestUtils.createAllTable(engine, PartitionBy.DAY);
 

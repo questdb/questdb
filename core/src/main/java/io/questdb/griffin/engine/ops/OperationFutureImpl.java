@@ -154,7 +154,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
 
             try (TableWriter writer = engine.getWriterOrPublishCommand(
                     executionContext.getCairoSecurityContext(),
-                    tableName,
+                    asyncWriterCommand.getTableName(),
                     asyncWriterCommand
             )) {
                 if (writer != null) {

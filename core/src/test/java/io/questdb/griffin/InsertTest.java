@@ -284,7 +284,7 @@ public class InsertTest extends AbstractGriffinTest {
                 method.commit();
             }
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), insertOperation.getTableName())) {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "balances")) {
                 TestUtils.assertReader("cust_id\tccy\tbalance\n" +
                         "1\tGBP\t150.4\n" +
                         "1\tGBP\t56.4\n", reader, sink);
@@ -325,7 +325,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReader(expected, "TS");
         });
     }
 
@@ -432,7 +432,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "timestamp\tfield\tvalue\n" +
                     "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReader(expected, "TS");
         });
     }
 
@@ -489,7 +489,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "cust_id\tccy\tbalance\n" +
                     "1\tUSD\t356.12\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReader(expected, "balances");
         });
     }
 
@@ -599,7 +599,7 @@ public class InsertTest extends AbstractGriffinTest {
             String expected = "id\tsym\n" +
                     "2\tA\n";
 
-            assertReader(expected, insert.getTableName());
+            assertReader(expected, "ww");
         });
     }
 
