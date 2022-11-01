@@ -267,7 +267,11 @@ public class TableSequencerImpl implements TableSequencer {
             change.apply(sequencerMetadataUpdater, true);
             metadata.syncToMetaFile();
         } catch (CairoException e) {
-            throw CairoException.critical(0, e).put("error applying alter command to sequencer metadata [error=").putCauseMessage().put(']');
+            int errno = e.getErrno();
+            LOG.error().$("cannot apply structure change from WAL to table [table=").utf8(sequencerMetadataUpdater.getTableName())
+                    .$("', error=").$(errno).I$();
+            throw CairoException.critical(errno)
+                    .put("error applying alter command to sequencer metadata");
         }
     }
 

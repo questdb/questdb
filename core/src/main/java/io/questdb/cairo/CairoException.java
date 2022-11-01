@@ -42,7 +42,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
     protected int errno;
-    private final StringSink causeMessage = new StringSink();
     private boolean cacheable;
     private boolean interruption; // used when a query times out
 
@@ -81,32 +80,17 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException nonCritical() {
-        return init(NON_CRITICAL, null);
-    }
-
-    public static CairoException nonCritical(CairoException cause) {
-        return init(NON_CRITICAL, cause);
+        return init(NON_CRITICAL);
     }
 
     public static CairoException critical(int errno) {
-        return init(errno, null);
+        return init(errno);
     }
 
-    public static CairoException critical(int errno, CairoException cause) {
-        return init(errno, cause);
-    }
-
-    private static CairoException init(int errno, CairoException cause) {
+    private static CairoException init(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
-        if (cause != null) {
-            ex.causeMessage.clear();
-            if (cause.errno != NON_CRITICAL) {
-                ex.causeMessage.put('[').put(cause.errno).put("] ");
-            }
-            ex.causeMessage.put(cause.message);
-        }
         ex.message.clear();
         ex.errno = errno;
         ex.cacheable = false;
@@ -164,11 +148,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setInterruption(boolean interruption) {
         this.interruption = interruption;
-        return this;
-    }
-
-    public CairoException putCauseMessage() {
-        message.put(causeMessage);
         return this;
     }
 

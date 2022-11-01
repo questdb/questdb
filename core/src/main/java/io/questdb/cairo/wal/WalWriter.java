@@ -544,9 +544,11 @@ public class WalWriter implements TableWriterAPI {
                     tableMetadataChange.apply(walMetadataUpdater, true);
                 } catch (CairoException e) {
                     distressed = true;
-                    throw CairoException.critical(0, e)
-                            .put("could not apply table definition changes to the current transaction. ")
-                            .putCauseMessage();
+                    int errno = e.getErrno();
+                    LOG.error().$("could not apply table definition changes to the current transaction [table=").utf8(tableName)
+                            .$("', error=").$(errno).I$();
+                    throw CairoException.critical(errno)
+                            .put("could not apply table definition changes to the current transaction");
                 }
 
                 if (++metadataVersion != getStructureVersion()) {

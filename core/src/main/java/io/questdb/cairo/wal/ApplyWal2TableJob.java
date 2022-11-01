@@ -172,7 +172,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
-                        throw CairoException.critical(0).put("Unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1).put(" but was ").put(seqTxn);
+                        throw CairoException.critical(0)
+                                .put("unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1)
+                                .put(" but was ").put(seqTxn);
                     }
 
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
@@ -186,7 +188,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         @SuppressWarnings("UnnecessaryLocalVariable") final int newStructureVersion = segmentId;
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
-                                    .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                    .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
                                     .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                     .put(']');
                         }
@@ -203,9 +205,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
                             } catch (CairoException e) {
-                                throw CairoException.critical(0, e)
-                                        .put("cannot apply structure change from WAL to table [error=")
-                                        .putCauseMessage().put(']');
+                                int errno = e.getErrno();
+                                LOG.error().$("cannot apply structure change from WAL to table [table=").utf8(writer.getTableName())
+                                        .$("', error=").$(errno).I$();
+                                throw CairoException.critical(errno)
+                                        .put("cannot apply structure change from WAL to table");
                             }
                         } else {
                             // Something messed up in sequencer.
