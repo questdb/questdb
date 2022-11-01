@@ -1254,15 +1254,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    int tableId = (int) cairoEngine.getTableIdGenerator().getNextId();
                     createTable(
                             ff,
                             configuration.getMkDirMode(),
                             configuration.getRoot(),
                             tableName,
                             targetTableStructure,
-                            (int) cairoEngine.getTableIdGenerator().getNextId(),
+                            tableId,
                             configuration
                     );
+                    if (targetTableStructure.isWalEnabled()) {
+                        cairoEngine.getTableSequencerAPI().registerTable(tableId, targetTableStructure);
+                    }
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
@@ -1581,7 +1585,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         @Override
         public boolean isWalEnabled() {
-            return false;
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         @Override
