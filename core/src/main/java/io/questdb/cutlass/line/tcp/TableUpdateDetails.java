@@ -464,7 +464,7 @@ public class TableUpdateDetails implements Closeable {
                 if (index > -1) {
                     // column has not been sent to the writer by name on this line before
                     // we can try to resolve column index using table reader
-                    colWriterIndex = getColumnWriterIndexFromReader(colNameUtf16);
+                    colWriterIndex = getColumnWriterIndex(colNameUtf16);
                     if (colWriterIndex > -1) {
                         // keys of this map will be checked against DirectByteCharSequence when get() is called
                         // DirectByteCharSequence.equals() compares chars created from each byte, basically it
@@ -492,7 +492,7 @@ public class TableUpdateDetails implements Closeable {
             return colWriterIndex;
         }
 
-        private int getColumnWriterIndexFromReader(CharSequence colNameUtf16) {
+        private int getColumnWriterIndex(CharSequence colNameUtf16) {
             assert latestKnownMetadata != null;
             int colIndex = latestKnownMetadata.getColumnIndexQuiet(colNameUtf16);
             if (colIndex < 0) {
@@ -568,6 +568,8 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
+                // TODO(puzpuzpuz): fix uncompressed for non-WAL tables returned
+                //  by engine.getUncompressedMetadata() and start using it here.
                 latestKnownMetadata = engine.getCompressedMetadata(
                         AllowAllCairoSecurityContext.INSTANCE,
                         tableNameUtf16

@@ -58,7 +58,7 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         if (tableMetadata instanceof ColumnMetadataCollection) {
             for (int i = 0; i < columnCount; i++) {
                 TableColumnMetadata column = ((ColumnMetadataCollection) tableMetadata).getColumnMetadata(i);
-                if (column.getType() >= 0) {
+                if (!column.isDeleted()) {
                     metadata.add(column);
                     if (i == timestampIndex) {
                         metadata.setTimestampIndex(metadata.getColumnCount() - 1);
@@ -126,6 +126,15 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
     public GenericRecordMetadata add(int i, TableColumnMetadata meta) {
         int index = columnNameIndexMap.keyIndex(meta.getName());
         if (index > -1) {
+            columnNameIndexMap.putAt(index, meta.getName(), i);
+            columnMetadata.extendAndSet(i, meta);
+            columnCount++;
+            return this;
+        }
+        // Check if the older column with the same name was deleted.
+        int olderIndex = columnNameIndexMap.valueAt(index);
+        TableColumnMetadata olderMeta = columnMetadata.get(olderIndex);
+        if (olderMeta.isDeleted()) {
             columnNameIndexMap.putAt(index, meta.getName(), i);
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
