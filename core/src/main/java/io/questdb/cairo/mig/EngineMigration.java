@@ -50,7 +50,7 @@ public class EngineMigration {
     public static void migrateEngineTo(CairoEngine engine, int latestVersion, boolean force) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final CairoConfiguration configuration = engine.getConfiguration();
-        int tempMemSize = 8;
+        int tempMemSize = Long.BYTES;
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try (
@@ -68,7 +68,7 @@ public class EngineMigration {
             LOG.debug()
                     .$("open [fd=").$(upgradeFd)
                     .$(", path=").$(path)
-                    .$(']').$();
+                    .I$();
             if (existed) {
                 int currentVersion = TableUtils.readIntOrFail(
                         ff,
@@ -130,8 +130,8 @@ public class EngineMigration {
                 toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
             }
 
-            LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
-            if (ff.copy(src.$(), toTemp.$()) < 0) {
+            LOG.info().$("backing up [file=").$(src).$(", to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp) < 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }
         } finally {
@@ -226,6 +226,6 @@ public class EngineMigration {
         MIGRATIONS.put(424, Mig609::migrate);
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
-        MIGRATIONS.put(427, Mig620::migrate);
+        MIGRATIONS.put(427, Mig655::migrate);
     }
 }

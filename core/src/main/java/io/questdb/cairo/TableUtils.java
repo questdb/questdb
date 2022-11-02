@@ -400,7 +400,7 @@ public final class TableUtils {
 
     public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
-        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
+        txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * Long.BYTES);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
         resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
@@ -460,7 +460,7 @@ public final class TableUtils {
     }
 
     public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
-        return partitionTableOffset + 4 + index * 8L;
+        return partitionTableOffset + Integer.BYTES + index * Long.BYTES;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -468,7 +468,7 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT_32 + 4 + index * 8L;
+        return TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + index * Long.BYTES;
     }
 
     public static long getSymbolWriterTransientIndexOffset(int index) {
@@ -743,7 +743,7 @@ public final class TableUtils {
     public static long openRO(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRO(path);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
@@ -752,7 +752,7 @@ public final class TableUtils {
     public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
         final long fd = ff.openRW(path, opts);
         if (fd > -1) {
-            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
@@ -1223,7 +1223,7 @@ public final class TableUtils {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
-                    .put("could not write 8 bytes [path=").put(path)
+                    .put("could not write 4 bytes [path=").put(path)
                     .put(", fd=").put(fd)
                     .put(", offset=").put(offset)
                     .put(", value=").put(value)

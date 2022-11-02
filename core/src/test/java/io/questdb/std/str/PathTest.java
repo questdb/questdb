@@ -35,6 +35,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class PathTest {
 
@@ -51,6 +52,34 @@ public class PathTest {
     @Test
     public void testConcatWithSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz/").concat("123").$());
+    }
+
+    @Test
+    public void testDollar0() {
+        try(Path path = new Path()) {
+            path.$();
+            System.out.printf("");
+
+        }
+    }
+
+    @Test
+    public void testDollarIdempotent() {
+        final CharSequence tableName = "table_name";
+        final AtomicInteger extendCount = new AtomicInteger();
+        try (Path path = new Path(0){
+            @Override
+            void extend(int len) {
+                super.extend(len);
+                extendCount.incrementAndGet();
+            }
+        }) {
+            path.of(tableName).$();
+            for (int i=0; i < 50_000; i++) {
+                path.$();
+                Assert.assertEquals(1, extendCount.get());
+            }
+        }
     }
 
     @Test
@@ -74,6 +103,23 @@ public class PathTest {
         try (Path p = new Path()) {
             TestUtils.assertEquals("9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
                     p.of(b).concat("xyz").$());
+        }
+    }
+
+    @Test
+    public void testParent() {
+        try (
+                Path path = new Path();
+                Path expected = new Path()
+        ) {
+            Assert.assertEquals("", path.parent().toString());
+            Assert.assertEquals("" + Files.SEPARATOR, path.put(Files.SEPARATOR).parent().toString());
+
+            expected.concat("A").concat("B").concat("C").$();
+            path.of(expected).concat("D").$();
+            Assert.assertEquals(expected.toString(), path.parent().toString());
+            path.of(expected).concat("D").slash$();
+            Assert.assertEquals(expected.toString(), path.parent().toString());
         }
     }
 
@@ -149,22 +195,5 @@ public class PathTest {
         Assert.assertTrue(f.createNewFile());
 
         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
-    }
-
-    @Test
-    public void testParent() {
-        try (
-                Path path = new Path();
-                Path expected = new Path()
-        ) {
-            Assert.assertEquals("", path.parent().toString());
-            Assert.assertEquals("" + Files.SEPARATOR, path.put(Files.SEPARATOR).parent().toString());
-
-            expected.concat("A").concat("B").concat("C").$();
-            path.of(expected).concat("D").$();
-            Assert.assertEquals(expected.toString(), path.parent().toString());
-            path.of(expected).concat("D").slash$();
-            Assert.assertEquals(expected.toString(), path.parent().toString());
-        }
     }
 }

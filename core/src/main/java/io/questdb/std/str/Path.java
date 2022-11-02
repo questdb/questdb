@@ -83,7 +83,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path $() {
-        if (Unsafe.getUnsafe().getByte(wptr) != (byte) 0) { // to avoid overflowing by accidental call lf .$() multiple times
+        if (wptr == ptr || Unsafe.getUnsafe().getByte(wptr - 1) != (byte) 0) {
             if (1 + (wptr - ptr) >= capacity) {
                 extend((int) (16 + (wptr - ptr)));
             }
@@ -116,7 +116,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
      * @return instance of this
      */
     public Path chop$() {
-        trimTo(this.length());
+        trimTo(length());
         return this;
     }
 
@@ -368,11 +368,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (missingTrailingSeparator()) {
             Unsafe.getUnsafe().putByte(wptr, (byte) Files.SEPARATOR);
             wptr++;
-            this.len++;
+            len++;
         }
     }
 
-    private void extend(int len) {
+    void extend(int len) {
         long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1, MemoryTag.NATIVE_PATH);
         long d = wptr - ptr;
         this.ptr = p;

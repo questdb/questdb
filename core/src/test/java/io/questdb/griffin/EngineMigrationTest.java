@@ -47,7 +47,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipException;
 import java.util.zip.ZipInputStream;
 
 public class EngineMigrationTest extends AbstractGriffinTest {
@@ -122,8 +121,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test426() throws IOException, SqlException {
-        // the command to produce 'data_426.zip' from within a dbRoot
-        // that has created the tables at version 426: zip -r ../data_426.zip *
         doMigration("/migration/data_426.zip", true, true, true, true);
     }
 
@@ -1273,8 +1270,8 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
         assertData(withO3, withColTops, withColTopO3);
-//        appendData(withColTopO3);
-//        assertAppendedData(withColTopO3);
+        appendData(withColTopO3);
+        assertAppendedData(withColTopO3);
     }
 
     private void generateMigrationTables() throws SqlException, NumericException {
