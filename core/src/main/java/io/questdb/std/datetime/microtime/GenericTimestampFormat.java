@@ -76,6 +76,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
                     if (micros0 == -1) {
                         micros0 = Timestamps.getMicrosOfSecond(micros);
                     }
@@ -437,7 +438,13 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     break;
 
                 case TimestampFormatCompiler.OP_MICROS_GREEDY6:
-                    l = Numbers.parseInt000000Greedy(in, pos, hi);
+                    l = Numbers.parseLong000000Greedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                    l = Timestamps.parseNanosAsMicrosGreedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;

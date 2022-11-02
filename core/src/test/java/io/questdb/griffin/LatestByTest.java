@@ -383,6 +383,45 @@ public class LatestByTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testLatestWithJoinNonIndexed() throws Exception {
+        testLatestByWithJoin(false);
+    }
+
+    @Test
+    public void testLatestWithJoinIndexed() throws Exception {
+        testLatestByWithJoin(true);
+    }
+
+    private void testLatestByWithJoin(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table r (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
+            compiler.compile("create table t (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
+
+            String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
+                    " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
+                    "select r.symbol, r.v subscribers, t.v followers\n" +
+                    "from r\n" +
+                    "join t on symbol";
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "symbol\tsubscribers\tfollowers\n" +
+                                "xyz\t1\t42\n",
+                        factory,
+                        false,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
     private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
         StringSink sink = new StringSink();
         try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
