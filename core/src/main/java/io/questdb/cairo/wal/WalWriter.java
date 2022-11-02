@@ -62,7 +62,7 @@ public class WalWriter implements TableWriterAPI {
     private static final long COLUMN_DELETED_NULL_FLAG = Long.MAX_VALUE;
     private final ObjList<MemoryMA> columns;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final CowIntList initialSymbolCounts;
+    private final AtomicIntList initialSymbolCounts;
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final MillisecondClock millisecondClock;
     private final Path path;
@@ -125,7 +125,7 @@ public class WalWriter implements TableWriterAPI {
             columnCount = metadata.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
             nullSetters = new ObjList<>(columnCount);
-            initialSymbolCounts = new CowIntList(columnCount);
+            initialSymbolCounts = new AtomicIntList(columnCount);
 
             events = new WalWriterEvents(ff);
             events.of(symbolMaps, initialSymbolCounts);

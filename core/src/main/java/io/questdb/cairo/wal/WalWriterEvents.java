@@ -45,7 +45,7 @@ class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final StringSink sink = new StringSink();
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
-    private CowIntList initialSymbolCounts;
+    private AtomicIntList initialSymbolCounts;
     private long txn = 0;
     private long startOffset = 0;
 
@@ -53,7 +53,7 @@ class WalWriterEvents implements Closeable {
         this.ff = ff;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, CowIntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
     }

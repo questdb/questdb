@@ -29,69 +29,82 @@ import io.questdb.std.str.CharSink;
 import java.util.Arrays;
 
 /**
- * Copy-on-write (COW) thread-safe int list. Basic semantics are same as in {@link IntList}
- * with a few simplifications and lack of no entry values ({@link CowIntList#DEFAULT_VALUE}
- * default value is assumed instead).
- * <p>
- * A COW list assumes a single writer that occasionally mutates the list and an arbitrary
- * number of concurrent readers that perform frequent reads of the list's values.
+ * Thread-safe grow-only integer list. Assumes multiple reader threads
+ * and a single writer thread.
  */
-// TODO optimize
-public class CowIntList {
+public class AtomicIntList {
 
-    public static final int DEFAULT_VALUE = -1;
+    private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final int NO_ENTRY_VALUE = -1;
 
     private volatile int[] data;
+    private volatile int pos;
 
-    public CowIntList() {
-        this(0);
+    public AtomicIntList() {
+        this(DEFAULT_ARRAY_SIZE);
     }
 
-    public CowIntList(int size) {
-        int[] data = new int[size];
-        Arrays.fill(data, 0, data.length, DEFAULT_VALUE);
+    public AtomicIntList(int capacity) {
+        int[] data = new int[capacity];
+        Arrays.fill(data, 0, data.length, NO_ENTRY_VALUE);
         this.data = data;
     }
 
     public void add(int value) {
         int[] data = this.data;
-        int[] dataCopy = new int[data.length + 1];
-        System.arraycopy(data, 0, dataCopy, 0, data.length);
-        dataCopy[data.length] = value;
-        this.data = dataCopy;
-    }
-
-    public void extendAndSet(int index, int value) {
-        int[] data = this.data;
-        int[] dataCopy;
-        if (index >= data.length) {
-            dataCopy = new int[index + 1];
+        int pos = this.pos;
+        if (pos >= data.length) {
+            int[] dataCopy = new int[2 * data.length];
             System.arraycopy(data, 0, dataCopy, 0, data.length);
-            Arrays.fill(dataCopy, data.length, dataCopy.length, DEFAULT_VALUE);
+            dataCopy[pos] = value;
+            this.data = dataCopy;
         } else {
-            dataCopy = new int[data.length];
-            System.arraycopy(data, 0, dataCopy, 0, data.length);
+            Unsafe.arrayPutOrdered(data, pos, value);
         }
-        dataCopy[index] = value;
-        this.data = dataCopy;
-    }
-
-    public int get(int index) {
-        int[] data = this.data;
-        assert index < data.length;
-        return data[index];
+        this.pos = pos + 1;
     }
 
     public void set(int index, int value) {
         int[] data = this.data;
-        assert index < data.length;
-        data[index] = value;
-        int[] dataCopy = new int[data.length];
-        System.arraycopy(data, 0, dataCopy, 0, data.length);
-        this.data = dataCopy;
+        int pos = this.pos;
+        if (index < pos) {
+            Unsafe.arrayPutOrdered(data, index, value);
+            return;
+        }
+        throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    public void extendAndSet(int index, int value) {
+        int[] data = this.data;
+        int pos = this.pos;
+        if (index >= data.length) {
+            int[] dataCopy = new int[2 * (index + 1)];
+            System.arraycopy(data, 0, dataCopy, 0, data.length);
+            Arrays.fill(dataCopy, data.length, dataCopy.length, NO_ENTRY_VALUE);
+            dataCopy[index] = value;
+            this.data = dataCopy;
+        } else {
+            Unsafe.arrayPutOrdered(data, index, value);
+        }
+        if (pos <= index) {
+            this.pos = index + 1;
+        }
+    }
+
+    public int get(int index) {
+        int[] data = this.data;
+        int pos = this.pos;
+        if (index >= pos) {
+            throw new IndexOutOfBoundsException(index);
+        }
+        return Unsafe.arrayGetVolatile(data, index);
     }
 
     public int size() {
+        return this.pos;
+    }
+
+    public int capacity() {
         int[] data = this.data;
         return data.length;
     }
@@ -101,8 +114,9 @@ public class CowIntList {
         CharSink b = Misc.getThreadLocalBuilder();
 
         int[] data = this.data;
+        int pos = this.pos;
         b.put('[');
-        for (int i = 0; i < data.length; i++) {
+        for (int i = 0; i < pos; i++) {
             if (i > 0) {
                 b.put(',');
             }
