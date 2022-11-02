@@ -130,7 +130,7 @@ public class TableSequencerImpl implements TableSequencer {
                 sink.addColumn(
                         metadata.getColumnName(i),
                         columnType,
-                        metadata.getColumnHash(i), metadata.isColumnIndexed(i),
+                        metadata.isColumnIndexed(i),
                         metadata.getIndexValueBlockCapacity(i),
                         metadata.isSymbolTableStatic(i),
                         i

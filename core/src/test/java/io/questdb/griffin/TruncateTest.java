@@ -112,7 +112,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                     ") timestamp (k) partition by day"
                     );
 
-                    compile("alter table testTruncateWithColumnTop add column colum_with_top int");
+                    compile("alter table testTruncateWithColumnTop add column column_with_top int");
 
                     compile(
                             "insert into testTruncateWithColumnTop " +
@@ -120,7 +120,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                     " cast(x as int) i," +
                                     " rnd_symbol('msft','ibm', 'googl') sym," +
                                     " timestamp_sequence('1970-01-01T12', 10000) k," +
-                                    " x as colum_with_top " +
+                                    " x as column_with_top " +
                                     " from long_sequence(1000)"
                     );
 
@@ -141,11 +141,11 @@ public class TruncateTest extends AbstractGriffinTest {
                                     " cast(x as int) i," +
                                     " rnd_symbol('msft','ibm', 'googl') sym," +
                                     " timestamp_sequence('1970-01-01T12', 10000) k, " +
-                                    " x as colum_with_top " +
+                                    " x as column_with_top " +
                                     " from long_sequence(1000)"
                     );
 
-                    assertSql("select colum_with_top from testTruncateWithColumnTop limit -2", "colum_with_top\n" +
+                    assertSql("select column_with_top from testTruncateWithColumnTop limit -2", "column_with_top\n" +
                             "999\n" +
                             "1000\n");
                 }

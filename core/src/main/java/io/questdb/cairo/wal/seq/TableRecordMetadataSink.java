@@ -31,7 +31,6 @@ public interface TableRecordMetadataSink extends Mutable {
     void addColumn(
             String columnName,
             int columnType,
-            long columnHash,
             boolean columnIndexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,

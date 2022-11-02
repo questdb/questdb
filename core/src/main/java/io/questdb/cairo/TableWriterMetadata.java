@@ -129,7 +129,6 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
             columnMetadata.add(
                     new TableColumnMetadata(
                             nameStr,
-                            TableUtils.getColumnHash(metaMem, i),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
@@ -151,13 +150,12 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         version = ColumnType.VERSION;
     }
 
-    void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
                 new TableColumnMetadata(
                         str,
-                        hash,
                         type,
                         indexFlag,
                         indexValueBlockCapacity,

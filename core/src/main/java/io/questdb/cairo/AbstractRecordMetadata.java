@@ -43,7 +43,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
         }
         return new TableColumnMetadata(
                 metadata.getColumnName(columnIndex),
-                metadata.getColumnHash(columnIndex),
                 metadata.getColumnType(columnIndex),
                 metadata.isColumnIndexed(columnIndex),
                 metadata.getIndexValueBlockCapacity(columnIndex),
@@ -69,11 +68,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
             return columnNameIndexMap.valueAt(index);
         }
         return -1;
-    }
-
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return getColumnMetadata(columnIndex).getHash();
     }
 
     @Override

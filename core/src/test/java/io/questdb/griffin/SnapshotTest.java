@@ -148,7 +148,6 @@ public class SnapshotTest extends AbstractGriffinTest {
                                 TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
                                 Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
                                 Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
-                                Assert.assertEquals(columnMetadata0.getHash(), columnMetadata1.getHash());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
                                 Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());

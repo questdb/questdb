@@ -52,7 +52,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     public void add(
             CharSequence tableAlias,
             CharSequence columnName,
-            long columnHash,
             int columnType,
             boolean indexFlag,
             int indexValueBlockCapacity,
@@ -65,7 +64,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         if (dot == -1) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
-                    columnHash,
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
@@ -75,7 +73,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         } else {
             cm = new TableColumnMetadata(
                     Chars.toString(columnName),
-                    columnHash,
                     columnType,
                     indexFlag,
                     indexValueBlockCapacity,
@@ -94,7 +91,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         if (dot == -1) {
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
-                    m.getHash(),
                     m.getType(),
                     m.isIndexed(),
                     m.getIndexValueBlockCapacity(),
@@ -124,7 +120,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
                 add(
                         alias,
                         fromMetadata.getColumnName(i),
-                        fromMetadata.getColumnHash(i),
                         fromMetadata.getColumnType(i),
                         fromMetadata.isColumnIndexed(i),
                         fromMetadata.getIndexValueBlockCapacity(i),

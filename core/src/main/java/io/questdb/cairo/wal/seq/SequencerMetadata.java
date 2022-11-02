@@ -239,9 +239,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
                 } else {
-                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                    columnMetadata.add(new TableColumnMetadata(name, type));
                 }
             }
 
@@ -267,7 +267,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnMetadata.add(
                 new TableColumnMetadata(
                         name,
-                        -1L,
                         columnType,
                         false,
                         0,

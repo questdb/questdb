@@ -64,10 +64,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", 1, ColumnType.STRING))
-                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", 1, ColumnType.LONG))
-                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", 1, ColumnType.TIMESTAMP))
-                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", 1, ColumnType.LONG));
+        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", ColumnType.STRING))
+                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", ColumnType.LONG))
+                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP))
+                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", ColumnType.LONG));
         METADATA = metadata;
     }
 

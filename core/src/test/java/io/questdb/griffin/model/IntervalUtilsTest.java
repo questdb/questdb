@@ -221,18 +221,18 @@ public class IntervalUtilsTest {
         }
 
         // B
-        LongList bItervals = new LongList();
+        LongList bIntervals = new LongList();
         for (int i = 0; i < bSize; i++) {
-            add(bItervals, bPos, bPos += r.nextInt(100));
+            add(bIntervals, bPos, bPos += r.nextInt(100));
             bPos += r.nextInt(100);
         }
 
         LongList expected = new LongList();
         // non-in place algo, supposed to be correct
-        intersect(intervals, bItervals, expected);
+        intersect(intervals, bIntervals, expected);
         String expectedStr = toIntervalString(expected, 0);
 
-        intervals.add(bItervals);
+        intervals.add(bIntervals);
         runTestIntersectInplace(intervals, aSize * 2, expectedStr);
     }
 

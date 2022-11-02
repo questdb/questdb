@@ -40,7 +40,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             for (int i = 0, n = from.getColumnCount(); i < n; i++) {
                 to.add(new TableColumnMetadata(
                         from.getColumnName(i),
-                        from.getColumnHash(i),
                         from.getColumnType(i),
                         from.isColumnIndexed(i),
                         from.getIndexValueBlockCapacity(i),
@@ -72,7 +71,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
                     metadata.add(
                             new TableColumnMetadata(
                                     metadata.getColumnName(i),
-                                    metadata.getColumnHash(i),
                                     columnType,
                                     metadata.isColumnIndexed(i),
                                     metadata.getIndexValueBlockCapacity(i),

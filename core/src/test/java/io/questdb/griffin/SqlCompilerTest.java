@@ -3245,8 +3245,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         ") TIMESTAMP(ts) PARTITION BY DAY",
                 sqlExecutionContext
         );
-        compiler.compile("INSERT INTO t1(ts, x) VALUES (1, 1)", sqlExecutionContext);
-        compiler.compile("INSERT INTO t2(ts, x) VALUES (1, 2)", sqlExecutionContext);
+        executeInsert("INSERT INTO t1(ts, x) VALUES (1, 1)");
+        executeInsert("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
         // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)

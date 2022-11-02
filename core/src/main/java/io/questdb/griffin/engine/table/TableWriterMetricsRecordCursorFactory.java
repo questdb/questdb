@@ -80,8 +80,8 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("name", 0, ColumnType.STRING));
-        metadata.add(1, new TableColumnMetadata("value", 1, ColumnType.LONG));
+        metadata.add(0, new TableColumnMetadata("name", ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("value", ColumnType.LONG));
         METADATA = metadata;
 
         KEYS[TOTAL_COMMITS_COLUMN_INDEX] = "total_commits";

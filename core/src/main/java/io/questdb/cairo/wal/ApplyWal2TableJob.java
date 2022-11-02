@@ -86,19 +86,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 lastAppliedSeqTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
-                    // Oh, no, rogue writer
-                    // todo: rephrase error message
-                    //   wal apply job could not lock table writer because something other than another wal apply job stole the writer
-                    //   this is not supposed to happen
-                    //   perhaps reject writer with WAL to anything other than WAL_2_TABLE_WRITE_REASON
-                    LOG.critical().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
-                            .$(", lock_reason=").$(tableBusy.getReason()).I$();
+                    LOG.critical().$("unsolicited table lock [table=").$(tableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
                     return WAL_APPLY_FAILED;
                 }
                 // This is good, someone else will apply the data
                 break;
             } catch (CairoException ex) {
-                LOG.critical().$("failed to apply WAL transaction to table, will be moved to SUSPENDED state [table=").$(tableName)
+                LOG.critical().$("WAL apply job failed, table suspended [table=").$(tableName)
                         .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
@@ -144,7 +138,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             final long lastAppliedSeqTxn = processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
             if (lastAppliedSeqTxn > -1L) {
                 lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
-            } else if (lastAppliedSeqTxn != -1L) {
+            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
                 lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
                 engine.getTableSequencerAPI().suspendTable(tableName);
             }

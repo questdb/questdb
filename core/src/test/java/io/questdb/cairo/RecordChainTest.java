@@ -116,9 +116,9 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testSkipAndRefill() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.add(new TableColumnMetadata("x", 1, ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("y", 2, ColumnType.INT));
-            metadata.add(new TableColumnMetadata("z", 3, ColumnType.INT));
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("y", ColumnType.INT));
+            metadata.add(new TableColumnMetadata("z", ColumnType.INT));
 
             ListColumnFilter filter = new ListColumnFilter();
             filter.add(1);

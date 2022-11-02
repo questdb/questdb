@@ -129,7 +129,7 @@ public class OrderByAscRowSkippingTest extends AbstractGriffinTest {
         assertQuery("l\n", "select l from tab order by ts limit -8,-8");
     }
 
-    //creates test table in descending and then ascending order order 10,9,..,1, 1,2,..,10
+    //creates test table in descending and then ascending order 10,9,..,1, 1,2,..,10
     private void prepareNoDesignatedTsTableWithDuplicates() throws Exception {
         runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +

@@ -499,7 +499,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata.add(
                                 slaveAlias,
                                 m.getName(),
-                                m.getHash(),
                                 ColumnType.STRING,
                                 false,
                                 0,
@@ -520,7 +519,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata.add(
                                 slaveAlias,
                                 slaveMetadata.getColumnName(i),
-                                slaveMetadata.getColumnHash(i),
                                 type,
                                 slaveMetadata.isColumnIndexed(i),
                                 slaveMetadata.getIndexValueBlockCapacity(i),
@@ -544,7 +542,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata.add(
                             slaveAlias,
                             slaveMetadata.getColumnName(index),
-                            slaveMetadata.getColumnHash(index),
                             type,
                             slaveMetadata.isColumnIndexed(i),
                             slaveMetadata.getIndexValueBlockCapacity(i),
@@ -2681,7 +2678,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 deferredAnalyticMetadata.extendAndSet(i, new TableColumnMetadata(
                         Chars.toString(qc.getAlias()),
-                        0, // transient column hash is 0
                         analyticFunction.getType(),
                         false,
                         0,
@@ -2816,7 +2812,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 selectMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(queryColumn.getAlias()),
-                                metadata.getColumnHash(index),
                                 metadata.getColumnType(index),
                                 metadata.isColumnIndexed(index),
                                 metadata.getIndexValueBlockCapacity(index),
@@ -2944,7 +2939,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), 0, ColumnType.LONG));
+                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
@@ -3025,7 +3020,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 indexInThis,
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName())
-                                        , 0
                                         , type
                                         , false
                                         , 0
@@ -3038,7 +3032,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 indexInThis,
                                 new TableColumnMetadata(
                                         Chars.toString(columns.getQuick(indexInThis).getName()),
-                                        0,
                                         type,
                                         null
                                 )
@@ -3056,7 +3049,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     meta.add(indexInThis,
                             new TableColumnMetadata(
                                     Chars.toString(columns.getQuick(indexInThis).getName()),
-                                    0,
                                     vaf.getType(),
                                     null
                             )
@@ -3261,7 +3253,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
                                         Chars.toString(column.getAlias()),
-                                        configuration.getRandom().nextLong(),
                                         function.getType(),
                                         false,
                                         0,
@@ -3273,7 +3264,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
                                         Chars.toString(column.getAlias()),
-                                        configuration.getRandom().nextLong(),
                                         ColumnType.SYMBOL,
                                         false,
                                         0,
@@ -3288,7 +3278,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     virtualMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    configuration.getRandom().nextLong(),
                                     columnType,
                                     function.getMetadata()
                             )
@@ -3321,7 +3310,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         virtualMetadata.add(
                                 new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
-                                        0,
                                         timestampFunction.getType(),
                                         timestampFunction.getMetadata()
                                 )
@@ -3519,7 +3507,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         myMeta.add(new TableColumnMetadata(
                                 Chars.toString(topDownColumns.getQuick(i).getName()),
-                                readerMeta.getColumnHash(columnIndex),
                                 type,
                                 readerMeta.isColumnIndexed(columnIndex),
                                 readerMeta.getIndexValueBlockCapacity(columnIndex),
@@ -3536,7 +3523,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                         myMeta.add(new TableColumnMetadata(
                                 readerMeta.getColumnName(readerTimestampIndex),
-                                readerMeta.getColumnHash(readerTimestampIndex),
                                 readerMeta.getColumnType(readerTimestampIndex),
                                 readerMeta.getMetadata(readerTimestampIndex)
                         ));
@@ -4286,14 +4272,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // set metadata will use A column names
                 metadata.add(new TableColumnMetadata(
                         typesA.getColumnName(i),
-                        typesA.getColumnHash(i),
                         typeB
                 ));
             } else {
                 // we can cast anything to string
                 metadata.add(new TableColumnMetadata(
                         typesA.getColumnName(i),
-                        typesA.getColumnHash(i),
                         ColumnType.STRING
                 ));
             }

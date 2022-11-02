@@ -30,6 +30,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
@@ -64,18 +65,6 @@ public class DateFormatUtils {
         if (v < 10) {
             sink.put('0').put('0');
         } else if (v < 100) {
-            sink.put('0');
-        }
-        Numbers.append(sink, val);
-    }
-
-    public static void append000(CharSink sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.put('0').put('0').put('0');
-        } else if (v < 100) {
-            sink.put('0').put('0');
-        } else if (v < 1000) {
             sink.put('0');
         }
         Numbers.append(sink, val);
