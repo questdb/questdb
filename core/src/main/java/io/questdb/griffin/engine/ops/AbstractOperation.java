@@ -41,7 +41,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     private long correlationId;
     String tableName;
     int tableNamePosition;
-    @Nullable CharSequence sqlStatement;
+    @Nullable String sqlStatement;
     @Nullable SqlExecutionContext sqlExecutionContext;
 
     void init(
@@ -119,11 +119,11 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         return sqlExecutionContext;
     }
 
-    public @Nullable CharSequence getSqlStatement() {
+    public @Nullable String getSqlStatement() {
         return sqlStatement;
     }
 
-    public void withSqlStatement(CharSequence sqlStatement) {
+    public void withSqlStatement(String sqlStatement) {
         this.sqlStatement = sqlStatement;
     }
 

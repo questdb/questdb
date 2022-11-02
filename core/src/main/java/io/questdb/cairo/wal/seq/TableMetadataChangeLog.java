@@ -27,6 +27,8 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.std.QuietCloseable;
 
 public interface TableMetadataChangeLog extends QuietCloseable {
+    String getTableName();
+
     boolean hasNext();
 
     TableMetadataChange next();

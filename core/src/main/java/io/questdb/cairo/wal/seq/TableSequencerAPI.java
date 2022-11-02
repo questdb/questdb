@@ -59,6 +59,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
         this.tableNameRegistry = new TableNameRegistry(configuration.mangleTableSystemNames());
+        this.tableNameRegistry.reloadTableNameCache(configuration);
     }
 
     @Override
@@ -70,6 +71,7 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
         if (tableNameRegistry.removeName(tableName, systemTableName)) {
+            LOG.info().$("dropped wal table [name=").utf8(tableName).$(", systemTableName=").utf8(systemTableName).I$();
             try (TableSequencerImpl seq = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
                 try {
                     seq.dropTable();
@@ -77,6 +79,7 @@ public class TableSequencerAPI implements QuietCloseable {
                     seq.unlockWrite();
                 }
             } catch (CairoException e) {
+                LOG.info().$("failed to drop wal table [name=").utf8(tableName).$(", systemTableName=").utf8(systemTableName).I$();
                 if (!failedCreate) {
                     throw e;
                 }
@@ -85,7 +88,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
-        for (CharSequence systemTableName : tableNameRegistry.getTableSystemNames()) {
+        for (CharSequence systemTableName : tableNameRegistry.getWalTableSystemNames()) {
             long lastTxn;
             int tableId;
             try {
@@ -187,8 +190,8 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean isTableDropped(String systemTableName) {
-        return tableNameRegistry.isTableDropped(systemTableName);
+    public boolean isWalTableDropped(String systemTableName) {
+        return tableNameRegistry.isWalTableDropped(systemTableName);
     }
 
     public boolean isWalSystemName(String systemTableName) {
@@ -277,8 +280,14 @@ public class TableSequencerAPI implements QuietCloseable {
         tableNameRegistry.removeTableSystemName(systemTableName);
     }
 
-    public void rename(CharSequence tableName, CharSequence newName, String toString) {
-        tableNameRegistry.rename(tableName, newName, toString);
+    public void rename(CharSequence tableName, CharSequence newTableName, String systemTableName) {
+        String newTableNameStr = tableNameRegistry.rename(tableName, newTableName, systemTableName);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
+            tableSequencer.rename(newTableNameStr);
+        }
+        LOG.advisoryW().$("renamed wal table [table=")
+                .utf8(tableName).$(", newName").utf8(newTableName).$(", systemTableName=").utf8(systemTableName).$();
+
     }
 
     public void reopen() {

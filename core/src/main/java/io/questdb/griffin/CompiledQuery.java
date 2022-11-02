@@ -62,6 +62,8 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
+    String getSqlStatement();
+
     TextLoader getTextLoader();
 
     InsertOperation getInsertOperation();
@@ -97,5 +99,5 @@ public interface CompiledQuery {
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    CompiledQuery withSqlStatement(CharSequence sqlStatement);
+    void withSqlStatement(String sqlStatement);
 }

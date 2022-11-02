@@ -44,6 +44,7 @@ public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
+    private final EmptyOperationCursor emptyOperationCursor = new EmptyOperationCursor();
     private final CairoEngine engine;
     private final String systemTableName;
     private final int rootLen;
@@ -54,7 +55,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final SequencerMetadataUpdater sequencerMetadataUpdater;
     private final FilesFacade ff;
     private final int mkDirMode;
-    private final String tableName;
+    private volatile String tableName;
     private volatile boolean closed = false;
     private boolean distressed;
 
@@ -108,9 +109,9 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         if (metadata.getStructureVersion() == structureVersionLo) {
             // Nothing to do.
-            return EmptyOperationCursor.INSTANCE;
+            return emptyOperationCursor.of(tableName);
         }
-        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
+        return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter, tableName);
     }
 
     @Override
@@ -236,6 +237,11 @@ public class TableSequencerImpl implements TableSequencer {
             engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
         }
         return txn;
+    }
+
+    @Override
+    public void rename(String newTableName) {
+        tableName = newTableName;
     }
 
     @Override

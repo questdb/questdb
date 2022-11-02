@@ -518,7 +518,12 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public CharSequence getSqlStatement() {
+                    public int getTableId() {
+                        return 1;
+                    }
+
+                    @Override
+                    public String getSqlStatement() {
                         throw new IndexOutOfBoundsException();
                     }
                 };

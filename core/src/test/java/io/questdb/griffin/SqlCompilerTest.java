@@ -4316,17 +4316,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         }) {
 
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                compiler.compile(sql, sqlExecutionContext);
+                try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                    compiler.compile(sql, executionContext);
 
-                Assert.assertTrue(fiddler.isHappy());
+                    Assert.assertTrue(fiddler.isHappy());
 
-                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "Y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
-                    sink.clear();
-                    reader.getMetadata().toJson(sink);
-                    TestUtils.assertEquals(expectedMetadata, sink);
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "Y", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
+                        sink.clear();
+                        reader.getMetadata().toJson(sink);
+                        TestUtils.assertEquals(expectedMetadata, sink);
+                    }
+
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
             }
         }
     }

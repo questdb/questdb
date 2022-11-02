@@ -25,10 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
@@ -46,7 +46,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private TextLoader textLoader;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    private CharSequence sqlStatement;
+    private String sqlStatement;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
@@ -75,6 +75,11 @@ public class CompiledQueryImpl implements CompiledQuery {
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
+    }
+
+    @Override
+    public String getSqlStatement() {
+        return sqlStatement;
     }
 
     @Override
@@ -158,9 +163,8 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withSqlStatement(CharSequence sqlStatement) {
+    public void withSqlStatement(String sqlStatement) {
         this.sqlStatement = sqlStatement;
-        return this;
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
@@ -3852,8 +3853,8 @@ public class SampleByTest extends AbstractGriffinTest {
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                    try {
-                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext);
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                        compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", ctx);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertTrue(Chars.contains(e.getMessage(), "could not mmap"));

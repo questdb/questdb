@@ -86,7 +86,7 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final TableWriterSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final AlterOperationValidationBackend alterOperationValidationBackend = new AlterOperationValidationBackend();
-    private final String tableName;
+    private String tableName;
     private long walLockFd = -1;
     private long segmentLockFd = -1;
     private int columnCount;
@@ -553,6 +553,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void applyMetadataChangeLog(long structureVersionHi) {
         try (TableMetadataChangeLog structureChangeCursor = tableSequencerAPI.getMetadataChangeLogCursor(systemTableName, getStructureVersion())) {
+            this.tableName = structureChangeCursor.getTableName();
             long metadataVersion = getStructureVersion();
             while (structureChangeCursor.hasNext() && metadataVersion < structureVersionHi) {
                 TableMetadataChange tableMetadataChange = structureChangeCursor.next();

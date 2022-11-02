@@ -36,6 +36,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -295,6 +296,49 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             assertSql(tableName, "x\tts\n" +
                     "1\t2022-02-24T00:00:00.000000Z\n");
+
+        });
+    }
+
+    @Test
+    public void testCreateDropCreateWalNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String createSql = "create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY";
+
+            compile(createSql + " WAL");
+            compile("drop table " + tableName);
+
+            SharedRandom.RANDOM.get().reset();
+            compile(createSql);
+            assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+
+            compile("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            compile(createSql + " WAL");
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+
+            compile("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            compile(createSql);
+            assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
+
+            compile("drop table " + tableName);
+            SharedRandom.RANDOM.get().reset();
+            compile(createSql + " WAL");
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tsym2\tts\n" +
+                    "1\tAB\tEF\t2022-02-24T00:00:00.000000Z\n");
 
         });
     }

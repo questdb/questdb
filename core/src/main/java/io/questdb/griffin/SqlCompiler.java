@@ -1153,7 +1153,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         final CompiledQuery cq = executor == null ? compileUsingModel(executionContext) : executor.execute(executionContext);
         final short type = cq.getType();
-        if (type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) {
+        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
             cq.withSqlStatement(Chars.toString(query));
         }
         cq.withContext(executionContext);

@@ -137,7 +137,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Path tempPath
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
-        if (engine.isTableDropped(systemTableName)) {
+        if (engine.isWalTableDropped(systemTableName)) {
             LOG.info().$("table '").utf8(systemTableName).$("' is dropped, skipping WAL application").$();
             tryDestroyDroppedTable(systemTableName, writer, engine);
             return;

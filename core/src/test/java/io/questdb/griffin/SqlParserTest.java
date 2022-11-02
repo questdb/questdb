@@ -6953,11 +6953,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             ) {
                 TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {
-                    try {
+                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
                             CairoTestUtils.create(tableModels[i]);
                         }
-                        compiler.compile("select * from tab", sqlExecutionContext);
+                        compiler.compile("select * from tab", ctx);
                         Assert.fail("Exception expected");
                     } catch (SqlException e) {
                         Assert.assertEquals(14, e.getPosition());

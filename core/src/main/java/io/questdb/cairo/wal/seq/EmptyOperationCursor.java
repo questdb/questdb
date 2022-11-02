@@ -25,10 +25,15 @@
 package io.questdb.cairo.wal.seq;
 
 public class EmptyOperationCursor implements TableMetadataChangeLog {
-    static final EmptyOperationCursor INSTANCE = new EmptyOperationCursor();
+    private String tableName;
 
     @Override
     public void close() {
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
     }
 
     @Override
@@ -39,5 +44,10 @@ public class EmptyOperationCursor implements TableMetadataChangeLog {
     @Override
     public TableMetadataChange next() {
         throw new UnsupportedOperationException();
+    }
+
+    public TableMetadataChangeLog of(String tableName) {
+        this.tableName = tableName;
+        return this;
     }
 }

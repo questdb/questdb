@@ -144,9 +144,9 @@ public class TableTransactionLog implements Closeable {
     }
 
     @NotNull
-    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer) {
+    TableMetadataChangeLog getTableMetadataChangeLog(long structureVersionLo, MemorySerializer serializer, String tableName) {
         final TableMetadataChangeLogImpl cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
-        cursor.of(ff, structureVersionLo, serializer, Path.getThreadLocal(rootPath));
+        cursor.of(ff, structureVersionLo, serializer, tableName, Path.getThreadLocal(rootPath));
         return cursor;
     }
 
@@ -281,6 +281,7 @@ public class TableTransactionLog implements Closeable {
         private long txnMetaAddress;
         private MemorySerializer serializer;
         private FilesFacade ff;
+        private String tableName;
 
         @Override
         public void close() {
@@ -290,6 +291,10 @@ public class TableTransactionLog implements Closeable {
             }
             txnMetaOffset = 0;
             txnMetaOffsetHi = 0;
+        }
+
+        public String getTableName() {
+            return tableName;
         }
 
         @Override
@@ -313,11 +318,14 @@ public class TableTransactionLog implements Closeable {
                 FilesFacade ff,
                 long structureVersionLo,
                 MemorySerializer serializer,
+                String tableName,
                 @Transient final Path path
         ) {
 
             // deallocates current state
             close();
+
+            this.tableName = tableName;
 
             final long fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
             final long fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);

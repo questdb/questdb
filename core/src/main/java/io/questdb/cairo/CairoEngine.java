@@ -333,15 +333,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return messageBus;
     }
 
-    public int getStatus(
-            CairoSecurityContext securityContext,
-            Path path,
-            CharSequence tableName,
-            int lo,
-            int hi
-    ) {
-        String systemTableName = getSystemTableName(tableName.subSequence(lo, hi));
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), systemTableName);
+    public TableReader getReaderBySystemName(@SuppressWarnings("unused") CairoSecurityContext securityContext, String systemTableName) {
+        return readerPool.get(systemTableName);
     }
 
     public Metrics getMetrics() {
@@ -386,8 +379,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
-    public TableReader getReaderBySystemName(CairoSecurityContext securityContext, String systemTableName) {
-        return readerPool.get(systemTableName);
+    public int getStatus(
+            @SuppressWarnings("unused") CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName,
+            int lo,
+            int hi
+    ) {
+        String systemTableName = getSystemTableName(tableName.subSequence(lo, hi));
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), systemTableName);
     }
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
@@ -408,7 +408,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public int getStatus(
-            CairoSecurityContext securityContext,
+            @SuppressWarnings("unused") CairoSecurityContext securityContext,
             Path path,
             CharSequence tableName
     ) {
@@ -443,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
     // For testing only
     @TestOnly
     public WalReader getWalReader(
-            CairoSecurityContext securityContext,
+            @SuppressWarnings("unused") CairoSecurityContext securityContext,
             CharSequence tableName,
             CharSequence walName,
             int segmentId,
@@ -534,8 +534,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return unpublishedWalTxnCount.get();
     }
 
-    public boolean isTableDropped(String systemTableName) {
-        return tableSequencerAPI.isTableDropped(systemTableName);
+    public boolean isWalTableDropped(String systemTableName) {
+        return tableSequencerAPI.isWalTableDropped(systemTableName);
     }
 
     public TableWriter getWriterOrPublishCommand(
@@ -691,7 +691,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void unlock(
-            CairoSecurityContext securityContext,
+            @SuppressWarnings("unused") CairoSecurityContext securityContext,
             CharSequence tableName,
             @Nullable TableWriter writer,
             boolean newTable

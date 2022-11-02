@@ -1365,6 +1365,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
                 processCompiledQuery(cc);
             } catch (Throwable e) {
+                typesAndUpdate = Misc.free(typesAndUpdate);
                 if (transactionState == IN_TRANSACTION) {
                     transactionState = ERROR_TRANSACTION;
                 }
@@ -2031,7 +2032,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq.getUpdateOperation(), queryText, bindVariableService);
+                typesAndUpdate.of(cq, bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:

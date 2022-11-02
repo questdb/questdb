@@ -76,6 +76,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         this.broadSweepIter = this::broadSweep;
 
         // some code here assumes that WAL_NAME_BASE is "wal", this is to fail the tests if it is not
+        //noinspection ConstantConditions
         assert WalUtils.WAL_NAME_BASE.equals("wal");
     }
 
@@ -191,7 +192,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // never recorded and tracked by the sequencer for that table.
             deleteOutstandingWalDirectories();
 
-            if (engine.isTableDropped(tableName)) {
+            if (engine.isWalTableDropped(tableName)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableName);
                 engine.removeTableSystemName(tableName);
@@ -330,7 +331,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
-        if (!engine.isTableDropped(tableName)) {
+        if (!engine.isWalTableDropped(tableName)) {
             try {
                 txReader.ofRO(path, PartitionBy.NONE);
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
