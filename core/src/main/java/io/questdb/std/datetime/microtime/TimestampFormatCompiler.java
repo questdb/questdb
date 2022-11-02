@@ -76,7 +76,9 @@ public class TimestampFormatCompiler {
     static final int OP_MICROS_THREE_DIGITS = 49;
     static final int OP_NANOS_ONE_DIGIT = 40;
     static final int OP_NANOS_THREE_DIGITS = 50;
-    static final int OP_MICROS_GREEDY = 149;
+    static final int OP_NANOS_GREEDY9 = 52;
+    static final int OP_MICROS_GREEDY3 = 149;
+    static final int OP_MICROS_GREEDY6 = 51;
     static final int OP_YEAR_GREEDY = 132;
     static final int OP_MONTH_GREEDY = 135;
     static final int OP_DAY_GREEDY = 139;
@@ -108,6 +110,7 @@ public class TimestampFormatCompiler {
     private static final int FA_WEEK_OF_YEAR = 12;
     private static final int FA_ISO_WEEK_OF_YEAR = 13;
     private static final int FA_MILLIS_MICROS = 11;
+    private static final int FA_SECOND_MICROS = 15;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -174,9 +177,11 @@ public class TimestampFormatCompiler {
         addOp("Z", OP_TIME_ZONE_RFC_822);
         addOp("x", OP_TIME_ZONE_ISO_8601_1);
         addOp("xx", OP_TIME_ZONE_ISO_8601_2);
-        addOp("merge_copy_var_column", OP_TIME_ZONE_ISO_8601_3);
+        addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
         addOp("U", OP_MICROS_ONE_DIGIT);
         addOp("UUU", OP_MICROS_THREE_DIGITS);
+        addOp("U+", OP_MICROS_GREEDY6);
+        addOp("N+", OP_NANOS_GREEDY9);
     }
 
     private final GenericLexer lexer = new GenericLexer(2048);
@@ -275,8 +280,10 @@ public class TimestampFormatCompiler {
             int getMinuteOfHourIndex,
             int getSecondOfMinuteIndex,
             int getMillisOfSecondIndex,
+            int getMicrosOfMilliIndex,
             int getMicrosOfSecondIndex,
             int getDayOfWeekIndex,
+            int append00000Index,
             int append00Index,
             int append0Index,
             int appendYear000Index,
@@ -306,6 +313,7 @@ public class TimestampFormatCompiler {
                 getMinuteOfHourIndex,
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
+                getMicrosOfMilliIndex,
                 getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
                 getDayOfYearIndex,
@@ -323,13 +331,20 @@ public class TimestampFormatCompiler {
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.invokeStatic(appendAmPmIndex);
                     break;
-                // MICROS
+                // MICROS3
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
+                    break;
+                // MICROS6 & NANOS9 are formatted the same
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
+                    asm.invokeStatic(append00000Index);
                     break;
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
@@ -620,6 +635,7 @@ public class TimestampFormatCompiler {
             int getMinuteOfHourIndex,
             int getSecondOfMinuteIndex,
             int getMillisOfSecondIndex,
+            int getMicrosOfMilliIndex,
             int getMicrosOfSecondIndex,
             int getDayOfWeekIndex,
             int getDayOfYearIndex,
@@ -676,8 +692,12 @@ public class TimestampFormatCompiler {
             fmtAttributeIndex[FA_SECOND_MILLIS] = index++;
         }
 
-        if (invokeConvertMillis(formatAttributes, FA_MILLIS_MICROS, getMicrosOfSecondIndex, index)) {
+        if (invokeConvertMillis(formatAttributes, FA_MILLIS_MICROS, getMicrosOfMilliIndex, index)) {
             fmtAttributeIndex[FA_MILLIS_MICROS] = index++;
+        }
+
+        if (invokeConvertMillis(formatAttributes, FA_SECOND_MICROS, getMicrosOfSecondIndex, index)) {
+            fmtAttributeIndex[FA_SECOND_MICROS] = index++;
         }
 
         if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {
@@ -714,6 +734,8 @@ public class TimestampFormatCompiler {
             int matchEraIndex,
             int parseIntSafelyIndex,
             int parseInt000GreedyIndex,
+            int parseLong000000GreedyIndex,
+            int parseNanosAsMicrosGreedyIndex,
             int decodeLenIndex,
             int decodeIntIndex,
             int assertRemainingIndex,
@@ -721,7 +743,7 @@ public class TimestampFormatCompiler {
             int parseIntIndex,
             int assertStringIndex,
             int assertCharIndex,
-            int computeMillisIndex,
+            int computeIndex,
             int adjustYearIndex,
             int parseYearGreedyIndex,
             int parseOffsetIndex,
@@ -823,9 +845,6 @@ public class TimestampFormatCompiler {
             switch (op) {
                 // AM/PM
                 case OP_AM_PM:
-                    // l = locale.matchAMPM(in, pos, hi);
-                    // hourType = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeMatch(matchAMPMIndex);
                     decodeInt(decodeIntIndex);
@@ -833,24 +852,27 @@ public class TimestampFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_MICROS_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // millis = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MICROS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MICROS);
                     break;
                 case OP_MICROS_THREE_DIGITS:
-                    // assertRemaining(pos + 2, hi);
-                    // millis = Numbers.parseInt(in, pos, pos += 3);
                     stackState &= ~(1 << LOCAL_MICROS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MICROS);
                     break;
-                case OP_MICROS_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // millis = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
+                case OP_MICROS_GREEDY3:
                     stackState &= ~(1 << LOCAL_MICROS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    break;
+                case OP_MICROS_GREEDY6:
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseLong000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    break;
+                case OP_NANOS_GREEDY9:
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
                 case OP_NANOS_ONE_DIGIT:
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
@@ -862,14 +884,10 @@ public class TimestampFormatCompiler {
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, -1);
                     break;
                 case OP_MILLIS_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // millis = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_THREE_DIGITS:
-                    // assertRemaining(pos + 2, hi);
-                    // millis = Numbers.parseInt(in, pos, pos += 3);
                     stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MILLIS);
                     break;
@@ -879,8 +897,6 @@ public class TimestampFormatCompiler {
                     invokeParseIntSafelyAndStore(parseInt000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MILLIS);
                     break;
                 case OP_SECOND_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // second = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_SECOND);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_SECOND);
                     break;
@@ -889,63 +905,37 @@ public class TimestampFormatCompiler {
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_SECOND);
                     break;
                 case OP_SECOND_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // second = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_SECOND);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_SECOND);
                     break;
                 case OP_MINUTE_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // minute = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MINUTE);
                     break;
                 case OP_MINUTE_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // minute = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MINUTE);
                     break;
 
                 case OP_MINUTE_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // minute = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MINUTE);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MINUTE);
                     break;
                 // HOUR (0-11)
                 case OP_HOUR_12_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
                 case OP_HOUR_12_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
-                    // if (hourType == HOUR_24) {
-                    //     hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
@@ -953,34 +943,18 @@ public class TimestampFormatCompiler {
                     break;
                 // HOUR (1-12)
                 case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    // }
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    //}
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
                     setHourType(stackState);
                     break;
 
                 case OP_HOUR_12_GREEDY_ONE_BASED:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l) - 1;
-                    // pos += Numbers.decodeHighInt(l);
-                    // if (hourType == HOUR_24) {
-                    //    hourType = HOUR_AM;
-                    //}
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -998,46 +972,32 @@ public class TimestampFormatCompiler {
                     break;
                 // HOUR (0-23)
                 case OP_HOUR_24_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     break;
 
                 case OP_HOUR_24_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     break;
 
                 case OP_HOUR_24_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
                     break;
                 // HOUR (1 - 24)
                 case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    // assertRemaining(pos, hi);
-                    // hour = Numbers.parseInt(in, pos, ++pos) - 1;
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
                     break;
 
                 case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    // assertRemaining(pos + 1, hi);
-                    // hour = Numbers.parseInt(in, pos, pos += 2) - 1;
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
                     break;
 
                 case OP_HOUR_24_GREEDY_ONE_BASED:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // hour = Numbers.decodeLowInt(l) - 1;
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -1054,43 +1014,30 @@ public class TimestampFormatCompiler {
                     break;
                 // DAY
                 case OP_DAY_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    //day = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_DAY);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_DAY);
                     break;
                 case OP_DAY_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // day = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_DAY);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_DAY);
                     break;
                 case OP_DAY_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // day = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_DAY);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_DAY);
                     break;
                 case OP_DAY_NAME_LONG:
                 case OP_DAY_NAME_SHORT:
-                    // l = locale.matchWeekday(in, pos, hi);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeMatch(matchWeekdayIndex);
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_ISO_WEEK_OF_YEAR:
-                    // assertRemaining(pos + 1, hi);
-                    // week = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_WEEK);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_WEEK);
                     break;
                 case OP_WEEK_OF_YEAR:
                 case OP_DAY_OF_YEAR:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     asm.aload(P_INPUT_STR);
                     asm.iload(LOCAL_POS);
@@ -1100,9 +1047,6 @@ public class TimestampFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_DAY_OF_WEEK:
-                    // assertRemaining(pos, hi);
-                    // // ignore weekday
-                    // Numbers.parseInt(in, pos, ++pos);
                     asm.iload(LOCAL_POS);
                     asm.iload(P_HI);
                     asm.invokeStatic(assertRemainingIndex);
@@ -1116,21 +1060,14 @@ public class TimestampFormatCompiler {
                     break;
 
                 case OP_MONTH_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // month = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_MONTH);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MONTH);
                     break;
                 case OP_MONTH_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // month = Numbers.parseInt(in, pos, pos += 2);
                     stackState &= ~(1 << LOCAL_MONTH);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_MONTH);
                     break;
                 case OP_MONTH_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // month = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MONTH);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MONTH);
@@ -1138,9 +1075,6 @@ public class TimestampFormatCompiler {
 
                 case OP_MONTH_SHORT_NAME:
                 case OP_MONTH_LONG_NAME:
-                    // l = locale.matchMonth(in, pos, hi);
-                    // month = Numbers.decodeLowInt(l) + 1;
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_MONTH);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -1153,14 +1087,10 @@ public class TimestampFormatCompiler {
                     break;
 
                 case OP_YEAR_ONE_DIGIT:
-                    // assertRemaining(pos, hi);
-                    // year = Numbers.parseInt(in, pos, ++pos);
                     stackState &= ~(1 << LOCAL_YEAR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_YEAR);
                     break;
                 case OP_YEAR_TWO_DIGITS:
-                    // assertRemaining(pos + 1, hi);
-                    // year = adjustYear(Numbers.parseInt(in, pos, pos += 2));
                     stackState &= ~(1 << LOCAL_YEAR);
 
                     asm.iload(LOCAL_POS);
@@ -1178,8 +1108,6 @@ public class TimestampFormatCompiler {
                     asm.istore(LOCAL_YEAR);
                     break;
                 case OP_YEAR_THREE_DIGITS:
-                    // assertRemaining(pos + 2, hi);
-                    // year = Numbers.parseInt(in, pos, pos += 3);
                     stackState &= ~(1 << LOCAL_YEAR);
 
                     asm.iload(LOCAL_POS);
@@ -1197,13 +1125,6 @@ public class TimestampFormatCompiler {
                     break;
                 case OP_YEAR_ISO_FOUR_DIGITS:
                 case OP_YEAR_FOUR_DIGITS: {
-                    // if (pos < hi && in.charAt(pos) == '-') {
-                    //    assertRemaining(pos + 4, hi);
-                    //    year = -Numbers.parseInt(in, pos + 1, pos += 5);
-                    //} else {
-                    //    assertRemaining(pos + 3, hi);
-                    //    year = Numbers.parseInt(in, pos, pos += 4);
-                    //}
                     asm.iload(LOCAL_POS);
                     asm.iload(P_HI);
                     int b1 = asm.if_icmpge();
@@ -1254,15 +1175,6 @@ public class TimestampFormatCompiler {
                 }
                 break;
                 case OP_YEAR_GREEDY:
-                    // l = Numbers.parseIntSafely(in, pos, hi);
-                    // len = Numbers.decodeHighInt(l);
-                    // if (len == 2) {
-                    //     year = adjustYear(Numbers.decodeLowInt(l));
-                    // } else {
-                    //     year = Numbers.decodeLowInt(l);
-                    // }
-                    // pos += len;
-
                     stackState &= ~(1 << LOCAL_YEAR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
@@ -1276,9 +1188,6 @@ public class TimestampFormatCompiler {
                     addTempToPos(decodeLenIndex);
                     break;
                 case OP_ERA:
-                    // l = locale.matchEra(in, pos, hi);
-                    // era = Numbers.decodeLowInt(l);
-                    // pos += Numbers.decodeHighInt(l);
                     stackState &= ~(1 << LOCAL_ERA);
 
                     invokeMatch(matchEraIndex);
@@ -1293,17 +1202,6 @@ public class TimestampFormatCompiler {
                 case OP_TIME_ZONE_ISO_8601_3:
                 case OP_TIME_ZONE_LONG:
                 case OP_TIME_ZONE_RFC_822:
-
-                    // l = Dates.parseOffset(in, pos, hi);
-                    // if (l == Long.MIN_VALUE) {
-                    //     l = locale.matchZone(in, pos, hi);
-                    //     timezone = Numbers.decodeLowInt(l);
-                    //     pos += Numbers.decodeHighInt(l);
-                    // } else {
-                    //     offset = Numbers.decodeLowInt(l) * Dates.MINUTE_MICROS;
-                    //     pos += Numbers.decodeHighInt(l);
-                    // }
-
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
 
                     asm.aload(P_INPUT_STR);
@@ -1344,7 +1242,6 @@ public class TimestampFormatCompiler {
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
-                        // TimestampFormatUtils.assertChar(' ', in, pos++, hi);
                         asm.iconst(delimiter.charAt(0));
                         asm.aload(P_INPUT_STR);
                         asm.iload(LOCAL_POS);
@@ -1352,7 +1249,6 @@ public class TimestampFormatCompiler {
                         asm.iload(P_HI);
                         asm.invokeStatic(assertCharIndex);
                     } else {
-                        // pos = TimestampFormatUtils.assertString(", ", 2, in, pos, hi);
                         asm.ldc(delimIndices.getQuick(-op - 1));
                         asm.iconst(len);
                         asm.aload(P_INPUT_STR);
@@ -1383,7 +1279,7 @@ public class TimestampFormatCompiler {
         asm.iload(LOCAL_TIMEZONE);
         asm.lload(LOCAL_OFFSET);
         asm.iload(LOCAL_HOUR_TYPE);
-        asm.invokeStatic(computeMillisIndex);
+        asm.invokeStatic(computeIndex);
         asm.lreturn();
         asm.endMethodCode();
 
@@ -1543,6 +1439,8 @@ public class TimestampFormatCompiler {
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
         int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
+        int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, "parseLong000000Greedy", "(Ljava/lang/CharSequence;II)J");
+        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Timestamps.class, "parseNanosAsMicrosGreedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
@@ -1551,7 +1449,7 @@ public class TimestampFormatCompiler {
         int assertNoTailIndex = asm.poolMethod(TimestampFormatUtils.class, "assertNoTail", "(II)V");
         int assertStringIndex = asm.poolMethod(TimestampFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(TimestampFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J");
+        int computeIndex = asm.poolMethod(TimestampFormatUtils.class, "compute", "(Lio/questdb/std/datetime/DateLocale;IIIIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(TimestampFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(TimestampFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
         int appendEraIndex = asm.poolMethod(TimestampFormatUtils.class, "appendEra", "(Lio/questdb/std/str/CharSink;ILio/questdb/std/datetime/DateLocale;)V");
@@ -1560,6 +1458,7 @@ public class TimestampFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int append00000Index = asm.poolMethod(TimestampFormatUtils.class, "append00000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
         int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
@@ -1577,6 +1476,7 @@ public class TimestampFormatCompiler {
         int getMinuteOfHourIndex = asm.poolMethod(Timestamps.class, "getMinuteOfHour", "(J)I");
         int getSecondOfMinuteIndex = asm.poolMethod(Timestamps.class, "getSecondOfMinute", "(J)I");
         int getMillisOfSecondIndex = asm.poolMethod(Timestamps.class, "getMillisOfSecond", "(J)I");
+        int getMicrosOfMilliIndex = asm.poolMethod(Timestamps.class, "getMicrosOfMilli", "(J)I");
         int getMicrosOfSecondIndex = asm.poolMethod(Timestamps.class, "getMicrosOfSecond", "(J)I");
         int getDayOfWeekIndex = asm.poolMethod(Timestamps.class, "getDayOfWeekSundayFirst", "(J)I");
         int getDayOfYearIndex = asm.poolMethod(Timestamps.class, "getDayOfYear", "(J)I");
@@ -1632,6 +1532,8 @@ public class TimestampFormatCompiler {
                 matchEraIndex,
                 parseIntSafelyIndex,
                 parseInt000GreedyIndex,
+                parseLong000000GreedyIndex,
+                parseNanosAsMicrosGreedyIndex,
                 decodeLenIndex,
                 decodeIntIndex,
                 assertRemainingIndex,
@@ -1639,7 +1541,7 @@ public class TimestampFormatCompiler {
                 parseIntIndex,
                 assertStringIndex,
                 assertCharIndex,
-                computeMillisIndex,
+                computeIndex,
                 adjustYearIndex,
                 parseYearGreedyIndex,
                 parseOffsetIndex,
@@ -1671,8 +1573,10 @@ public class TimestampFormatCompiler {
                 getMinuteOfHourIndex,
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
+                getMicrosOfMilliIndex,
                 getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
+                append00000Index,
                 append00Index,
                 append0Index,
                 appendYear000Index,
@@ -1705,9 +1609,14 @@ public class TimestampFormatCompiler {
                     break;
                 // MICROS
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_MILLIS_MICROS);
+                    break;
+                 // formatting method for MICROS6 and NANOS9 is the same
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                    attributes |= (1 << FA_SECOND_MICROS);
                     break;
 
                 // NANOS we are parsing microsecond resolution time, it does not
@@ -1814,11 +1723,12 @@ public class TimestampFormatCompiler {
                 case OP_AM_PM:
                     result |= (1 << LOCAL_TEMP_LONG);
                     break;
-                case OP_MICROS_GREEDY:
+                case OP_MICROS_GREEDY3:
                     result |= (1 << LOCAL_TEMP_LONG);
                     // fall through
                 case OP_MICROS_ONE_DIGIT:
                 case OP_MICROS_THREE_DIGITS:
+                case OP_MICROS_GREEDY6:
                     result |= (1 << LOCAL_MICROS);
                     break;
                 case OP_MILLIS_GREEDY:
@@ -1967,7 +1877,7 @@ public class TimestampFormatCompiler {
             case OP_MILLIS_ONE_DIGIT:
                 return OP_MILLIS_GREEDY;
             case OP_MICROS_ONE_DIGIT:
-                return OP_MICROS_GREEDY;
+                return OP_MICROS_GREEDY3;
             case OP_NANOS_ONE_DIGIT:
                 return OP_NANOS_GREEDY;
             default:

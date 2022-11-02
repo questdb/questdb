@@ -887,7 +887,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRowCount, rowCount);
     }
 
-    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
+    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expectedRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
 
@@ -907,7 +907,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
         }
 
-        Assert.assertEquals(expecteRowCount, rowCount);
+        Assert.assertEquals(expectedRowCount, rowCount);
     }
 
     private long assertIndex(TableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, DataFrame frame, int direction) {

@@ -578,11 +578,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return 0;
         }

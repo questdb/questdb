@@ -159,7 +159,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -173,7 +173,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax2() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax2() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -186,7 +186,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax22() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax22() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -199,7 +199,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax3() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax3() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -213,7 +213,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax4() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax4() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {
@@ -227,7 +227,7 @@ public class GeoHashQueryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAddGeoHashBitsColumnInvlidSyntax5() throws Exception {
+    public void testAlterTableAddGeoHashBitsColumnInvalidSyntax5() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table pos(x long)", sqlExecutionContext);
             try {

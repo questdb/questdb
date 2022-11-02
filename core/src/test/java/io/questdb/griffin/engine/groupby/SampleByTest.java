@@ -1104,7 +1104,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffst() throws Exception {
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
@@ -2557,10 +2557,10 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            groupByMeta.add(new TableColumnMetadata("col1", 1, ColumnType.STRING, false, 0, false, null));
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, null));
 
             GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(new TableColumnMetadata("col1", 2, ColumnType.LONG, false, 0, false, null));
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null));
 
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
@@ -2592,7 +2592,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            TableColumnMetadata column = new TableColumnMetadata("col1", 1, ColumnType.LONG, false, 0, false, null);
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null);
             groupByMeta.add(column);
 
             GenericRecordMetadata meta = new GenericRecordMetadata();

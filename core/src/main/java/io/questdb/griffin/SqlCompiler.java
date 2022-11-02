@@ -889,7 +889,7 @@ public class SqlCompiler implements Closeable {
                 }
                 if (designatedTimestampColumnName != null) {
                     GenericRecordMetadata metadata = new GenericRecordMetadata();
-                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, 0, ColumnType.TIMESTAMP, null));
+                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
                     if (function != null && ColumnType.isBoolean(function.getType())) {
                         function.init(null, executionContext);
@@ -1469,7 +1469,7 @@ public class SqlCompiler implements Closeable {
                 int columnType = rdrMetadata.getColumnType(i);
                 boolean isSymbol = ColumnType.isSymbol(columnType);
                 int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
-                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity);
                 if (isSymbol) {
                     model.cached(rdr.getSymbolMapReader(i).isCached());
                 }
@@ -2494,27 +2494,47 @@ public class SqlCompiler implements Closeable {
     private void validateTableModelAndCreateTypeCast(
             CreateTableModel model,
             RecordMetadata metadata,
-            @Transient IntIntHashMap typeCast) throws SqlException {
+            @Transient IntIntHashMap typeCast
+    ) throws SqlException {
         CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
         ObjList<CharSequence> castColumnNames = castModels.keys();
 
         for (int i = 0, n = castColumnNames.size(); i < n; i++) {
             CharSequence columnName = castColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
+            ColumnCastModel ccm = castModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
                 // Cast isn't going to go away when we re-parse SQL. We must make this
                 // permanent error
-                throw SqlException.invalidColumn(castModels.get(columnName).getColumnNamePos(), columnName);
+                throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
             }
-            ColumnCastModel ccm = castModels.get(columnName);
             int from = metadata.getColumnType(index);
             int to = ccm.getColumnType();
             if (isCompatibleCase(from, to)) {
+                int modelColumnIndex = model.getColumnIndex(columnName);
+                if (!ColumnType.isSymbol(to) && model.isIndexed(modelColumnIndex)) {
+                    throw SqlException.$(ccm.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
+                }
                 typeCast.put(index, to);
             } else {
                 throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
+            }
+        }
+
+        // validate that all indexes are specified only on columns with symbol type
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+            CharSequence columnName = model.getColumnName(i);
+            ColumnCastModel ccm = castModels.get(columnName);
+            if (ccm != null) {
+                // We already checked this column when validating casts.
+                continue;
+            }
+            int index = metadata.getColumnIndexQuiet(columnName);
+            assert index > -1 : "wtf? " + columnName;
+            if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
         }
 
@@ -2574,11 +2594,6 @@ public class SqlCompiler implements Closeable {
                 return typeCast.valueAt(castIndex);
             }
             return metadata.getColumnType(columnIndex);
-        }
-
-        @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
         }
 
         @Override

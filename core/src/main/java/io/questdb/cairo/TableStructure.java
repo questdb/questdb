@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 public interface TableStructure extends TableDescriptor {
-    long getColumnHash(int columnIndex);
 
     long getCommitLag();
 

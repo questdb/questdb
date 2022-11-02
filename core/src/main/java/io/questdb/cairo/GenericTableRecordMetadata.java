@@ -36,7 +36,6 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     public void addColumn(
             String columnName,
             int columnType,
-            long columnHash,
             boolean columnIndexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
@@ -45,7 +44,6 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
         add(
                 new TableColumnMetadata(
                         columnName,
-                        columnHash,
                         columnType,
                         columnIndexed,
                         indexValueBlockCapacity,

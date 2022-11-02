@@ -124,7 +124,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     columnMetadata.setQuick(existingIndex - shiftLeft,
                             new TableColumnMetadata(
                                     newName,
-                                    TableUtils.getColumnHash(metaMem, metaIndex),
                                     columnType,
                                     isIndexed,
                                     indexBlockCapacity,
@@ -181,7 +180,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
             this.columnMetadata.setQuick(i, new TableColumnMetadata(
                     columnMetadata.getName(),
-                    columnMetadata.getHash(),
                     columnMetadata.getType(),
                     columnMetadata.isIndexed(),
                     columnMetadata.getIndexValueBlockCapacity(),
@@ -314,7 +312,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     columnMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(name),
-                                    TableUtils.getColumnHash(metaMem, i),
                                     columnType,
                                     TableUtils.isColumnIndexed(metaMem, i),
                                     TableUtils.getIndexBlockCapacity(metaMem, i),

@@ -93,7 +93,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "Z",
                 "x",
                 "xx",
-                "merge_copy_var_column",
+                "xxx",
                 // "U", these also don't make sense for millis
                 // "UUU"
         };

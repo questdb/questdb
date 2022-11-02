@@ -216,7 +216,6 @@ public class GroupByUtils {
                     groupByMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(column.getAlias()),
-                                    metadata.getColumnHash(index),
                                     type,
                                     metadata.isColumnIndexed(index),
                                     metadata.getIndexValueBlockCapacity(index),
@@ -239,7 +238,6 @@ public class GroupByUtils {
                 groupByMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(column.getName()),
-                                0,
                                 type,
                                 false,
                                 0,

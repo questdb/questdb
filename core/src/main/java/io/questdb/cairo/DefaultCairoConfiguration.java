@@ -249,9 +249,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWalSegmentRolloverRowCount() { return 200000; }
-
-    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }
@@ -437,6 +434,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -454,6 +456,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return 200000;
     }
 
     @Override
@@ -493,7 +500,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAnalyticStorePageSize() {
-        return 4 * 1024;
+        return 1024 * 1024;
     }
 
     @Override
@@ -734,11 +741,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getStrFunctionMaxBufferLength() {
-        return 1024 * 1024;
-    }
-
-    @Override
     public CharSequence getSystemTableNamePrefix() {
         return "__sys";
     }
@@ -828,13 +830,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isIOURingEnabled() {
-        return true;
+    public boolean isO3QuickSortEnabled() {
+        return false;
     }
 
     @Override
-    public boolean isO3QuickSortEnabled() {
-        return false;
+    public boolean isIOURingEnabled() {
+        return true;
     }
 
     @Override

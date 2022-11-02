@@ -292,9 +292,8 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.putLong(structure.getColumnHash(i));
                 // reserved
-                mem.skip(8);
+                mem.skip(16);
             }
 
             for (int i = 0; i < count; i++) {
@@ -319,7 +318,6 @@ public final class TableUtils {
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
-
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             createColumnVersionFile(mem);

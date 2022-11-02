@@ -44,11 +44,6 @@ public class TableModel implements TableStructure, Closeable {
     private int timestampIndex = -1;
     private int walEnabled = -1;
 
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return configuration.getRandom().nextLong();
-    }
-
     public TableModel(CairoConfiguration configuration, String name, int partitionBy) {
         this.configuration = configuration;
         this.name = name;

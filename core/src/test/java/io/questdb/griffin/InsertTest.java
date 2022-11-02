@@ -729,6 +729,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=3, actual=2, tuple=1]");
@@ -936,6 +937,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
@@ -949,6 +951,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp of existing table");
@@ -992,6 +995,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select x ac, rnd_int() id from long_sequence(10)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "expected timestamp column");
@@ -1004,10 +1008,11 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table test (a timestamp)", sqlExecutionContext);
             try {
-                compiler.compile("insert into test values ('2013')", sqlExecutionContext);
-            } catch (SqlException e) {
-                Assert.assertEquals(25, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
+                executeInsert("insert into test values ('foobar')");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                Assert.assertEquals(0, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
             }
         });
     }
