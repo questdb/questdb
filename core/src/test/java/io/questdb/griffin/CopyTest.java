@@ -37,16 +37,44 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class CopyTest extends AbstractGriffinTest {
+    private final boolean walEnabled;
+
+    public CopyTest(boolean walEnabled) {
+        this.walEnabled = walEnabled;
+    }
+
+    @Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+                { false }, { true }
+        });
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
+    }
+
+    @After
+    public void tearDown() {
+        super.tearDown();
+        defaultTableWriteMode = -1;
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -601,7 +629,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
 
-        CopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
     }
@@ -619,7 +647,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
 
-        CopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
 
@@ -915,7 +943,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
 
-        CopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
     }
@@ -928,7 +956,7 @@ public class CopyTest extends AbstractGriffinTest {
                     "on error SKIP_ROW; ", sqlExecutionContext);
         };
 
-        CopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContentExisting;
 
         testCopy(stmt, test);
     }
@@ -1053,8 +1081,23 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     private void assertQuotesTableContent() throws SqlException {
+       assertQuotesTableContent0(false);
+    }
+
+    private void assertQuotesTableContentExisting() throws SqlException {
+        assertQuotesTableContent0(true);
+    }
+
+    private void assertQuotesTableContent0(boolean columnsReordered) throws SqlException {
+        final String values = columnsReordered ?
+                "('1972-09-28T00:00:00.000000Z','line1001','desc 1001',0.918270255022)" :
+                "('line1001','1972-09-28T00:00:00.000000Z',0.918270255022,'desc 1001')";
+
+        executeInsert("insert into x values" + values);
+        if (walEnabled) {
+            drainWalQueue();
+        }
         assertQuery("line\tts\td\tdescription\n" +
-                        "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                         "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                         "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
                         "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
@@ -1063,13 +1106,14 @@ public class CopyTest extends AbstractGriffinTest {
                         "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
                         "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
                         "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                        "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                        "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n" +
+                        "line1001\t1972-09-28T00:00:00.000000Z\t0.918270255022\tdesc 1001\n",
                 "select line,ts,d,description from x limit -10",
                 "ts",
                 true
         );
 
-        assertQuery("cnt\n1000\n", "select count(*) cnt from x", null, false);
+        assertQuery("cnt\n1001\n", "select count(*) cnt from x", null, false);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
