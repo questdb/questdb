@@ -1525,11 +1525,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
-        }
-
-        @Override
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }

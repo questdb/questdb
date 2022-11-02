@@ -79,11 +79,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
-    }
-
-    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }

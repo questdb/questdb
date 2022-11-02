@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
@@ -56,7 +54,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -145,12 +142,8 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     private final boolean o3QuickSortEnabled;
     private final LongConsumer appendTimestampSetter;
     private final MemoryMR indexMem = Vm.getMRInstance();
-    private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
-    private final LongIntHashMap replPartitionHash = new LongIntHashMap();
-    private final MemoryFMCRImpl slaveTxMemory = new MemoryFMCRImpl();
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
-    private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterOperation alterTableStatement = new AlterOperation();
     private final ColumnVersionWriter columnVersionWriter;
     private final Metrics metrics;
@@ -499,7 +492,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity, columnIndex);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
@@ -1101,25 +1094,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
-    public long getRawMetaMemory() {
-        return metaMem.getPageAddress(0);
-    }
-
-    // todo: this method is not tested in cases when metadata size changes due to column add/remove operations
-    public long getRawMetaMemorySize() {
-        return metadata.getFileDataSize();
-    }
-
-    // todo: hide raw memory access from public interface when slave is able to send data over the network
-    public long getRawTxnMemory() {
-        return txWriter.unsafeGetRawMemory();
-    }
-
-    // todo: hide raw memory access from public interface when slave is able to send data over the network
-    public long getRawTxnMemorySize() {
-        return txWriter.unsafeGetRawMemorySize();
-    }
-
     public long getRowCount() {
         return txWriter.getRowCount();
     }
@@ -1260,9 +1234,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
         if (cmd.getTableId() == getMetadata().getTableId()) {
             switch (cmd.getType()) {
-                case CMD_SLAVE_SYNC:
-                    processReplSyncCommand(cmd, cursor, commandSubSeq);
-                    break;
                 case CMD_ALTER_TABLE:
                     processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                     break;
@@ -1636,143 +1607,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
-    }
-
-    public TableSyncModel replCreateTableSyncModel(long slaveTxAddress, long slaveTxDataSize, long slaveMetaData, long slaveMetaDataSize) {
-        replPartitionHash.clear();
-
-        final TableSyncModel model = new TableSyncModel();
-
-        model.setMaxTimestamp(getMaxTimestamp());
-
-        slaveTxMemory.of(slaveTxAddress, slaveTxDataSize);
-        slaveTxReader.initRO(slaveTxMemory, partitionBy);
-        slaveTxReader.unsafeLoadAll();
-
-        final int theirLast;
-        if (slaveTxReader.getDataVersion() != txWriter.getDataVersion()) {
-            // truncate
-            model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
-            theirLast = -1;
-        } else {
-            // hash partitions on slave side
-            int partitionCount = slaveTxReader.getPartitionCount();
-            theirLast = partitionCount - 1;
-            for (int i = 0; i < partitionCount; i++) {
-                replPartitionHash.put(slaveTxReader.getPartitionTimestamp(i), i);
-            }
-        }
-        model.setDataVersion(txWriter.getDataVersion());
-
-        // collate local partitions that need to be propagated to this slave
-        final int ourPartitionCount = txWriter.getPartitionCount();
-        final int ourLast = ourPartitionCount - 1;
-
-        for (int i = 0; i < ourPartitionCount; i++) {
-            try {
-                final long ts = txWriter.getPartitionTimestamp(i);
-                final long ourSize = i < ourLast ? txWriter.getPartitionSize(i) : txWriter.transientRowCount;
-                final long ourColumnVersion = i < ourLast ? txWriter.getPartitionColumnVersion(i) : txWriter.columnVersion;
-                final int keyIndex = replPartitionHash.keyIndex(ts);
-                final long theirSize;
-                if (keyIndex < 0) {
-                    int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
-                    // check if partition name ourDataTxn is the same
-                    if (slaveTxReader.getPartitionNameTxn(slavePartitionIndex) == txWriter.getPartitionNameTxn(i)) {
-                        // this is the same partition roughly
-                        theirSize = slavePartitionIndex < theirLast ?
-                                slaveTxReader.getPartitionSize(slavePartitionIndex) :
-                                slaveTxReader.getTransientRowCount();
-
-                        if (theirSize > ourSize) {
-                            LOG.error()
-                                    .$("slave partition is larger than that on master [table=").utf8(tableName)
-                                    .$(", ts=").$ts(ts)
-                                    .I$();
-                        }
-                    } else {
-                        // partition name ourDataTxn is different, partition mutated
-                        theirSize = 0;
-                    }
-                } else {
-                    theirSize = 0;
-                }
-
-                if (theirSize < ourSize) {
-                    final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    model.addPartitionAction(
-                            theirSize == 0 ?
-                                    TableSyncModel.PARTITION_ACTION_WHOLE :
-                                    TableSyncModel.PARTITION_ACTION_APPEND,
-                            ts,
-                            theirSize,
-                            ourSize - theirSize,
-                            partitionNameTxn,
-                            ourColumnVersion
-                    );
-
-                    setPathForPartition(path, partitionBy, ts, false);
-
-                    if (partitionNameTxn > -1) {
-                        path.put('.').put(partitionNameTxn);
-                    }
-
-                    int plen = path.length();
-
-                    for (int j = 0; j < columnCount; j++) {
-                        final CharSequence columnName = metadata.getColumnName(j);
-                        long top = columnVersionWriter.getColumnTopQuick(ts, j);
-                        if (top > 0) {
-                            model.addColumnTop(ts, j, top);
-                        }
-
-                        if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
-                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-                            iFile(path.trimTo(plen), columnName, columnNameTxn);
-                            long sz = TableUtils.readLongAtOffset(
-                                    ff,
-                                    path,
-                                    tempMem16b,
-                                    ourSize * 8L
-                            );
-                            model.addVarColumnSize(ts, j, sz);
-                        }
-                    }
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
-
-        slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
-        int slaveColumnCount = slaveMetaMem.getInt(META_OFFSET_COUNT);
-        long offset = getColumnNameOffset(slaveColumnCount);
-
-        int newIndex = 0;
-        for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
-            if (masterIndex < slaveColumnCount) {
-                CharSequence slaveName = slaveMetaMem.getStr(offset);
-                offset += Vm.getStorageLength(slaveName);
-                int slaveColumnType = getColumnType(slaveMetaMem, masterIndex);
-                boolean isSlaveIndexed = isColumnIndexed(slaveMetaMem, masterIndex);
-                boolean isRename = !Chars.equalsIgnoreCase(slaveName, metadata.getColumnName(masterIndex));
-
-                if (slaveColumnType != metadata.getColumnType(masterIndex)
-                        || isRename
-                        || isSlaveIndexed != metadata.isColumnIndexed(masterIndex)) {
-                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, masterIndex, masterIndex);
-                    if (metadata.getColumnType(masterIndex) > 0) {
-                        model.addColumnMetadata(metadata.getColumnMetadata(masterIndex));
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
-                    }
-                }
-            } else {
-                model.addColumnMetadata(metadata.getColumnMetadata(masterIndex));
-                model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
-            }
-        }
-
-        return model;
     }
 
     public void rollback() {
@@ -2688,8 +2522,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                     }
                     ddlMem.putLong(flags);
                     ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.putLong(getColumnHash(metaMem, i));
-                    ddlMem.skip(8);
+                    ddlMem.skip(16);
                 }
             }
 
@@ -4856,29 +4689,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
-    private void processReplSyncCommand(TableWriterTask cmd, long cursor, Sequence sequence) {
-        long dst = cmd.getInstance();
-        long dstIP = cmd.getIp();
-        long tableId = cmd.getTableId();
-        TableSyncModel syncModel;
-
-        try {
-            LOG.info()
-                    .$("received replication SYNC cmd [tableName=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(dst)
-                    .$(", srcIP=").$ip(dstIP)
-                    .I$();
-            syncModel = replHandleSyncCmd(cmd);
-        } finally {
-            // release command queue slot not to hold queues
-            sequence.done(cursor);
-        }
-        if (syncModel != null) {
-            publishTableWriterEvent(syncModel, tableId, dst, dstIP);
-        }
-    }
-
     private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, int errorCode, CharSequence errorMsg, long affectedRowsCount, int eventType) {
         long pubCursor;
         do {
@@ -4922,38 +4732,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                     .$(",tableName=").utf8(tableName)
                     .$(",tableId=").$(tableId)
                     .$(",correlationId=").$(correlationId)
-                    .I$();
-        }
-    }
-
-    void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
-        long pubCursor;
-        do {
-            pubCursor = messageBus.getTableWriterEventPubSeq().next();
-            if (pubCursor == -2) {
-                Os.pause();
-            }
-        } while (pubCursor < -1);
-
-        if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            model.toBinary(event);
-            event.setInstance(dst);
-            event.setIp(dstIP);
-            event.setTableId(tableId);
-            messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            LOG.info()
-                    .$("published replication SYNC event [table=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
-                    .I$();
-        } else {
-            LOG.error()
-                    .$("could not publish slave sync event [table=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
                     .I$();
         }
     }
@@ -5704,23 +5482,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         clearTodoLog();
     }
 
-    @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
-        final long instance = cmd.getInstance();
-        final long sequence = cmd.getSequence();
-        final int index = cmdSequences.keyIndex(instance);
-        if (index < 0 && sequence <= cmdSequences.valueAt(index)) {
-            return null;
-        }
-        cmdSequences.putAt(index, instance, sequence);
-        final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
-        return replCreateTableSyncModel(
-                cmd.getData() + 8,
-                txMemSize,
-                cmd.getData() + txMemSize + 16,
-                Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
-        );
-    }
-
     private void resizeColumnTopSink(long o3TimestampMin, long o3TimestampMax) {
         long maxPartitionsAffected = (o3TimestampMax - o3TimestampMin) / PartitionBy.getPartitionTimeIntervalFloor(partitionBy) + 2;
         long size = maxPartitionsAffected * (metadata.getColumnCount() + 1);
@@ -6251,8 +6012,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.putLong(getColumnHash(metaMem, i));
-        ddlMem.skip(8);
+        ddlMem.skip(16);
     }
 
     private void writeRestoreMetaTodo(CharSequence columnName) {

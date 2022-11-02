@@ -266,19 +266,19 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("id", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("id", ColumnType.INT));
         idColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("name", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
         nameColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("designatedTimestamp", 3, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         designatedTimestampColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("partitionBy", 4, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         partitionByColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("maxUncommittedRows", 5, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("commitLag", 6, ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG));
         commitLagColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("walEnabled", 7, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }

@@ -69,8 +69,8 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("memory_tag", 0, ColumnType.STRING));
-        metadata.add(1, new TableColumnMetadata("bytes", 1, ColumnType.LONG));
+        metadata.add(0, new TableColumnMetadata("memory_tag", ColumnType.STRING));
+        metadata.add(1, new TableColumnMetadata("bytes", ColumnType.LONG));
         METADATA = metadata;
 
         KEYS[0] = "TOTAL_USED";

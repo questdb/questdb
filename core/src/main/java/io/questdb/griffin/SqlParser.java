@@ -680,7 +680,7 @@ public final class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
         }
 
         model.setQueryModel(queryModel);
@@ -754,7 +754,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {

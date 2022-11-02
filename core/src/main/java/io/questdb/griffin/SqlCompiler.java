@@ -887,7 +887,7 @@ public class SqlCompiler implements Closeable {
                 }
                 if (designatedTimestampColumnName != null) {
                     GenericRecordMetadata metadata = new GenericRecordMetadata();
-                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, 0, ColumnType.TIMESTAMP, null));
+                    metadata.add(new TableColumnMetadata(designatedTimestampColumnName, ColumnType.TIMESTAMP, null));
                     Function function = functionParser.parseFunction(expr, metadata, executionContext);
                     if (function != null && ColumnType.isBoolean(function.getType())) {
                         function.init(null, executionContext);
@@ -1456,7 +1456,7 @@ public class SqlCompiler implements Closeable {
                 int columnType = rdrMetadata.getColumnType(i);
                 boolean isSymbol = ColumnType.isSymbol(columnType);
                 int symbolCapacity = isSymbol ? rdr.getSymbolMapReader(i).getSymbolCapacity() : configuration.getDefaultSymbolCapacity();
-                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity, rdrMetadata.getColumnHash(i));
+                model.addColumn(rdrMetadata.getColumnName(i), columnType, symbolCapacity);
                 if (isSymbol) {
                     model.cached(rdr.getSymbolMapReader(i).isCached());
                 }
@@ -2574,11 +2574,6 @@ public class SqlCompiler implements Closeable {
                 return typeCast.valueAt(castIndex);
             }
             return metadata.getColumnType(columnIndex);
-        }
-
-        @Override
-        public long getColumnHash(int columnIndex) {
-            return metadata.getColumnHash(columnIndex);
         }
 
         @Override

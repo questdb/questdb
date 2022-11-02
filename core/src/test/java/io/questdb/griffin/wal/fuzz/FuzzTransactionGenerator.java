@@ -28,8 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
@@ -239,7 +237,6 @@ public class FuzzTransactionGenerator {
             }
             to.add(new TableColumnMetadata(
                     from.getColumnName(i),
-                    from.getColumnHash(i),
                     columnType,
                     from.isColumnIndexed(i),
                     from.getIndexValueBlockCapacity(i),
@@ -278,7 +275,6 @@ public class FuzzTransactionGenerator {
         GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
         newMeta.add(new TableColumnMetadata(
                 newColName,
-                -1,
                 newType,
                 indexFlag,
                 indexValueBlockCapacity,

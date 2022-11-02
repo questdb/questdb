@@ -56,12 +56,11 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     public void checkNotifyOutstandingTxnInWal(int tableId, CharSequence tableName, long txn) {
-        // todo: too much GC
         final Path rootPath = Path.PATH.get().of(dbRoot);
         rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
-        try (TxReader txReader2 = txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            TableUtils.safeReadTxn(txReader2, milliseconClock, spinLockTimeout);
-            if (txReader2.getSeqTxn() < txn && !engine.getTableSequencerAPI().isSuspended(tableName)) {
+        try (TxReader txReader = this.txReader.ofRO(rootPath, PartitionBy.NONE)) {
+            TableUtils.safeReadTxn(txReader, milliseconClock, spinLockTimeout);
+            if (txReader.getSeqTxn() < txn && !engine.getTableSequencerAPI().isSuspended(tableName)) {
                 // table name should be immutable when in the notification message
                 final String tableNameStr = Chars.toString(tableName);
                 engine.notifyWalTxnCommitted(tableId, tableNameStr, txn);

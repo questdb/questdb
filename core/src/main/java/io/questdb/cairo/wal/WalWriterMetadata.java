@@ -69,7 +69,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public void addColumn(
             String columnName,
             int columnType,
-            long columnHash,
             boolean columnIndexed,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
@@ -162,7 +161,17 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnMetadata.size()));
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        name,
+                        columnType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnMetadata.size()
+                )
+        );
         columnCount++;
     }
 

@@ -239,9 +239,9 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("adrelid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("adnum", 2, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("adbin", 3, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("adrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("adnum", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("adbin", ColumnType.STRING));
         METADATA = metadata;
     }
 }

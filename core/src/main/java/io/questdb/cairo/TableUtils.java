@@ -279,9 +279,8 @@ public final class TableUtils {
 
                 mem.putLong(flags);
                 mem.putInt(structure.getIndexBlockCapacity(i));
-                mem.putLong(structure.getColumnHash(i));
                 // reserved
-                mem.skip(8);
+                mem.skip(16);
             }
 
             for (int i = 0; i < count; i++) {
@@ -444,10 +443,6 @@ public final class TableUtils {
             return;
         }
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
-    }
-
-    public static long getColumnHash(MemoryR metaMem, int columnIndex) {
-        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 16);
     }
 
     public static long getColumnNameOffset(int columnCount) {
