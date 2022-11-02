@@ -126,18 +126,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
             CairoTestUtils.create(model);
         }
-        final String expected = "int:INT\n" +
-                "short:SHORT\n" +
-                "byte:BYTE\n" +
-                "double:DOUBLE\n" +
-                "float:FLOAT\n" +
-                "long:LONG\n" +
-                "str:STRING\n" +
-                "sym:SYMBOL\n" +
-                "bool:BOOLEAN\n" +
-                "bin:BINARY\n" +
-                "date:DATE\n";
-        assertThat(expected, 0);
+        assertThat(0);
     }
 
     @Test
@@ -159,19 +148,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        final String expected = "int:INT\n" +
-                "short:SHORT\n" +
-                "byte:BYTE\n" +
-                "double:DOUBLE\n" +
-                "float:FLOAT\n" +
-                "long:LONG\n" +
-                "str:STRING\n" +
-                "sym:SYMBOL\n" +
-                "bool:BOOLEAN\n" +
-                "bin:BINARY\n" +
-                "date:DATE\n";
-
-        assertThat(expected, 5);
+        assertThat(5);
     }
 
     @Test
@@ -180,21 +157,10 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
-        final String expected = "int:INT\n" +
-                "short:SHORT\n" +
-                "byte:BYTE\n" +
-                "double:DOUBLE\n" +
-                "float:FLOAT\n" +
-                "long:LONG\n" +
-                "str:STRING\n" +
-                "sym:SYMBOL\n" +
-                "bool:BOOLEAN\n" +
-                "bin:BINARY\n" +
-                "date:DATE\n";
-        assertThat(expected, 11);
+        assertThat(11);
     }
 
-    private void assertThat(String expected, int expectedInitialTimestampIndex) throws Exception {
+    private void assertThat(int expectedInitialTimestampIndex) throws Exception {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             String tableName = "all";
@@ -216,6 +182,18 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                     for (int i = 0; i < columnCount; i++) {
                         sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                     }
+
+                    final String expected = "int:INT\n" +
+                            "short:SHORT\n" +
+                            "byte:BYTE\n" +
+                            "double:DOUBLE\n" +
+                            "float:FLOAT\n" +
+                            "long:LONG\n" +
+                            "str:STRING\n" +
+                            "sym:SYMBOL\n" +
+                            "bool:BOOLEAN\n" +
+                            "bin:BINARY\n" +
+                            "date:DATE\n";
 
                     TestUtils.assertEquals(expected, sink);
                     Assert.assertEquals(-1, metadata.getTimestampIndex());

@@ -440,7 +440,7 @@ public class SqlCompiler implements Closeable {
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
             String tableName = Chars.toString(tok);
-            try (TableRecordMetadata tableMetadata = engine.getCompressedMetadata(
+            try (TableRecordMetadata tableMetadata = engine.getMetadata(
                     executionContext.getCairoSecurityContext(),
                     tableName
             )) {
@@ -1123,7 +1123,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 try (
-                        TableRecordMetadata metadata = engine.getCompressedMetadata(
+                        TableRecordMetadata metadata = engine.getMetadata(
                                 executionContext.getCairoSecurityContext(),
                                 queryModel.getTableName().token
                         )) {
@@ -1213,7 +1213,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 try (
-                        TableRecordMetadata metadata = engine.getUncompressedMetadata(
+                        TableRecordMetadata metadata = engine.getMetadata(
                                 executionContext.getCairoSecurityContext(),
                                 updateQueryModel.getTableName().token
                         )
@@ -1769,7 +1769,7 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         ObjList<Function> valueFunctions = null;
-        try (TableRecordMetadata metadata = engine.getCompressedMetadata(
+        try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
                 name.token
         )) {

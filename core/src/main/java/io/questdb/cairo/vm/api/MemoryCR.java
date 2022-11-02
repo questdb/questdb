@@ -121,7 +121,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return null;
     }
 
-    class ByteSequenceView implements BinarySequence {
+    class ByteSequenceView implements BinarySequence, Mutable {
         private long address;
         private long len = -1;
 
@@ -147,9 +147,14 @@ public interface MemoryCR extends MemoryC, MemoryR {
             this.len = len;
             return this;
         }
+
+        @Override
+        public void clear() {
+            len = -1;
+        }
     }
 
-    class CharSequenceView extends AbstractCharSequence {
+    class CharSequenceView extends AbstractCharSequence implements Mutable {
         private int len;
         private long address;
 
@@ -167,6 +172,11 @@ public interface MemoryCR extends MemoryC, MemoryR {
             this.address = address;
             this.len = len;
             return this;
+        }
+
+        @Override
+        public void clear() {
+            len = 0;
         }
     }
 }
