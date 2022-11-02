@@ -44,7 +44,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testApplyOutOfOrder100k() throws Exception {
+   public void testApplyOutOfOrder100k() throws Exception {
         testApplyOutOfOrder(100_000);
     }
 

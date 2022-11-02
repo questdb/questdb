@@ -81,7 +81,6 @@ public class TableSequencerAPI implements QuietCloseable {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
 
-        // todo: too much GC here
         // this will be replaced with table name registry when drop WAL table implemented
         try (Path path = new Path().of(root).slash$()) {
             final StringSink nameSink = new StringSink();

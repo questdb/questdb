@@ -156,7 +156,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
-        // todo: why string ?
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
