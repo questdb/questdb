@@ -234,7 +234,11 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                         default:
                             final int strLen = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                             final long strLo = event.getData() + 2L * Integer.BYTES;
-                            throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);
+                            if (strLen == 0) {
+                                throw SqlException.$(tableNamePositionInSql, "writer command failed");
+                            } else {
+                                throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);
+                            }
                     }
                 } else {
                     status = QUERY_STARTED;

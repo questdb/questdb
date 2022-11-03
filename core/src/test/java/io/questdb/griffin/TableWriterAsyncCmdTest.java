@@ -71,7 +71,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 fut.await();
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertEquals("async cmd failed: invalid alter table command [code=1000]", ex.getFlyweightMessage());
+                TestUtils.assertEquals("invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
                 Misc.free(fut);
             }
@@ -179,7 +179,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             try {
                 fut.await();
             } catch (SqlException exception) {
-                TestUtils.assertContains(exception.getFlyweightMessage(), "async cmd failed");
+                TestUtils.assertContains(exception.getFlyweightMessage(), "Cannot rename");
             } finally {
                 fut.close();
             }
@@ -214,7 +214,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 fut.close();
-                TestUtils.assertContains(ex.getFlyweightMessage(), "async cmd failed");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "writer command failed");
             }
         });
     }
@@ -246,7 +246,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "async cmd failed");
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "Cannot rename");
                     }
                 }
             } // Unblock table
