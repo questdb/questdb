@@ -643,10 +643,20 @@ public abstract class AbstractCairoTest {
 
     protected static void runWalPurgeJob(FilesFacade ff) {
         WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
+        snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
         while (job.run(0)) {
             // run until empty
         }
         job.close();
+    }
+
+    public static class MicrosecondClockMock implements MicrosecondClock {
+        public long timestamp = 0;
+
+        @Override
+        public long getTicks() {
+            return timestamp;
+        }
     }
 
     protected static void runWalPurgeJob() {

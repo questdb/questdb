@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -598,6 +599,73 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Dropped column should be there.
             assertSql("select * from " + tableName, expectedAllColumns);
+        });
+    }
+
+    @Test
+    public void testSuspendResumeWalPurgeJob() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            MicrosecondClockMock clock = new MicrosecondClockMock();
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
+            FilesFacade ff = configuration.getFilesFacade();
+            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Thread controlThread1 = new Thread(() -> {
+                clock.timestamp = interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread1.start();
+            controlThread1.join();
+
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertWalExistence(true, tableName, 1);
+
+            engine.releaseInactive();
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Thread controlThread2 = new Thread(() -> {
+                clock.timestamp = 2*interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread2.start();
+            controlThread2.join();
+
+            job.close();
+            snapshotAgent.setWalPurgeJobRunLock(null);
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
         });
     }
 

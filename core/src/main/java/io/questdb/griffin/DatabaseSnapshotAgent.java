@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -48,6 +49,7 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock(); // protects below fields
+    private ReentrantLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
@@ -56,6 +58,10 @@ public class DatabaseSnapshotAgent implements Closeable {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable ReentrantLock walPurgeJobRunLock) {
+        this.walPurgeJobRunLock = walPurgeJobRunLock;
     }
 
     @Override
@@ -225,10 +231,13 @@ public class DatabaseSnapshotAgent implements Closeable {
             // Delete snapshot/db directory.
             path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
-
             // Release locked readers if any.
             unsafeReleaseReaders();
         } finally {
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null && walPurgeJobRunLock.isHeldByCurrentThread()) {
+                walPurgeJobRunLock.unlock();
+            }
             lock.unlock();
         }
     }
@@ -269,6 +278,12 @@ public class DatabaseSnapshotAgent implements Closeable {
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+
+                        // Suspend the WalPurgeJob
+                        if (walPurgeJobRunLock != null) {
+                            walPurgeJobRunLock.lock(); // wait for the WalPurgeJob to release the lock
+                        }
+
                         // Copy metadata files for all tables.
 
                         while (cursor.hasNext()) {
@@ -321,6 +336,10 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
+                        // Resume the WalPurgeJob
+                        if (walPurgeJobRunLock != null && walPurgeJobRunLock.isHeldByCurrentThread()) {
+                            walPurgeJobRunLock.unlock();
+                        }
                         unsafeReleaseReaders();
                         LOG.error()
                                 .$("snapshot error [e=").$(e)

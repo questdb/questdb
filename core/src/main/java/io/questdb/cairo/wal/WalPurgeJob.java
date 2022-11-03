@@ -39,10 +39,11 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.util.PrimitiveIterator;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-    private final MillisecondClock milliseconClock;
+    private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -64,13 +65,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private int walsLatestSegmentId;
     private final FindVisitor broadSweepIterFunc = this::broadSweepIter;
     private long last = 0;
+    private final ReentrantLock runLock = new ReentrantLock();
 
     public WalPurgeJob(CairoEngine engine, FilesFacade ff, MicrosecondClock clock) {
         this.engine = engine;
         this.ff = ff;
         this.clock = clock;
         this.checkInterval = engine.getConfiguration().getWalPurgeInterval() * 1000;
-        this.milliseconClock = engine.getConfiguration().getMillisecondClock();
+        this.millisecondClock = engine.getConfiguration().getMillisecondClock();
         this.spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         this.txReader = new TxReader(ff);
 
@@ -86,6 +88,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     public void close() {
         this.txReader.close();
         path.close();
+    }
+
+    public ReentrantLock getRunLock() {
+        return runLock;
     }
 
     /**
@@ -328,7 +334,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         setTxnPath(tableName);
         txReader.ofRO(path, PartitionBy.NONE);
         try {
-            TableUtils.safeReadTxn(txReader, milliseconClock, spinLockTimeout);
+            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
             final long lastAppliedTxn = txReader.getSeqTxn();
 
             TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
@@ -359,7 +365,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
-            broadSweep();
+            // do nothing if the snapshot is running (holding the lock)
+            if (runLock.tryLock()) {
+                try {
+                    broadSweep();
+                } finally {
+                    runLock.unlock();
+                }
+            }
         }
         return false;
     }
