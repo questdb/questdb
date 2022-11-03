@@ -1538,7 +1538,11 @@ public class SqlCompiler implements Closeable {
                 engine.unlock(executionContext.getCairoSecurityContext(), name.token, tableWriter, newTable);
             }
         } else {
-            throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
+            if (!createTableModel.isIgnoreIfExists()) {
+                throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
+            } else {
+                compiledQuery.ofCreateTable();
+            }
         }
 
         if (createTableModel.getQueryModel() == null) {
