@@ -16,8 +16,11 @@ jobs:
           node-version: 16.x
       - name: install danger 
         run: yarn global add danger 
+      - name: Validate PR title validation rules
+        working-directory: ./ci/validate-pr-title
+        run: node validate.test.js
       - name: Danger
         run: danger ci
-        working-directory: ./ci
+        working-directory: ./ci/validate-pr-title
         env:
           DANGER_GITHUB_API_TOKEN: ${{ secrets.DANGER_GITHUB_TOKEN }}
