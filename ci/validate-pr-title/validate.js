@@ -52,7 +52,7 @@ perf(sql): improve pattern matching performance for SELECT sub-queries
 const prTitleRegex = new RegExp(
   `^(((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join(
     "|"
-  )})\\))|build): .*`
+  )})\\))|buid): .*`
 );
 
 function validate({ title, onError }) {
