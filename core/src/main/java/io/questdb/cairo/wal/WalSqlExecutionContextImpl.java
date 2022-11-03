@@ -40,14 +40,6 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
-    public TableRecordMetadata getCompressedMetadata(CairoEngine engine, CharSequence tableName) {
-        return engine.getCompressedMetadata(
-                getCairoSecurityContext(),
-                systemTableName
-        );
-    }
-
-    @Override
     public TableReader getReader(CharSequence tableName, int tableId, long version) {
         return getCairoEngine().getReaderBySystemName(
                 getCairoSecurityContext(),
@@ -74,8 +66,8 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
-    public TableRecordMetadata getUncompressedMetadata(CairoEngine engine, CharSequence tableName) {
-        return engine.getUncompressedMetadata(
+    public TableRecordMetadata getMetadata(CharSequence tableName) {
+        return getCairoEngine().getMetadata(
                 getCairoSecurityContext(),
                 systemTableName
         );

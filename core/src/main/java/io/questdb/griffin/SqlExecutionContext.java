@@ -74,13 +74,6 @@ public interface SqlExecutionContext extends Closeable {
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
-    default TableRecordMetadata getCompressedMetadata(CairoEngine engine, CharSequence tableName) {
-        return engine.getCompressedMetadata(
-                getCairoSecurityContext(),
-                engine.getSystemTableName(tableName)
-        );
-    }
-
     int getJitMode();
 
     void setJitMode(int jitMode);
@@ -119,8 +112,9 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
     }
 
-    default TableRecordMetadata getUncompressedMetadata(CairoEngine engine, CharSequence tableName) {
-        return engine.getUncompressedMetadata(
+    default TableRecordMetadata getMetadata(CharSequence tableName) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
                 getCairoSecurityContext(),
                 engine.getSystemTableName(tableName)
         );

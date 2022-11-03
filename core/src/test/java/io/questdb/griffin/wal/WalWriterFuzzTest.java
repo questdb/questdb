@@ -43,6 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -131,6 +132,15 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
+        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd1);
+    }
+
+    @Test
+    @Ignore // TODO: fix this test
+    public void testWalWriteRollbackHeavyToFix() throws Exception {
+        Rnd rnd1 = new Rnd(628706008284375L, 1667487965450L);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);

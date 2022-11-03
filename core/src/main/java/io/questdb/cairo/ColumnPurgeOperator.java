@@ -46,7 +46,6 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
-    private final CairoEngine engine;
     private TxnScoreboard txnScoreboard;
     private TxReader txReader;
     private long longBytes;
@@ -54,9 +53,7 @@ public class ColumnPurgeOperator implements Closeable {
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private long purgeLogPartitionFd = -1L;
 
-    public ColumnPurgeOperator(CairoEngine engine, TableWriter purgeLogWriter, String updateCompleteColumnName) {
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.engine = engine;
+    public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = purgeLogWriter;
         this.updateCompleteColumnName = updateCompleteColumnName;
@@ -69,9 +66,7 @@ public class ColumnPurgeOperator implements Closeable {
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
     }
 
-    public ColumnPurgeOperator(CairoEngine engine) {
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.engine = engine;
+    public ColumnPurgeOperator(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = null;
         this.updateCompleteColumnName = null;

@@ -48,7 +48,7 @@ public class O3Utils {
     ) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
-        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(cairoEngine, workerCount);
+        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
         final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
 
         workerPool.assign(purgeDiscoveryJob);

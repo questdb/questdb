@@ -895,9 +895,6 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
-        // todo: import "cancel" tries to remove WAL table, which does not work correctly on this branch
-        Assume.assumeTrue(!walEnabled || Os.type != Os.WINDOWS);
-
         String importId = runAndFetchImportId("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 

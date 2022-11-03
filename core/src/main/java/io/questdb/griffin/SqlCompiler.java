@@ -443,7 +443,6 @@ public class SqlCompiler implements Closeable {
             String systemTableName = engine.getSystemTableName(tok);
             String tableName = engine.getTableNameBySystemName(systemTableName);
             try (TableRecordMetadata tableMetadata = executionContext.getMetadata(
-                    engine,
                     tok
             )) {
                 tok = expectToken(lexer, "'add', 'alter' or 'drop'");
@@ -1126,7 +1125,7 @@ public class SqlCompiler implements Closeable {
                 final QueryModel queryModel = (QueryModel) model;
                 try (
                         TableRecordMetadata metadata = executionContext.getMetadata(
-                                engine, queryModel.getTableName().token
+                                queryModel.getTableName().token
                         )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
                         optimiser.optimiseUpdate(queryModel, executionContext, metadata);
@@ -1215,7 +1214,6 @@ public class SqlCompiler implements Closeable {
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 try (
                         TableRecordMetadata metadata = executionContext.getMetadata(
-                                engine,
                                 updateQueryModel.getTableName().token
                         )
                 ) {

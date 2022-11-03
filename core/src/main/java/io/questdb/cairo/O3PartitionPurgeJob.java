@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -50,12 +51,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final ObjList<TxnScoreboard> txnScoreboards;
     private final ObjList<TxReader> txnReaders;
     private final AtomicBoolean halted = new AtomicBoolean(false);
-    private final CairoEngine engine;
 
-    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
-        super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
-        this.engine = engine;
-        this.configuration = engine.getMessageBus().getConfiguration();
+    public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
+        super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
+        this.configuration = messageBus.getConfiguration();
         this.sink = new MutableCharSink[workerCount];
         this.fileNameSinks = new StringSink[workerCount];
         this.partitionList = new ObjList<>(workerCount);
@@ -247,7 +246,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
-            CharSequence systemTableName,
+            String systemTableName,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
             int partitionBy) {

@@ -1885,15 +1885,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         String tab34_0 = Chars.toString(systemTableName) + "_0";
         String fakeExists = tab34_0 + File.separator + "_txn";
         FilesFacade ff = new FilesFacadeImpl() {
-
             @Override
             public boolean exists(LPSZ path) {
                 if (Chars.endsWith(path, tab34_0)) {
                     return true;
-                } else {
-                    if (Chars.endsWith(path, fakeExists)) {
-                        return true;
-                    }
+                } else if (Chars.endsWith(path, tab34_0 + File.separator + "_txn")) {
+                    return true;
                 }
                 return super.exists(path);
             }
@@ -1907,7 +1904,15 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, "tab34", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=partition_import, msg=`[-1] Table remove failed [tableName=tab34:_0]`]");
+        testImportThrowsException(
+                ff,
+                "tab34",
+                "test-quotes-big.csv",
+                PartitionBy.MONTH,
+                "ts",
+                null,
+                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=" + tab34_0 + "]`]"
+        );
     }
 
     static ObjList<IndexChunk> readIndexChunks(File root) {
@@ -2003,14 +2008,14 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
-        String tab35 = "tab35";
-        CharSequence systemTableName = engine.getSystemTableName(tab35);
+        String mangledPartDir = engine.getSystemTableName("tab34") + "_0";
         FilesFacade ff = new FilesFacadeImpl() {
-            final String tempDir = inputWorkRoot + File.separator + systemTableName;
 
             @Override
             public boolean exists(LPSZ path) {
-                if (Chars.equals(path, tempDir)) {
+                if (Chars.endsWith(path, mangledPartDir)) {
+                    return true;
+                } else if (Chars.endsWith(path, mangledPartDir + File.separator + "_txn")) {
                     return true;
                 }
                 return super.exists(path);
@@ -2018,7 +2023,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             @Override
             public int rmdir(Path name) {
-                if (Chars.equals(name, tempDir)) {
+                if (Chars.endsWith(name, mangledPartDir)) {
                     return -1;
                 }
                 return super.rmdir(name);
@@ -2032,7 +2037,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 PartitionBy.MONTH,
                 "ts",
                 null,
-                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=tab34:_0]`]"
+                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=" + mangledPartDir + "]`]"
         );
     }
 

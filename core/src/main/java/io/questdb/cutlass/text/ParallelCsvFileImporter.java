@@ -205,7 +205,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int tableId
     ) {
         try (Path path = new Path()) {
-            switch (TableUtils.exists(ff, path, root, systemTableName)) {
+            switch (TableUtils.exists(ff, path, root, systemTableName, 0, systemTableName.length())) {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
@@ -456,14 +456,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
             this.statusReporter.report(phase, status, msg, Numbers.LONG_NaN, Numbers.LONG_NaN, phaseErrors);
-        }
-    }
-
-    private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
-        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.nonCritical()
-                    .put("invalid table name [table=").putAsPrintable(tableName)
-                    .put(']');
         }
     }
 

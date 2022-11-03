@@ -58,7 +58,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractGriffinTest.setUpStatic();
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
+        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass

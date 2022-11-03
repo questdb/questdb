@@ -141,11 +141,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return b1 & b2 & b3 & b4 & b5;
     }
 
-    @TestOnly
-    public void clearPools() {
-        sqlCompilerPool.releaseInactive();
-    }
-
     @Override
     public void close() {
         Misc.free(writerPool);
@@ -311,7 +306,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     int errno;
                     if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
                         LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("Table remove failed");
+                        throw CairoException.critical(errno).put("could not remove table");
                     }
                     return;
                 } finally {
@@ -322,13 +317,13 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName) {
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, String systemTableName) {
         try {
-            return metadataPool.get(tableName);
+            return metadataPool.get(systemTableName);
         } catch (CairoException e) {
-            tryRepairTable(securityContext, tableName, e);
+            tryRepairTable(securityContext, systemTableName, e);
         }
-        return metadataPool.get(tableName);
+        return metadataPool.get(systemTableName);
     }
 
     public CairoConfiguration getConfiguration() {
@@ -354,6 +349,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    public IDGenerator getTableIdGenerator() {
+        return tableIdGenerator;
     }
 
     public void removeTableSystemName(CharSequence tableName) {
@@ -435,6 +434,24 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         return writerPool.get(tableSequencerAPI.getDefaultTableName(tableName), lockReason);
+    }
+
+    // For testing only
+    @TestOnly
+    public WalReader getWalReader(
+            @SuppressWarnings("unused") CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
+        if (systemTableName != null) {
+            // This is WAL table because sequencer exists
+            return new WalReader(configuration, tableName, systemTableName, walName, segmentId, walRowCount);
+        }
+
+        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
     }
 
     public boolean isWalTable(final CharSequence tableName) {

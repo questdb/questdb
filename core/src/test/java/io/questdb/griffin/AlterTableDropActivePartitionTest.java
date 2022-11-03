@@ -744,7 +744,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         assertSql(tableName, expected);
 
         workerPool = new TestWorkerPool(1);
-        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine, 1);
+        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
         workerPool.assign(partitionPurgeJob);
         workerPool.freeOnExit(partitionPurgeJob);
         workerPool.start(); // closed by assertTableX

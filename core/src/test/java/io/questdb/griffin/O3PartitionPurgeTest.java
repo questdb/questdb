@@ -44,7 +44,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
+        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass
