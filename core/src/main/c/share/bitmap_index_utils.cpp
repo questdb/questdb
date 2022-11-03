@@ -143,7 +143,7 @@ inline int64_t linked_search_lower(const int64_t *indexBase,
     // Timeseries data is usually distributed equally in time
     // This code optimises using assumption that as if there are 200 index elements within 20 mins
     // and sample by is by 1 minute the next value will be around every 10 elements
-    // To not degrade it to full scan, use miniumum increment of 32
+    // To not degrade it to full scan, use minimum increment of 32
     // This is same as
     // return branch_free_linked_search_lower(indexBase, dataBase, indexLength, value);
     const int64_t step = std::max<int64_t>(32LL, indexLength / estimatedCount);

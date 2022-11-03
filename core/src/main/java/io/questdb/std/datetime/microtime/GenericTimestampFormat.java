@@ -68,16 +68,24 @@ public class GenericTimestampFormat extends AbstractDateFormat {
 
                 // MICROS
                 case TimestampFormatCompiler.OP_MICROS_ONE_DIGIT:
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                     if (micros0 == -1) {
-                        micros0 = Timestamps.getMicrosOfSecond(micros);
+                        micros0 = Timestamps.getMicrosOfMilli(micros);
                     }
                     sink.put(micros0);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
                     if (micros0 == -1) {
                         micros0 = Timestamps.getMicrosOfSecond(micros);
+                    }
+                    TimestampFormatUtils.append00000(sink, micros0);
+                    break;
+
+                case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    if (micros0 == -1) {
+                        micros0 = Timestamps.getMicrosOfMilli(micros);
                     }
                     TimestampFormatUtils.append00(sink, micros0);
                     break;
@@ -385,7 +393,6 @@ public class GenericTimestampFormat extends AbstractDateFormat {
     @Override
     public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException {
         int day = 1;
-        int week = 0;
         int month = 1;
         int year = 1970;
         int hour = 0;
@@ -393,6 +400,7 @@ public class GenericTimestampFormat extends AbstractDateFormat {
         int second = 0;
         int millis = 0;
         int micros = 0;
+        int week = 0;
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
@@ -423,8 +431,20 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     micros = Numbers.parseInt(in, pos, pos += 3);
                     break;
 
-                case TimestampFormatCompiler.OP_MICROS_GREEDY:
+                case TimestampFormatCompiler.OP_MICROS_GREEDY3:
                     l = Numbers.parseInt000Greedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                    l = Numbers.parseLong000000Greedy(in, pos, hi);
+                    micros = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
+                    l = Timestamps.parseNanosAsMicrosGreedy(in, pos, hi);
                     micros = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;

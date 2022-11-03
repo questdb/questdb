@@ -54,7 +54,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterExpectUnkockWriter() throws Exception {
+    public void testAlterExpectUnlockWriter() throws Exception {
         assertFailure("alter system unlock reader", 20, "'writer' expected");
     }
 

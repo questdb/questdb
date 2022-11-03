@@ -21,6 +21,71 @@ import java.util.concurrent.atomic.AtomicReference;
 public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
+    public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "1\n",
+                "select * from tab",
+                "CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as SYMBOL) AS x FROM long_sequence(1)" +
+                        "), INDEX(x)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast2() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "1\n",
+                "select * from tab",
+                "CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as STRING) AS x FROM long_sequence(1)" +
+                        "), CAST(x as SYMBOL), INDEX(x)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectIndexUnsupportedColumnType() throws Exception {
+        assertFailure(
+                "CREATE TABLE tab AS (" +
+                        "SELECT x FROM long_sequence(1)" +
+                        "), INDEX(x)",
+                0,
+                "indexes are supported only for SYMBOL columns: x"
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectIndexUnsupportedColumnTypeAfterCast() throws Exception {
+        assertFailure(
+                "CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as STRING) x FROM long_sequence(1)" +
+                        "), INDEX(x)",
+                0,
+                "indexes are supported only for SYMBOL columns: x"
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectIndexUnsupportedColumnTypeAfterCast2() throws Exception {
+        assertFailure(
+                "CREATE TABLE tab AS (" +
+                        "SELECT CAST(x as SYMBOL) x FROM long_sequence(1)" +
+                        "), CAST(x as STRING), INDEX(x)",
+                82,
+                "indexes are supported only for SYMBOL columns: x"
+        );
+    }
+
+    @Test
     public void testCreateTableAsSelectInheritsColumnIndex() throws Exception {
         assertCompile("create table old(s string,sym symbol index, ts timestamp)");
         assertQuery("s\tsym\tts\n", "select * from new",
@@ -420,6 +485,18 @@ public class CreateTableTest extends AbstractGriffinTest {
                         Assert.assertFalse("Column " + columnName + " shouldn't be indexed!", metadata.isColumnIndexed(i));
                     }
                 }
+            }
+        });
+    }
+
+    private void assertFailure(String sql, int position, String message) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile(sql, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
         });
     }

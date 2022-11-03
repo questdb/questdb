@@ -400,6 +400,14 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     @Test
+    public void testNonAscii() {
+        assertThat(
+                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000--non ascii--\n",
+                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000\n"
+        );
+    }
+
+    @Test
     public void testWithQuotedStringsWithSpaces2() {
         // Good test, but runs 5s to check all combinations because message is quite long
 //        assertThat(

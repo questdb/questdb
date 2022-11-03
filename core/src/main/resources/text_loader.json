@@ -19,6 +19,22 @@
     {
       "format": "yyyy-MM-ddTHH:mm:ss.SSSUUUz",
       "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.U+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.U+z",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.N+",
+      "utf8": false
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.N+z",
+      "utf8": false
     }
   ]
 }
