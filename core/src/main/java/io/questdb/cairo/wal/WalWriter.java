@@ -1463,7 +1463,8 @@ public class WalWriter implements TableWriterAPI {
                     }
                     LOG.info().$("added column to WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId).$(", columnName=").$(columnName).I$();
                 } else {
-                    throw CairoException.critical(0).put("column '").put(columnName).put("' added, cannot commit because of concurrent table definition change");
+                    throw CairoException.critical(0).put("column '").put(columnName)
+                            .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
@@ -1519,7 +1520,7 @@ public class WalWriter implements TableWriterAPI {
                         LOG.info().$("removed column from WAL [path=").$(path).$(", columnName=").$(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' removed, cannot commit because of concurrent table definition change ");
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }
             } else {
@@ -1562,7 +1563,7 @@ public class WalWriter implements TableWriterAPI {
                         LOG.info().$("renamed column in wal [path=").$(path).$(", columnName=").$(columnName).$(", newColumnName=").$(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
-                                .put("' removed, cannot commit because of concurrent table definition change ");
+                                .put("' was removed, cannot apply commit because of concurrent table definition change");
                     }
                 }
             } else {

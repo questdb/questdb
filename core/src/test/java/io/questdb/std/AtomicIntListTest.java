@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -101,7 +102,7 @@ public class AtomicIntListTest {
             reader.start();
         }
 
-        Writer writer = new Writer(list, barrier, latch, maxSize);
+        Writer writer = new Writer(list, barrier, latch, anomalies, maxSize);
         writer.start();
 
         latch.await();
@@ -128,7 +129,7 @@ public class AtomicIntListTest {
         @Override
         public void run() {
             try {
-                barrier.await();
+                TestUtils.await(barrier);
                 while (true) {
                     int size = list.size();
                     if (size == maxSize) {
@@ -155,12 +156,14 @@ public class AtomicIntListTest {
         private final AtomicIntList list;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
+        private final AtomicInteger anomalies;
         private final int maxSize;
 
-        private Writer(AtomicIntList list, CyclicBarrier barrier, CountDownLatch latch, int maxSize) {
+        private Writer(AtomicIntList list, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomalies, int maxSize) {
             this.list = list;
             this.barrier = barrier;
             this.latch = latch;
+            this.anomalies = anomalies;
             this.maxSize = maxSize;
         }
 
@@ -178,6 +181,7 @@ public class AtomicIntListTest {
                     Os.pause();
                 }
             } catch (Exception e) {
+                anomalies.incrementAndGet();
                 e.printStackTrace();
             } finally {
                 latch.countDown();

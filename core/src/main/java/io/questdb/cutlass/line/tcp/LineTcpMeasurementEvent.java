@@ -54,7 +54,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private boolean commitOnWriterClose;
-    private final AlterOperationBuilder addColumnBuilder = new AlterOperationBuilder();
+    private final AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
 
     LineTcpMeasurementEvent(
             long bufLo,
@@ -158,11 +158,11 @@ class LineTcpMeasurementEvent implements Closeable {
                         // we have to commit before adding a new column as WalWriter doesn't do that automatically
                         writer.commit();
                         try {
-                            addColumnBuilder.clear();
-                            addColumnBuilder
+                            alterOperationBuilder.clear();
+                            alterOperationBuilder
                                     .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
                                     .ofAddColumn(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
-                            writer.apply(addColumnBuilder.build(), true);
+                            writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
                             if (colIndex < 0) {

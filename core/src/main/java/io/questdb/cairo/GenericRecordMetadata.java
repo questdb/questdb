@@ -129,15 +129,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             columnCount++;
             return this;
         }
-        // Check if the older column with the same name was deleted.
-        int olderIndex = columnNameIndexMap.valueAt(index);
-        TableColumnMetadata olderMeta = columnMetadata.get(olderIndex);
-        if (olderMeta.isDeleted()) {
-            columnNameIndexMap.putAt(index, meta.getName(), i);
-            columnMetadata.extendAndSet(i, meta);
-            columnCount++;
-            return this;
-        }
         throw CairoException.duplicateColumn(meta.getName());
     }
 

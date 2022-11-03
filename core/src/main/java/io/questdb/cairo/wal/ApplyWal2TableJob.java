@@ -200,10 +200,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 writer.setSeqTxn(seqTxn);
                             } catch (CairoException e) {
                                 int errno = e.getErrno();
-                                LOG.error().$("cannot apply structure change from WAL to table [table=").utf8(writer.getTableName())
+                                LOG.error().$("could not apply structure change from WAL to table [table=").utf8(writer.getTableName())
                                         .$("', error=").$(errno).I$();
                                 throw CairoException.critical(errno)
-                                        .put("cannot apply structure change from WAL to table");
+                                        .put("could not apply structure change from WAL to table");
                             }
                         } else {
                             // Something messed up in sequencer.
@@ -211,7 +211,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             // TODO: make sequencer distressed and try to reconcile on sequencer opening
                             //  or skip the transaction?
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                    .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                     .put(newStructureVersion)
                                     .put(']');
                         }
