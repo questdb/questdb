@@ -411,7 +411,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                                 SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
                         ) {
                             for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("create table if not exists tab" + (threadId * tableCount + j) + " (x int)", executionContext);
+                                compiler.compile("create table tab" + (threadId * tableCount + j) + " (x int)", executionContext);
                             }
                         }
                     } catch (Throwable e) {
