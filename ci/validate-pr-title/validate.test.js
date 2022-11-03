@@ -1,13 +1,14 @@
 const assert = require("node:assert").strict;
 const { validate, allowedTypes, allowedSubTypes } = require("./validate");
 
-const onError = (message) => {
-  throw message;
-};
-
 const testValid = (title) =>
   assert.doesNotThrow(() =>
-    validate({ title, onError: () => onError(`should accept "${title}"`) })
+    validate({
+      title,
+      onError: () => {
+        throw `should accept "${title}"`;
+      },
+    })
   );
 
 const testInvalid = (title) =>
