@@ -65,7 +65,6 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final IntList initialSymbolCounts = new IntList();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final MillisecondClock millisecondClock;
     private final Path path;
     private final LongList rowValueIsNotNull = new LongList();
     private final int rootLen;
@@ -89,7 +88,6 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private long segmentRowCount = -1;
     private int segmentId = -1;
-    private long segmentStartMillis;
     private boolean txnOutOfOrder = false;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private long txnMaxTimestamp = -1;
@@ -104,7 +102,6 @@ public class WalWriter implements TableWriterAPI {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.tableSequencerAPI = tableSequencerAPI;
         this.configuration = configuration;
-        this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.tableName = tableName;
@@ -947,7 +944,6 @@ public class WalWriter implements TableWriterAPI {
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen);
             events.openEventFile(path, segmentPathLen);
-            segmentStartMillis = millisecondClock.getTicks();
             lastSegmentTxn = 0;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
