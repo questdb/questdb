@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -75,8 +74,6 @@ public class WriterPool extends AbstractPool {
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
-    private final int rootLen;
     private final MicrosecondClock clock;
     private final CharSequence root;
     @NotNull
@@ -97,8 +94,6 @@ public class WriterPool extends AbstractPool {
         this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
-        this.path.concat(this.root);
-        this.rootLen = this.path.length();
         this.metrics = metrics;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
@@ -256,7 +251,8 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path.trimTo(rootLen).concat(name));
+                    Path path = Path.getThreadLocal(root).concat(name);
+                    TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -345,7 +341,6 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        Misc.free(path);
         LOG.info().$("closed").$();
     }
 
@@ -513,7 +508,8 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
-        TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
+        Path path = Path.getThreadLocal(root).concat(tableName);
+        TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
