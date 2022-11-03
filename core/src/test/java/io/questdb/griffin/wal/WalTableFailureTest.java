@@ -820,7 +820,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 compile("alter table " + tableName + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "table structure change does not contain 1 transaction");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not apply transaction, there is a gap in structure version numbers");
             }
 
             executeInsert("insert into " + tableName +

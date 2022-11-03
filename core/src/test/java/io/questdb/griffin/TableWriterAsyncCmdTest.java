@@ -214,7 +214,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 fut.close();
-                TestUtils.assertContains(ex.getFlyweightMessage(), "writer command failed");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "statement execution failed");
             }
         });
     }

@@ -48,7 +48,6 @@ public class TableWriterTask implements Closeable {
     private long appendPtr;
     private long appendLim;
     private long instance;
-    private long sequence;
     private long ip;
 
     public TableWriterTask(long data, long dataSize) {
@@ -110,10 +109,6 @@ public class TableWriterTask implements Closeable {
 
     public void setIp(long ip) {
         this.ip = ip;
-    }
-
-    public long getSequence() {
-        return sequence;
     }
 
     public long getTableId() {

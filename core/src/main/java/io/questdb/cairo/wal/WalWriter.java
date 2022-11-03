@@ -160,7 +160,7 @@ public class WalWriter implements TableWriterAPI {
                 }
 
                 if (structureVersionMismatch) {
-                    throw CairoException.nonCritical().put("table structure change does not contain 1 transaction [table=").put(tableName)
+                    throw CairoException.nonCritical().put("could not apply transaction, there is a gap in structure version numbers [table=").put(tableName)
                             .put(", oldStructureVersion=").put(metadata.getStructureVersion())
                             .put(", newStructureVersion=").put(alterOperationValidationBackend.structureVersion).put(']');
                 }
