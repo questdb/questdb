@@ -114,17 +114,53 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDuplicateTableCreation() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
+    public void testCannotMapTableId() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() {
+                ff = new FilesFacadeImpl() {
+                    private long theFD = 0;
+                    private boolean failNextAlloc = false;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (failNextAlloc) {
+                            failNextAlloc = false;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        if (theFD == fd) {
+                            failNextAlloc = true;
+                            theFD = 0;
+                            return 0;
+                        }
+                        return super.length(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                            theFD = fd;
+                        }
+                        return fd;
+                    }
+                };
+
                 try {
-                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model, false);
-                    fail("duplicated tables should not be permitted!");
+                    //noinspection resource
+                    new CairoEngine(configuration);
+                    Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                } finally {
+                    ff = null;
                 }
+                Path.clearThreadLocals();
             }
         });
     }
@@ -380,52 +416,17 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotMapTableId() throws Exception {
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
-            @Override
-            public void run() {
-                ff = new FilesFacadeImpl() {
-                    private long theFD = 0;
-                    private boolean failNextAlloc = false;
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (failNextAlloc) {
-                            failNextAlloc = false;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
-                    }
-
-                    @Override
-                    public long length(long fd) {
-                        if (theFD == fd) {
-                            failNextAlloc = true;
-                            theFD = 0;
-                            return 0;
-                        }
-                        return super.length(fd);
-                    }
-
-                    @Override
-                    public long openRW(LPSZ name, long opts) {
-                        long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
-                            theFD = fd;
-                        }
-                        return fd;
-                    }
-                };
-
+    public void testDuplicateTableCreation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
                 try {
-                    new CairoEngine(configuration);
-                    Assert.fail();
+                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), false, model, false);
+                    fail("duplicated tables should not be permitted!");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-                } finally {
-                    ff = null;
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
                 }
-                Path.clearThreadLocals();
             }
         });
     }

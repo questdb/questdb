@@ -720,32 +720,31 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         });
     }
 
-    protected static void drainWalQueue(boolean cleanup) throws IOException {
-        class QueueCleanerJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-            public QueueCleanerJob(CairoEngine engine) {
-                super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
-            }
-
-            @Override
-            public void close() throws IOException {
-            }
-
-            @Override
-            protected boolean doRun(int workerId, long cursor) {
-                try {
-                    queue.get(cursor);
-                } finally {
-                    subSeq.done(cursor);
-                }
-                return true;
-            }
+    @SuppressWarnings("SameParameterValue")
+    private void createTableAndCopy(String tableName, String tableCopyName) {
+        // tableName is WAL enabled
+        try (TableModel model = createTableModel(tableName).wal()) {
+            engine.createTable(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    false,
+                    model,
+                    false
+            );
         }
 
-        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
-        while (job.run(0)) {
-            // run until empty
+        // tableCopyName is not WAL enabled
+        try (TableModel model = createTableModel(tableCopyName).noWal()) {
+            engine.createTable(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    false,
+                    model,
+                    false
+            );
         }
-        ((Closeable) job).close();
     }
 
     private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
@@ -820,32 +819,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         }
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void createTableAndCopy(String tableName, String tableCopyName) {
-        // tableName is WAL enabled
-        try (TableModel model = createTableModel(tableName).wal()) {
-            engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model,
-                    false
-            );
-        }
-
-        // tableCopyName is not WAL enabled
-        try (TableModel model = createTableModel(tableCopyName).noWal()) {
-            engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model,
-                    false
-            );
-        }
-    }
-
     private TableModel createTableModel(String tableName) {
+        //noinspection resource
         return new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("int", ColumnType.INT)
                 .col("byte", ColumnType.BYTE)
@@ -867,6 +842,35 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("bin", ColumnType.BINARY)
                 .timestamp("ts");
+    }
+
+    protected static void drainWalQueue(boolean cleanup) throws IOException {
+        class QueueCleanerJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
+            public QueueCleanerJob(CairoEngine engine) {
+                super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
+            }
+
+            @Override
+            public void close() throws IOException {
+            }
+
+            @Override
+            protected boolean doRun(int workerId, long cursor) {
+                try {
+                    queue.get(cursor);
+                } finally {
+                    subSeq.done(cursor);
+                }
+                return true;
+            }
+        }
+
+        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
+        //noinspection StatementWithEmptyBody
+        while (job.run(0)) {
+            // run until empty
+        }
+        ((Closeable) job).close();
     }
 
     private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {

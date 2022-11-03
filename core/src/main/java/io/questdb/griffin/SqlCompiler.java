@@ -1525,9 +1525,11 @@ public class SqlCompiler implements Closeable {
                 if (createTableModel.getLikeTableName() != null) {
                     copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                 }
-                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel, false);
+                engine.createTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel.isIgnoreIfExists(), createTableModel, false);
+            } catch (EntryUnavailableException e) {
+                throw SqlException.$(name.position, "table already exists");
             } catch (CairoException e) {
-                LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+                LOG.error().$("could not create table [error=").$((Throwable) e).I$();
                 if (e.isInterruption()) {
                     throw e;
                 }
@@ -1559,6 +1561,7 @@ public class SqlCompiler implements Closeable {
                     executionContext.getCairoSecurityContext(),
                     mem,
                     path,
+                    false,
                     tableStructureAdapter.of(model, metadata, typeCast),
                     keepLock
             );

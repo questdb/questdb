@@ -121,10 +121,10 @@ public class WriterPoolTest extends AbstractCairoTest {
 
         assertWithPool(pool -> {
             sink.clear();
-            CharSequence xTableSystemName = engine.getSystemTableName("x");
+            String xTableSystemName = engine.getSystemTableName("x");
             sink.put(xTableSystemName);
 
-            TableWriter writer1 = pool.get(sink, "testing");
+            TableWriter writer1 = pool.get(sink.toString(), "testing");
             Assert.assertNotNull(writer1);
             writer1.close();
 
@@ -189,6 +189,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
+                //noinspection resource
                 newTableWriter(configuration, "z", metrics);
                 Assert.fail();
             } catch (CairoException ignored) {
@@ -492,6 +493,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
+                        //noinspection StringEquality
                         if (pool.lock(xyzTableSystemName, "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
                             pool.unlock(xyzTableSystemName);
                         }
@@ -527,22 +529,47 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNThreadsRaceToLockSameTable() throws Exception {
+    public void testNThreadsRaceToLock() throws Exception {
         assertWithPool(pool -> {
             int N = 8;
-            final AtomicInteger errors = new AtomicInteger();
-            Thread[] threads = new Thread[N];
-            for (int i = 0; i < N; i++) {
-                threads[i] = new Thread(() -> {
-                    try (TableWriter ignored1 = pool.get("x", "testing")) {
-                    } catch (Throwable ignored) {
-                        errors.incrementAndGet();
-                    }
-                });
-                threads[i].start();
-            }
-            for (int i = 0; i < threads.length; i++) {
-                threads[i].join();
+            for (int k = 0; k < 1000; k++) {
+                final CyclicBarrier barrier = new CyclicBarrier(N);
+                final CountDownLatch halt = new CountDownLatch(N);
+                final AtomicInteger errors = new AtomicInteger();
+                final AtomicInteger writerCount = new AtomicInteger();
+
+                for (int i = 0; i < N; i++) {
+                    String tableName = "table_" + i;
+                    new Thread(() -> {
+                        try {
+                            barrier.await();
+                            //noinspection StringEquality
+                            if (pool.lock(tableName, "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
+                                Os.pause();
+                                pool.unlock(tableName);
+                            } else {
+                                Thread.yield();
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                            errors.incrementAndGet();
+                        } finally {
+                            Path.clearThreadLocals();
+                            halt.countDown();
+                        }
+                    }).start();
+                }
+
+                halt.await();
+
+                // this check is unreliable on slow build servers
+                // it is very often the case that there are limited number of cores
+                // available and threads execute sequentially rather than
+                // simultaneously. We should check that none of the threads
+                // receive error.
+                Assert.assertEquals(0, writerCount.get());
+                Assert.assertEquals(0, errors.get());
+                Assert.assertEquals(0, pool.countFreeWriters());
             }
         });
     }
@@ -685,46 +712,24 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNThreadsRaceToLock() throws Exception {
+    public void testNThreadsRaceToLockSameTable() throws Exception {
         assertWithPool(pool -> {
             int N = 8;
-            for (int k = 0; k < 1000; k++) {
-                final CyclicBarrier barrier = new CyclicBarrier(N);
-                final CountDownLatch halt = new CountDownLatch(N);
-                final AtomicInteger errors = new AtomicInteger();
-                final AtomicInteger writerCount = new AtomicInteger();
-
-                for (int i = 0; i < N; i++) {
-                    String tableName = "table_" + i;
-                    new Thread(() -> {
-                        try {
-                            barrier.await();
-                            if (pool.lock(tableName, "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
-                                Os.pause();
-                                pool.unlock(tableName);
-                            } else {
-                                Thread.yield();
-                            }
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            Path.clearThreadLocals();
-                            halt.countDown();
-                        }
-                    }).start();
-                }
-
-                halt.await();
-
-                // this check is unreliable on slow build servers
-                // it is very often the case that there are limited number of cores
-                // available and threads execute sequentially rather than
-                // simultaneously. We should check that none of the threads
-                // receive error.
-                Assert.assertEquals(0, writerCount.get());
-                Assert.assertEquals(0, errors.get());
-                Assert.assertEquals(0, pool.countFreeWriters());
+            final AtomicInteger errors = new AtomicInteger();
+            Thread[] threads = new Thread[N];
+            for (int i = 0; i < N; i++) {
+                threads[i] = new Thread(() -> {
+                    //noinspection EmptyTryBlock
+                    try (TableWriter ignored1 = pool.get("x", "testing")) {
+                    } catch (Throwable ignored) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads[i].start();
+            }
+            //noinspection ForLoopReplaceableByForEach
+            for (int i = 0; i < threads.length; i++) {
+                threads[i].join();
             }
         });
     }
@@ -754,6 +759,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             }
 
                             // lock frees up writer, make sure on next iteration threads have something to compete for
+                            //noinspection StringEquality
                             if (pool.lock(zTableSystemName, "testing") == WriterPool.OWNERSHIP_REASON_NONE) {
                                 pool.unlock(zTableSystemName);
                             }

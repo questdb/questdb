@@ -209,6 +209,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 cairoSecurityContext,
                 ddlMem,
                 path,
+                false,
                 tableStructureAdapter.of(names, detectedTypes),
                 false
         );

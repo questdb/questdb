@@ -13,11 +13,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Test interactions between cast and index clauses in CREATE TABLE and CREATE TABLE AS SELECT statements .
  */
+@SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
@@ -285,6 +287,51 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableIfNotExistParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                compiler.compile("create table if not exists tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            AtomicInteger tableCount2 = new AtomicInteger();
+            engine.getTableSequencerAPI().forAllWalTables((ignore, ignore1, ignore2) -> tableCount2.incrementAndGet());
+
+            Assert.assertEquals(tableCount, tableCount2.get());
+        });
+    }
+
+    @Test
     public void testCreateTableIfNotExistsExistingLikeAndDestinationTable() throws Exception {
         assertCompile("create table x (s1 symbol)");
         assertCompile("create table y (s2 symbol)");
@@ -337,7 +384,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableLikeTableWithCachedSymbol() throws Exception {
         boolean isSymbolCached = true;
-        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
+        String symbolCacheParameterValue = "CACHE";
 
         assertCompile("create table x (" +
                 "a INT," +
@@ -430,6 +477,55 @@ public class CreateTableTest extends AbstractGriffinTest {
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
+        });
+    }
+
+    @Test
+    public void testCreateTableParallelWal() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) partition by YEAR WAL", executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertEquals("table already exists", e.getFlyweightMessage());
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+
+            AtomicInteger tableCount2 = new AtomicInteger();
+            engine.getTableSequencerAPI().forAllWalTables((ignore, ignore1, ignore2) -> tableCount2.incrementAndGet());
+
+            Assert.assertEquals(tableCount, tableCount2.get());
         });
     }
 

@@ -38,7 +38,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -119,12 +118,12 @@ public class WriterPool extends AbstractPool {
      * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.</li>
      * </ul>
      *
-     * @param tableName  name of the table
+     * @param systemTableName  name of the table
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
      */
-    public TableWriter get(CharSequence tableName, String lockReason) {
-        return getWriterEntry(tableName, lockReason, null);
+    public TableWriter get(String systemTableName, String lockReason) {
+        return getWriterEntry(systemTableName, lockReason, null);
     }
 
     /**
@@ -146,19 +145,19 @@ public class WriterPool extends AbstractPool {
     /**
      * Returns writer from the pool or sends writer command
      *
-     * @param tableName          name of the table
+     * @param systemTableName    name of the table
      * @param lockReason         reason for the action
      * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
     public TableWriter getWriterOrPublishCommand(
-            CharSequence tableName,
+            String systemTableName,
             String lockReason,
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
         while (true) {
             try {
-                return getWriterEntry(tableName, lockReason, asyncWriterCommand);
+                return getWriterEntry(systemTableName, lockReason, asyncWriterCommand);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -316,6 +315,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private void assertLockReasonIsNone(String lockReason) {
+        //noinspection StringEquality
         if (lockReason == OWNERSHIP_REASON_NONE) {
             throw new NullPointerException();
         }
@@ -424,11 +424,8 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    private TableWriter createWriter(CharSequence systemTableName, Entry e, long thread, String lockReason) {
-        StringSink tableName = Misc.getThreadLocalBuilder();
-        tableName.put(systemTableName);
-        TableUtils.convertSystemToTableName(tableName);
-
+    private TableWriter createWriter(String systemTableName, Entry e, long thread, String lockReason) {
+        String tableName = engine.getTableNameBySystemName(systemTableName);
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
@@ -451,7 +448,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter getWriterEntry(
-            CharSequence tableName,
+            String systemTableName,
             String lockReason,
             @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
@@ -461,14 +458,14 @@ public class WriterPool extends AbstractPool {
         long thread = Thread.currentThread().getId();
 
         while (true) {
-            Entry e = entries.get(tableName);
+            Entry e = entries.get(systemTableName);
             if (e == null) {
                 // We are racing to create new writer!
                 e = new Entry(clock.getTicks());
-                Entry other = entries.putIfAbsent(tableName, e);
+                Entry other = entries.putIfAbsent(systemTableName, e);
                 if (other == null) {
                     // race won
-                    return createWriter(tableName, e, thread, lockReason);
+                    return createWriter(systemTableName, e, thread, lockReason);
                 } else {
                     e = other;
                 }
@@ -480,9 +477,9 @@ public class WriterPool extends AbstractPool {
                 // in an extreme race condition it is possible that e.writer will be null
                 // in this case behaviour should be identical to entry missing entirely
                 if (e.writer == null) {
-                    return createWriter(tableName, e, thread, lockReason);
+                    return createWriter(systemTableName, e, thread, lockReason);
                 }
-                return checkClosedAndGetWriter(tableName, e, lockReason);
+                return checkClosedAndGetWriter(systemTableName, e, lockReason);
             } else {
                 if (owner < 0) {
                     // writer is about to be released from the pool by release method.
@@ -496,10 +493,10 @@ public class WriterPool extends AbstractPool {
                     }
 
                     if (e.ex != null) {
-                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
+                        notifyListener(thread, systemTableName, PoolListener.EV_EX_RESEND);
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
-                        entries.remove(tableName);
+                        entries.remove(systemTableName);
                         throw e.ex;
                     }
                 }
@@ -509,7 +506,7 @@ public class WriterPool extends AbstractPool {
                 }
 
                 String reason = reinterpretOwnershipReason(e.ownershipReason);
-                LOG.info().$("busy [table=`").utf8(tableName)
+                LOG.info().$("busy [table=`").utf8(systemTableName)
                         .$("`, owner=").$(owner)
                         .$(", thread=").$(thread)
                         .$(", reason=").$(reason)
@@ -548,6 +545,7 @@ public class WriterPool extends AbstractPool {
         // therefore we could be in a situation where we can be confident writer is locked
         // but reason has not yet caught up. In this case we do not really know the reason
         // but not to confuse the caller, we have to provide a non-null value
+        //noinspection StringEquality
         return providedReason == OWNERSHIP_REASON_NONE ? OWNERSHIP_REASON_UNKNOWN : providedReason;
     }
 

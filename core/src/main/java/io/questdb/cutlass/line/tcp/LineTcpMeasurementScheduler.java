@@ -161,6 +161,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
         Misc.free(path);
         Misc.free(ddlMem);
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
@@ -289,7 +290,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                         }
                     }
                     LOG.info().$("creating table [tableName=").$(tableNameUtf16).$(']').$();
-                    engine.createTable(securityContext, ddlMem, path, tsa, false);
+                    engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                 }
 
                 final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);

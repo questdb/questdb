@@ -160,6 +160,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
+            boolean ifNotExists,
             TableStructure struct,
             boolean keepLock
     ) {
@@ -172,6 +173,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (struct.isWalEnabled()) {
             systemTableName = tableSequencerAPI.registerTableName(tableName, tableId);
             if (systemTableName == null) {
+                if (ifNotExists) {
+                    return;
+                }
                 throw EntryUnavailableException.instance("table exists");
             }
         } else {
@@ -207,7 +211,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
             } else {
-                throw EntryUnavailableException.instance(lockedReason);
+                if (!ifNotExists) {
+                    throw EntryUnavailableException.instance(lockedReason);
+                }
             }
         } catch (Throwable th) {
             if (struct.isWalEnabled() && tableNameStr != null) {
@@ -532,7 +538,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        CharSequence systemTableName = getSystemTableName(tableName);
+        String systemTableName = getSystemTableName(tableName);
         return writerPool.getWriterOrPublishCommand(systemTableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 

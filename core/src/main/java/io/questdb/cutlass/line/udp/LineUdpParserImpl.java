@@ -123,6 +123,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             writer.commit(commitMode);
         }
         for (int i = 0, n = commitList.size(); i < n; i++) {
+            //noinspection resource
             commitList.valueQuick(i).commit(commitMode);
         }
         commitList.clear();
@@ -278,6 +279,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 cairoSecurityContext,
                 ddlMem,
                 path,
+                true,
                 tableStructureAdapter.of(cache),
                 false
         );

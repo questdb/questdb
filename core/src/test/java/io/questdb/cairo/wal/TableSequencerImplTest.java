@@ -182,6 +182,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                         AllowAllCairoSecurityContext.INSTANCE,
                         model.getMem(),
                         model.getPath(),
+                        false,
                         model,
                         false
                 );
