@@ -568,12 +568,7 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
-                // TODO(puzpuzpuz): fix uncompressed for non-WAL tables returned
-                //  by engine.getUncompressedMetadata() and start using it here.
-                latestKnownMetadata = engine.getCompressedMetadata(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        tableNameUtf16
-                );
+                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16);
             }
         }
 
