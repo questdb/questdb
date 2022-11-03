@@ -161,7 +161,7 @@ class LineTcpMeasurementEvent implements Closeable {
                             alterOperationBuilder.clear();
                             alterOperationBuilder
                                     .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
-                                    .ofAddColumn(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
+                                    .addColumnToList(columnName, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {
                             colIndex = writer.getMetadata().getColumnIndexQuiet(columnName);

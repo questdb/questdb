@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
@@ -173,7 +172,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
 
     static void addColumn(TableWriterAPI writer, String columnName) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+        addColumnC.addColumnToList(columnName, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
 

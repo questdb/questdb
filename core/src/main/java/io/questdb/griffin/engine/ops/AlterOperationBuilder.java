@@ -169,11 +169,11 @@ public class AlterOperationBuilder {
         objCharList.add(newName);
     }
 
-    public void ofPartition(long timestamp) {
+    public void addPartitionToList(long timestamp) {
         longList.add(timestamp);
     }
 
-    public void ofAddColumn(
+    public void addColumnToList(
             CharSequence columnName,
             int type,
             int symbolCapacity,

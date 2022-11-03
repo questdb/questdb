@@ -25,7 +25,6 @@
 package io.questdb.griffin.wal;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -625,7 +624,7 @@ public class WalPurgeJobTest  extends AbstractGriffinTest {
 
     static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
+        addColumnC.addColumnToList(columnName, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
 

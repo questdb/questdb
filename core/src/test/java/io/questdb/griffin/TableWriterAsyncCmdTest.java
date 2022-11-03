@@ -453,7 +453,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                 AlterOperationBuilder creepyAlter = new AlterOperationBuilder();
-                creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getTableId()).ofPartition(0);
+                creepyAlter.ofDropPartition(0, "product", writer.getMetadata().getTableId()).addPartitionToList(0);
                 CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                 cc.ofAlter(creepyAlter.build());
                 try (OperationFuture fut = cc.execute(commandReplySequence)) {

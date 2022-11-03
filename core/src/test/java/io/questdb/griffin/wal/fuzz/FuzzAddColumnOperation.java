@@ -51,7 +51,7 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
-        builder.ofAddColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
+        builder.addColumnToList(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
         AlterOperation alter = builder.build();
         tableWriter.apply(alter, true);
         return true;
