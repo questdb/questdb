@@ -249,13 +249,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             } else {
                 this.lockFd = -1L;
             }
-            long todoCount = openTodoMem();
-            int todo;
-            if (todoCount > 0) {
-                todo = (int) todoMem.getLong(40);
-            } else {
-                todo = -1;
-            }
+            int todo = readTodo();
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
@@ -4932,6 +4926,27 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    private int readTodo() {
+        long todoCount;
+        try {
+            // This is first FS call to the table directory.
+            // If table is removed / renamed this should fail with table does not exist.
+            todoCount = openTodoMem();
+        } catch (CairoException ex) {
+            if (ex.errno == 2) {
+                throw CairoException.nonCritical().put("table does not exist [table=").put(this.tableName).put(']');
+            }
+            throw ex;
+        }
+        int todo;
+        if (todoCount > 0) {
+            todo = (int) todoMem.getLong(40);
+        } else {
+            todo = -1;
+        }
+        return todo;
     }
 
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, Path path, CharSequence columnName) {
