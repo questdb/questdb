@@ -182,7 +182,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 if (e.next == null) {
                     if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
                         break;
-                    } else {
+                    } else if (Unsafe.getUnsafe().getIntVolatile(e, NEXT_STATUS) != NEXT_LOCKED) {
                         // now we must wait until another thread that executes a get() call
                         // assigns the newly created next entry
                         while (e.next == null) {
