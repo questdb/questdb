@@ -34,7 +34,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -77,8 +76,6 @@ public class WriterPool extends AbstractPool {
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
-    private final int rootLen;
     private final MicrosecondClock clock;
     private final CharSequence root;
     @NotNull
@@ -104,8 +101,6 @@ public class WriterPool extends AbstractPool {
         this.messageBus = engine.getMessageBus();
         this.clock = this.configuration.getMicrosecondClock();
         this.root = this.configuration.getRoot();
-        this.path.concat(this.root);
-        this.rootLen = this.path.length();
         this.metrics = metrics;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
@@ -265,8 +260,7 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    path.trimTo(rootLen);
-                    path.concat(systemTableName);
+                    Path path = Path.getThreadLocal(root).concat(systemTableName);
                     TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
@@ -356,7 +350,6 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        Misc.free(path);
         LOG.info().$("closed").$();
     }
 
@@ -528,8 +521,7 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence systemTableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
-        path.trimTo(rootLen);
-        path.concat(systemTableName);
+        Path path = Path.getThreadLocal(root).concat(systemTableName);
         TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {

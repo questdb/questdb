@@ -1890,6 +1890,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid >= bid");
+        Assert.assertEquals(IntrinsicModel.TRUE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid > bid");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid <= bid");
+        Assert.assertEquals(IntrinsicModel.TRUE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testLessNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid < bid");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
     private void andShuffleExpressionsTest(String[] expressions, String expected) throws SqlException {
         shuffleExpressionsTest(expressions, " AND ", expected, 0);
     }
@@ -1902,8 +1926,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
         if (k == expressions.length - 1) {
             sink.clear();
-            for (int j = 0; j < expressions.length; j++) {
-                sink.put(expressions[j]).put(separator);
+            for (String s : expressions) {
+                sink.put(s).put(separator);
             }
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();
