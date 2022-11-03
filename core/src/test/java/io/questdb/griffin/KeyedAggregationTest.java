@@ -92,7 +92,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         });
     }
 
-    //test rosti failing to alloc in porallel aggregate computation
+    //test rosti failing to alloc in parallel aggregate computation
     @Test
     public void testOOMInRostiAggCalcResetsAllocatedNativeMemoryToMinSizes() throws Exception {
         RostiAllocFacade rostiAllocFacade = new RostiAllocFacadeImpl() {

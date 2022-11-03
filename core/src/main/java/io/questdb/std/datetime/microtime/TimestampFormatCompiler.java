@@ -76,6 +76,7 @@ public class TimestampFormatCompiler {
     static final int OP_MICROS_THREE_DIGITS = 49;
     static final int OP_NANOS_ONE_DIGIT = 40;
     static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_NANOS_GREEDY9 = 52;
     static final int OP_MICROS_GREEDY3 = 149;
     static final int OP_MICROS_GREEDY6 = 51;
     static final int OP_YEAR_GREEDY = 132;
@@ -180,6 +181,7 @@ public class TimestampFormatCompiler {
         addOp("U", OP_MICROS_ONE_DIGIT);
         addOp("UUU", OP_MICROS_THREE_DIGITS);
         addOp("U+", OP_MICROS_GREEDY6);
+        addOp("N+", OP_NANOS_GREEDY9);
     }
 
     private final GenericLexer lexer = new GenericLexer(2048);
@@ -337,8 +339,9 @@ public class TimestampFormatCompiler {
                     asm.invokeInterface(sinkPutIntIndex, 1);
                     asm.pop();
                     break;
-                // MICROS6
+                // MICROS6 & NANOS9 are formatted the same
                 case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
                     asm.invokeStatic(append00000Index);
@@ -731,7 +734,8 @@ public class TimestampFormatCompiler {
             int matchEraIndex,
             int parseIntSafelyIndex,
             int parseInt000GreedyIndex,
-            int parseInt000000GreedyIndex,
+            int parseLong000000GreedyIndex,
+            int parseNanosAsMicrosGreedyIndex,
             int decodeLenIndex,
             int decodeIntIndex,
             int assertRemainingIndex,
@@ -863,7 +867,12 @@ public class TimestampFormatCompiler {
                 case OP_MICROS_GREEDY6:
                     stackState &= ~(1 << LOCAL_MICROS);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    invokeParseIntSafelyAndStore(parseInt000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    invokeParseIntSafelyAndStore(parseLong000000GreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    break;
+                case OP_NANOS_GREEDY9:
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
                 case OP_NANOS_ONE_DIGIT:
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
@@ -1430,7 +1439,8 @@ public class TimestampFormatCompiler {
 
         int parseIntSafelyIndex = asm.poolMethod(Numbers.class, "parseIntSafely", "(Ljava/lang/CharSequence;II)J");
         int parseInt000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000Greedy", "(Ljava/lang/CharSequence;II)J");
-        int parseInt000000GreedyIndex = asm.poolMethod(Numbers.class, "parseInt000000Greedy", "(Ljava/lang/CharSequence;II)J");
+        int parseLong000000GreedyIndex = asm.poolMethod(Numbers.class, "parseLong000000Greedy", "(Ljava/lang/CharSequence;II)J");
+        int parseNanosAsMicrosGreedyIndex = asm.poolMethod(Timestamps.class, "parseNanosAsMicrosGreedy", "(Ljava/lang/CharSequence;II)J");
         int decodeLenIndex = asm.poolMethod(Numbers.class, "decodeHighInt", "(J)I");
         int decodeIntIndex = asm.poolMethod(Numbers.class, "decodeLowInt", "(J)I");
         int parseIntIndex = asm.poolMethod(Numbers.class, "parseInt", "(Ljava/lang/CharSequence;II)I");
@@ -1522,7 +1532,8 @@ public class TimestampFormatCompiler {
                 matchEraIndex,
                 parseIntSafelyIndex,
                 parseInt000GreedyIndex,
-                parseInt000000GreedyIndex,
+                parseLong000000GreedyIndex,
+                parseNanosAsMicrosGreedyIndex,
                 decodeLenIndex,
                 decodeIntIndex,
                 assertRemainingIndex,
@@ -1602,7 +1613,9 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_MILLIS_MICROS);
                     break;
+                 // formatting method for MICROS6 and NANOS9 is the same
                 case TimestampFormatCompiler.OP_MICROS_GREEDY6:
+                case TimestampFormatCompiler.OP_NANOS_GREEDY9:
                     attributes |= (1 << FA_SECOND_MICROS);
                     break;
 

@@ -1245,7 +1245,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         Random rand = new Random(0);
         IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
         int atRow = nInitialStateRows;
-        batchRowEnd.add(-atRow); // negative row means this has been commited
+        batchRowEnd.add(-atRow); // negative row means this has been committed
         while (atRow < nTotalRows) {
             int nRows = rand.nextInt(maxBatchedRows) + 1;
             atRow += nRows;

@@ -118,7 +118,7 @@ Change log for Vector class library
   * constructors to make boolean vectors from their elements
   * constructors and = operators to broadcast boolean scalar into boolean vectors
   * various lookup functions improved
-  * operators &, |, ^, ~, etc. defined for various boolean vectors to avoid converson
+  * operators &, |, ^, ~, etc. defined for various boolean vectors to avoid conversion
       to integer vectors
   * nmul_add functions
   * mul_add etc. moved to main header files
