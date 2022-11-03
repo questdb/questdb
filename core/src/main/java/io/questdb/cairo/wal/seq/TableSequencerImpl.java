@@ -117,7 +117,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void getTableMetadata(@NotNull TableRecordMetadataSink sink, boolean compress) {
+    public void getTableMetadata(@NotNull TableRecordMetadataSink sink) {
         int columnCount = metadata.getColumnCount();
         int timestampIndex = metadata.getTimestampIndex();
         int compressedTimestampIndex = -1;
@@ -126,7 +126,7 @@ public class TableSequencerImpl implements TableSequencer {
         int compressedColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
-            if (columnType > -1 || !compress) {
+            if (columnType > -1) {
                 sink.addColumn(
                         metadata.getColumnName(i),
                         columnType,

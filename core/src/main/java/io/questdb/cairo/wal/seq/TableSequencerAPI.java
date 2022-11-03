@@ -67,10 +67,10 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
-    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink, boolean compress) {
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {
-                tableSequencer.getTableMetadata(sink, compress);
+                tableSequencer.getTableMetadata(sink);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -210,13 +210,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public void reloadMetadataConditionally(
             final CharSequence tableName,
             long expectedStructureVersion,
-            TableRecordMetadataSink sink,
-            boolean compress
+            TableRecordMetadataSink sink
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {
                 if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
-                    tableSequencer.getTableMetadata(sink, compress);
+                    tableSequencer.getTableMetadata(sink);
                 }
             } finally {
                 tableSequencer.unlockRead();

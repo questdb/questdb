@@ -934,6 +934,7 @@ public final class TableUtils {
                 break;
             case ColumnType.LONG128:
                 // Long128 is null when all 2 longs are NaNs
+                //noinspection ConstantConditions
                 assert Long128Constant.NULL_HI == Long128Constant.NULL_LO;
                 Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
                 break;

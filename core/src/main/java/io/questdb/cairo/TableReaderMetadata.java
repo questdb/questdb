@@ -82,7 +82,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
-        this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
+        this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         long offset = TableUtils.getColumnNameOffset(columnCount);
 
         int shiftLeft = 0, existingIndex = 0;
@@ -262,7 +262,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         boolean existenceChecked = false;
         while (true) {
             try {
-                load0(path);
+                load(path);
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
@@ -278,7 +278,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    public void load0(Path path) {
+    public void load(Path path) {
         load0(path, ColumnType.VERSION);
     }
 
@@ -294,8 +294,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-            // todo: should be boolean
-            this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
+            this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
             this.timestampIndex = -1;
@@ -305,7 +304,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 CharSequence name = metaMem.getStr(offset);
                 assert name != null;
                 int columnType = TableUtils.getColumnType(metaMem, i);
-                if (columnType > 0) {
+                if (columnType > -1) {
                     columnMetadata.add(
                             new TableColumnMetadata(
                                     Chars.toString(name),
