@@ -125,6 +125,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     @Override
     public void clear() {
+        super.clear();
         if (pageAddress != 0) {
             long baseLength = lim - pageAddress;
             Unsafe.free(pageAddress, baseLength, memoryTag);

@@ -2025,7 +2025,15 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        testImportThrowsException(ff, tab35, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove import work directory");
+        testImportThrowsException(
+                ff,
+                "tab34",
+                "test-quotes-big.csv",
+                PartitionBy.MONTH,
+                "ts",
+                null,
+                "import failed [phase=partition_import, msg=`[-1] could not overwrite [tableName=tab34:_0]`]"
+        );
     }
 
     @Test

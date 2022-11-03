@@ -39,7 +39,7 @@ public interface TableSequencer extends QuietCloseable {
 
     int getTableId();
 
-    void getTableMetadata(TableRecordMetadataSink sink, boolean compress);
+    void getTableMetadata(TableRecordMetadataSink sink);
 
     // return txn cursor to apply transaction from given point
     TransactionLogCursor getTransactionLogCursor(long seqTxn);

@@ -164,7 +164,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 Path path = getMetaFilePath(root, tableName);
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
-            metadata.load0(path);
+            metadata.load(path);
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }

@@ -442,7 +442,7 @@ public class SqlCompiler implements Closeable {
 
             String systemTableName = engine.getSystemTableName(tok);
             String tableName = engine.getTableNameBySystemName(systemTableName);
-            try (TableRecordMetadata tableMetadata = executionContext.getCompressedMetadata(
+            try (TableRecordMetadata tableMetadata = executionContext.getMetadata(
                     engine,
                     tok
             )) {
@@ -1125,7 +1125,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel queryModel = (QueryModel) model;
                 try (
-                        TableRecordMetadata metadata = executionContext.getCompressedMetadata(
+                        TableRecordMetadata metadata = executionContext.getMetadata(
                                 engine, queryModel.getTableName().token
                         )) {
                     if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
@@ -1214,7 +1214,7 @@ public class SqlCompiler implements Closeable {
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
                 try (
-                        TableRecordMetadata metadata = executionContext.getUncompressedMetadata(
+                        TableRecordMetadata metadata = executionContext.getMetadata(
                                 engine,
                                 updateQueryModel.getTableName().token
                         )
@@ -1766,7 +1766,7 @@ public class SqlCompiler implements Closeable {
 
         ObjList<Function> valueFunctions = null;
         String systemTableName = engine.getSystemTableName(name.token);
-        try (TableRecordMetadata metadata = engine.getCompressedMetadata(
+        try (TableRecordMetadata metadata = engine.getMetadata(
                 executionContext.getCairoSecurityContext(),
                 systemTableName
         )) {

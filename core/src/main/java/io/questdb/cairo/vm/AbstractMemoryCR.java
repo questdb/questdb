@@ -25,13 +25,10 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
+import io.questdb.std.*;
 
 //contiguous readable
-public abstract class AbstractMemoryCR implements MemoryCR {
+public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
@@ -108,5 +105,12 @@ public abstract class AbstractMemoryCR implements MemoryCR {
 
     public FilesFacade getFilesFacade() {
         return ff;
+    }
+
+    public void clear() {
+        // avoid debugger seg faulting when memory is closed
+        csview.clear();
+        csview2.clear();
+        bsview.clear();
     }
 }

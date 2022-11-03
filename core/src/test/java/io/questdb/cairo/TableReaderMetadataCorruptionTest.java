@@ -221,7 +221,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
         // this test asserts that validator compares column count to file size, where
-        // file is prepared to be smaller than count. On windows this setup does not work
+        // file is prepared to be smaller than count. On Windows this setup does not work
         // because appender cannot truncate file to size smaller than default page size
         // when reader is open.
         if (Os.type != Os.WINDOWS) {
@@ -286,7 +286,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)){
-                    metadata.load0(path);
+                    metadata.load(path);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);

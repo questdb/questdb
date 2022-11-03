@@ -190,7 +190,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "remove failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table");
                 }
             }
         });

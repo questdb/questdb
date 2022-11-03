@@ -69,6 +69,16 @@ public class TableSequencerAPI implements QuietCloseable {
         Misc.free(tableNameRegistry);
     }
 
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            try {
+                tableSequencer.getTableMetadata(sink);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
+    }
+
     public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
         if (tableNameRegistry.removeName(tableName, systemTableName)) {
             LOG.info().$("dropped wal table [name=").utf8(tableName).$(", systemTableName=").utf8(systemTableName).I$();
@@ -258,13 +268,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public void reloadMetadataConditionally(
             final String systemTableName,
             long expectedStructureVersion,
-            TableRecordMetadataSink sink,
-            boolean compress
+            TableRecordMetadataSink sink
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
             try {
                 if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
-                    tableSequencer.getTableMetadata(sink, compress);
+                    tableSequencer.getTableMetadata(sink);
                 }
             } finally {
                 tableSequencer.unlockRead();

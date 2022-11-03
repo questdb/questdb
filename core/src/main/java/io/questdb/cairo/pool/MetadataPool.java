@@ -33,21 +33,10 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataTenant> {
     private final TableSequencerAPI tableSequencerAPI;
-    private final boolean compress;
 
-    public MetadataPool(
-            CairoConfiguration configuration,
-            TableSequencerAPI tableSequencerAPI,
-            boolean compress
-    ) {
+    public MetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
         super(configuration);
         this.tableSequencerAPI = tableSequencerAPI;
-        this.compress = compress;
-    }
-
-    @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_METADATA;
     }
 
     @Override
@@ -55,11 +44,16 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         String tableName = tableSequencerAPI.getTableNameBySystemName(systemTableName);
         if (tableName != null) {
             if (tableSequencerAPI.isWalSystemName(systemTableName)) {
-                return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI, compress);
+                return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI);
             }
             return new TableReaderMetadataTenant(this, entry, index, tableName, systemTableName);
         }
-        throw new CairoException().put("table does not exist [systemTableName=").put(systemTableName).put(']');
+        throw CairoException.nonCritical().put("table does not exist [systemTableName=").put(systemTableName).put(']');
+    }
+
+    @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_METADATA;
     }
 
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
@@ -78,7 +72,6 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 String systemTableName
         ) {
             super(pool.getConfiguration(), tableName, systemTableName);
-            load();
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -121,7 +114,6 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         private final TableSequencerAPI tableSequencerAPI;
         private AbstractMultiTenantPool<MetadataTenant> pool;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
-        private final boolean compress;
         private final String systemTableName;
 
         public SequencerMetadataTenant(
@@ -129,16 +121,14 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
                 Entry<MetadataTenant> entry,
                 int index,
                 String systemTableName,
-                TableSequencerAPI tableSequencerAPI,
-                boolean compress
+                TableSequencerAPI tableSequencerAPI
         ) {
             this.pool = pool;
             this.entry = entry;
             this.index = index;
             this.tableSequencerAPI = tableSequencerAPI;
-            this.compress = compress;
             this.systemTableName = systemTableName;
-            tableSequencerAPI.getTableMetadata(systemTableName, this, compress);
+            tableSequencerAPI.getTableMetadata(systemTableName, this);
         }
 
         @Override
@@ -158,7 +148,7 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
         @Override
         public void refresh() {
-            tableSequencerAPI.reloadMetadataConditionally(systemTableName, getStructureVersion(), this, compress);
+            tableSequencerAPI.reloadMetadataConditionally(systemTableName, getStructureVersion(), this);
         }
 
         @SuppressWarnings("unchecked")

@@ -209,8 +209,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(systemTableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("Table remove failed [tableName=").put(systemTableName).put("]");
+                        LOG.error().$("could not overwrite table [tableName='").utf8(systemTableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(systemTableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {

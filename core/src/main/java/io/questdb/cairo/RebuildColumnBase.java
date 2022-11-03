@@ -170,7 +170,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-            metadata.load0(path.$());
+            metadata.load(path.$());
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {

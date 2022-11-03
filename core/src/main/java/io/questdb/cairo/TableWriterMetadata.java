@@ -115,7 +115,7 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-        this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
+        this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
