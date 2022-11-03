@@ -34,6 +34,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
@@ -177,9 +178,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
                 }
 
-                // prevent new entries from being created
-                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                    break;
+                // try to prevent new entries from being created
+                if (e.next == null) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                        break;
+                    } else {
+                        // now we must wait until another thread that executes a get() call
+                        // assigns the newly created next entry
+                        while (e.next == null) {
+                            Os.pause();
+                        }
+                    }
                 }
 
                 e = e.next;
@@ -344,7 +353,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
-        int nextStatus = 0;
+        int nextStatus = NEXT_OPEN;
         volatile Entry next;
 
         public Entry(int index, long currentMicros) {
