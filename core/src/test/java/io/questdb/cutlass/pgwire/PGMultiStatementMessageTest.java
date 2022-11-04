@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.WorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -36,7 +37,6 @@ import java.io.IOException;
 import java.sql.*;
 import java.util.Arrays;
 
-import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS;
 import static org.junit.Assert.*;
 
 /**
@@ -290,7 +290,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             ) {
                 workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, 1);
-                     Statement stmt = connection.createStatement()) {
+                     Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
                     ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
@@ -423,8 +423,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "SELECT l from TEST;");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: table 'test' could not be altered: [-1] failed to attach partition '2020': " + ATTACH_ERR_PARTITION_EXISTS.name() + '\n' +
-                            "  Position: 203", e.getMessage());
+                    TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
                 }
             }
         });
@@ -946,7 +945,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             ) {
                 workerPool.start(LOG);
                 try (Connection connection = getConnection(Mode.ExtendedForPrepared, server.getPort(), true, -1);
-                     Statement stmt = connection.createStatement()) {
+                     Statement ignored = connection.createStatement()) {
                     connection.setAutoCommit(true);
 
                     PreparedStatement pstmt1 = connection.prepareStatement("SELECT l FROM mytable where 1=1");
@@ -1705,12 +1704,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             server = createPGServer(2);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
-            statement = connection.createStatement();
-        }
-
-        PGTestSetup(Mode mode, int prepareThreshold) throws SQLException {
-            server = createPGServer(2);
-            connection = getConnection(mode, server.getPort(), true, prepareThreshold);
             statement = connection.createStatement();
         }
 

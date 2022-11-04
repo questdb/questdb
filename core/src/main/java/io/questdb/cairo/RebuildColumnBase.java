@@ -117,7 +117,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 tableWriter.getColumnVersionReader(),
                 // this may not be needed, because table writer's column index is the same
                 // as metadata writers' index.
-                metadata.getWriterIndex(columnIndex),
+                columnIndex,
                 columnName,
                 tempStringSink, // partition name
                 partitionNameTxn,

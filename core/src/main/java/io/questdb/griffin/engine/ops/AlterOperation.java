@@ -24,21 +24,16 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.AttachDetachStatus;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
@@ -61,7 +56,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
-    private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
     private final LongList longList;
     private final ObjCharSequenceList objCharList;
     private CharSequenceList charSequenceList;
@@ -81,53 +75,68 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     @Override
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
-    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        switch (command) {
-            case ADD_COLUMN:
-                applyAddColumn(tableWriter);
-                break;
-            case DROP_COLUMN:
-                if (!contextAllowsAnyStructureChanges) {
-                    throw AlterTableContextException.INSTANCE;
-                }
-                applyDropColumn(tableWriter);
-                break;
-            case RENAME_COLUMN:
-                if (!contextAllowsAnyStructureChanges) {
-                    throw AlterTableContextException.INSTANCE;
-                }
-                applyRenameColumn(tableWriter);
-                break;
-            case DROP_PARTITION:
-                applyDropPartition(tableWriter);
-                break;
-            case DETACH_PARTITION:
-                applyDetachPartition(tableWriter);
-                break;
-            case ATTACH_PARTITION:
-                applyAttachPartition(tableWriter);
-                break;
-            case ADD_INDEX:
-                applyAddIndex(tableWriter);
-                break;
-            case DROP_INDEX:
-                applyDropIndex(tableWriter);
-                break;
-            case ADD_SYMBOL_CACHE:
-                applySetSymbolCache(tableWriter, true);
-                break;
-            case REMOVE_SYMBOL_CACHE:
-                applySetSymbolCache(tableWriter, false);
-                break;
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS:
-                applyParamUncommittedRows(tableWriter);
-                break;
-            case SET_PARAM_COMMIT_LAG:
-                applyParamCommitLag(tableWriter);
-                break;
-            default:
-                LOG.error().$("invalid alter table command [code=").$(command).$(" , table=").$(tableName).I$();
-                throw CairoException.nonCritical().put("invalid alter table command [code=").put(command).put(']');
+    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        try {
+            switch (command) {
+                case ADD_COLUMN:
+                    applyAddColumn(tableWriter);
+                    break;
+                case DROP_COLUMN:
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
+                    }
+                    applyDropColumn(tableWriter);
+                    break;
+                case RENAME_COLUMN:
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
+                    }
+                    applyRenameColumn(tableWriter);
+                    break;
+                case DROP_PARTITION:
+                    applyDropPartition(tableWriter);
+                    break;
+                case DETACH_PARTITION:
+                    applyDetachPartition(tableWriter);
+                    break;
+                case ATTACH_PARTITION:
+                    applyAttachPartition(tableWriter);
+                    break;
+                case ADD_INDEX:
+                    applyAddIndex(tableWriter);
+                    break;
+                case DROP_INDEX:
+                    applyDropIndex(tableWriter);
+                    break;
+                case ADD_SYMBOL_CACHE:
+                    applySetSymbolCache(tableWriter, true);
+                    break;
+                case REMOVE_SYMBOL_CACHE:
+                    applySetSymbolCache(tableWriter, false);
+                    break;
+                case SET_PARAM_MAX_UNCOMMITTED_ROWS:
+                    applyParamUncommittedRows(tableWriter);
+                    break;
+                case SET_PARAM_COMMIT_LAG:
+                    applyParamCommitLag(tableWriter);
+                    break;
+                default:
+                    LOG.error()
+                            .$("invalid alter table command [code=").$(command)
+                            .$(" ,table=").$(tableWriter.getTableName())
+                            .I$();
+                    throw CairoException.critical(0).put("invalid alter table command [code=").put(command).put(']');
+            }
+        } catch (EntryUnavailableException ex) {
+            throw ex;
+        } catch (CairoException e) {
+            LOG.critical().$("could not alter table [table=").$(tableWriter.getTableName())
+                    .$(", command=").$(command)
+                    .$(", errno=").$(e.getErrno())
+                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
+                    .I$();
+
+            throw e;
         }
         return 0;
     }
@@ -246,7 +255,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
-    private void applyAddColumn(TableWriterSPI tableWriter) {
+    private void applyAddColumn(MetadataChangeSPI tableWriter) {
         int lParam = 0;
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
             CharSequence columnName = charSequenceList.getStrA(i);
@@ -255,6 +264,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             boolean symbolCacheFlag = longList.get(lParam++) > 0;
             boolean isIndexed = longList.get(lParam++) > 0;
             int indexValueBlockCapacity = (int) longList.get(lParam++);
+            int columnNamePosition = (int) longList.get(lParam++);
             try {
                 tableWriter.addColumn(
                         columnName,
@@ -266,137 +276,86 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         false
                 );
             } catch (CairoException e) {
-                LOG.error().$("could not add column [table=").$(tableName)
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
+                e.position(columnNamePosition);
                 throw e;
             }
         }
     }
 
-    private void applyAddIndex(TableWriterSPI tableWriter) {
-        CharSequence columnName = charSequenceList.getStrA(0);
+    private void applyAddIndex(MetadataChangeSPI tableWriter) {
+        final CharSequence columnName = charSequenceList.getStrA(0);
         try {
-            int indexValueBlockSize = (int) longList.get(0);
-            tableWriter.addIndex(columnName, indexValueBlockSize);
+            tableWriter.addIndex(columnName, (int) longList.get(0));
         } catch (CairoException e) {
-            LOG.error().$("could not add index [table=").$(tableName)
-                    .$(", column=").$(columnName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
+            // augment exception with table position
+            e.position(tableNamePosition);
             throw e;
         }
     }
 
-    private void applyAttachPartition(TableWriterSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i);
-            try {
-                AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
-                if (attachDetachStatus != AttachDetachStatus.OK) {
-                    throw putPartitionName(
-                            CairoException.nonCritical().put("failed to attach partition '"),
-                            tableWriter.getPartitionBy(),
-                            partitionTimestamp
-                    ).put("': ").put(attachDetachStatus.name());
-                }
-            } catch (CairoException e) {
-                LOG.error().$("failed to attach partition [table=").$(tableName)
-                        .$(", ts=").$ts(partitionTimestamp)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
-                throw e;
+    private void applyAttachPartition(MetadataChangeSPI tableWriter) {
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            final long partitionTimestamp = longList.getQuick(i * 2);
+            AttachDetachStatus attachDetachStatus = tableWriter.attachPartition(partitionTimestamp);
+            if (AttachDetachStatus.OK != attachDetachStatus) {
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not attach partition [table=").put(tableName)
+                        .put(", detachStatus=").put(attachDetachStatus.name())
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
+                        .put(']')
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyDetachPartition(TableWriterSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i);
-            try {
-                AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
-                if (AttachDetachStatus.OK != attachDetachStatus) {
-                    throw putPartitionName(
-                            CairoException.nonCritical()
-                                    .put("could not detach partition [statusCode=").put(attachDetachStatus.name())
-                                    .put(", table=").put(tableName)
-                                    .put(", partition='"),
-                            tableWriter.getPartitionBy(),
-                            partitionTimestamp
-                    ).put("']");
-                }
-            } catch (CairoException e) {
-                LOG.error().$("failed to detach partition [table=").$(tableName)
-                        .$(", ts=").$ts(partitionTimestamp)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
-                throw e;
+    private void applyDetachPartition(MetadataChangeSPI tableWriter) {
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            final long partitionTimestamp = longList.getQuick(i * 2);
+            AttachDetachStatus attachDetachStatus = tableWriter.detachPartition(partitionTimestamp);
+            if (AttachDetachStatus.OK != attachDetachStatus) {
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("could not detach partition [table=").put(tableName)
+                        .put(", detachStatus=").put(attachDetachStatus.name())
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
+                        .put(']')
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyDropColumn(TableWriterSPI writer) {
+    private void applyDropColumn(MetadataChangeSPI writer) {
         for (int i = 0, n = charSequenceList.size(); i < n; i++) {
-            CharSequence columnName = charSequenceList.getStrA(i);
-            RecordMetadata metadata = writer.getMetadata();
-            if (metadata.getColumnIndexQuiet(columnName) == -1) {
-                throw CairoException.nonCritical().put("invalid column: ").put(columnName);
-            }
-            try {
-                writer.removeColumn(columnName);
-            } catch (CairoException e) {
-                LOG.error().$("cannot drop column [table=").$(tableName)
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
-                throw e;
-            }
+            writer.removeColumn(charSequenceList.getStrA(i));
         }
     }
 
-    private void applyDropIndex(TableWriterSPI tableWriter) {
-        CharSequence columnName = charSequenceList.getStrA(0);
+    private void applyDropIndex(MetadataChangeSPI tableWriter) {
+        final CharSequence columnName = charSequenceList.getStrA(0);
+        final int columnNamePosition = (int) longList.get(0);
         try {
             tableWriter.dropIndex(columnName);
         } catch (CairoException e) {
-            LOG.error().$("could not drop index [table=").$(tableName)
-                    .$(", column=").$(columnName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
+            e.position(columnNamePosition);
             throw e;
         }
     }
 
-    private void applyDropPartition(TableWriterSPI tableWriter) {
-        for (int i = 0, n = longList.size(); i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i);
-            try {
-                if (!tableWriter.removePartition(partitionTimestamp)) {
-                    throw putPartitionName(
-                            CairoException.nonCritical().put("could not remove partition '"),
-                            tableWriter.getPartitionBy(),
-                            partitionTimestamp
-                    ).put('\'');
-                }
-            } catch (CairoException e) {
-                LOG.error().$("failed to drop partition [table=").$(tableName)
-                        .$(", ts=").$ts(partitionTimestamp)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
-                throw e;
+    private void applyDropPartition(MetadataChangeSPI tableWriter) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = longList.size() / 2; i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i * 2);
+            if (!tableWriter.removePartition(partitionTimestamp)) {
+                throw CairoException.nonCritical()
+                        .put("could not remove partition [table=").put(tableName)
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(tableWriter.getPartitionBy()))
+                        .put(']')
+                        .position((int) longList.getQuick(i * 2 + 1));
             }
         }
     }
 
-    private void applyParamCommitLag(TableWriterSPI tableWriter) {
+    private void applyParamCommitLag(MetadataChangeSPI tableWriter) {
         long commitLag = longList.get(0);
         try {
             tableWriter.setMetaCommitLag(commitLag);
@@ -409,59 +368,33 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyParamUncommittedRows(TableWriterSPI tableWriter) {
+    private void applyParamUncommittedRows(MetadataChangeSPI tableWriter) {
         int maxUncommittedRows = (int) longList.get(0);
         try {
             tableWriter.setMetaMaxUncommittedRows(maxUncommittedRows);
         } catch (CairoException e) {
-            LOG.error().$("could not change max uncommitted rows [table=").$(tableName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
+            e.position(tableNamePosition);
             throw e;
         }
     }
 
-    private void applyRenameColumn(TableWriterSPI writer) {
+    private void applyRenameColumn(MetadataChangeSPI writer) {
         // To avoid storing 2 var len fields, store only new name as CharSequence
         // and index of existing column.
         int i = 0, n = charSequenceList.size();
         while (i < n) {
             CharSequence columnName = charSequenceList.getStrA(i++);
             CharSequence newName = charSequenceList.getStrB(i++);
-            try {
-                writer.renameColumn(columnName, newName);
-            } catch (CairoException e) {
-                LOG.error().$("cannot rename column [table=").$(tableName)
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage())
-                        .I$();
-                throw e;
-            }
+            writer.renameColumn(columnName, newName);
         }
     }
 
-    private void applySetSymbolCache(TableWriterSPI tableWriter, boolean isCacheOn) {
+    private void applySetSymbolCache(MetadataChangeSPI tableWriter, boolean isCacheOn) {
         CharSequence columnName = charSequenceList.getStrA(0);
-        try {
-            int columnIndex = tableWriter.getMetadata().getColumnIndexQuiet(columnName);
-            if (columnIndex == -1) {
-                throw CairoException.nonCritical().put("invalid column: ").put(columnName);
-            }
-            tableWriter.changeCacheFlag(columnIndex, isCacheOn);
-        } catch (CairoException e) {
-            LOG.error().$("could not change symbol cache flag [table=").$(tableName)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
-            throw e;
-        }
-    }
-
-    private CairoException putPartitionName(CairoException ex, int partitionBy, long timestamp) {
-        PartitionBy.setSinkForPartition(exceptionSinkAdapter.of(ex), partitionBy, timestamp, false);
-        return ex;
+        tableWriter.changeCacheFlag(
+                tableWriter.getMetadata().getColumnIndex(columnName),
+                isCacheOn
+        );
     }
 
     interface CharSequenceList extends Mutable {
@@ -523,51 +456,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         @Override
         public int size() {
             return offsets.size() / 2;
-        }
-    }
-
-    // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
-    // to exception message using TableUtils.setSinkForPartition
-    private static class ExceptionSinkAdapter implements CharSink {
-        private CairoException ex;
-
-        @Override
-        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public char[] getDoubleDigitsBuffer() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public CharSink put(CharSequence cs) {
-            ex.put(cs);
-            return this;
-        }
-
-        @Override
-        public CharSink put(char c) {
-            ex.put(c);
-            return this;
-        }
-
-        @Override
-        public CharSink put(int c) {
-            ex.put(c);
-            return this;
-        }
-
-        @Override
-        public CharSink put(long c) {
-            ex.put(c);
-            return this;
-        }
-
-        ExceptionSinkAdapter of(CairoException ex) {
-            this.ex = ex;
-            return this;
         }
     }
 

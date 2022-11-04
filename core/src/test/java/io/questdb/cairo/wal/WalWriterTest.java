@@ -940,7 +940,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 new Thread(() -> {
                     final String colName = "col" + columnNumber.incrementAndGet();
                     TableWriter.Row row;
-                    Integer walId = -1;
+                    int walId = -1;
                     boolean countedDown = false;
                     try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                         walId = walWriter.getWalId();
@@ -1094,7 +1094,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             for (int i = 0; i < numOfThreads; i++) {
                 new Thread(() -> {
                     TableWriter.Row row;
-                    Integer walId = -1;
+                    int walId = -1;
                     try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                         walId = walWriter.getWalId();
                         final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
@@ -1410,9 +1410,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
-                } catch (Exception e) {
+                } catch (CairoException e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[2] could not apply table definition changes to the current transaction"));
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
                 }
             }
         });
@@ -1928,7 +1928,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     removeColumn(walWriter, "noColLikeThis");
                     fail("Should not be able to remove non existent column");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "invalid column: noColLikeThis");
+                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testTableRemoveNonExistentCol, column=noColLikeThis]");
                 }
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 10);
@@ -2890,34 +2890,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void createRollSegmentTestTable(String tableName) {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("int", ColumnType.INT)
-                .col("byte", ColumnType.BYTE)
-                .col("long", ColumnType.LONG)
-                .col("long256", ColumnType.LONG256)
-                .col("double", ColumnType.DOUBLE)
-                .col("float", ColumnType.FLOAT)
-                .col("short", ColumnType.SHORT)
-                .col("timestamp", ColumnType.TIMESTAMP)
-                .col("char", ColumnType.CHAR)
-                .col("boolean", ColumnType.BOOLEAN)
-                .col("date", ColumnType.DATE)
-                .col("string", ColumnType.STRING)
-                .col("geoByte", ColumnType.GEOBYTE)
-                .col("geoInt", ColumnType.GEOINT)
-                .col("geoShort", ColumnType.GEOSHORT)
-                .col("geoLong", ColumnType.GEOLONG)
-                .col("bin", ColumnType.BINARY)
-                .col("symbol", ColumnType.SYMBOL)
-                .wal()
-                .timestamp("ts")
-        ) {
-            createTable(model);
-        }
-    }
-
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
@@ -2990,7 +2962,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.addColumnToList(columnName, columnType, 0, false, false, 0);
+        addColumnC.addColumnToList(columnName, 11, columnType, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
     }
 

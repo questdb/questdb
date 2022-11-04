@@ -83,8 +83,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs); // because it does not exist
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'");
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition [table=testCannotDropActivePartitionWhenO3HasARowFromTheFuture, partitionTimestamp=2023-10-15");
                     }
 
                     assertTableX(tableName, TableHeader +
@@ -396,8 +396,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
-                    final String expectedTableInTransaction = expectedTable;
-
                     final String expectedTableAfterDrop = TableHeader +
                             "1\t2023-10-10T00:00:00.000000Z\n" +
                             "2\t2023-10-11T00:00:00.000000Z\n" +
@@ -424,7 +422,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
-                        assertSql(tableName, expectedTableInTransaction);
+                        assertSql(tableName, expectedTable);
 
                         writer.removePartition(lastTs);
 
@@ -520,8 +518,6 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                             "insert into " + tableName + " values(5, '2023-10-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
-                    final String expectedTableInTransaction = expectedTable;
-
                     final String expectedTableAfterDrop = TableHeader +
                             "1\t2023-10-10T00:00:00.000000Z\n" +
                             "2\t2023-10-11T00:00:00.000000Z\n" +
@@ -548,7 +544,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         Assert.assertEquals(6, reader0.size());
                         Assert.assertEquals(6, reader1.size());
 
-                        assertSql(tableName, expectedTableInTransaction);
+                        assertSql(tableName, expectedTable);
 
                         writer.removePartition(lastTs);
 

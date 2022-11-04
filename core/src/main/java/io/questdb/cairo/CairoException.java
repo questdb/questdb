@@ -34,18 +34,27 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
-    public static final int ILLEGAL_OPERATION = -101;
-    public static final int METADATA_VALIDATION = -100;
     public static final int NON_CRITICAL = -1;
-    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    public static final int METADATA_VALIDATION = -100;
+    public static final int ILLEGAL_OPERATION = -101;
+
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
+    private int messagePosition;
 
     public static CairoException critical(int errno) {
-        return init(errno);
+        CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new CairoException()) != null;
+        ex.message.clear();
+        ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
+        return ex;
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -83,7 +92,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException nonCritical() {
-        return init(NON_CRITICAL);
+        return critical(NON_CRITICAL);
     }
 
     public int getErrno() {
@@ -93,6 +102,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     @Override
     public CharSequence getFlyweightMessage() {
         return message;
+    }
+
+    @Override
+    public int getPosition() {
+        return messagePosition;
     }
 
     @Override
@@ -112,6 +126,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return cacheable;
     }
 
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
     public boolean isCritical() {
         return errno != NON_CRITICAL;
     }
@@ -120,8 +139,19 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return interruption;
     }
 
-    public boolean isWalTolerable() {
-        return errno == NON_CRITICAL || errno == METADATA_VALIDATION;
+    public CairoException setInterruption(boolean interruption) {
+        this.interruption = interruption;
+        return this;
+    }
+
+    // logged and skipped by WAL applying code
+    public boolean isWALTolerable() {
+        return !isCritical() || errno == METADATA_VALIDATION;
+    }
+
+    public CairoException position(int position) {
+        this.messagePosition = position;
+        return this;
     }
 
     public CairoException put(long value) {
@@ -144,16 +174,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
-        return this;
-    }
-
-    public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
-        return this;
-    }
-
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);
@@ -162,16 +182,5 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public CairoException ts(long timestamp) {
         TimestampFormatUtils.appendDateTime(message, timestamp);
         return this;
-    }
-
-    private static CairoException init(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        return ex;
     }
 }

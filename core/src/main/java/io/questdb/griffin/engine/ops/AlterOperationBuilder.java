@@ -38,12 +38,14 @@ public class AlterOperationBuilder {
     private String tableName;
     private int tableNamePosition = -1;
 
+    // builder and the operation it is building share two lists.
     public AlterOperationBuilder() {
         this.resultInstance = new AlterOperation(longList, objCharList);
     }
 
     public void addColumnToList(
             CharSequence columnName,
+            int columnNamePosition,
             int type,
             int symbolCapacity,
             boolean cache,
@@ -57,10 +59,12 @@ public class AlterOperationBuilder {
         longList.add(cache ? 1 : -1);
         longList.add(indexed ? 1 : -1);
         longList.add(indexValueBlockCapacity);
+        longList.add(columnNamePosition);
     }
 
-    public void addPartitionToList(long timestamp) {
+    public void addPartitionToList(long timestamp, int timestampPosition) {
         longList.add(timestamp);
+        longList.add(timestampPosition);
     }
 
     public AlterOperation build() {
@@ -83,6 +87,25 @@ public class AlterOperationBuilder {
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofAddColumn(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
+        longList.add(columnNamePosition);
     }
 
     public AlterOperationBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
@@ -134,12 +157,13 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int columnNamePosition) {
         this.command = DROP_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
         this.objCharList.add(columnName);
+        this.longList.add(columnNamePosition);
         return this;
     }
 
@@ -149,6 +173,15 @@ public class AlterOperationBuilder {
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofPartition(long timestamp) {
+        longList.add(timestamp);
+    }
+
+    public void ofPartition(long partitionTimestamp, int partitionNamePosition) {
+        longList.add(partitionTimestamp);
+        longList.add(partitionNamePosition);
     }
 
     public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
@@ -174,16 +207,18 @@ public class AlterOperationBuilder {
         objCharList.add(newName);
     }
 
-    public AlterOperationBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
+    public AlterOperationBuilder ofSetParamCommitLag(int tableNamePosition, String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(commitLag);
         this.tableId = tableId;
         return this;
     }
 
-    public AlterOperationBuilder ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
+    public AlterOperationBuilder ofSetParamUncommittedRows(int tableNamePosition, String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(maxUncommittedRows);
         this.tableId = tableId;
