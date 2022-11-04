@@ -163,15 +163,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
 
                         if (hasNext) {
-//                            try {
-                            // todo: we might need to handle cairo exception here
-                                structuralChangeCursor.next().apply(writer, true);
-                                writer.setSeqTxn(seqTxn);
-//                            } catch (SqlException e) {
-//                                throw CairoException.critical(0)
-//                                        .put("cannot apply structure change from WAL to table [error=")
-//                                        .put(e.getFlyweightMessage()).put(']');
-//                            }
+                            structuralChangeCursor.next().apply(writer, true);
+                            writer.setSeqTxn(seqTxn);
                         } else {
                             // Something messed up in sequencer.
                             // There is a transaction in WAL but no structure change record.
