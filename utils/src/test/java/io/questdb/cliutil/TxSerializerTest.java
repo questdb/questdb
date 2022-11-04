@@ -175,7 +175,6 @@ public class TxSerializerTest {
         compiler.compile("truncate table xxx", sqlExecutionContext);
         json = serializer.toJson(txPath);
         Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 1"));
-
     }
 
     private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {

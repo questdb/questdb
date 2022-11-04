@@ -26,7 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -267,8 +266,12 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             change.apply(sequencerMetadataUpdater, true);
             metadata.syncToMetaFile();
-        } catch (SqlException e) {
-            throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
+        } catch (CairoException e) {
+            int errno = e.getErrno();
+            LOG.error().$("could not apply structure change from WAL to table [table=").utf8(sequencerMetadataUpdater.getTableName())
+                    .$("', error=").$(errno).I$();
+            throw CairoException.critical(errno)
+                    .put("error applying alter command to sequencer metadata");
         }
     }
 

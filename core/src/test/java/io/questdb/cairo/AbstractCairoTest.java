@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -45,6 +46,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -639,6 +641,11 @@ public abstract class AbstractCairoTest {
         while (checkWalTransactionsJob.run(0)) {
             // run until empty
         }
+
+        // run once again as there might be notifications to handle now
+        while (walApplyJob.run(0)) {
+            // run until empty
+        }
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
@@ -653,6 +660,12 @@ public abstract class AbstractCairoTest {
         runWalPurgeJob(engine.getConfiguration().getFilesFacade());
     }
 
+    protected boolean isWalTable(CharSequence tableName) {
+        try (Path path = new Path().of(configuration.getRoot())) {
+            return TableSequencerAPI.isWalTable(tableName, path, configuration.getFilesFacade());
+        }
+    }
+
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
@@ -661,6 +674,10 @@ public abstract class AbstractCairoTest {
         assertCursor(expected, cursor, metadata, true);
         cursor.toTop();
         assertCursor(expected, cursor, metadata, true);
+    }
+
+    protected enum WalMode {
+        WITH_WAL, NO_WAL
     }
 
     private static class ClockMock implements MicrosecondClock {

@@ -33,8 +33,6 @@ public class AlterOperationBuilder {
     private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final LongList longList = new LongList();
     private final AlterOperation resultInstance;
-    // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
-    // to exception message using TableUtils.setSinkForPartition
     private short command;
     private String tableName;
     private int tableId = -1;
@@ -171,11 +169,11 @@ public class AlterOperationBuilder {
         objCharList.add(newName);
     }
 
-    public void ofPartition(long timestamp) {
+    public void addPartitionToList(long timestamp) {
         longList.add(timestamp);
     }
 
-    public void ofAddColumn(
+    public void addColumnToList(
             CharSequence columnName,
             int type,
             int symbolCapacity,

@@ -80,10 +80,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException nonCritical() {
-        return critical(NON_CRITICAL);
+        return init(NON_CRITICAL);
     }
 
     public static CairoException critical(int errno) {
+        return init(errno);
+    }
+
+    private static CairoException init(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new CairoException()) != null;
@@ -118,6 +122,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isCritical() {
         return errno != NON_CRITICAL;
+    }
+
+    public boolean isWalTolerable() {
+        return errno == NON_CRITICAL || errno == METADATA_VALIDATION;
     }
 
     public boolean isCacheable() {

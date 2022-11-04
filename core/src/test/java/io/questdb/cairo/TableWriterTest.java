@@ -241,7 +241,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                                .addColumnToList(columnName, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOperation = alterOperationBuilder.build();
                         try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
                             if (writer != null) {

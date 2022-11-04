@@ -30,11 +30,15 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 import static io.questdb.griffin.CompiledQuery.ALTER;
 
@@ -238,7 +242,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                         dropPartition(tableName, LastPartitionTs);
                         Assert.fail();
                     } catch (EntryUnavailableException ex) {
-                        TestUtils.assertContains("[-1] table busy [reason=testing]", ex.getFlyweightMessage());
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "table busy [reason=testing]");
                         Misc.free(workerPool);
                     }
                 }
@@ -557,7 +561,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
                     try {
                         dropPartition(tableName, LastPartitionTs); // because it does not exist
                     } catch (SqlException ex) {
-                        TestUtils.assertContains("[26] could not remove partition '2023-10-15'", ex.getFlyweightMessage());
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'");
                     }
 
                     assertTableX(tableName, TableHeader +
@@ -685,8 +689,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. cannot read min, max timestamp from the column");
+                    } catch (CairoException | SqlException ex) { // the latter is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the column");
                         Misc.free(workerPool);
                     }
                 }
@@ -717,8 +721,8 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
                     try {
                         dropPartition(tableName, LastPartitionTs);
-                    } catch (CairoException | SqlException ex) { // the later is due to an assertion in SqlException.position
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove partition '2023-10-15'. invalid timestamp column data in detached partition");
+                    } catch (CairoException | SqlException ex) { // the latter is due to an assertion in SqlException.position
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp column data in detached partition");
                         TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         Misc.free(workerPool);
                     }

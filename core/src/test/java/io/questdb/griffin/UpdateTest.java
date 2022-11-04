@@ -2069,7 +2069,7 @@ public class UpdateTest extends AbstractGriffinTest {
             try {
                 executeUpdate("UPDATE up SET x = 1");
                 Assert.fail();
-            } catch (CairoException ex) {
+            } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
             }
 

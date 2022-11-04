@@ -409,8 +409,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//this test confirms that command is parsed and executed properly
+    @Test
     public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
+        // this test confirms that command is parsed and executed properly
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 try {
@@ -422,7 +423,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "SELECT l from TEST;");
                     fail("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: failed to attach partition '2020': " + ATTACH_ERR_PARTITION_EXISTS.name() + '\n' +
+                    assertEquals("ERROR: table 'test' could not be altered: [-1] failed to attach partition '2020': " + ATTACH_ERR_PARTITION_EXISTS.name() + '\n' +
                             "  Position: 203", e.getMessage());
                 }
             }

@@ -91,6 +91,12 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
     }
 
     @Override
+    public boolean hasColumn(int columnIndex) {
+        final TableColumnMetadata columnMeta = columnMetadata.getQuiet(columnIndex);
+        return columnMeta != null && !columnMeta.isDeleted();
+    }
+
+    @Override
     public int getWriterIndex(int columnIndex) {
         return getColumnMetadata(columnIndex).getWriterIndex();
     }

@@ -24,12 +24,11 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.TableWriterSPI;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
@@ -70,7 +69,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
+    public long apply(TableWriterSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 

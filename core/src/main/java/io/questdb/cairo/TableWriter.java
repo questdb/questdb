@@ -300,10 +300,10 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
-                partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                partitionTimestampHi = txWriter.getLastPartitionTimestamp();
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                this.partitionTimestampHi = txWriter.getLastPartitionTimestamp();
             } else {
-                partitionDirFmt = null;
+                this.partitionDirFmt = null;
             }
             this.commitInterval = calculateCommitInterval();
 
@@ -399,6 +399,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
+    @Override
     public void addColumn(
             CharSequence name,
             int type,
@@ -497,6 +498,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
+    @Override
     public void addIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
@@ -577,6 +579,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
+    @Override
     public AttachDetachStatus attachPartition(long timestamp) {
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
@@ -717,6 +720,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public void changeCacheFlag(int columnIndex, boolean cache) {
         checkDistressed();
 
@@ -760,14 +764,22 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
             }
             return 0;
-        } catch (SqlException ex) {
-            // This is non-critical error, we can mark seqTxn as processed
-            try {
-                rollback(); // rollback in case on any dirty state
-                setSeqTxn(seqTxn);
-                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-            } catch (Throwable th2) {
-                LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+        } catch (CairoException ex) {
+            if (ex.isWalTolerable()) {
+                // This is non-critical error, we can mark seqTxn as processed
+                try {
+                    rollback(); // rollback in case on any dirty state
+                    setSeqTxn(seqTxn);
+                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                } catch (Throwable th2) {
+                    LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+                }
+            } else {
+                try {
+                    rollback(); // rollback seqTxn
+                } catch (Throwable th2) {
+                    LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+                }
             }
             throw ex;
         } catch (Throwable th) {
@@ -781,12 +793,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
+    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         return operation.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
-    public long apply(UpdateOperation operation) throws SqlException {
+    public long apply(UpdateOperation operation) {
         return operation.apply(this, true);
     }
 
@@ -797,6 +809,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public long commit() {
         return commit(defaultCommitMode);
     }
@@ -805,10 +818,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return commit(commitMode, 0);
     }
 
+    @Override
     public long commitWithLag() {
         return commit(defaultCommitMode, metadata.getCommitLag());
     }
 
+    @Override
     public long commitWithLag(long lagMicros) {
         return commit(defaultCommitMode, lagMicros);
     }
@@ -817,6 +832,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return commit(commitMode, metadata.getCommitLag());
     }
 
+    @Override
     public AttachDetachStatus detachPartition(long timestamp) {
         // Should be checked by SQL compiler
         assert metadata.getTimestampIndex() > -1;
@@ -968,6 +984,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return AttachDetachStatus.OK;
     }
 
+    @Override
     public void dropIndex(CharSequence columnName) {
 
         checkDistressed();
@@ -1047,6 +1064,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    @Override
     public long getCommitInterval() {
         return commitInterval;
     }
@@ -1063,6 +1081,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
+    @Override
     public TableRecordMetadata getMetadata() {
         return metadata;
     }
@@ -1071,6 +1090,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return hasO3() ? getO3RowCount0() : 0;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -1098,6 +1118,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getRowCount();
     }
 
+    @Override
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
     }
@@ -1110,6 +1131,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    @Override
     public String getTableName() {
         return tableName;
     }
@@ -1138,6 +1160,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txnScoreboard;
     }
 
+    @Override
     public long getUncommittedRowCount() {
         return (masterRef - committedMasterRef) >> 1;
     }
@@ -1158,6 +1181,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return tempMem16b != 0;
     }
 
+    @Override
     public Row newRow(long timestamp) {
 
         switch (rowAction) {
@@ -1213,6 +1237,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return row;
     }
 
+    @Override
     public Row newRow() {
         return newRow(0L);
     }
@@ -1386,6 +1411,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public void removeColumn(CharSequence name) {
         checkDistressed();
         checkColumnName(name);
@@ -1456,6 +1482,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
+    @Override
     public boolean removePartition(long timestamp) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
@@ -1558,6 +1585,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return true;
     }
 
+    @Override
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -1609,6 +1637,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
+    @Override
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -1650,6 +1679,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    @Override
     public void setMetaCommitLag(long commitLag) {
         try {
             commit();
@@ -1672,6 +1702,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
+    public long getMetaMaxUncommittedRows() {
+        return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         try {
             commit();
@@ -1698,16 +1734,17 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Does not accept structure changes, e.g. equivalent to tick(false)
      * Some tick calls can result into transaction commit.
      */
+    @Override
     public void tick() {
         tick(false);
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Some tick calls can result into transaction commit.
      * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
@@ -1794,10 +1831,17 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("truncated [name=").utf8(tableName).I$();
     }
 
+    @Override
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
         this.commitIntervalFraction = commitIntervalFraction;
         this.commitIntervalDefault = commitIntervalDefault;
         this.commitInterval = calculateCommitInterval();
+    }
+
+    @Override
+    public int getSymbolCountWatermark(int columnIndex) {
+        // We don't need the watermark for non-WAL tables.
+        return -1;
     }
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
@@ -4372,8 +4416,8 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                     .I$();
             errorCode = STRUCTURE_CHANGE_NOT_ALLOWED;
             errorMsg = "async cmd cannot change table structure while writer is busy";
-        } catch (SqlException | CairoException ex) {
-            errorCode = SQL_OR_CAIRO_ERROR;
+        } catch (CairoException ex) {
+            errorCode = CAIRO_ERROR;
             errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
