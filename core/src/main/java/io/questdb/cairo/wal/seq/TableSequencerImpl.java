@@ -126,15 +126,15 @@ public class TableSequencerImpl implements TableSequencer {
         int compressedColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
+            sink.addColumn(
+                    metadata.getColumnName(i),
+                    columnType,
+                    metadata.isColumnIndexed(i),
+                    metadata.getIndexValueBlockCapacity(i),
+                    metadata.isSymbolTableStatic(i),
+                    i
+            );
             if (columnType > -1) {
-                sink.addColumn(
-                        metadata.getColumnName(i),
-                        columnType,
-                        metadata.isColumnIndexed(i),
-                        metadata.getIndexValueBlockCapacity(i),
-                        metadata.isSymbolTableStatic(i),
-                        i
-                );
                 if (i == timestampIndex) {
                     compressedTimestampIndex = compressedColumnCount;
                 }
@@ -145,6 +145,7 @@ public class TableSequencerImpl implements TableSequencer {
         sink.of(
                 tableName,
                 metadata.getTableId(),
+                timestampIndex,
                 compressedTimestampIndex,
                 metadata.isSuspended(),
                 metadata.getStructureVersion(),

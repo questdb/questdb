@@ -76,6 +76,15 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         addColumn0(columnName, columnType);
     }
 
+    @Override
+    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.timestampIndex = timestampIndex;
+        this.suspended = suspended;
+        this.structureVersion = structureVersion;
+    }
+
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
         structureVersion++;
@@ -108,15 +117,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     @Override
     public boolean isWalEnabled() {
         return true;
-    }
-
-    @Override
-    public void of(String tableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.timestampIndex = timestampIndex;
-        this.suspended = suspended;
-        this.structureVersion = structureVersion;
     }
 
     public void removeColumn(CharSequence columnName) {
@@ -173,6 +173,14 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnCount++;
     }
 
+    protected void clear(byte truncateMode) {
+        reset();
+        if (metaMem != null) {
+            metaMem.close(true, truncateMode);
+        }
+        Misc.free(roMetaMem);
+    }
+
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
@@ -181,14 +189,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         tableName = null;
         tableId = -1;
         suspended = false;
-    }
-
-    protected void clear(byte truncateMode) {
-        reset();
-        if (metaMem != null) {
-            metaMem.close(true, truncateMode);
-        }
-        Misc.free(roMetaMem);
     }
 
     void syncToMetaFile() {
