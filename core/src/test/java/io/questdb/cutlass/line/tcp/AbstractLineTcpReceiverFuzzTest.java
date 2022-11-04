@@ -36,14 +36,15 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
+@RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
@@ -90,6 +91,24 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private boolean sendSymbolsWithSpace = false;
 
     private volatile String errorMsg = null;
+    protected final boolean walEnabled;
+
+    public AbstractLineTcpReceiverFuzzTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name="{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        });
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
+    }
 
     @Before
     public void setUp2() {
@@ -100,6 +119,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     protected abstract Log getLog();
+
+    protected void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
 
     private CharSequence addTag(LineData line, int tagIndex) {
         final CharSequence tagName = generateTagName(tagIndex, false);
@@ -147,13 +172,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }
     }
 
-    void waiForTable(TableData table) {
+    void waitForTable(TableData table) {
         // if CI is very slow the table could be released before ingestion stops
         // then acquired again for further data ingestion
         // because of the above we will wait in a loop with a timeout for the data to appear in the table
         // in most cases we should not hit the sleep() below
         table.await();
         for (int i = 0; i < 180; i++) {
+            mayDrainWalQueue();
             if (checkTable(table)) {
                 return;
             }
@@ -225,16 +251,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final LineData line = new LineData(timestampMillis.incrementAndGet());
         if (exerciseTags) {
             final int[] tagIndexes = getTagIndexes();
-            for (int i = 0; i < tagIndexes.length; i++) {
-                final int tagIndex = tagIndexes[i];
+            for (final int tagIndex : tagIndexes) {
                 final CharSequence tagName = addTag(line, tagIndex);
                 addDuplicateTag(line, tagIndex, tagName);
                 addNewTag(line);
             }
         }
         final int[] columnIndexes = getColumnIndexes();
-        for (int i = 0; i < columnIndexes.length; i++) {
-            final int colIndex = columnIndexes[i];
+        for (final int colIndex : columnIndexes) {
             final CharSequence colName = addColumn(line, colIndex);
             addDuplicateColumn(line, colIndex, colName);
             addNewColumn(line);
@@ -352,14 +376,22 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                handleWriterUnlockEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                handleWriterGetEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                handleWriterReturnEvent(name);
+            if (walEnabled) {
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterUnlockEvent(name);
+                    handleWriterReturnEvent(name);
+                }
+            } else {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
+                    handleWriterUnlockEvent(name);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(name);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterReturnEvent(name);
+                }
             }
         }, 250);
     }
@@ -412,8 +444,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     final Socket socket = sockets.get(i);
                     socket.close();
                 }
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                });
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
             }
         }, false, minIdleMsBeforeWriterRelease);
 
@@ -448,7 +479,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         for (int i = 0; i < numOfTables; i++) {
             final CharSequence tableName = getTableName(i);
             final TableData table = tables.get(tableName);
-            waiForTable(table);
+            waitForTable(table);
         }
     }
 
@@ -464,8 +495,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (shouldFuzz(columnSkipFactor)) {
             // avoid list here and just copy slices of the original array into the new one
             final List<Integer> indexes = new ArrayList<>();
-            for (int i = 0; i < originalColumnIndexes.length; i++) {
-                indexes.add(originalColumnIndexes[i]);
+            for (int originalColumnIndex : originalColumnIndexes) {
+                indexes.add(originalColumnIndex);
             }
             final int numOfSkippedCols = random.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
             for (int i = 0; i < numOfSkippedCols; i++) {

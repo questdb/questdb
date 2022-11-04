@@ -26,7 +26,11 @@ package io.questdb.cutlass.line.tcp;
 
 import org.junit.Test;
 
-public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {
+public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
+    public LineTcpInsertByteGeoHashTest(WalMode walMode) {
+        super(walMode);
+    }
+
     @Test
     public void testInsertNoValueByteGeoHash() throws Exception {
         assertGeoHash(5,

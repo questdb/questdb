@@ -137,7 +137,7 @@ public class SqlCompiler implements Closeable {
                 functionFactoryCache != null
                         ? functionFactoryCache
                         : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+                                FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);
@@ -342,7 +342,7 @@ public class SqlCompiler implements Closeable {
                 long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
                 partitionFunctionRec.setTimestamp(partitionTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.ofPartition(partitionTimestamp);
+                    changePartitionStatement.addPartitionToList(partitionTimestamp);
                 }
             }
 
@@ -350,7 +350,7 @@ public class SqlCompiler implements Closeable {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.ofPartition(partitionTimestamp);
+                changePartitionStatement.addPartitionToList(partitionTimestamp);
             }
         }
     }
@@ -681,7 +681,6 @@ public class SqlCompiler implements Closeable {
                     symbolCapacity = configuration.getDefaultSymbolCapacity();
                 }
 
-
                 if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
                     cache = true;
                     tok = SqlUtil.fetchNext(lexer);
@@ -728,7 +727,7 @@ public class SqlCompiler implements Closeable {
                 indexed = false;
             }
 
-            addColumn.ofAddColumn(
+            addColumn.addColumnToList(
                     columnName,
                     type,
                     Numbers.ceilPow2(symbolCapacity),
@@ -954,7 +953,7 @@ public class SqlCompiler implements Closeable {
                             .put("[errno=").put(e.getErrno()).put(']');
                 }
 
-                partitions.ofPartition(timestamp);
+                partitions.addPartitionToList(timestamp);
             }
 
             tok = SqlUtil.fetchNext(lexer);

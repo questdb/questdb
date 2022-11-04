@@ -29,6 +29,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.AbstractLineSender;
@@ -51,10 +52,9 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -62,16 +62,32 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.ECPublicKey;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collection;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
 
+@RunWith(Parameterized.class)
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private static final long TEST_TIMEOUT_IN_MS = 120000;
     private Path path;
+    private final boolean walEnabled;
+
+    public LineTcpReceiverTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name="{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        });
+    }
 
     @Test
     public void generateKeys() throws NoSuchAlgorithmException {
@@ -103,12 +119,19 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Before
     public void setUpLineTcpReceiverTest() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
         path = new Path();
     }
 
     @After
     public void tearDownLineTcpReceiverTest() {
         path.close();
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     @Test
@@ -145,16 +168,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // this will wait until the writer is returned into the pool
             finished.await();
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            });
+            mayDrainWalQueue();
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 final int expectedNumOfRows = numOfRows / 2;
                 // usually the data will be in the table by the time we get here but
                 // if it is not we will wait for it in a loop
                 while (reader.getTransientRowCount() < expectedNumOfRows) {
+                    mayDrainWalQueue();
                     Os.sleep(100);
                 }
+                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
                 Assert.assertEquals(expectedNumOfRows, reader.getTransientRowCount());
             } catch (Exception e) {
                 Assert.fail("Reader failed [e=" + e + "]");
@@ -187,7 +212,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 });
             }
         });
+        mayDrainWalQueue();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
             Assert.assertEquals(count * writeIterations, reader.size());
         }
     }
@@ -205,6 +232,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             sendLinger(receiver, lineData, "tab");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("tab"));
+            }
             String expected = "ts_nsec\traw_msg\ttimestamp\n" +
                     "1111111111111111111\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
                     "2222222222222222222\t_________________________________________________________________________________________________________ ____________\t2021-04-27T07:40:49.714000Z\n" +
@@ -218,6 +249,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testFieldsReducedNonPartitioned() throws Exception {
+        // WAL is not supported on non-partitioned tables
+        Assume.assumeFalse(walEnabled);
+
         try (TableModel m = new TableModel(configuration, "weather", PartitionBy.NONE)) {
             m.col("windspeed", ColumnType.DOUBLE).timestamp();
             CairoTestUtils.createTable(m, ColumnType.VERSION);
@@ -241,6 +275,46 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testCreationAttemptNonPartitionedTableWithWal() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        partitionByDefault = PartitionBy.NONE;
+
+        final String tableNonPartitioned = "weather_none";
+        final String tablePartitioned = "weather_day";
+
+        runInContext((receiver) -> {
+            // Pre-create a partitioned table, so we can wait until it's created.
+            try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
+                m.timestamp("ts").wal();
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            // Send non-partitioned table rows before the partitioned table ones.
+            final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
+                    tableNonPartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                    tablePartitioned + " windspeed=4.0 631170000000000000\n" +
+                    tablePartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n";
+            sendLinger(receiver, lineData, tablePartitioned);
+
+            mayDrainWalQueue();
+
+            // Verify that the partitioned table data has landed.
+            Assert.assertTrue(isWalTable(tablePartitioned));
+            String expected = "ts\twindspeed\ttimetocycle\n" +
+                    "1990-01-01T02:13:20.000000Z\t3.0\t0.0\n" +
+                    "1990-01-01T05:00:00.000000Z\t4.0\tNaN\n";
+            assertTable(expected, tablePartitioned);
+
+            // WAL is not supported on non-partitioned tables, so we create a non-WAL table as a fallback.
+            Assert.assertFalse(isWalTable(tableNonPartitioned));
+            expected = "windspeed\ttimestamp\ttimetocycle\n" +
+                    "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n";
+            assertTable(expected, tableNonPartitioned);
+        });
+    }
+
+    @Test
     public void testFieldsReducedO3() throws Exception {
         String lineData =
                 "weather windspeed=1.0 631152000000000000\n" +
@@ -251,6 +325,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             sendLinger(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected =
                     "windspeed\ttimestamp\ttimetocycle\n" +
                             "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
@@ -272,6 +350,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             sendLinger(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected =
                     "dir\twindspeed\ttimestamp\ttimetocycle\n" +
                             "South\t2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
@@ -310,6 +392,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table"));
+            }
             String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
                     "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
                     "value 2\t\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -335,8 +421,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test(expected = LineSenderException.class)
     public void testInvalidZeroSignature() throws Exception {
-        test(AUTH_KEY_ID1, 768, 100, true, () ->
-        {
+        test(AUTH_KEY_ID1, 768, 100, true, () -> {
             PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
             LineTcpSender sender = new LineTcpSender(channel, 4096) {
                 @Override
@@ -368,7 +453,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             try (Socket socket = getSocket()) {
                 // this loop adds columns to the table
-                // after the 252th column has been added the metadata size will be exactly 16k
+                // after the 252nd column has been added the metadata size will be exactly 16k
                 // adding an extra 2 columns, just in case
                 for (int i = 1; i < numOfColumns; i++) {
                     sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13 - (int) Math.log10(i)) + i + "=32 " + i + "\n");
@@ -380,7 +465,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
         }, false, 250);
 
+        mayDrainWalQueue();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
             Assert.assertEquals(numOfColumns + 1, reader.getMetadata().getColumnCount());
         }
     }
@@ -414,6 +501,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table"));
+            }
             String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
                     "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
                     "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
@@ -432,6 +523,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testSomeWritersReleased() throws Exception {
+        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
+        Assume.assumeFalse(walEnabled);
+
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
                     "weather,location=us-eastcoast temperature=89 1465839830102400200\n" +
@@ -458,7 +552,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 for (int i = 1; i < threadCount; i++) {
                     final String threadTable = "weather" + i;
                     final String lineDataThread = lineData.replace("weather", threadTable);
-                    sendNoWait(receiver, threadTable, lineDataThread);
+                    sendNoWait(receiver, lineDataThread, threadTable);
                     new Thread(() -> {
                         try {
                             for (int n = 0; n < iterations; n++) {
@@ -474,10 +568,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
 
                 sendAndWait(receiver, lineData, tableIndex, 2);
-                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
+                mayDrainWalQueue();
+                try (TableWriterAPI w = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                     w.truncate();
                 }
-                sendAndWait(receiver, lineData, tableIndex, 4);
+                // drainWalQueue() call opens TableWriter one more time
+                int expectedReleases = walEnabled ? 5 : 4;
+                sendAndWait(receiver, lineData, tableIndex, expectedReleases);
+                mayDrainWalQueue();
 
                 String header = "location\ttemperature\ttimestamp\n";
                 String[] lines = {"us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n",
@@ -485,12 +583,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"};
                 String expected = header + lines[0] + lines[1] + lines[2];
                 assertTable(expected, "weather");
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("weather"));
+                }
 
                 // Concatenate iterations + 1 of identical insert results
                 // to assert against weather 1-8 tables
                 StringBuilder expectedSB = new StringBuilder(header);
-                for (int l = 0; l < lines.length; l++) {
-                    expectedSB.append(Chars.repeat(lines[l], iterations + 1));
+                for (String line : lines) {
+                    expectedSB.append(Chars.repeat(line, iterations + 1));
                 }
 
                 // Wait async ILP send threads to finish.
@@ -501,11 +602,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     try {
                         try {
                             assertTable(expectedSB, tableName);
+                            if (walEnabled) {
+                                Assert.assertTrue(isWalTable(tableName));
+                            }
                         } catch (AssertionError e) {
                             int releasedCount = -tableIndex.get(tableName).getCount();
                             // Wait one more writer release before re-trying to compare
                             wait(tableIndex.get(tableName), releasedCount + 3, minIdleMsBeforeWriterRelease);
+                            mayDrainWalQueue();
                             assertTable(expectedSB, tableName);
+                            if (walEnabled) {
+                                Assert.assertTrue(isWalTable(tableName));
+                            }
                         }
                     } catch (Throwable err) {
                         LOG.error().$("Error '").$(err.getMessage()).$("' comparing table: ").$(tableName).$();
@@ -514,8 +622,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             } finally {
                 // Clean engine hook
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                });
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
             }
         });
     }
@@ -535,6 +642,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table"));
+            }
             String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
                     "value 1\tзначение 2\t{\"ключ\": \n" +
                     " \"число\", \r\n" +
@@ -547,13 +658,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testSymbolAddedInO3Mode() throws Exception {
         maxMeasurementSize = 4096;
         runInContext((receiver) -> {
-            String lineData = "plug,room=6A watts=\"469\" 1631817902842\n" +
-                    "plug,room=6A watts=\"3195\" 1631817296977\n" +
+            String lineData = "plug,room=6A watts=\"3195\" 1631817296977\n" +
                     "plug,room=6A watts=\"3188\" 1631817599910\n" +
                     "plug,room=6A watts=\"3180\" 1631817902842\n" +
+                    "plug,room=6A watts=\"469\" 1631817902842\n" +
                     "plug,label=Power,room=6A watts=\"475\" 1631817478737\n";
             sendLinger(receiver, lineData, "plug");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6A\t3195\t1970-01-01T00:27:11.817296Z\t\n" +
                     "6A\t475\t1970-01-01T00:27:11.817478Z\tPower\n" +
@@ -572,6 +687,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Power,room=6B watts=\"22\" 1631817902842\n";
             sendLinger(receiver, lineData, "plug");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
                     "6A\t1\t1970-01-01T00:43:51.819999Z\t\n";
@@ -588,6 +707,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
             sendLinger(receiver, lineData, "plug");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("plug"));
+            }
             String expected = "room\twatts\ttimestamp\tlabel\n" +
                     "6C\t333\t1970-01-01T00:25:31.817902Z\tLine\n" +
                     "6B\t22\t1970-01-01T00:27:11.817902Z\tPower\n" +
@@ -611,7 +734,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         "select x as windspeed," +
                         "x*2 as timetocycle, " +
                         "cast(x as timestamp) as ts " +
-                        "from long_sequence(2)) timestamp(ts) ", sqlExecutionContext);
+                        "from long_sequence(2)) timestamp(ts)", sqlExecutionContext);
 
                 CompiledQuery cq = compiler.compile("weather", sqlExecutionContext);
                 try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
@@ -632,6 +755,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                         "weather windspeed=4.0 631170000000000000\n";
                         sendLinger(receiver, lineData, "weather");
                     });
+                    mayDrainWalQueue();
+                    if (walEnabled) {
+                        Assert.assertTrue(isWalTable("weather"));
+                    }
 
                     try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
                         TestUtils.printCursor(cursor, cursorFactory.getMetadata(), true, sink, printer);
@@ -662,7 +789,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
                 Assert.assertEquals(rowCount, reader.size());
             }
         });
@@ -683,6 +812,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(tableName));
+            }
             String expected = "tag1\ttag2\ttimestamp\n" +
                     "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, tableName);
@@ -700,20 +833,27 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         byte[] utf8Bytes = "ल".getBytes(Files.UTF_8);
         Assert.assertEquals(3, utf8Bytes.length);
 
-        try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
-            m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("поле", ColumnType.STRING)
-                    .timestamp("время");
-            CairoTestUtils.createTableWithVersion(m, ColumnType.VERSION);
-        }
-
         runInContext((receiver) -> {
+            try (TableModel m = new TableModel(configuration, "लаблअца", PartitionBy.DAY)) {
+                m.col("символ", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("поле", ColumnType.STRING)
+                        .timestamp("время");
+                if (walEnabled) {
+                    m.wal();
+                }
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
             String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
             sendLinger(receiver, lineData, "लаблअца");
 
             String lineData2 = "लаблअца,символ=значение2 поле=\"значение3\" 1619509249714000000\n";
             sendLinger(receiver, lineData2, "लаблअца");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("लаблअца"));
+            }
             assertTable("символ\tполе\tвремя\n" +
                     "\tзначение\t2021-04-27T07:40:49.714000Z\n" +
                     "значение2\tзначение3\t2021-04-27T07:40:49.714000Z\n", "लаблअца");
@@ -729,6 +869,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String lineData2 = "लаблअца,символ=значение2 1619509249714000000\n";
             sendLinger(receiver, lineData2, "लаблअца");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("लаблअца"));
+            }
             String expected = "поле\ttimestamp\tсимвол\n" +
                     "значение\t2021-04-27T07:40:49.714000Z\t\n" +
                     "\t2021-04-27T07:40:49.714000Z\tзначение2\n";
@@ -738,56 +882,53 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWindowsAccessDenied() throws Exception {
-        assertMemoryLeak(() -> {
+        String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+
+        runInContext((receiver) -> {
             try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
                 m.timestamp("ReceiveTime")
                         .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
                         .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
                         .col("Length", ColumnType.INT);
-                CairoTestUtils.createTable(m, ColumnType.VERSION);
+                if (walEnabled) {
+                    m.wal();
+                }
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
             }
 
-            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            sendLinger(receiver, lineData, "table_a");
 
-            runInContext((receiver) -> {
-                sendLinger(receiver, lineData, "table_a");
-
-                String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
-                        "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
-                assertTable(expected, "table_a");
-            });
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table_a"));
+            }
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\ttest\n" +
+                    "2016-06-13T17:43:50.100400Z\t1\tB\t92\t1.5\n";
+            assertTable(expected, "table_a");
         });
     }
 
     @Test
     public void testWithColumnAsReservedKeyword() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = new SqlCompiler(engine);
-                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                         .with(
-                                 AllowAllCairoSecurityContext.INSTANCE,
-                                 new BindVariableServiceImpl(configuration),
-                                 null,
-                                 -1,
-                                 null)) {
-                String expected =
-                        "out\ttimestamp\tin\n" +
-                                "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                                "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
-                                "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
-                                "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+        runInContext((receiver) -> {
+            String lineData =
+                    "up out=1.0 631150000000000000\n" +
+                            "up in=2.0 631152000000000000\n" +
+                            "up in=3.0 631160000000000000\n" +
+                            "up in=4.0 631170000000000000\n";
+            sendLinger(receiver, lineData, "up");
 
-                runInContext((receiver) -> {
-                    String lineData =
-                            "up out=1.0 631150000000000000\n" +
-                                    "up in=2.0 631152000000000000\n" +
-                                    "up in=3.0 631160000000000000\n" +
-                                    "up in=4.0 631170000000000000\n";
-                    sendLinger(receiver, lineData, "up");
-                });
-
-                TestUtils.assertSql(compiler, sqlExecutionContext, "up", sink, expected);
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("up"));
             }
+            String expected =
+                    "out\ttimestamp\tin\n" +
+                            "1.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                            "NaN\t1990-01-01T00:00:00.000000Z\t2.0\n" +
+                            "NaN\t1990-01-01T02:13:20.000000Z\t3.0\n" +
+                            "NaN\t1990-01-01T05:00:00.000000Z\t4.0\n";
+            assertTable(expected, "up");
         });
     }
 
@@ -815,6 +956,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             });
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("table"));
+            }
             String expected = "tag1\ttag=2\tполе=3\ttimestamp\n" +
                     "value 1\tзначение 2\t{\"ключ\": \"число\"}\t1970-01-01T00:00:00.000000Z\n" +
                     "value 2\t\t\t1970-01-01T00:00:00.000000Z\n";
@@ -831,6 +976,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             sendLinger(receiver, lineData, "tableCRASH");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("tableCRASH"));
+            }
             String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
                     "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.4\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tableCRASH");
@@ -840,34 +989,110 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testWriterAllLongs() throws Exception {
         currentMicros = 1;
-        try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
-            m.timestamp("ts")
-                    .col("id", ColumnType.LONG)
-                    .col("author", ColumnType.LONG)
-                    .col("guild", ColumnType.LONG)
-                    .col("channel", ColumnType.LONG)
-                    .col("flags", ColumnType.BYTE);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
-        }
-
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
         runInContext((receiver) -> {
+            try (TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH)) {
+                m.timestamp("ts")
+                        .col("id", ColumnType.LONG)
+                        .col("author", ColumnType.LONG)
+                        .col("guild", ColumnType.LONG)
+                        .col("channel", ColumnType.LONG)
+                        .col("flags", ColumnType.BYTE);
+                if (walEnabled) {
+                    m.wal();
+                }
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
             send(receiver, lineData, "messages");
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
                     "1970-01-01T00:00:00.000001Z\t843530699759026177\t820703963477180437\t820704412095479830\t820704412095479833\t6\n";
+
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("messages"));
+            }
             assertTable(expected, "messages");
         });
     }
 
     @Test
+    public void testWriterInsertNewSymbolsIntoTableWithExistingSymbols() throws Exception {
+        // This test only makes sense to WAL tables since it writes into the table from multiple threads.
+        Assume.assumeTrue(walEnabled);
+
+        // Here we make sure that TableUpdateDetails' and WalWriter's symbol caches to not clash with each other.
+        final String tableName = "x";
+        final int symbols = 1024;
+
+        runInContext((receiver) -> {
+            // First, create a table and insert a few rows into it, so that we get some existing symbol keys.
+            try (TableModel m = new TableModel(configuration, tableName, PartitionBy.MONTH)) {
+                m.timestamp("ts").col("sym", ColumnType.SYMBOL).wal();
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            // Next, start inserting symbols on a background thread.
+            final CountDownLatch halfDoneLatch = new CountDownLatch(1);
+            final CountDownLatch doneLatch = new CountDownLatch(1);
+            new Thread(() -> {
+                try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                    for (int i = 0; i < symbols; i++) {
+                        TableWriter.Row row = writer.newRow();
+                        row.putSym(1, "sym" + i);
+                        row.append();
+                        writer.commit();
+
+                        drainWalQueue();
+
+                        if (i == (symbols / 2)) {
+                            halfDoneLatch.countDown();
+                        }
+                    }
+                }
+                Path.clearThreadLocals();
+                doneLatch.countDown();
+            }).start();
+
+            // Finally, ingest rows with same symbols, but opposite direction, into the table.
+            final StringBuilder lineData = new StringBuilder();
+            for (int i = symbols - 1; i > -1; i--) {
+                lineData.append(tableName)
+                        .append(",sym=sym")
+                        .append(i)
+                        .append('\n');
+            }
+
+            halfDoneLatch.await();
+            sendLinger(receiver, lineData.toString(), tableName);
+            doneLatch.await();
+
+            TestUtils.assertEventually(() -> {
+                mayDrainWalQueue();
+
+                CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    Assert.assertEquals(2 * symbols, reader.size());
+                    RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        symbolCounts.increment(record.getSym(1));
+                    }
+                }
+
+                Assert.assertEquals(symbols, symbolCounts.size());
+                for (int i = 0; i < symbols; i++) {
+                    // increment() uses 0 as the first counter value, so we expect to see all 1s.
+                    Assert.assertEquals("count should be 2 for sym" + i + " symbol", 1, symbolCounts.get("sym" + i));
+                }
+            });
+        });
+    }
+
+    @Test
     public void testWriterCommitFails() throws Exception {
-        try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-            m.timestamp("ReceiveTime")
-                    .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                    .col("Length", ColumnType.INT);
-            CairoTestUtils.createTable(m, ColumnType.VERSION);
-        }
+        // This test only makes sense for TableWriter.
+        Assume.assumeFalse(walEnabled);
 
         runInContext((receiver) -> {
             ff = new FilesFacadeImpl() {
@@ -876,6 +1101,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     return 5;
                 }
             };
+
+            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+                m.timestamp("ReceiveTime")
+                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("Length", ColumnType.INT);
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
 
             String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
             sendLinger(receiver, lineData, "table_a");
@@ -888,7 +1121,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testWriterRelease1() throws Exception {
         runInContext((receiver) -> {
-
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
@@ -899,6 +1131,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
                     "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
@@ -912,13 +1148,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease2() throws Exception {
+        // TODO(puzpuzpuz): truncate() in WalWriter seems broken when it comes to symbols; re-enable the test when it's fixed.
+        Assume.assumeFalse(walEnabled);
+
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
 
-            try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
+            mayDrainWalQueue();
+            try (TableWriterAPI w = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "weather", "testing")) {
                 w.truncate();
             }
 
@@ -927,6 +1167,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -937,12 +1181,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease3() throws Exception {
+        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
+        Assume.assumeFalse(walEnabled);
+
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest temperature=85 1465839830102300200\n" +
@@ -950,6 +1198,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-westcost temperature=82 1465839830102500200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -960,12 +1212,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease4() throws Exception {
+        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
+        Assume.assumeFalse(walEnabled);
+
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,loc=us-midwest temp=85 1465839830102300200\n" +
@@ -973,6 +1229,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,loc=us-westcost temp=82 1465839830102500200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected = "loc\ttemp\ttimestamp\n" +
                     "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -983,11 +1243,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterRelease5() throws Exception {
+        // TODO(puzpuzpuz): re-enable when we properly support dropping WAL tables.
+        Assume.assumeFalse(walEnabled);
+
         runInContext((receiver) -> {
             String lineData = "weather,location=us-midwest temperature=82 1465839830100400200\n" +
                     "weather,location=us-midwest temperature=83 1465839830100500200\n" +
                     "weather,location=us-eastcoast temperature=81 1465839830101400200\n";
             send(receiver, lineData, "weather");
+
+            mayDrainWalQueue();
             engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "weather");
 
             lineData = "weather,location=us-midwest,source=sensor1 temp=85 1465839830102300200\n" +
@@ -995,6 +1260,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "weather,location=us-westcost,source=sensor1 temp=82 1465839830102500200\n";
             send(receiver, lineData, "weather");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("weather"));
+            }
             String expected = "location\tsource\ttemp\ttimestamp\n" +
                     "us-midwest\tsensor1\t85.0\t2016-06-13T17:43:50.102300Z\n" +
                     "us-eastcoast\tsensor2\t89.0\t2016-06-13T17:43:50.102400Z\n" +
@@ -1009,6 +1278,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String lineData = "doubles d0=0,d1=1.23E-10,d2=1.23E-03,d3=1.23E10,d4=1.23E01,d5=1.23E+10,d6=1.23E+01,dNaN=NaN,dmNan=-NaN,dInf=Infinity,dmInf=-Infinity 0\n";
             send(receiver, lineData, "doubles");
 
+            mayDrainWalQueue();
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable("doubles"));
+            }
             String expected = "d0\td1\td2\td3\td4\td5\td6\tdNaN\tdmNan\tdInf\tdmInf\ttimestamp\n" +
                     "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\tNaN\tNaN\tInfinity\t-Infinity\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "doubles");
@@ -1037,8 +1310,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         send(receiver, tableName, LineTcpReceiverTest.WAIT_ENGINE_TABLE_RELEASE, () -> sendToSocket(lineData));
     }
 
-    private void sendNoWait(LineTcpReceiver receiver, String threadTable, String lineDataThread) {
-        send(receiver, lineDataThread, threadTable, WAIT_NO_WAIT);
+    private void sendNoWait(LineTcpReceiver receiver, String lineData, String tableName) {
+        send(receiver, lineData, tableName, WAIT_NO_WAIT);
     }
 
     private void test(
@@ -1133,8 +1406,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             ts += rand.nextInt(1000);
                         }
                     } finally {
-                        for (int n = 0; n < senders.length; n++) {
-                            AbstractLineSender sender = senders[n];
+                        for (AbstractLineSender sender : senders) {
                             sender.close();
                         }
                     }
@@ -1144,6 +1416,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     if (!ready) {
                         throw new IllegalStateException("Timeout waiting for tables to be created");
                     }
+                    mayDrainWalQueue();
 
                     int nRowsWritten;
                     do {
@@ -1181,6 +1454,9 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             for (int n = 0; n < tables.size(); n++) {
                 CharSequence tableName = tables.get(n);
                 LOG.info().$("checking table ").$(tableName).$();
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable(tableName));
+                }
                 assertTable(expectedSbs[n], tableName);
             }
         });

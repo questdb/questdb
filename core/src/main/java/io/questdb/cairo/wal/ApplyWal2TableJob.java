@@ -166,7 +166,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
-                        throw CairoException.critical(0).put("Unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1).put(" but was ").put(seqTxn);
+                        throw CairoException.critical(0)
+                                .put("unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1)
+                                .put(" but was ").put(seqTxn);
                     }
 
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
@@ -180,7 +182,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         @SuppressWarnings("UnnecessaryLocalVariable") final int newStructureVersion = segmentId;
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
-                                    .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                    .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
                                     .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                     .put(']');
                         }
@@ -196,10 +198,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             try {
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
-                            } catch (SqlException e) {
-                                throw CairoException.critical(0)
-                                        .put("cannot apply structure change from WAL to table [error=")
-                                        .put(e.getFlyweightMessage()).put(']');
+                            } catch (CairoException e) {
+                                int errno = e.getErrno();
+                                LOG.error().$("could not apply structure change from WAL to table [table=").utf8(writer.getTableName())
+                                        .$("', error=").$(errno).I$();
+                                throw CairoException.critical(errno)
+                                        .put("could not apply structure change from WAL to table");
                             }
                         } else {
                             // Something messed up in sequencer.
@@ -207,7 +211,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             // TODO: make sequencer distressed and try to reconcile on sequencer opening
                             //  or skip the transaction?
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                    .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                     .put(newStructureVersion)
                                     .put(']');
                         }
@@ -242,6 +246,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
                     break;
                 case TRUNCATE:
+                    // TODO(puzpuzpuz): this implementation is broken because of ILP I/O threads' symbol cache
+                    //                  and also concurrent table readers
                     writer.setSeqTxn(seqTxn);
                     writer.truncate();
                     break;
@@ -266,10 +272,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
+        } catch (CairoException ex) {
+            if (ex.isWalTolerable()) {
+                LOG.error().$("error applying UPDATE SQL to wal table [table=")
+                        .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
+                // This is fine, some non-critical or metadata validation error, we should block WAL processing if SQL is not valid.
+            } else {
+                throw ex;
+            }
         } catch (SqlException ex) {
             LOG.error().$("error applying UPDATE SQL to wal table [table=")
                     .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            // This is fine, some syntax error, we should block WAL processing if SQL is not valid
+            // This is fine, some syntax error, we should block WAL processing if SQL is not valid.
         }
     }
 }

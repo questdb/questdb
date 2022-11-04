@@ -149,7 +149,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     null,
                     12,
-                    "Column is not indexed [name=колонка][errno=-100]"
+                    "table 'підрахунок' could not be altered: [-100] Column is not indexed [name=колонка]"
             );
         });
     }
@@ -187,7 +187,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             try {
                 compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException expected) {
+            } catch (SqlException expected) {
                 TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
                 TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);

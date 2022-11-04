@@ -89,6 +89,10 @@ public class TableColumnMetadata {
         type = -Math.abs(type);
     }
 
+    public boolean isDeleted() {
+        return type < 0;
+    }
+
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
