@@ -98,7 +98,7 @@ public class AtomicIntList {
         int pos = this.pos;
         int[] data = this.data;
         if (index >= pos) {
-            throw new IndexOutOfBoundsException(index);
+            throw new IndexOutOfBoundsException("Index out of range: " + index);
         }
         return Unsafe.arrayGetVolatile(data, index);
     }
