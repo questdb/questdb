@@ -43,30 +43,29 @@ import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
-    public final static String CMD_NAME = "ALTER TABLE";
-    public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
-    public final static short DROP_PARTITION = 2;
-    public final static short ATTACH_PARTITION = 3;
     public final static short ADD_INDEX = 4;
-    public final static short DROP_INDEX = 5;
     public final static short ADD_SYMBOL_CACHE = 6;
-    public final static short REMOVE_SYMBOL_CACHE = 7;
-    public final static short DROP_COLUMN = 8;
-    public final static short RENAME_COLUMN = 9;
-    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
-    public final static short SET_PARAM_COMMIT_LAG = 11;
+    public final static short ATTACH_PARTITION = 3;
+    public final static String CMD_NAME = "ALTER TABLE";
     public final static short DETACH_PARTITION = 12;
-
+    public final static short DO_NOTHING = 0;
+    public final static short DROP_COLUMN = 8;
+    public final static short DROP_INDEX = 5;
+    public final static short DROP_PARTITION = 2;
+    public final static short REMOVE_SYMBOL_CACHE = 7;
+    public final static short RENAME_COLUMN = 9;
+    public final static short SET_PARAM_COMMIT_LAG = 11;
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
-    private final ObjCharSequenceList objCharList;
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
-    private final LongList longList;
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
     private final ExceptionSinkAdapter exceptionSinkAdapter = new ExceptionSinkAdapter();
-    private short command;
+    private final LongList longList;
+    private final ObjCharSequenceList objCharList;
     private CharSequenceList charSequenceList;
+    private short command;
     private MemoryFCRImpl deserializeMem;
 
     public AlterOperation() {
@@ -134,6 +133,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     @Override
+    public void clear() {
+        command = DO_NOTHING;
+        objCharList.clear();
+        directCharList.clear();
+        charSequenceList = objCharList;
+        longList.clear();
+        clearCommandCorrelationId();
+    }
+
+    @Override
     public AlterOperation deserialize(TableWriterTask event) {
         clear();
 
@@ -152,32 +161,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         deserializeMem.of(readPtr, event.getDataSize());
         deserializeBody(deserializeMem, 0L);
         return this;
-    }
-
-    @Override
-    public boolean isStructureChange() {
-        switch (command) {
-            case ADD_COLUMN:
-            case RENAME_COLUMN:
-            case DROP_COLUMN:
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    @Override
-    public void startAsync() {
-    }
-
-    @Override
-    public void clear() {
-        command = DO_NOTHING;
-        objCharList.clear();
-        directCharList.clear();
-        charSequenceList = objCharList;
-        longList.clear();
-        clearCommandCorrelationId();
     }
 
     public void deserializeBody(MemoryCR buffer, long offset) {
@@ -203,6 +186,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
         directCharList.of(buffer, readPtr, hi);
         charSequenceList = directCharList;
+    }
+
+    @Override
+    public boolean isStructureChange() {
+        switch (command) {
+            case ADD_COLUMN:
+            case RENAME_COLUMN:
+            case DROP_COLUMN:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public AlterOperation of(
@@ -245,6 +240,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         for (int i = 0, n = objCharList.size(); i < n; i++) {
             sink.putStr(objCharList.getStrA(i));
         }
+    }
+
+    @Override
+    public void startAsync() {
     }
 
     private void applyAddColumn(TableWriterSPI tableWriter) {
@@ -473,6 +472,60 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         int size();
     }
 
+    private static class DirectCharSequenceList implements CharSequenceList {
+        private final LongList offsets = new LongList();
+        private final DirectCharSequence strA = new DirectCharSequence();
+        private final DirectCharSequence strB = new DirectCharSequence();
+
+        @Override
+        public void clear() {
+            offsets.clear();
+        }
+
+        public CharSequence getStrA(int i) {
+            long lo = offsets.get(i * 2);
+            long hi = offsets.get(i * 2 + 1);
+            strA.of(lo, hi);
+            return strA;
+        }
+
+        @Override
+        public CharSequence getStrB(int i) {
+            long lo = offsets.get(i * 2);
+            long hi = offsets.get(i * 2 + 1);
+            strB.of(lo, hi);
+            return strB;
+        }
+
+        public long of(MemoryCR buffer, long lo, long hi) {
+            long initialAddress = lo;
+            if (lo + Integer.BYTES > hi) {
+                throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
+            }
+            int size = buffer.getInt(lo);
+            lo += 4;
+            for (int i = 0; i < size; i++) {
+                if (lo + Integer.BYTES > hi) {
+                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [12]");
+                }
+                int stringSize = 2 * buffer.getInt(lo);
+                lo += 4;
+                if (lo + stringSize > hi) {
+                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [13]");
+                }
+                long address = buffer.addressOf(lo);
+                offsets.add(address, address + stringSize);
+                lo += stringSize;
+            }
+            return lo - initialAddress;
+        }
+
+        @Override
+        public int size() {
+            return offsets.size() / 2;
+        }
+    }
+
     // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition
     private static class ExceptionSinkAdapter implements CharSink {
@@ -542,60 +595,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         @Override
         public int size() {
             return strings.size();
-        }
-    }
-
-    private static class DirectCharSequenceList implements CharSequenceList {
-        private final LongList offsets = new LongList();
-        private final DirectCharSequence strA = new DirectCharSequence();
-        private final DirectCharSequence strB = new DirectCharSequence();
-
-        @Override
-        public void clear() {
-            offsets.clear();
-        }
-
-        public CharSequence getStrA(int i) {
-            long lo = offsets.get(i * 2);
-            long hi = offsets.get(i * 2 + 1);
-            strA.of(lo, hi);
-            return strA;
-        }
-
-        @Override
-        public CharSequence getStrB(int i) {
-            long lo = offsets.get(i * 2);
-            long hi = offsets.get(i * 2 + 1);
-            strB.of(lo, hi);
-            return strB;
-        }
-
-        @Override
-        public int size() {
-            return offsets.size() / 2;
-        }
-
-        public long of(MemoryCR buffer, long lo, long hi) {
-            long initialAddress = lo;
-            if (lo + Integer.BYTES > hi) {
-                throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
-            }
-            int size = buffer.getInt(lo);
-            lo += 4;
-            for (int i = 0; i < size; i++) {
-                if (lo + Integer.BYTES > hi) {
-                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [12]");
-                }
-                int stringSize = 2 * buffer.getInt(lo);
-                lo += 4;
-                if (lo + stringSize > hi) {
-                    throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [13]");
-                }
-                long address = buffer.addressOf(lo);
-                offsets.add(address, address + stringSize);
-                lo += stringSize;
-            }
-            return lo - initialAddress;
         }
     }
 }
