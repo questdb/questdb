@@ -356,10 +356,10 @@ public class TableSequencerAPI implements QuietCloseable {
         while (iterator.hasNext()) {
             final TableSequencerEntry sequencer = iterator.next();
             if (deadline >= sequencer.releaseTime) {
+                iterator.remove();
                 sequencer.pool = null;
                 sequencer.close();
                 removed = true;
-                iterator.remove();
             }
         }
         return removed;
