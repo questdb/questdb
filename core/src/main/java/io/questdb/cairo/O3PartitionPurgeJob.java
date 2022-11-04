@@ -143,7 +143,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             try {
                 long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
                 partitionList.add(partitionTs);
-                System.out.printf("TOTO %s, %d%n", fileNameSink, partitionTs);
             } catch (NumericException e) {
                 LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
@@ -306,27 +305,26 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
-        for (File file : new File(path.toString()).listFiles()) {
-            if (file.isDirectory()) { // links to folders count as directory as well
-                fileNameSink.clear();
-                fileNameSink.put(file.getName());
-                parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+        long p = ff.findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long fileName = ff.findName(p);
+                    boolean isSoftLink = Files.findTypeIsSoftLink(p);
+                    if (Files.isDir(fileName, ff.findType(p), fileNameSink) || isSoftLink) {
+                        // extract txn, partition ts from name
+                        if (isSoftLink) {
+                            fileNameSink.clear();
+                            Chars.utf8DecodeZ(fileName, fileNameSink);
+                            Files.notDots(fileNameSink);
+                        }
+                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
             }
         }
-        // TODO: this code does not work in the presence of soft links
-        //        long p = ff.findFirst(path);
-        //        if (p > 0) {
-        //            try {
-        //                do {
-        //                    long fileName = ff.findName(p);
-        //                    if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
-        //                        // extract txn, partition ts from name
-        //                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
-        //                    }
-        //                } while (ff.findNext(p) > 0);
-        //            } finally {
-        //                ff.findClose(p);
-        //            }
 
         // find duplicate partitions
         assert partitionList.size() % 2 == 0;
