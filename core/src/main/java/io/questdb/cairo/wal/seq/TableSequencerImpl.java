@@ -182,6 +182,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+        assert !closed;
         long txn;
         try {
             if (metadata.getStructureVersion() == expectedStructureVersion) {
@@ -216,6 +217,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+        assert !closed;
         long txn;
         try {
             if (metadata.getStructureVersion() == expectedSchemaVersion) {
