@@ -838,10 +838,6 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
             return parseFunction(expression, metadata, new FunctionParser(configuration, new FunctionFactoryCache(configuration, functions)));
         }
 
-        Record getRecord() {
-            return record;
-        }
-
         private FunctionBuilder withColumn(String name, int type, Object value) {
             metadata.add(new TableColumnMetadata(name, type));
             columnValues.add(value);
@@ -859,6 +855,10 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         private FunctionBuilder withFunction(FunctionFactory functionFactory) {
             BindVariablesTest.functions.add(functionFactory);
             return this;
+        }
+
+        Record getRecord() {
+            return record;
         }
     }
 }

@@ -68,7 +68,7 @@ public class FuzzTransactionGenerator {
 
         for (int i = 0; i < transactionCount; i++) {
             double transactionType = getZeroToOneDouble(rnd);
-           if (transactionType < collRemove) {
+            if (transactionType < collRemove) {
                 // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, tableMetadata);
                 if (newTableMetadata != null) {
@@ -84,10 +84,10 @@ public class FuzzTransactionGenerator {
                     metaVersion++;
                     tableMetadata = newTableMetadata;
                 }
-            } else  if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < MAX_COLUMNS) {
-               // generate column add
-               tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
-           } else {
+            } else if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < MAX_COLUMNS) {
+                // generate column add
+                tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
+            } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
                 if (i < transactionCount - 1) {
@@ -113,7 +113,7 @@ public class FuzzTransactionGenerator {
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
                 generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, rnd.nextLong(), transactionCount);
-               rowCount -= blockRows;
+                rowCount -= blockRows;
                 lastTimestamp = stopTs;
             }
         }
@@ -121,12 +121,26 @@ public class FuzzTransactionGenerator {
         return transactionList;
     }
 
-    private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
-        if (tableMetadata instanceof FuzzTestColumnMeta) {
-            return ((FuzzTestColumnMeta)tableMetadata).getLiveColumnCount();
-        } else {
-            return tableMetadata.getColumnCount();
+    private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            int columnType = from.getColumnType(i);
+            if (i == columnIndex) {
+                columnType = -columnType;
+            }
+            to.add(new TableColumnMetadata(
+                    from.getColumnName(i),
+                    columnType,
+                    from.isColumnIndexed(i),
+                    from.getIndexValueBlockCapacity(i),
+                    from.isSymbolTableStatic(i),
+                    GenericRecordMetadata.copyOf(from.getMetadata(i))
+            ));
         }
+        to.setTimestampIndex(from.getTimestampIndex());
+    }
+
+    private static int generateNewColumnType(Rnd rnd) {
+        return FuzzInsertOperation.SUPPORTED_COLUM_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUM_TYPES.length)];
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {
@@ -162,6 +176,53 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
+        if (tableMetadata instanceof FuzzTestColumnMeta) {
+            return ((FuzzTestColumnMeta) tableMetadata).getLiveColumnCount();
+        } else {
+            return tableMetadata.getColumnCount();
+        }
+    }
+
+    static RecordMetadata generateAddColumn(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            Rnd rnd,
+            RecordMetadata tableMetadata
+    ) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        int newType = generateNewColumnType(rnd);
+        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextBoolean();
+        int indexValueBlockCapacity = 256;
+        boolean symbolTableStatic = rnd.nextBoolean();
+
+        String newColName;
+        for (int col = 0; ; col++) {
+            newColName = "new_col_" + col;
+            int colIndex = tableMetadata.getColumnIndexQuiet(newColName);
+            if (colIndex == -1) {
+                break;
+            }
+        }
+        transaction.operationList.add(new FuzzAddColumnOperation(tableMetadata, newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
+        transaction.structureVersion = metadataVersion;
+        transactionList.add(transaction);
+
+        FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
+        GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
+        newMeta.add(new TableColumnMetadata(
+                newColName,
+                newType,
+                indexFlag,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                null,
+                newMeta.getColumnCount()
+        ));
+        newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
+        return newMeta;
     }
 
     static void generateDataBlock(
@@ -227,66 +288,5 @@ public class FuzzTransactionGenerator {
 
         // nothing to drop, only timestamp column left
         return null;
-    }
-
-    private static void copyColumnsExcept(RecordMetadata from, FuzzTestColumnMeta to, int columnIndex) {
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            int columnType = from.getColumnType(i);
-            if (i == columnIndex) {
-                columnType = -columnType;
-            }
-            to.add(new TableColumnMetadata(
-                    from.getColumnName(i),
-                    columnType,
-                    from.isColumnIndexed(i),
-                    from.getIndexValueBlockCapacity(i),
-                    from.isSymbolTableStatic(i),
-                    GenericRecordMetadata.copyOf(from.getMetadata(i))
-            ));
-        }
-        to.setTimestampIndex(from.getTimestampIndex());
-    }
-
-    static RecordMetadata generateAddColumn(
-            ObjList<FuzzTransaction> transactionList,
-            int metadataVersion,
-            Rnd rnd,
-            RecordMetadata tableMetadata
-    ) {
-        FuzzTransaction transaction = new FuzzTransaction();
-        int newType = generateNewColumnType(rnd);
-        boolean indexFlag = newType == ColumnType.SYMBOL && rnd.nextBoolean();
-        int indexValueBlockCapacity = 256;
-        boolean symbolTableStatic = rnd.nextBoolean();
-
-        String newColName;
-        for (int col = 0; ; col++) {
-            newColName = "new_col_" + col;
-            int colIndex = tableMetadata.getColumnIndexQuiet(newColName);
-            if (colIndex == -1) {
-                break;
-            }
-        }
-        transaction.operationList.add(new FuzzAddColumnOperation(tableMetadata, newColName, newType, indexFlag, indexValueBlockCapacity, symbolTableStatic));
-        transaction.structureVersion = metadataVersion;
-        transactionList.add(transaction);
-
-        FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
-        GenericRecordMetadata.copyColumns(tableMetadata, newMeta);
-        newMeta.add(new TableColumnMetadata(
-                newColName,
-                newType,
-                indexFlag,
-                indexValueBlockCapacity,
-                symbolTableStatic,
-                null,
-                newMeta.getColumnCount()
-        ));
-        newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
-        return newMeta;
-    }
-
-    private static int generateNewColumnType(Rnd rnd) {
-        return FuzzInsertOperation.SUPPORTED_COLUM_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUM_TYPES.length)];
     }
 }

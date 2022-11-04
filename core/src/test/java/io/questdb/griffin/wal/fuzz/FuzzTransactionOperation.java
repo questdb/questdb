@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.wal.fuzz;
 
-import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TestRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 

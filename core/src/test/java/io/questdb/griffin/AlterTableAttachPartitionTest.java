@@ -46,8 +46,8 @@ import static io.questdb.cairo.AttachDetachStatus.*;
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static int DIR_MODE = configuration.getMkDirMode();
     private final static StringSink partitions = new StringSink();
-    private Path path;
     private Path other;
+    private Path path;
 
     @Override
     @Before
@@ -255,7 +255,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[24] table 'dst9' could not be altered: [-1] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                    Assert.assertEquals("[24] table 'dst9' could not be altered: [-1] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -275,7 +275,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] table 'dst10' could not be altered: [-1] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                    Assert.assertEquals("[25] table 'dst10' could not be altered: [-1] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
                 }
             }
         });
@@ -922,7 +922,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] table 'dst42' could not be altered: [-1] failed to attach partition '2022-08-09': "+ ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                    Assert.assertEquals("[25] table 'dst42' could not be altered: [-1] failed to attach partition '2022-08-09': " + ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
                 }
             }
         });

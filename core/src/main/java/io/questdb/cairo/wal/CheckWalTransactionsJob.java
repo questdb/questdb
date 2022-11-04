@@ -35,13 +35,13 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
-    private final CairoEngine engine;
-    private final TxReader txReader;
     private final CharSequence dbRoot;
+    private final CairoEngine engine;
     private final MillisecondClock milliseconClock;
     private final long spinLockTimeout;
-    private long lastProcessed = 0;
+    private final TxReader txReader;
     private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
+    private long lastProcessed = 0;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
         this.engine = engine;

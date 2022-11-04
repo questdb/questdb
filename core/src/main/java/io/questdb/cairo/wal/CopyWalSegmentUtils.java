@@ -71,7 +71,7 @@ public class CopyWalSegmentUtils {
 
         boolean success;
         if (ColumnType.isVariableLength(columnType)) {
-            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd,  rowOffset, rowCount, newColumnFiles, columnIndex);
+            success = copyVarLenFile(ff, primaryColumn, secondaryColumn, primaryFd, secondaryFd, rowOffset, rowCount, newColumnFiles, columnIndex);
         } else if (columnType > 0) {
             success = copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, columnType, newColumnFiles, columnIndex);
         } else {
@@ -86,6 +86,34 @@ public class CopyWalSegmentUtils {
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType).put("]");
         }
+    }
+
+    private static boolean copyFixLenFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, int columnType, LongList newOffsets, int columnIndex) {
+        int shl = ColumnType.pow2SizeOf(columnType);
+        long offset = rowOffset << shl;
+        long length = rowCount << shl;
+
+        boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
+        if (success) {
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
+            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
+        }
+        return success;
+    }
+
+    private static boolean copyTimestampFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
+        // Designated timestamp column is written as 2 long values
+        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {
+            return false;
+        }
+        long size = rowCount << 4;
+        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
+        try {
+            Vect.flattenIndex(srcDataTimestampAddr, rowCount);
+        } finally {
+            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
+        }
+        return true;
     }
 
     private static boolean copyVarLenFile(FilesFacade ff, MemoryMA primaryColumn, MemoryMA secondaryColumn, long primaryFd, long secondaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
@@ -117,33 +145,5 @@ public class CopyWalSegmentUtils {
         } finally {
             ff.munmap(srcIndexAddr, indexMapSize, MEMORY_TAG);
         }
-    }
-
-    private static boolean copyTimestampFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, LongList newOffsets, int columnIndex) {
-        // Designated timestamp column is written as 2 long values
-        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, columnIndex)) {
-            return false;
-        }
-        long size = rowCount << 4;
-        long srcDataTimestampAddr = TableUtils.mapRW(ff, primaryFd, size, MEMORY_TAG);
-        try {
-            Vect.flattenIndex(srcDataTimestampAddr, rowCount);
-        } finally {
-            ff.munmap(srcDataTimestampAddr, size, MEMORY_TAG);
-        }
-        return true;
-    }
-
-    private static boolean copyFixLenFile(FilesFacade ff, MemoryMA primaryColumn, long primaryFd, long rowOffset, long rowCount, int columnType, LongList newOffsets, int columnIndex) {
-        int shl = ColumnType.pow2SizeOf(columnType);
-        long offset = rowOffset << shl;
-        long length = rowCount << shl;
-
-        boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
-        if (success) {
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 1, offset);
-            newOffsets.setQuick(columnIndex * NEW_COL_RECORD_SIZE + 2, length);
-        }
-        return success;
     }
 }

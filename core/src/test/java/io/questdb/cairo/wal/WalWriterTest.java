@@ -89,228 +89,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddingColumnOverlapping() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    walName1 = walWriter1.getWalName();
-                    walName2 = walWriter2.getWalName();
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-                }
-            }
-
-            try (TableModel model = defaultModel(tableName)) {
-                model.col("c", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 0)) {
-                    assertEquals(3, reader.getColumnCount());
-                    assertEquals(walName1, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(0, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertFalse(eventCursor.hasNext());
-                }
-
-                model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 0)) {
-                    assertEquals(4, reader.getColumnCount());
-                    assertEquals(walName2, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(0, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertFalse(eventCursor.hasNext());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testAddingColumnOverlappingAndAddRow() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    walName1 = walWriter1.getWalName();
-                    walName2 = walWriter2.getWalName();
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-
-                    TableWriter.Row row = walWriter1.newRow();
-                    row.putByte(0, (byte) 1);
-                    row.append();
-                    walWriter1.commit();
-                }
-            }
-
-            try (TableModel model = defaultModel(tableName)) {
-                model.col("c", ColumnType.INT);
-                model.col("d", ColumnType.INT);
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 1)) {
-                    assertEquals(4, reader.getColumnCount());
-                    assertEquals(walName1, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(1, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 0)) {
-                    assertEquals(4, reader.getColumnCount());
-                    assertEquals(walName2, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(0, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertFalse(eventCursor.hasNext());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testOverlappingStructureChangeMissing() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long readULong(long fd, long offset) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableTransactionLog$TableMetadataChangeLogImpl") && stackTrace[1].getMethodName().equals("of")) {
-                        return -1;
-                    }
-                }
-                return Files.readULong(fd, offset);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
-                } catch(Exception e) {
-                    // this exception will be handled in ILP/PG/HTTP
-                    assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
-                } catch(Exception e) {
-                    // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[2] could not apply table definition changes to the current transaction"));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testOverlappingStructureChangeFails() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
-                        return -1;
-                    }
-                }
-                return Files.openRO(name);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
-                } catch(Exception e) {
-                    // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().contains("could not open read-only"));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -478,26 +256,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableRejectedIfTransactionPending() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                TableWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-                // no commit intentional
-                addColumn(walWriter, "c", ColumnType.INT);
-                fail("Exception expected");
-            } catch(Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
-            }
-        });
-    }
-
-    @Test
     public void testAddingColumnClosesSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -622,6 +380,131 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertFalse(dataInfo.isOutOfOrder());
                     assertNull(dataInfo.nextSymbolMapDiff());
 
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAddingColumnOverlapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            final String walName1, walName2;
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    walName1 = walWriter1.getWalName();
+                    walName2 = walWriter2.getWalName();
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                }
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                model.col("c", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 0)) {
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(walName1, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(0, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertFalse(eventCursor.hasNext());
+                }
+
+                model.col("d", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 0)) {
+                    assertEquals(4, reader.getColumnCount());
+                    assertEquals(walName2, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(0, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAddingColumnOverlappingAndAddRow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            final String walName1, walName2;
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    walName1 = walWriter1.getWalName();
+                    walName2 = walWriter2.getWalName();
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+
+                    TableWriter.Row row = walWriter1.newRow();
+                    row.putByte(0, (byte) 1);
+                    row.append();
+                    walWriter1.commit();
+                }
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                model.col("c", ColumnType.INT);
+                model.col("d", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 1)) {
+                    assertEquals(4, reader.getColumnCount());
+                    assertEquals(walName1, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 0)) {
+                    assertEquals(4, reader.getColumnCount());
+                    assertEquals(walName2, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(0, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
                     assertFalse(eventCursor.hasNext());
                 }
             }
@@ -806,6 +689,26 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     assertFalse(eventCursor.hasNext());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableRejectedIfTransactionPending() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                TableWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                // no commit intentional
+                addColumn(walWriter, "c", ColumnType.INT);
+                fail("Exception expected");
+            } catch (Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertTrue(e.getMessage().endsWith("cannot alter table with uncommitted inserts [table=testAlterTableRejectedIfTransactionPending]"));
             }
         });
     }
@@ -1018,157 +921,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConcurrentInsert() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTable";
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            final int numOfRows = 4000;
-            final int maxRowCount = 500;
-            walSegmentRolloverRowCount = maxRowCount;
-            Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
-            final int numOfSegments = numOfRows / maxRowCount;
-            final int numOfThreads = 10;
-            final int numOfTxn = numOfThreads * numOfSegments;
-            final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
-
-            // map<walId, Error|Exception>
-            final ConcurrentMap<Integer, Throwable> errors = new ConcurrentHashMap<>(numOfThreads);
-            // map<walId, numOfThreadsUsedThisWalWriter>
-            final ConcurrentMap<Integer, AtomicInteger> counters = new ConcurrentHashMap<>(numOfThreads);
-            for (int i = 0; i < numOfThreads; i++) {
-                new Thread(() -> {
-                    TableWriter.Row row;
-                    Integer walId = -1;
-                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        walId = walWriter.getWalId();
-                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
-                        assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
-                        counter.incrementAndGet();
-                        for (int n = 0; n < numOfRows; n++) {
-                            row = walWriter.newRow();
-                            row.putInt(0, n);
-                            row.putSym(1, "test" + n);
-                            row.append();
-                            if ((n + 1) % maxRowCount == 0) {
-                                walWriter.commit();
-                            }
-                        }
-                        walWriter.commit();
-                        assertWalExistence(true, tableName, walId);
-                        for (int n = 0; n < counter.get() * numOfSegments; n++) {
-                            assertSegmentExistence(true, tableName, walId, n);
-                        }
-                        assertSegmentExistence(false, tableName, walId, counter.get() * numOfSegments);
-                    } catch (Throwable th) {
-                        errors.put(walId, th);
-                    } finally {
-                        Path.clearThreadLocals();
-                        writeFinished.countDown();
-                    }
-                }).start();
-            }
-            writeFinished.await();
-
-            if (!errors.isEmpty()) {
-                for (Throwable th: errors.values()) {
-                    th.printStackTrace();
-                }
-                Assert.fail("Write failed");
-            }
-
-            final LongHashSet txnSet = new LongHashSet(numOfTxn);
-            final IntList symbolCounts = new IntList();
-            symbolCounts.add(numOfRows);
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal()
-            ) {
-                for (Map.Entry<Integer, AtomicInteger> counterEntry: counters.entrySet()) {
-                    final int walId = counterEntry.getKey();
-                    final int count = counterEntry.getValue().get();
-                    final String walName = WAL_NAME_BASE + walId;
-
-                    for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
-                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, segmentId, maxRowCount)) {
-                            assertEquals(3, reader.getColumnCount());
-                            assertEquals(walName, reader.getWalName());
-                            assertEquals(tableName, reader.getTableName());
-                            assertEquals(maxRowCount, reader.size());
-
-                            final RecordCursor cursor = reader.getDataCursor();
-                            final Record record = cursor.getRecord();
-                            int n = 0;
-                            while (cursor.hasNext()) {
-                                assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
-                                assertEquals(n, record.getInt(1)); // New symbol value every row
-                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSym(1));
-                                assertEquals(n, record.getRowId());
-                                n++;
-                            }
-                            assertEquals(maxRowCount, n);
-
-                            assertColumnMetadata(model, reader);
-
-                            final WalEventCursor eventCursor = reader.getEventCursor();
-                            assertTrue(eventCursor.hasNext());
-                            assertEquals(WalTxnType.DATA, eventCursor.getType());
-                            txnSet.add(Numbers.encodeLowHighInts(walId, segmentId * 1000 + (int) eventCursor.getTxn()));
-
-                            final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                            assertEquals(0, dataInfo.getStartRowID());
-                            assertEquals(maxRowCount, dataInfo.getEndRowID());
-                            assertEquals(0, dataInfo.getMinTimestamp());
-                            assertEquals(0, dataInfo.getMaxTimestamp());
-                            assertFalse(dataInfo.isOutOfOrder());
-
-                            final SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
-                            assertEquals(1, symbolMapDiff.getColumnIndex());
-                            int expectedKey = 0;
-                            SymbolMapDiffEntry entry;
-                            while ((entry = symbolMapDiff.nextEntry()) != null) {
-                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + expectedKey), entry.getSymbol().toString());
-                                expectedKey++;
-                            }
-                            assertEquals(maxRowCount, expectedKey);
-                            assertNull(dataInfo.nextSymbolMapDiff());
-
-                            assertFalse(eventCursor.hasNext());
-                        }
-
-                        try (Path path = new Path().of(configuration.getRoot())) {
-                            assertWalFileExist(path, tableName, walName, segmentId, "_meta");
-                            assertWalFileExist(path, tableName, walName, segmentId, "_event");
-                            assertWalFileExist(path, tableName, walName, segmentId, "a.d");
-                            assertWalFileExist(path, tableName, walName, segmentId, "b.d");
-                            assertWalFileExist(path, tableName, walName, segmentId, "ts.d");
-                        }
-                    }
-                }
-            }
-
-            assertEquals(numOfTxn, txnSet.size());
-            for (Map.Entry<Integer, AtomicInteger> counterEntry: counters.entrySet()) {
-                final int walId = counterEntry.getKey();
-                final int count = counterEntry.getValue().get();
-                for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
-                    txnSet.remove(Numbers.encodeLowHighInts(walId, segmentId * 1000));
-                }
-            }
-            assertEquals(0, txnSet.size());
-        });
-    }
-
-    @Test
     public void testConcurrentAddRemoveColumn_DifferentColNamePerThread() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -1228,7 +980,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             writeFinished.await();
 
             if (!errors.isEmpty()) {
-                for (Throwable th: errors.values()) {
+                for (Throwable th : errors.values()) {
                     th.printStackTrace();
                 }
                 Assert.fail("Write failed");
@@ -1238,7 +990,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final IntList symbolCounts = new IntList();
             symbolCounts.add(numOfRows);
             try (TableModel model = defaultModel(tableName)) {
-                for (Map.Entry<Integer, AtomicInteger> counterEntry: counters.entrySet()) {
+                for (Map.Entry<Integer, AtomicInteger> counterEntry : counters.entrySet()) {
                     final int walId = counterEntry.getKey();
                     final int count = counterEntry.getValue().get();
                     final String walName = WAL_NAME_BASE + walId;
@@ -1314,6 +1066,157 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConcurrentInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            final int numOfRows = 4000;
+            final int maxRowCount = 500;
+            walSegmentRolloverRowCount = maxRowCount;
+            Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
+            final int numOfSegments = numOfRows / maxRowCount;
+            final int numOfThreads = 10;
+            final int numOfTxn = numOfThreads * numOfSegments;
+            final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
+
+            // map<walId, Error|Exception>
+            final ConcurrentMap<Integer, Throwable> errors = new ConcurrentHashMap<>(numOfThreads);
+            // map<walId, numOfThreadsUsedThisWalWriter>
+            final ConcurrentMap<Integer, AtomicInteger> counters = new ConcurrentHashMap<>(numOfThreads);
+            for (int i = 0; i < numOfThreads; i++) {
+                new Thread(() -> {
+                    TableWriter.Row row;
+                    Integer walId = -1;
+                    try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                        walId = walWriter.getWalId();
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
+                        counter.incrementAndGet();
+                        for (int n = 0; n < numOfRows; n++) {
+                            row = walWriter.newRow();
+                            row.putInt(0, n);
+                            row.putSym(1, "test" + n);
+                            row.append();
+                            if ((n + 1) % maxRowCount == 0) {
+                                walWriter.commit();
+                            }
+                        }
+                        walWriter.commit();
+                        assertWalExistence(true, tableName, walId);
+                        for (int n = 0; n < counter.get() * numOfSegments; n++) {
+                            assertSegmentExistence(true, tableName, walId, n);
+                        }
+                        assertSegmentExistence(false, tableName, walId, counter.get() * numOfSegments);
+                    } catch (Throwable th) {
+                        errors.put(walId, th);
+                    } finally {
+                        Path.clearThreadLocals();
+                        writeFinished.countDown();
+                    }
+                }).start();
+            }
+            writeFinished.await();
+
+            if (!errors.isEmpty()) {
+                for (Throwable th : errors.values()) {
+                    th.printStackTrace();
+                }
+                Assert.fail("Write failed");
+            }
+
+            final LongHashSet txnSet = new LongHashSet(numOfTxn);
+            final IntList symbolCounts = new IntList();
+            symbolCounts.add(numOfRows);
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                for (Map.Entry<Integer, AtomicInteger> counterEntry : counters.entrySet()) {
+                    final int walId = counterEntry.getKey();
+                    final int count = counterEntry.getValue().get();
+                    final String walName = WAL_NAME_BASE + walId;
+
+                    for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, segmentId, maxRowCount)) {
+                            assertEquals(3, reader.getColumnCount());
+                            assertEquals(walName, reader.getWalName());
+                            assertEquals(tableName, reader.getTableName());
+                            assertEquals(maxRowCount, reader.size());
+
+                            final RecordCursor cursor = reader.getDataCursor();
+                            final Record record = cursor.getRecord();
+                            int n = 0;
+                            while (cursor.hasNext()) {
+                                assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
+                                assertEquals(n, record.getInt(1)); // New symbol value every row
+                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSym(1));
+                                assertEquals(n, record.getRowId());
+                                n++;
+                            }
+                            assertEquals(maxRowCount, n);
+
+                            assertColumnMetadata(model, reader);
+
+                            final WalEventCursor eventCursor = reader.getEventCursor();
+                            assertTrue(eventCursor.hasNext());
+                            assertEquals(WalTxnType.DATA, eventCursor.getType());
+                            txnSet.add(Numbers.encodeLowHighInts(walId, segmentId * 1000 + (int) eventCursor.getTxn()));
+
+                            final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                            assertEquals(0, dataInfo.getStartRowID());
+                            assertEquals(maxRowCount, dataInfo.getEndRowID());
+                            assertEquals(0, dataInfo.getMinTimestamp());
+                            assertEquals(0, dataInfo.getMaxTimestamp());
+                            assertFalse(dataInfo.isOutOfOrder());
+
+                            final SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
+                            assertEquals(1, symbolMapDiff.getColumnIndex());
+                            int expectedKey = 0;
+                            SymbolMapDiffEntry entry;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + expectedKey), entry.getSymbol().toString());
+                                expectedKey++;
+                            }
+                            assertEquals(maxRowCount, expectedKey);
+                            assertNull(dataInfo.nextSymbolMapDiff());
+
+                            assertFalse(eventCursor.hasNext());
+                        }
+
+                        try (Path path = new Path().of(configuration.getRoot())) {
+                            assertWalFileExist(path, tableName, walName, segmentId, "_meta");
+                            assertWalFileExist(path, tableName, walName, segmentId, "_event");
+                            assertWalFileExist(path, tableName, walName, segmentId, "a.d");
+                            assertWalFileExist(path, tableName, walName, segmentId, "b.d");
+                            assertWalFileExist(path, tableName, walName, segmentId, "ts.d");
+                        }
+                    }
+                }
+            }
+
+            assertEquals(numOfTxn, txnSet.size());
+            for (Map.Entry<Integer, AtomicInteger> counterEntry : counters.entrySet()) {
+                final int walId = counterEntry.getKey();
+                final int count = counterEntry.getValue().get();
+                for (int segmentId = 0; segmentId < count * numOfSegments; segmentId++) {
+                    txnSet.remove(Numbers.encodeLowHighInts(walId, segmentId * 1000));
+                }
+            }
+            assertEquals(0, txnSet.size());
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
     }
@@ -1321,6 +1224,266 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
         testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        return -1;
+                    }
+                    return Files.openRW(name, opts);
+                }
+            };
+
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long getPageSize() {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
+                        throw e;
+                    }
+                }
+                return Files.PAGE_SIZE;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertEquals("Test failure", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 999;
+            }
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                        return 1;
+                    }
+                }
+                return Files.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
+            }
+        });
+    }
+
+    @Test
+    public void testLargeSegmentRollover() throws Exception {
+        currentMicros = -1;  // Don't mock MicrosecondClock.
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            // Schema with 8 columns, 8 bytes each = 64 bytes per row
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .timestamp("ts")
+                    .col("a", ColumnType.LONG)
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                final RowInserter ins = new RowInserter() {
+                    private long count;
+                    private long ts = 1000000000L;
+
+                    @Override
+                    public long getCount() {
+                        return count;
+                    }
+
+                    @Override
+                    public void insertRow() {
+                        TableWriter.Row row = walWriter.newRow(ts);
+                        row.putLong(1, count);
+                        row.append();
+                        ts += 1000;
+                        ++count;
+                    }
+                };
+
+                ins.insertRow();
+                walWriter.commit();
+                Assert.assertEquals(ins.getCount(), 1);
+
+                // Just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertWalExistence(false, tableName, 2);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                while (ins.getCount() < configuration.getWalSegmentRolloverRowCount()) {
+                    ins.insertRow();
+                    if (ins.getCount() % 1000 == 0) {  // Committing occasionally to avoid too many log messages.
+                        walWriter.commit();
+                    }
+                }
+                walWriter.commit();
+
+                // Still just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                ins.insertRow();
+                walWriter.commit();
+
+                // Rolled over to second segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(true, tableName, 1, 1);
+                assertSegmentExistence(false, tableName, 1, 2);
+
+                assertSegmentLockEngagement(false, tableName, 1, 0);
+
+                drainWalQueue();
+                runWalPurgeJob();
+
+                assertSegmentExistence(false, tableName, 1, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch (Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertTrue(e.getMessage().startsWith("[2] could not apply table definition changes to the current transaction"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeFails() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
+                        return -1;
+                    }
+                }
+                return Files.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch (Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertTrue(e.getMessage().contains("could not open read-only"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeMissing() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long readULong(long fd, long offset) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("TableTransactionLog$TableMetadataChangeLogImpl") && stackTrace[1].getMethodName().equals("of")) {
+                        return -1;
+                    }
+                }
+                return Files.readULong(fd, offset);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch (Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
+                }
+            }
+        });
     }
 
     @Test
@@ -1509,264 +1672,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             } finally {
                 Unsafe.getUnsafe().freeMemory(pointer);
-            }
-        });
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
-                        return -1;
-                    }
-                    return Files.openRW(name, opts);
-                }
-            };
-
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch(CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
-            }
-        });
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long getPageSize() {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
-                        throw e;
-                    }
-                }
-                return Files.PAGE_SIZE;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch(Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertEquals("Test failure", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public int mkdirs(Path path, int mode) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
-                        return 1;
-                    }
-                }
-                return Files.mkdirs(path, mode);
-            }
-
-            @Override
-            public int errno() {
-                return 999;
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch(Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
-            }
-        });
-    }
-
-    @Test
-    public void testRenameColumnRollsUncommittedRowsToNewSegment() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            final String walName1, walName2;
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    walName1 = walWriter1.getWalName();
-                    walName2 = walWriter2.getWalName();
-
-                    TableWriter.Row row = walWriter1.newRow();
-                    row.putByte(0, (byte) 1);
-                    row.append();
-                    walWriter1.commit();
-
-                    row = walWriter2.newRow();
-                    row.putByte(0, (byte) 10);
-                    row.append();
-                    walWriter2.commit();
-
-                    row = walWriter2.newRow();
-                    row.putByte(0, (byte) 100);
-                    row.append();
-
-                    renameColumn(walWriter1);
-
-                    walWriter2.commit();
-
-                    row = walWriter1.newRow();
-                    row.putByte(0, (byte) 110);
-                    row.append();
-                    walWriter1.commit();
-                }
-            }
-
-            try (TableModel model = defaultModel(tableName)) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 1)) {
-                    assertEquals(2, reader.getColumnCount());
-                    assertEquals(walName1, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(1, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 1)) {
-                    assertEquals(2, reader.getColumnCount());
-                    assertEquals(walName2, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(10, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-            }
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.BYTE)
-                    .col("c", ColumnType.STRING)
-                    .wal()
-            ) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 1, 1)) {
-                    assertEquals(2, reader.getColumnCount());
-                    assertEquals(walName1, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(110, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 1, 1)) {
-                    assertEquals(2, reader.getColumnCount());
-                    assertEquals(walName2, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(1, reader.size());
-
-                    final RecordCursor cursor = reader.getDataCursor();
-                    final Record record = cursor.getRecord();
-                    assertTrue(cursor.hasNext());
-                    assertEquals(100, record.getByte(0));
-                    assertNull(record.getStr(1));
-                    assertEquals(0, record.getRowId());
-                    assertFalse(cursor.hasNext());
-
-                    assertColumnMetadata(model, reader);
-
-                    final WalEventCursor eventCursor = reader.getEventCursor();
-                    assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
-                    assertEquals(WalTxnType.DATA, eventCursor.getType());
-
-                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    assertEquals(0, dataInfo.getStartRowID());
-                    assertEquals(1, dataInfo.getEndRowID());
-                    assertEquals(0, dataInfo.getMinTimestamp());
-                    assertEquals(0, dataInfo.getMaxTimestamp());
-                    assertFalse(dataInfo.isOutOfOrder());
-                    assertNull(dataInfo.nextSymbolMapDiff());
-
-                    assertFalse(eventCursor.hasNext());
-                }
             }
         });
     }
@@ -2215,6 +2120,178 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(1, symbolMapDiff.getSize());
                     assertEquals(2, symbolMapDiff.getColumnIndex());
                     assertEquals(0, symbolMapDiff.getCleanSymbolCount());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRenameColumnRollsUncommittedRowsToNewSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            final String walName1, walName2;
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    walName1 = walWriter1.getWalName();
+                    walName2 = walWriter2.getWalName();
+
+                    TableWriter.Row row = walWriter1.newRow();
+                    row.putByte(0, (byte) 1);
+                    row.append();
+                    walWriter1.commit();
+
+                    row = walWriter2.newRow();
+                    row.putByte(0, (byte) 10);
+                    row.append();
+                    walWriter2.commit();
+
+                    row = walWriter2.newRow();
+                    row.putByte(0, (byte) 100);
+                    row.append();
+
+                    renameColumn(walWriter1);
+
+                    walWriter2.commit();
+
+                    row = walWriter1.newRow();
+                    row.putByte(0, (byte) 110);
+                    row.append();
+                    walWriter1.commit();
+                }
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 0, 1)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName1, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 0, 1)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName2, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(10, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("a", ColumnType.BYTE)
+                    .col("c", ColumnType.STRING)
+                    .wal()
+            ) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName1, 1, 1)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName1, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(110, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName2, 1, 1)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName2, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(100, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -2749,128 +2826,28 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    interface RowInserter {
-        void insertRow();
-        long getCount();
-    }
-
-    @Test
-    public void testLargeSegmentRollover() throws Exception {
-        currentMicros = -1;  // Don't mock MicrosecondClock.
-
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            // Schema with 8 columns, 8 bytes each = 64 bytes per row
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .timestamp("ts")
-                    .col("a", ColumnType.LONG)
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                final RowInserter ins = new RowInserter() {
-                    private long count;
-                    private long ts = 1000000000L;
-                    @Override
-                    public void insertRow() {
-                        TableWriter.Row row = walWriter.newRow(ts);
-                        row.putLong(1, count);
-                        row.append();
-                        ts += 1000;
-                        ++count;
-                    }
-
-                    @Override
-                    public long getCount() {
-                        return count;
-                    }
-                };
-
-                ins.insertRow();
-                walWriter.commit();
-                Assert.assertEquals(ins.getCount(), 1);
-
-                // Just one segment.
-                assertWalExistence(true, tableName, 1);
-                assertWalExistence(false, tableName, 2);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(false, tableName, 1, 1);
-
-                while (ins.getCount() < configuration.getWalSegmentRolloverRowCount()) {
-                    ins.insertRow();
-                    if (ins.getCount() % 1000 == 0) {  // Committing occasionally to avoid too many log messages.
-                        walWriter.commit();
-                    }
-                }
-                walWriter.commit();
-
-                // Still just one segment.
-                assertWalExistence(true, tableName, 1);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(false, tableName, 1, 1);
-
-                ins.insertRow();
-                walWriter.commit();
-
-                // Rolled over to second segment.
-                assertWalExistence(true, tableName, 1);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(true, tableName, 1, 1);
-                assertSegmentExistence(false, tableName, 1, 2);
-
-                assertSegmentLockEngagement(false, tableName, 1, 0);
-
-                drainWalQueue();
-                runWalPurgeJob();
-
-                assertSegmentExistence(false, tableName, 1, 0);
-            }
-        });
-    }
-
-    static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.addColumnToList(columnName, columnType, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
-    }
-
-    static void removeColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
-        removeColumnOperation.ofDropColumn(columnName);
-        writer.apply(removeColumnOperation.build(), true);
-    }
-
-    static void renameColumn(TableWriterAPI writer) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
-        renameColumnC.ofRenameColumn("b", "c");
-        writer.apply(renameColumnC.build(), true);
-    }
-
-    static void prepareBinPayload(long pointer, int limit) {
-        for (int offset = 0; offset < limit; offset++) {
-            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
-        }
-    }
-
-    static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
-        assertNotNull(expected);
-        assertNotNull(actual);
-        assertEquals(expected.length(), actual.length());
-        for (int i = 0; i < expected.length(); i++) {
-            byte expectedByte = expected.byteAt(i);
-            byte actualByte = actual.byteAt(i);
-            assertEquals("Binary sequences not equals at offset " + i
-                            + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
-                    expectedByte, actualByte);
-        }
-    }
-
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
                 : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
+    }
+
+    private static TableModel defaultModel(String tableName) {
+        return defaultModel(tableName, false);
+    }
+
+    @SuppressWarnings("resource")
+    private static TableModel defaultModel(String tableName, boolean withTimestamp) {
+        return withTimestamp
+                ? new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.STRING)
+                .timestamp("ts")
+                .wal()
+                : new TableModel(configuration, tableName, PartitionBy.NONE)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.STRING)
+                .wal();
     }
 
     private void assertColumnMetadata(TableModel expected, WalReader reader) {
@@ -2941,45 +2918,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    static void createTable(String tableName) {
-        try (TableModel model = defaultModel(tableName)) {
-            createTable(model);
-        }
-    }
-
-    static void createTable() {
-        try (TableModel model = defaultModel("testTable", true)) {
-            createTable(model);
-        }
-    }
-
-    static void createTable(TableModel model) {
-        engine.createTableUnsafe(
-                AllowAllCairoSecurityContext.INSTANCE,
-                model.getMem(),
-                model.getPath(),
-                model
-        );
-    }
-
-    private static TableModel defaultModel(String tableName) {
-        return defaultModel(tableName, false);
-    }
-
-    @SuppressWarnings("resource")
-    private static TableModel defaultModel(String tableName, boolean withTimestamp) {
-        return withTimestamp
-                ? new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.STRING)
-                .timestamp("ts")
-                .wal()
-                : new TableModel(configuration, tableName, PartitionBy.NONE)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.STRING)
-                .wal();
-    }
-
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
@@ -3048,5 +2986,69 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.addColumnToList(columnName, columnType, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
+    }
+
+    static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
+        assertNotNull(expected);
+        assertNotNull(actual);
+        assertEquals(expected.length(), actual.length());
+        for (int i = 0; i < expected.length(); i++) {
+            byte expectedByte = expected.byteAt(i);
+            byte actualByte = actual.byteAt(i);
+            assertEquals("Binary sequences not equals at offset " + i
+                            + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
+                    expectedByte, actualByte);
+        }
+    }
+
+    static void createTable(String tableName) {
+        try (TableModel model = defaultModel(tableName)) {
+            createTable(model);
+        }
+    }
+
+    static void createTable() {
+        try (TableModel model = defaultModel("testTable", true)) {
+            createTable(model);
+        }
+    }
+
+    static void createTable(TableModel model) {
+        engine.createTableUnsafe(
+                AllowAllCairoSecurityContext.INSTANCE,
+                model.getMem(),
+                model.getPath(),
+                model
+        );
+    }
+
+    static void prepareBinPayload(long pointer, int limit) {
+        for (int offset = 0; offset < limit; offset++) {
+            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
+        }
+    }
+
+    static void removeColumn(TableWriterAPI writer, String columnName) {
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
+        removeColumnOperation.ofDropColumn(columnName);
+        writer.apply(removeColumnOperation.build(), true);
+    }
+
+    static void renameColumn(TableWriterAPI writer) {
+        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
+        renameColumnC.ofRenameColumn("b", "c");
+        writer.apply(renameColumnC.build(), true);
+    }
+
+    interface RowInserter {
+        long getCount();
+
+        void insertRow();
     }
 }

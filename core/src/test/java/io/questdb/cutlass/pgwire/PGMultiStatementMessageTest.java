@@ -1554,28 +1554,41 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 
-    static Row row(Object... cols) {
-        return new Row(cols);
-    }
+    private static void assertResultSet(Statement s, Row[] rows) throws SQLException {
+        ResultSet set = s.getResultSet();
 
-    static Result data(Row... rows) {
-        return new Result(rows);
-    }
+        for (int rownum = 0; rownum < rows.length; rownum++) {
+            Row row = rows[rownum];
+            assertTrue("result set should have row #" + rownum + " with data " + row, set.next());
 
-    static Result count(int updatedRows) {
-        return new Result(updatedRows);
-    }
+            for (int colnum = 0; colnum < row.length(); colnum++) {
+                Object col = row.get(colnum);
+                try {
+                    if (col instanceof String) {
+                        assertEquals(col, set.getString(colnum + 1));
+                    } else if (col instanceof Long) {
+                        assertEquals(col, set.getLong(colnum + 1));
+                    } else if (col instanceof Byte) {
+                        assertEquals(col, set.getByte(colnum + 1));
+                    } else if (col instanceof Short) {
+                        assertEquals(col, set.getShort(colnum + 1));
+                    } else if (col instanceof Double) {
+                        assertEquals(col, set.getDouble(colnum + 1));
+                    } else {
+                        assertEquals(col, set.getObject(colnum + 1));
+                    }
+                } catch (AssertionError ae) {
+                    throw new AssertionError("row#" + rownum + " col#" + colnum + " " + ae.getMessage());
+                }
+            }
+        }
 
-    static Result zero() {
-        return Result.ZERO;
-    }
+        int rowsLeft = 0;
+        while (set.next()) {
+            rowsLeft++;
+        }
 
-    static Result one() {
-        return Result.ONE;
-    }
-
-    static Result empty() {
-        return Result.EMPTY;
+        assertEquals("No more rows expected!", 0, rowsLeft);
     }
 
     private static void assertResults(Statement s, boolean hasFirstResult, Result... results) throws SQLException {
@@ -1615,41 +1628,51 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertEquals("No more results expected but got update count", -1, s.getUpdateCount());
     }
 
-    private static void assertResultSet(Statement s, Row[] rows) throws SQLException {
-        ResultSet set = s.getResultSet();
+    static Result count(int updatedRows) {
+        return new Result(updatedRows);
+    }
 
-        for (int rownum = 0; rownum < rows.length; rownum++) {
-            Row row = rows[rownum];
-            assertTrue("result set should have row #" + rownum + " with data " + row, set.next());
+    static Result data(Row... rows) {
+        return new Result(rows);
+    }
 
-            for (int colnum = 0; colnum < row.length(); colnum++) {
-                Object col = row.get(colnum);
-                try {
-                    if (col instanceof String) {
-                        assertEquals(col, set.getString(colnum + 1));
-                    } else if (col instanceof Long) {
-                        assertEquals(col, set.getLong(colnum + 1));
-                    } else if (col instanceof Byte) {
-                        assertEquals(col, set.getByte(colnum + 1));
-                    } else if (col instanceof Short) {
-                        assertEquals(col, set.getShort(colnum + 1));
-                    } else if (col instanceof Double) {
-                        assertEquals(col, set.getDouble(colnum + 1));
-                    } else {
-                        assertEquals(col, set.getObject(colnum + 1));
-                    }
-                } catch (AssertionError ae) {
-                    throw new AssertionError("row#" + rownum + " col#" + colnum + " " + ae.getMessage());
-                }
-            }
+    static Result empty() {
+        return Result.EMPTY;
+    }
+
+    static Result one() {
+        return Result.ONE;
+    }
+
+    static Row row(Object... cols) {
+        return new Row(cols);
+    }
+
+    static Result zero() {
+        return Result.ZERO;
+    }
+
+    static class Result {
+        //jdbc result with empty result set
+        static final Result EMPTY = new Result();
+        //jdbc result with no result set and update count = 1
+        static final Result ONE = new Result(1);
+        //jdbc result with no result set and update count = 0
+        static final Result ZERO = new Result(0);
+        Row[] rows;
+        int updateCount;
+
+        Result(Row... rows) {
+            this.rows = rows;
         }
 
-        int rowsLeft = 0;
-        while (set.next()) {
-            rowsLeft++;
+        Result(int updateCount) {
+            this.updateCount = updateCount;
         }
 
-        assertEquals("No more rows expected!", 0, rowsLeft);
+        boolean hasData() {
+            return rows != null;
+        }
     }
 
     static class Row {
@@ -1673,33 +1696,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         }
     }
 
-    static class Result {
-        //jdbc result with empty result set
-        static final Result EMPTY = new Result();
-        //jdbc result with no result set and update count = 0
-        static final Result ZERO = new Result(0);
-        //jdbc result with no result set and update count = 1
-        static final Result ONE = new Result(1);
-
-        Row[] rows;
-        int updateCount;
-
-        Result(Row... rows) {
-            this.rows = rows;
-        }
-
-        Result(int updateCount) {
-            this.updateCount = updateCount;
-        }
-
-        boolean hasData() {
-            return rows != null;
-        }
-    }
-
     class PGTestSetup implements Closeable {
-        final PGWireServer server;
         final Connection connection;
+        final PGWireServer server;
         final Statement statement;
 
         PGTestSetup(boolean useSimpleMode) throws SQLException {

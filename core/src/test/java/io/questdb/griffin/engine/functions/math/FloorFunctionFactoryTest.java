@@ -31,25 +31,12 @@ import org.junit.Test;
 public class FloorFunctionFactoryTest extends AbstractGriffinTest {
 
 
-
     @Test
-    public void testFloatPositive() throws SqlException {
+    public void testDoubleNegative() throws SqlException {
         assertQuery(
                 "floor\n" +
-                        "13.0000\n",
-                "select floor(13.1f)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatNegative() throws SqlException {
-        assertQuery(
-                "floor\n" +
-                        "-14.0000\n",
-                "select floor(-13.1f)",
+                        "-14.0\n",
+                "select floor(-13.1)",
                 null,
                 true,
                 true
@@ -69,17 +56,28 @@ public class FloorFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDoubleNegative() throws SqlException {
+    public void testFloatNegative() throws SqlException {
         assertQuery(
                 "floor\n" +
-                        "-14.0\n",
-                "select floor(-13.1)",
+                        "-14.0000\n",
+                "select floor(-13.1f)",
                 null,
                 true,
                 true
         );
     }
 
+    @Test
+    public void testFloatPositive() throws SqlException {
+        assertQuery(
+                "floor\n" +
+                        "13.0000\n",
+                "select floor(13.1f)",
+                null,
+                true,
+                true
+        );
+    }
 
     @Test
     public void testNaN() throws SqlException {

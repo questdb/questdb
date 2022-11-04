@@ -244,7 +244,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
             ) {
 
-                walIdSet.remove(badWriterId = ((WalWriter)insertWriter).getWalId());
+                walIdSet.remove(badWriterId = ((WalWriter) insertWriter).getWalId());
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to other WAL writers
@@ -508,11 +508,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                         return 0;
                     }
 
-                    @Override
-                    public boolean isStructureChange() {
-                        return false;
-                    }
-
                     public SqlExecutionContext getSqlExecutionContext() {
                         return sqlExecutionContext;
                     }
@@ -520,6 +515,11 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     @Override
                     public CharSequence getSqlStatement() {
                         throw new IndexOutOfBoundsException();
+                    }
+
+                    @Override
+                    public boolean isStructureChange() {
+                        return false;
                     }
                 };
 
@@ -791,23 +791,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalUpdateFailedSuspendsTable() throws Exception {
-        String tableName = testName.getMethodName();
-        String query = "update " + tableName + " set x = 1111";
-        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
-            private int attempt = 0;
-
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        });
-    }
-
-    @Test
     public void testWalTableMultiColumnAddNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -833,6 +816,23 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n" +
                     "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\n");
 
+        });
+    }
+
+    @Test
+    public void testWalUpdateFailedSuspendsTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "update " + tableName + " set x = 1111";
+        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
+            private int attempt = 0;
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
         });
     }
 

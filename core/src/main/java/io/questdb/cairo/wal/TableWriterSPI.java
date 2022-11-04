@@ -74,11 +74,15 @@ public interface TableWriterSPI {
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
-    AttachDetachStatus detachPartition(long partitionTimestamp);
-
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
+    AttachDetachStatus detachPartition(long partitionTimestamp);
+
     void dropIndex(CharSequence columnName);
+
+    long getCommitInterval();
+
+    long getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
 
@@ -98,11 +102,7 @@ public interface TableWriterSPI {
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
-    long getMetaMaxUncommittedRows();
+    void tick();
 
     void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault);
-
-    long getCommitInterval();
-
-    void tick();
 }

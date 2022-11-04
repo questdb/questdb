@@ -41,7 +41,7 @@ import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class WalPurgeJobTest  extends AbstractGriffinTest {
+public class WalPurgeJobTest extends AbstractGriffinTest {
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
         // Test two segment with changes committed to the sequencer, but never applied to the table.

@@ -27,7 +27,9 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -35,9 +37,9 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalEventReader implements Closeable {
-    private final FilesFacade ff;
-    private final MemoryMR eventMem;
     private final WalEventCursor eventCursor;
+    private final MemoryMR eventMem;
+    private final FilesFacade ff;
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;

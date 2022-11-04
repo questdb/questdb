@@ -30,16 +30,41 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
 public class AlterOperationBuilder {
-    private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final LongList longList = new LongList();
+    private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final AlterOperation resultInstance;
     private short command;
-    private String tableName;
     private int tableId = -1;
+    private String tableName;
     private int tableNamePosition = -1;
 
     public AlterOperationBuilder() {
         this.resultInstance = new AlterOperation(longList, objCharList);
+    }
+
+    public void addColumnToList(
+            CharSequence columnName,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
+    }
+
+    public void addPartitionToList(long timestamp) {
+        longList.add(timestamp);
+    }
+
+    public AlterOperation build() {
+        return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
     public void clear() {
@@ -50,10 +75,6 @@ public class AlterOperationBuilder {
         tableName = null;
         tableId = -1;
         tableNamePosition = -1;
-    }
-
-    public AlterOperation build() {
-        return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
     public AlterOperationBuilder ofAddColumn(int tableNamePosition, String tableName, int tableId) {
@@ -74,25 +95,8 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        this.command = DROP_INDEX;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
-        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
@@ -108,13 +112,11 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
-        this.command = REMOVE_SYMBOL_CACHE;
+    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
+        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
         return this;
     }
 
@@ -132,11 +134,30 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        this.command = DROP_INDEX;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
+        return this;
+    }
+
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        assert columnName != null && columnName.length() > 0;
+        this.command = REMOVE_SYMBOL_CACHE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
         return this;
     }
 
@@ -146,6 +167,11 @@ public class AlterOperationBuilder {
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        objCharList.add(columnName);
+        objCharList.add(newName);
     }
 
     public AlterOperationBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
@@ -162,31 +188,5 @@ public class AlterOperationBuilder {
         this.longList.add(maxUncommittedRows);
         this.tableId = tableId;
         return this;
-    }
-
-    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-        objCharList.add(columnName);
-        objCharList.add(newName);
-    }
-
-    public void addPartitionToList(long timestamp) {
-        longList.add(timestamp);
-    }
-
-    public void addColumnToList(
-            CharSequence columnName,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity
-    ) {
-        assert columnName != null && columnName.length() > 0;
-        objCharList.add(columnName);
-        longList.add(type);
-        longList.add(symbolCapacity);
-        longList.add(cache ? 1 : -1);
-        longList.add(indexed ? 1 : -1);
-        longList.add(indexValueBlockCapacity);
     }
 }

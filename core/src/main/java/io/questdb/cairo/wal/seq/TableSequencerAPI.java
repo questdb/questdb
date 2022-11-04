@@ -45,12 +45,12 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
-    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
-    private final CairoEngine engine;
-    private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
     private final CairoConfiguration configuration;
+    private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
+    private final CairoEngine engine;
     private final long inactiveTtlUs;
     private final int recreateDistressedSequencerAttempts;
+    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
@@ -61,20 +61,16 @@ public class TableSequencerAPI implements QuietCloseable {
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
     }
 
+    // kept visible for tests
+    public static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
+        root.concat(tableName).concat(SEQ_DIR);
+        return ff.exists(root.$());
+    }
+
     @Override
     public void close() {
         closed = true;
         releaseAll();
-    }
-
-    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
-            try {
-                tableSequencer.getTableMetadata(sink);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-        }
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
@@ -123,6 +119,18 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+            TableMetadataChangeLog metadataChangeLog;
+            try {
+                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+            return metadataChangeLog;
+        }
+    }
+
     public int getNextWalId(final CharSequence tableName) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             int walId;
@@ -135,15 +143,13 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final CharSequence tableName, long structureVersionLo) {
+    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
-            TableMetadataChangeLog metadataChangeLog;
             try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLogCursor(structureVersionLo);
+                tableSequencer.getTableMetadata(sink);
             } finally {
                 tableSequencer.unlockRead();
             }
-            return metadataChangeLog;
         }
     }
 
@@ -203,8 +209,18 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public void registerTable(int tableId, final TableStructure tableStructure) {
+        //noinspection EmptyTryBlock
+        try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
+        }
+    }
+
     public boolean releaseAll() {
         return releaseAll(Long.MAX_VALUE);
+    }
+
+    public boolean releaseInactive() {
+        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
     }
 
     public void reloadMetadataConditionally(
@@ -221,16 +237,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockRead();
             }
         }
-    }
-
-    public void registerTable(int tableId, final TableStructure tableStructure) {
-        //noinspection EmptyTryBlock
-        try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
-        }
-    }
-
-    public boolean releaseInactive() {
-        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
     }
 
     public void reopen() {
@@ -262,12 +268,6 @@ public class TableSequencerAPI implements QuietCloseable {
     private static boolean isWalTable(final CharSequence tableName, final CharSequence root, final FilesFacade ff) {
         Path path = Path.getThreadLocal2(root);
         return isWalTable(tableName, path, ff);
-    }
-
-    // kept visible for tests
-    public static boolean isWalTable(final CharSequence tableName, final Path root, final FilesFacade ff) {
-        root.concat(tableName).concat(SEQ_DIR);
-        return ff.exists(root.$());
     }
 
     private @NotNull TableSequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
@@ -346,18 +346,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return getTableSequencerEntryLocked(tableName, lock);
     }
 
-    private boolean returnToPool(final TableSequencerEntry entry) {
-        if (closed) {
-            return false;
-        }
-        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
-        return true;
-    }
-
-    protected boolean releaseAll(long deadline) {
-        return releaseEntries(deadline);
-    }
-
     private boolean releaseEntries(long deadline) {
         if (seqRegistry.size() == 0) {
             // nothing to release
@@ -377,11 +365,23 @@ public class TableSequencerAPI implements QuietCloseable {
         return removed;
     }
 
+    private boolean returnToPool(final TableSequencerEntry entry) {
+        if (closed) {
+            return false;
+        }
+        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
+        return true;
+    }
+
     private void throwIfClosed() {
         if (closed) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
+    }
+
+    protected boolean releaseAll(long deadline) {
+        return releaseEntries(deadline);
     }
 
     enum SequencerLockType {

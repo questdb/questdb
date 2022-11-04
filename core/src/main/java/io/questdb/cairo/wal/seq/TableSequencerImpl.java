@@ -42,17 +42,17 @@ import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
-    private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final CairoEngine engine;
-    private final String tableName;
-    private final int rootLen;
+    private final FilesFacade ff;
     private final SequencerMetadata metadata;
+    private final int mkDirMode;
+    private final Path path;
+    private final int rootLen;
+    private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
+    private final SequencerMetadataUpdater sequencerMetadataUpdater;
+    private final String tableName;
     private final TableTransactionLog tableTransactionLog;
     private final IDGenerator walIdGenerator;
-    private final Path path;
-    private final SequencerMetadataUpdater sequencerMetadataUpdater;
-    private final FilesFacade ff;
-    private final int mkDirMode;
     private volatile boolean closed = false;
     private boolean distressed;
 
@@ -152,9 +152,21 @@ public class TableSequencerImpl implements TableSequencer {
         );
     }
 
+    public String getTableName() {
+        return tableName;
+    }
+
     @Override
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         return tableTransactionLog.getCursor(seqTxn);
+    }
+
+    public boolean isClosed() {
+        return closed;
+    }
+
+    public boolean isDistressed() {
+        return distressed;
     }
 
     @Override
@@ -225,23 +237,6 @@ public class TableSequencerImpl implements TableSequencer {
         return txn;
     }
 
-    @Override
-    public void suspendTable() {
-        metadata.suspendTable();
-    }
-
-    public String getTableName() {
-        return tableName;
-    }
-
-    public boolean isClosed() {
-        return closed;
-    }
-
-    public boolean isDistressed() {
-        return distressed;
-    }
-
     public void open() {
         try {
             walIdGenerator.open(path);
@@ -262,6 +257,11 @@ public class TableSequencerImpl implements TableSequencer {
         this.distressed = true;
     }
 
+    @Override
+    public void suspendTable() {
+        metadata.suspendTable();
+    }
+
     private void applyToMetadata(TableMetadataChange change) {
         try {
             change.apply(sequencerMetadataUpdater, true);
@@ -273,6 +273,19 @@ public class TableSequencerImpl implements TableSequencer {
             throw CairoException.critical(errno)
                     .put("error applying alter command to sequencer metadata");
         }
+    }
+
+    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            final CairoException e = CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+            closeLocked();
+            throw e;
+        }
+        path.trimTo(rootLen);
+    }
+
+    private long nextTxn(int walId, int segmentId, long segmentTxn) {
+        return tableTransactionLog.addEntry(walId, segmentId, segmentTxn);
     }
 
     void closeLocked() {
@@ -293,19 +306,6 @@ public class TableSequencerImpl implements TableSequencer {
         } finally {
             schemaLock.writeLock().unlock();
         }
-    }
-
-    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            final CairoException e = CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
-            closeLocked();
-            throw e;
-        }
-        path.trimTo(rootLen);
-    }
-
-    private long nextTxn(int walId, int segmentId, long segmentTxn) {
-        return tableTransactionLog.addEntry(walId, segmentId, segmentTxn);
     }
 
     void readLock() {

@@ -34,38 +34,18 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
-    public static final int NON_CRITICAL = -1;
-    public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = -101;
-
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    public static final int METADATA_VALIDATION = -100;
+    public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
 
-    public static CairoException duplicateColumn(CharSequence columnName) {
-        return duplicateColumn(columnName, null);
-    }
-
-    public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
-        CairoException exception = invalidMetadata("Duplicate column", columnName);
-        if (columnAlias != null) {
-            exception.put(", [alias=").put(columnAlias).put(']');
-        }
-        return exception;
-    }
-
-    public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
-        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
-    }
-
-    public static CairoException detachedMetadataMismatch(CharSequence attribute) {
-        return critical(METADATA_VALIDATION)
-                .put("Detached partition metadata [")
-                .put(attribute)
-                .put("] is not compatible with current table metadata");
+    public static CairoException critical(int errno) {
+        return init(errno);
     }
 
     public static CairoException detachedColumnMetadataMismatch(int columnIndex, CharSequence columnName, CharSequence attribute) {
@@ -79,23 +59,31 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put("] does not match current table metadata");
     }
 
+    public static CairoException detachedMetadataMismatch(CharSequence attribute) {
+        return critical(METADATA_VALIDATION)
+                .put("Detached partition metadata [")
+                .put(attribute)
+                .put("] is not compatible with current table metadata");
+    }
+
+    public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
+        CairoException exception = invalidMetadata("Duplicate column", columnName);
+        if (columnAlias != null) {
+            exception.put(", [alias=").put(columnAlias).put(']');
+        }
+        return exception;
+    }
+
+    public static CairoException duplicateColumn(CharSequence columnName) {
+        return duplicateColumn(columnName, null);
+    }
+
+    public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
+        return critical(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
+    }
+
     public static CairoException nonCritical() {
         return init(NON_CRITICAL);
-    }
-
-    public static CairoException critical(int errno) {
-        return init(errno);
-    }
-
-    private static CairoException init(int errno) {
-        CairoException ex = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (ex = new CairoException()) != null;
-        ex.message.clear();
-        ex.errno = errno;
-        ex.cacheable = false;
-        ex.interruption = false;
-        return ex;
     }
 
     public int getErrno() {
@@ -115,40 +103,25 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
-        // This is to have correct stack trace reported in CI 
+        // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
-    }
-
-    public boolean isCritical() {
-        return errno != NON_CRITICAL;
-    }
-
-    public boolean isWalTolerable() {
-        return errno == NON_CRITICAL || errno == METADATA_VALIDATION;
     }
 
     public boolean isCacheable() {
         return cacheable;
     }
 
-    public CairoException putAsPrintable(CharSequence nonPrintable) {
-        message.putAsPrintable(nonPrintable);
-        return this;
-    }
-
-    public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
-        return this;
+    public boolean isCritical() {
+        return errno != NON_CRITICAL;
     }
 
     public boolean isInterruption() {
         return interruption;
     }
 
-    public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
-        return this;
+    public boolean isWalTolerable() {
+        return errno == NON_CRITICAL || errno == METADATA_VALIDATION;
     }
 
     public CairoException put(long value) {
@@ -161,18 +134,44 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
-    public CairoException ts(long timestamp) {
-        TimestampFormatUtils.appendDateTime(message, timestamp);
+    public CairoException put(char c) {
+        message.put(c);
         return this;
     }
 
-    public CairoException put(char c) {
-        message.put(c);
+    public CairoException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
+    }
+
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
+    public CairoException setInterruption(boolean interruption) {
+        this.interruption = interruption;
         return this;
     }
 
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);
+    }
+
+    public CairoException ts(long timestamp) {
+        TimestampFormatUtils.appendDateTime(message, timestamp);
+        return this;
+    }
+
+    private static CairoException init(int errno) {
+        CairoException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new CairoException()) != null;
+        ex.message.clear();
+        ex.errno = errno;
+        ex.cacheable = false;
+        ex.interruption = false;
+        return ex;
     }
 }

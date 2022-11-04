@@ -34,10 +34,10 @@ import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
-    private final String newColName;
-    private final int newType;
     private final boolean indexFlag;
     private final int indexValueBlockCapacity;
+    private final String newColName;
+    private final int newType;
     private final boolean symbolTableStatic;
 
     public FuzzAddColumnOperation(RecordMetadata tableModel, String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
