@@ -163,7 +163,7 @@ InitSubf2: ; private
 ;InitSubf2 endp
 
 
-; Subfunciton for initialization and period certification, except seeding
+; Subfunction for initialization and period certification, except seeding
 ; par1 = aligned pointer to CRandomSFMTA
 InitAndPeriod: ; private
         push    rbx

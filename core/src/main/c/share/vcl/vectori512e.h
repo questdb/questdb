@@ -1659,7 +1659,7 @@ static inline Vec8uq operator >> (Vec8uq const a, int32_t b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec8uq & operator >>= (Vec8uq & a, uint32_t b) {
     a = a >> b;
     return a;
