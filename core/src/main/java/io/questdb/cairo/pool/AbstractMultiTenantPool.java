@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
@@ -170,9 +171,17 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                     }
                 }
 
-                // prevent new entries from being created
-                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                    break;
+                // try to prevent new entries from being created
+                if (e.next == null) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                        break;
+                    } else if (Unsafe.getUnsafe().getIntVolatile(e, NEXT_STATUS) == NEXT_ALLOCATED) {
+                        // now we must wait until another thread that executes a get() call
+                        // assigns the newly created next entry
+                        while (e.next == null) {
+                            Os.pause();
+                        }
+                    }
                 }
 
                 e = e.next;
@@ -338,7 +347,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         private final int index;
         private volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
-        int nextStatus = 0;
+        int nextStatus = NEXT_OPEN;
         private volatile Entry<T> next;
 
         public Entry(int index, long currentMicros) {
