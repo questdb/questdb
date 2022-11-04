@@ -371,6 +371,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         if (increment) {
                             structureVersion.incrementAndGet();
                         }
+
+                        // CREATE TABLE may release all inactive sequencers occasionally, so we do the same
+                        // to make sure that there are no races between WAL writers and the engine.
+                        engine.releaseInactiveTableSequencers();
                     }
                 } catch (Throwable e) {
                     errors.add(e);

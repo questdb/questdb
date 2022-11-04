@@ -517,6 +517,11 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         sqlCompilerPool.releaseInactive();
     }
 
+    @TestOnly
+    public void releaseInactiveTableSequencers() {
+        tableSequencerAPI.releaseInactive();
+    }
+
     public void remove(
             CairoSecurityContext securityContext,
             Path path,
