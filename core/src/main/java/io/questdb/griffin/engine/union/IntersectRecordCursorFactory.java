@@ -58,6 +58,11 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     protected void _close() {
         Misc.free(this.cursor);
         super._close();

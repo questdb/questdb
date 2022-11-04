@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class CoalesceFunctionFactory implements FunctionFactory {

@@ -111,5 +111,4 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     public TableColumnMetadata getColumnQuick(int index) {
         return columnMetadata.getQuick(index);
     }
-
 }

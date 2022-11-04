@@ -45,6 +45,6 @@ public class DataFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("ForwardDataFrameRowCursor");
+        sink.type("Row forward scan");
     }
 }

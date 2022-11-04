@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class ToDateFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
@@ -91,7 +91,7 @@ public class ToDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("to_date(").put(arg).put(',').put(pattern).put(')');
         }
     }

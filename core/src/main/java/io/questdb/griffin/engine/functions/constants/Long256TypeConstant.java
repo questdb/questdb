@@ -29,6 +29,7 @@ import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class Long256TypeConstant extends Long256Function implements TypeConstant {
@@ -51,7 +52,7 @@ public class Long256TypeConstant extends Long256Function implements TypeConstant
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("Long256Type");
     }
 }

@@ -56,7 +56,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("all_tables()");
+        sink.type("all_tables");
     }
 
     @Override

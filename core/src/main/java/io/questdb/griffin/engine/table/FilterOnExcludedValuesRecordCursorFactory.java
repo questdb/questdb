@@ -78,7 +78,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         this.keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
-        cursorFactories = new ObjList<>(nKeyValues);
+        this.cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT) {
             this.cursor = new DataFrameRecordCursor(new SequentialRowCursorFactory(cursorFactories), false, filter, columnIndexes);
         } else {
@@ -91,7 +91,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
-        sink.attr("symbolFilter").val("Symbol(").val(columnIndex).val(") not in ").val(keyExcludedValueFunctions);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
         sink.child(cursor.getRowCursorFactory());
         sink.child(dataFrameCursorFactory);

@@ -28,13 +28,14 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
-public class CountLongGroupByFunction extends LongFunction implements GroupByFunction, Sinkable {
+public class CountLongGroupByFunction extends LongFunction implements GroupByFunction {
     private int valueIndex;
 
     @Override
@@ -78,7 +79,7 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
         return false;
     }
 
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("count(").put(valueIndex).put(')');
     }
 

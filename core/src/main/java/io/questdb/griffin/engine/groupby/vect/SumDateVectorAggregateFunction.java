@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -130,7 +129,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("sum(Date(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "sum";
     }
 }

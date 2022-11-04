@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class SubTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -79,7 +79,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("SubTimestamp(").put(left).put(",").put(right).put(')');
         }
     }

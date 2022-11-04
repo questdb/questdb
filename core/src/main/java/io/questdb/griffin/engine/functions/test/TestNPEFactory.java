@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
@@ -62,7 +63,7 @@ public class TestNPEFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(SIGNATURE);
         }
     }

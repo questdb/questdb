@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.str.CharSink;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
@@ -76,7 +76,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("?::symbol");
     }
 

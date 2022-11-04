@@ -74,7 +74,7 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Interval forward Scan");
+        sink.type("Interval forward scan");
         super.toPlan(sink);
         sink.attr("intervals").val(intervals);
     }

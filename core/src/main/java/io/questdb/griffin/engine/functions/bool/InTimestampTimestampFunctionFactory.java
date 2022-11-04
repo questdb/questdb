@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -155,13 +155,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(args.getQuick(0));
             if (negated) {
                 sink.put(" not");
             }
             sink.put(" in ");
-            args.toSink(sink, 1);
+            args.toSink(sink.getSink(), 1);
         }
     }
 
@@ -190,7 +190,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(tsFunc);
             if (negated) {
                 sink.put(" not");

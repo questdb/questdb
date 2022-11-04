@@ -117,8 +117,8 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("sum(Long256(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "sum";
     }
 
     @Override

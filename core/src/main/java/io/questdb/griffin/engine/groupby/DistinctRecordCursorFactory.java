@@ -63,6 +63,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Distinct");
+        sink.attr("keys").val(getMetadata());
         sink.child(base);
     }
 
@@ -82,6 +83,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             baseCursor.close();
             throw e;
         }
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override

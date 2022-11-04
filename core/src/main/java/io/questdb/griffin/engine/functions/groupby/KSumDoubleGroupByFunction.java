@@ -34,10 +34,10 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
-public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction, Sinkable {
+public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 

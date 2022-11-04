@@ -58,7 +58,7 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Full forward scan");
+        sink.type("Frame forward scan");
         super.toPlan(sink);
     }
 }

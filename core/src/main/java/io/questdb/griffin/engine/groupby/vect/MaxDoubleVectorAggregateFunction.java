@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.function.DoubleBinaryOperator;
@@ -126,8 +125,9 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
         return false;
     }
 
+
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("max(Double(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "max";
     }
 }

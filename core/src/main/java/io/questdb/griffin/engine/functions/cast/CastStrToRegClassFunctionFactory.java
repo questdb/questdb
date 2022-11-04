@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
@@ -89,7 +89,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg).put("::regclass");
         }
     }

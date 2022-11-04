@@ -65,7 +65,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Hash join light");
+        sink.type("Hash Join Light");
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
     }
@@ -91,6 +91,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             Misc.free(masterCursor);
             throw e;
         }
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return null;
     }
 
     @Override

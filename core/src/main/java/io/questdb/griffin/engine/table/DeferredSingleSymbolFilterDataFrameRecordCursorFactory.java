@@ -123,4 +123,9 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
         sink.type("DeferredSingleSymbolFilterDataFrame");
         super.toPlanInner(sink);
     }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
+    }
 }

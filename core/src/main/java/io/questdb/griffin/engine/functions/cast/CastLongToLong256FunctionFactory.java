@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class CastLongToLong256FunctionFactory implements FunctionFactory {

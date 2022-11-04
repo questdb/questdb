@@ -97,8 +97,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("GroupByNotKeyed");
         sink.meta("vectorized").val(false);
-        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.optAttr("groupByFunctions", groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {

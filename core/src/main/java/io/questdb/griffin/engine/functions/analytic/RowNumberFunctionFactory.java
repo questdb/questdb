@@ -42,7 +42,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
@@ -156,6 +156,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(SIGNATURE);
+        }
     }
 
     private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -212,6 +217,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(SIGNATURE);
+        }
     }
 
     private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
@@ -267,7 +277,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(SIGNATURE);
         }
     }

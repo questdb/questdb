@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
@@ -76,7 +76,7 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg).put("::symbol");
         }
 

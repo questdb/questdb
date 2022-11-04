@@ -37,7 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
@@ -82,7 +82,7 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(SIGNATURE);
         }
     }

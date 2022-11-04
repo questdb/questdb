@@ -1480,10 +1480,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected PlanSink getPlanSink(CharSequence query) throws SqlException {
         RecordCursorFactory factory = null;
         try {
-            planSink.reset();
             factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
-            factory.toPlan(planSink);
-            planSink.end();
+            planSink.of(factory, sqlExecutionContext);
             return planSink;
         } finally {
             Misc.free(factory);
@@ -1499,7 +1497,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
              RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
 
             if (!JitUtil.isJitSupported()) {
-                expectedPlan = Chars.toString(expectedPlan).replace("async jit", "async");
+                expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }
 
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);

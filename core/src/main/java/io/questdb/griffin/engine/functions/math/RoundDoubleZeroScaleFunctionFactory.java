@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
     @Override
@@ -65,7 +65,7 @@ public class RoundDoubleZeroScaleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("round(").put(arg).put(')');
         }
     }

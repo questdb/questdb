@@ -73,18 +73,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnSubQuery");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
-        }
+        sink.optAttr("filter", filter);
         sink.child(recordCursorFactory);
         sink.child(dataFrameCursorFactory);
-        for (int i = 0, n = factoriesA.size(); i < n; i++) {
-            sink.child(factoriesA.get(i));
-        }
-        for (int i = 0, n = factoriesB.size(); i < n; i++) {
-            sink.child(factoriesB.get(i));
-        }
-
+        //cursorFactories is empty until getCursorInstance() call 
+//        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+//            sink.child(cursorFactories.get(i));
+//        }
     }
 
     @Override

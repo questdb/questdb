@@ -77,12 +77,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByDeferredListValuesFiltered");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
-        }
-        if (symbolFunctions != null) {
-            sink.attr("symbolFunctions").val(symbolFunctions);
-        }
+        sink.optAttr("filter", filter);
+        sink.optAttr("symbolFunctions", symbolFunctions);
         sink.child(dataFrameCursorFactory);
     }
 
@@ -129,5 +125,10 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
                 }
             }
         }
+    }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return super.getBaseColumnName(idx, sqlExecutionContext);
     }
 }

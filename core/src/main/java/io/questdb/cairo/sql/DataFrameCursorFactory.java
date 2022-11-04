@@ -39,6 +39,8 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
 
     DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
 
+    String getColumnName(int idx, SqlExecutionContext executionContext);
+
     /**
      * @param sink to print data frame cursor to
      */

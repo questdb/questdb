@@ -36,7 +36,7 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
     @Override
@@ -88,7 +88,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(value).put("::geobyte");
         }
     }
@@ -113,7 +113,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(value).put("::geoint");
         }
     }
@@ -138,7 +138,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(value).put("::geoshort");
         }
     }
@@ -163,7 +163,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(value).put("::geolong");
         }
     }

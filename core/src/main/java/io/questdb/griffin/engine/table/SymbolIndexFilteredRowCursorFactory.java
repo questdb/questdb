@@ -89,11 +89,8 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SymbolIndexFilteredRowCursor");
-        sink.attr("direction").val(BitmapIndexReader.nameOf(cursor.getIndexDirection()));
-        sink.attr("usesIndex").val(isUsingIndex());
-        sink.attr("symbolValue").val(symbolFunction);
-        sink.optAttr("filter", cursor.getFilter());
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putColumnName(cursor.getColumnIndex());
+        sink.attr("filter").putColumnName(cursor.getColumnIndex()).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
     }
 }
 

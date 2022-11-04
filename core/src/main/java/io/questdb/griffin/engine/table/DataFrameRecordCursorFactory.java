@@ -124,26 +124,28 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (filter != null ||
-                rowCursorFactoryIsNonStandard()) {
-            sink.type("DataFrame");
-            toPlanInner(sink);
-        } else {
-            dataFrameCursorFactory.toPlan(sink);
-        }
-    }
-
-    private boolean rowCursorFactoryIsNonStandard() {
-        return !(rowCursorFactory instanceof DataFrameRowCursorFactory ||
-                rowCursorFactory instanceof BwdDataFrameRowCursorFactory);
+        sink.type("DataFrame");
+        toPlanInner(sink);
     }
 
     protected void toPlanInner(PlanSink sink) {
-        sink.optAttr("filter", filter);
-        if (rowCursorFactoryIsNonStandard()) {
-            sink.child(rowCursorFactory);
-        }
+        sink.child(rowCursorFactory);
         sink.child(dataFrameCursorFactory);
+    }
+
+    @Override
+    public String getColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(columnIndexes.getQuick(idx), sqlExecutionContext);
+    }
+
+    @Override
+    public String getBaseColumnNameNoRemap(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
     }
 
     public boolean hasDescendingOrder() {

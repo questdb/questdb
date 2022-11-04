@@ -45,7 +45,7 @@ public class BwdDataFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("BackwardDataFrameRowCursor");
+        sink.type("Row backward scan");
     }
 }
 

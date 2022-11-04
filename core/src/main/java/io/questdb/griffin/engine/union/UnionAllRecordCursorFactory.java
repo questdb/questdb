@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
@@ -49,11 +50,16 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return null;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 
     protected String getOperation() {
-        return "Union all";
+        return "Union All";
     }
 }

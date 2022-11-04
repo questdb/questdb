@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -114,7 +114,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(valueArg).put(" in ").put(cursorArg);
         }
     }
@@ -188,7 +188,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(valueArg).put(" in ").put(cursorArg);
         }
     }

@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {

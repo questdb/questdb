@@ -40,7 +40,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastStrToSymbolFunctionFactory implements FunctionFactory {
@@ -87,7 +87,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg).put("::symbol");
         }
 

@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class IntTypeConstant extends IntFunction implements TypeConstant {
     public static final IntTypeConstant INSTANCE = new IntTypeConstant();
@@ -43,7 +44,7 @@ public class IntTypeConstant extends IntFunction implements TypeConstant {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("IntType");
     }
 }

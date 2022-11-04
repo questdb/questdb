@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class BooleanTypeConstant extends BooleanFunction implements TypeConstant {
 
@@ -39,7 +39,7 @@ public class BooleanTypeConstant extends BooleanFunction implements TypeConstant
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("BooleanType");
     }
 }

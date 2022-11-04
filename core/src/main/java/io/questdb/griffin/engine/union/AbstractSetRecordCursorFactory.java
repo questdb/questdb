@@ -103,4 +103,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     protected boolean isSecondFactoryHashed() {
         return false;
     }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        if (idx < factoryA.getMetadata().getColumnCount()) {
+            return factoryA.getMetadata().getColumnName(idx);
+        } else {
+            return factoryB.getMetadata().getColumnName(idx);
+        }
+    }
 }

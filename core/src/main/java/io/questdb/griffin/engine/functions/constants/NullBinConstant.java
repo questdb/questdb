@@ -28,7 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public final class NullBinConstant extends BinFunction implements ConstantFunction {
 
@@ -45,7 +45,7 @@ public final class NullBinConstant extends BinFunction implements ConstantFuncti
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("null::binary");
     }
 }

@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoIntFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
 
@@ -47,7 +47,7 @@ public class GeoIntConstant extends GeoIntFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        GeoHashes.append(hash, type, sink);
+    public void toPlan(PlanSink sink) {
+        GeoHashes.append(hash, type, sink.getSink());
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -81,7 +82,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillNullNotKeyed");
-        sink.optAttr("groupByFunctions", cursor.groupByFunctions);
+        sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
         sink.child(base);
     }
 

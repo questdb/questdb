@@ -77,6 +77,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("DistinctTimeSeries");
+        sink.attr("keys").val(getMetadata());
         sink.child(base);
     }
 
@@ -89,6 +90,11 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return cursor.of(base.getCursor(executionContext), executionContext);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override

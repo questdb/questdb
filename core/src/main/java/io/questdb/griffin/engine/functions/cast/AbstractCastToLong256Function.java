@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToLong256Function extends Long256Function implements UnaryFunction {
     protected final Function arg;
@@ -43,7 +44,7 @@ public abstract class AbstractCastToLong256Function extends Long256Function impl
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(getArg()).put("::long256");
     }
 }

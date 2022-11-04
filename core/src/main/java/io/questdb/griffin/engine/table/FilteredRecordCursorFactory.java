@@ -73,6 +73,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

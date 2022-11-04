@@ -38,7 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class TimestampAddFunctionFactory implements FunctionFactory {
 
@@ -113,7 +113,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("dateadd('").put(periodSymbol).put("',").put(left).put(',').put(right).put(')');
         }
     }
@@ -146,7 +146,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("dateadd('").put(periodSymbol).put("',").put(interval).put(',').put(arg).put(')');
         }
     }

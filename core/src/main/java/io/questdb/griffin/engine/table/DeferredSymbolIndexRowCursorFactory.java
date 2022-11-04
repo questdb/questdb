@@ -93,9 +93,8 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DeferredSymbolIndexRowCursor");
-        sink.attr("direction").val(BitmapIndexReader.nameOf(indexDirection));
-        sink.attr("usesIndex").val(true);
-        sink.attr("filter").val("Symbol(").val(columnIndex).val(')').val('=').val(symbol);
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.meta("deferred").val("true");
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbol);
     }
 }

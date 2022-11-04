@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class DateTypeConstant extends DateFunction implements TypeConstant {
     public static final DateTypeConstant INSTANCE = new DateTypeConstant();
@@ -39,7 +39,7 @@ public class DateTypeConstant extends DateFunction implements TypeConstant {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("DateType");
     }
 }

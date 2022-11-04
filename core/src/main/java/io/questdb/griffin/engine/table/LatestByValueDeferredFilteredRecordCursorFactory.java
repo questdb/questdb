@@ -32,8 +32,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
 
-    private final IntList columnIndexes;
-
     public LatestByValueDeferredFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
@@ -42,8 +40,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter);
-        this.columnIndexes = columnIndexes;
+        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes);
     }
 
     @Override
@@ -54,12 +51,7 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueDeferredFiltered");
-        if (filter != null) {
-            sink.attr("filter").val(filter);
-        }
-        sink.attr("columnIndex").val(columnIndex);
-        sink.attr("symbolFunc").val(symbolFunc);
-        sink.child(dataFrameCursorFactory);
+        super.toPlan(sink);
     }
 
     @Override
@@ -68,10 +60,5 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
             return new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
         }
         return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
-    }
-
-    @Override
-    protected StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 }

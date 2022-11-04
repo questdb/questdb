@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
@@ -82,7 +83,7 @@ public class GeoLongColumn extends GeoLongFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("GeoLong(").put(columnIndex).put(')');
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 }

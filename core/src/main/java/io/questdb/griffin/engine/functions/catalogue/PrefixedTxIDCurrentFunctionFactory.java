@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -51,7 +51,7 @@ public class PrefixedTxIDCurrentFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new LongFunction() {
             @Override
-            public void toSink(CharSink sink) {
+            public void toPlan(PlanSink sink) {
                 sink.put(SIGNATURE);
             }
 

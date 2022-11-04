@@ -141,7 +141,7 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals("[0] interpolation is not supported for function: max(Str(2))", e.getMessage());
+                Assert.assertEquals("[0] interpolation is not supported for function: io.questdb.griffin.engine.functions.groupby.MaxStrGroupByFunction", e.getMessage());
             }
         });
     }

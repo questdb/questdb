@@ -205,6 +205,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 sink.child(factory);
             }
         }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            if (factory != null) {
+                return factory.getCursor(executionContext);
+            } else {
+                return null;
+            }
+        }
     }
 
     public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, SqlExecutionContext executionContext) {

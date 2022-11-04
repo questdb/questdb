@@ -98,6 +98,11 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return baseAggregatorFactory;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return this.baseAggregatorFactory.recordCursorSupportsRandomAccess();
     }

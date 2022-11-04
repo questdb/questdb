@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractGeoHashFunction implements ScalarFunction {

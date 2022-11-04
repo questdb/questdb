@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class CastBooleanToCharFunctionFactory implements FunctionFactory {
     @Override

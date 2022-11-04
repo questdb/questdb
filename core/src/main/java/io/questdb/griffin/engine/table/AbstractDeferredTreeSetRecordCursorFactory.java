@@ -41,8 +41,8 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     // symbol keys will be added to this hash set
     protected final IntHashSet symbolKeys;
     protected final IntHashSet deferredSymbolKeys;
-    private final int columnIndex;
-    private final ObjList<Function> deferredSymbolFuncs;
+    protected final int columnIndex;
+    protected final ObjList<Function> deferredSymbolFuncs;
 
     public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -93,7 +93,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.columnIndexes.getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStr(null);

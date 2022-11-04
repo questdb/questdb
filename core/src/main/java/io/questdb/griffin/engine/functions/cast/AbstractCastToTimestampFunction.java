@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction {
     protected AbstractCastToTimestampFunction(Function arg) {
@@ -36,7 +37,7 @@ public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimes
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(getArg()).put("::timestamp");
     }
 }

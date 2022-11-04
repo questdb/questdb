@@ -28,8 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class CursorFunction implements ScalarFunction {
@@ -185,7 +187,7 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("cursor ").put(factory);
     }
 }

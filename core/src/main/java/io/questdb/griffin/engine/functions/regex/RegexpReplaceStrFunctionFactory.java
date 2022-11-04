@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
@@ -169,7 +169,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("regexp_replace(").put(value).put(',').put(pattern).put(',').put(replacement).put(')');
         }
     }

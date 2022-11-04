@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -61,9 +62,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllFiltered");
-        if (cursor instanceof LatestByAllFilteredRecordCursor) {
-            sink.attr("filter").val(((LatestByAllFilteredRecordCursor) cursor).filter);
-        }
+        sink.child((Plannable) cursor);
         sink.child(dataFrameCursorFactory);
     }
 

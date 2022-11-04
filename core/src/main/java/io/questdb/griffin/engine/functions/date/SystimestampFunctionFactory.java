@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class SystimestampFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "systimestamp()";
@@ -67,7 +67,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(SIGNATURE);
         }
     }

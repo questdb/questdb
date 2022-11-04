@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class CastStrToDateFunctionFactory implements FunctionFactory {
     @Override

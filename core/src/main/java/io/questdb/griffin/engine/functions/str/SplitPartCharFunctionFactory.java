@@ -40,6 +40,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;

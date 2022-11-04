@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -68,8 +70,8 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("Str(").put(columnIndex).put(')');
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 
     static {

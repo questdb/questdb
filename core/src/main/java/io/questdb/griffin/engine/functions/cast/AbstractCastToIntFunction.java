@@ -25,9 +25,10 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToIntFunction extends IntFunction implements UnaryFunction {
     protected final Function arg;
@@ -42,7 +43,7 @@ public abstract class AbstractCastToIntFunction extends IntFunction implements U
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(getArg()).put("::int");
     }
 }

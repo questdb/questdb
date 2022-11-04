@@ -38,7 +38,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -176,7 +176,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg).put(" in ").put(set);
         }
     }

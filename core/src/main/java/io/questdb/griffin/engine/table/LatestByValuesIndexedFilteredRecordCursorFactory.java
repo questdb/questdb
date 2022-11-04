@@ -63,8 +63,18 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("LatestByValuesIndexed");
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
         sink.optAttr("filter", filter);
+        sink.attr("symbolFilter").putColumnName(columnIndex).val(" in ");
+        if (symbolKeys.size() > 0) {
+            sink.val(symbolKeys);
+        }
+        if (deferredSymbolFuncs != null && deferredSymbolFuncs.size() > 0) {
+            if (symbolKeys.size() > 0) {
+                sink.val(" or ").putColumnName(columnIndex).val(" in ");
+            }
+            sink.val(deferredSymbolFuncs);
+        }
         sink.child(dataFrameCursorFactory);
     }
 

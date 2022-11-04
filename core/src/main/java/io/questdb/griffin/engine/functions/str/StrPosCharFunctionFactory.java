@@ -38,7 +38,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class StrPosCharFunctionFactory implements FunctionFactory {
@@ -145,7 +145,7 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("strpos(").put(strFunc).put(",'").put(substr).put("')");
         }
     }

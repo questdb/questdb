@@ -38,6 +38,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
+/**
+ *
+ */
 public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final DataFrameRecordCursor cursor;
     private final int columnIndex;
@@ -95,6 +98,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
+    }
+
+    @Override
     protected void _close() {
         super._close();
         Misc.free(filter);
@@ -149,7 +157,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
         }
-
+        //potentially changes factory order so explain will show plan  different from actual  
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {

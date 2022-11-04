@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -122,8 +121,9 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
         return false;
     }
 
+
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("max(Date(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "max";
     }
 }

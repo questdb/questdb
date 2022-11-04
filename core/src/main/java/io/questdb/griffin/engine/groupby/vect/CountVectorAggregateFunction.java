@@ -27,11 +27,11 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -106,7 +106,7 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("count(").put(valueOffset).put(')');
     }
 }

@@ -26,12 +26,13 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public interface MultiArgFunction extends Function {
 
@@ -88,7 +89,7 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default void toSink(CharSink sink) {
+    default void toPlan(PlanSink sink) {
         sink.put(getSymbol()).put('(').put(getArgs()).put(')');
     }
 }

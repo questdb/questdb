@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 class Long256CaseFunction extends Long256Function implements CaseFunction {

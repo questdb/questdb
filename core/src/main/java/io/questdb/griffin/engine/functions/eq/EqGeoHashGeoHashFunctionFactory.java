@@ -39,7 +39,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 import static io.questdb.cairo.GeoHashes.getGeoLong;
 
@@ -170,7 +170,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         protected abstract long getHash();
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg);
             if (negated) {
                 sink.put('!');

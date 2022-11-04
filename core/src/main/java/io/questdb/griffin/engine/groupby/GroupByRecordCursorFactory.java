@@ -113,9 +113,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(false);
-        sink.attr("groupByFunctions").val(groupByFunctions);
-        sink.attr("recordFunctions").val(recordFunctions);
+        sink.optAttr("groupByFunctions", groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1409,8 +1410,9 @@ public class TimestampQueryTest extends AbstractGriffinTest {
     }
 
     private int compareNowRange(String query, List<Object[]> dates, LongPredicate filter) throws SqlException {
-        String queryPlan = "Interval forward Scan on: xts";
-        Assert.assertTrue(Chars.startsWith(getPlanSink(query).getText(), queryPlan));
+        String queryPlan = "Interval forward scan on: xts";
+        StringSink text = getPlanSink(query).getText();
+        Assert.assertTrue(text.toString(), Chars.contains(text, queryPlan));
 
         long expectedCount = dates.stream().filter(arr -> filter.test((long) arr[0])).count();
         String expected = "ts\n"

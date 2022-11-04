@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -37,7 +39,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable, Sinkable {
+public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
     public static final LongAdder PRE_TOUCH_BLACKHOLE = new LongAdder();
 
@@ -204,7 +206,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put(filter);
+    public void toPlan(PlanSink sink) {
+        sink.val(filter);
     }
 }

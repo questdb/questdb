@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.CharSink;
@@ -75,7 +76,7 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("?::geohash");
     }
 

@@ -27,12 +27,14 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
@@ -213,7 +215,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(variableName).put("::").put(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 

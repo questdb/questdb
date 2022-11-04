@@ -28,7 +28,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
     public static final StrConstant NULL = new StrConstant(null);
@@ -71,7 +71,7 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.put("null");
         } else {

@@ -64,7 +64,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("reader_pool()");
+        sink.type("reader_pool");
     }
 
     static {

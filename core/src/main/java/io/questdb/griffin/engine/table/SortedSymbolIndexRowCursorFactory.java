@@ -101,10 +101,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SortedSymbolIndexRowCursor");
-        sink.attr("usesIndex").val(true);
-        sink.attr("direction").val(BitmapIndexReader.nameOf(indexDirection));
-
+        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
+        sink.attr("symbolOrder").val(columnOrderDirectionAsc ? "asc" : "desc");
     }
 
     // this is a thread-local contraption used for sorting symbol values. We ought to think of something better

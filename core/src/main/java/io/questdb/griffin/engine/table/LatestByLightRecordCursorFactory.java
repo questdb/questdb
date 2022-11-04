@@ -111,6 +111,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
     private void buildMapForOrderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();

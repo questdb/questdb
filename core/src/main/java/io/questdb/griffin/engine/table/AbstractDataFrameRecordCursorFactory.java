@@ -25,10 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -65,4 +62,14 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException;
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
+    }
 }

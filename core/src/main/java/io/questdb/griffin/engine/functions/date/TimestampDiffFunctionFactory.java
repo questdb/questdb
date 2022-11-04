@@ -39,7 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Sinkable;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class TimestampDiffFunctionFactory implements FunctionFactory {
     private static final ObjList<LongDiffFunction> diffFunctions = new ObjList<>();
@@ -114,7 +114,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("datediff('").put(symbol).put("',").put(left).put(',').put(right).put(')');
         }
     }
@@ -147,7 +147,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("datediff('").put(symbol).put("',").put(arg).put(',').put(constantTime).put(')');
         }
     }
@@ -190,7 +190,7 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("datediff('").put(left).put("',").put(center).put(',').put(right).put(')');
         }
     }

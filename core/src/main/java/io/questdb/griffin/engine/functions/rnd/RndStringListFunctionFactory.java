@@ -37,7 +37,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
     @Override
@@ -104,7 +104,7 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("rnd_str(").put(symbols).put(')');
         }
     }

@@ -33,6 +33,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
+/**
+ * Returns rows from current data frame in table (physical) order :
+ * - fetches first record index per cursor into priority queue
+ * - then returns record with smallest index and adds next record from related cursor into queue
+ * until all cursors are exhausted .
+ */
 public class HeapRowCursorFactory implements RowCursorFactory {
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
@@ -65,7 +71,7 @@ public class HeapRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("HeapRowCursor");
+        sink.type("Table-order scan");
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             sink.child(cursorFactories.getQuick(i));
         }

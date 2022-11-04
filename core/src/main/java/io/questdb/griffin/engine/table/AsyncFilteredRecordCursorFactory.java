@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -146,6 +145,16 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public PageFrameSequence<AsyncFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
@@ -203,10 +212,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("async filter");
-        if (limitLoFunction != null) {
-            sink.attr("limit").val(limitLoFunction);
-        }
+        sink.type("Async Filter");
+        sink.optAttr("limit", limitLoFunction);
         sink.attr("filter").val(filterAtom);
         sink.attr("preTouch").val(preTouchColumns);
         sink.attr("workers").val(workerCount);

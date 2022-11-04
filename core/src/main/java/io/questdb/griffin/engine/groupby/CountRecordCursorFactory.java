@@ -73,6 +73,11 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

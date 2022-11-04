@@ -1,9 +1,11 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractEqBinaryFunction extends NegatableBooleanFunction implements BinaryFunction {
     protected final Function left;
@@ -25,11 +27,11 @@ public abstract class AbstractEqBinaryFunction extends NegatableBooleanFunction 
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put(left);
+    public void toPlan(PlanSink sink) {
+        sink.val(left);
         if (negated) {
             sink.put('!');
         }
-        sink.put('=').put(right);
+        sink.put('=').val(right);
     }
 }

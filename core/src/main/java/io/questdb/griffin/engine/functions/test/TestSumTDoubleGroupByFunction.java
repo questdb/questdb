@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumTDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {

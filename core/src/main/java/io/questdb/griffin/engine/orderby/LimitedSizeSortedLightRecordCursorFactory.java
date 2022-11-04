@@ -98,6 +98,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
     }
 
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         if (isInitialized()) {
             return;

@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -79,12 +80,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         if (intervals != null && intervals.size() > 0) {
-            sink.put("[static=").put(intervals);
+            sink.put("[static=").val(intervals);
         }
         if (dynamicRangeList != null && dynamicRangeList.size() > 0) {
-            sink.put(" dynamic=").put(dynamicRangeList).put("]");
+            sink.put(" dynamic=").val(dynamicRangeList).put("]");
         }
     }
 

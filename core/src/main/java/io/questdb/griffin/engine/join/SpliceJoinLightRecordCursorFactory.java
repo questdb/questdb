@@ -129,6 +129,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

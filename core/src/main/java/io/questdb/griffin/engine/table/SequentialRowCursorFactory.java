@@ -33,6 +33,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
+/**
+ * Returns rows from current data frame in order of cursors list :
+ * - first fetches and returns all records from first cursor
+ * - then from second cursors,
+ * until all cursors are exhausted .
+ */
 public class SequentialRowCursorFactory implements RowCursorFactory {
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
@@ -65,7 +71,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SequentialRowCursor");
+        sink.type("Cursor-order scan");//postgres uses 'Append' node  
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             sink.child(cursorFactories.getQuick(i));
         }

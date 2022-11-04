@@ -25,9 +25,10 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class CharTypeConstant extends CharFunction implements TypeConstant {
 
@@ -39,7 +40,7 @@ public class CharTypeConstant extends CharFunction implements TypeConstant {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("CharType");
     }
 }

@@ -24,15 +24,16 @@
 
 package io.questdb.griffin.engine.functions.conditional;
 
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 /**
  *
  */
 public interface CaseFunction extends MultiArgFunction {
     @Override
-    default void toSink(CharSink sink) {
-        sink.put("case(").put(getArgs()).put(')');
+    default void toPlan(PlanSink sink) {
+        sink.put("case(").val(getArgs()).put(')');
     }
 }

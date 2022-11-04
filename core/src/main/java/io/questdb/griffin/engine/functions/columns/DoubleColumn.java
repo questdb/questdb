@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -65,7 +66,7 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("Double(").put(columnIndex).put(')');
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 }

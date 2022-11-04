@@ -29,13 +29,15 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
+class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
 
     private final Map map;
     private final RecordSink recordSink;
@@ -44,6 +46,11 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
         super(rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan");
     }
 
     @Override

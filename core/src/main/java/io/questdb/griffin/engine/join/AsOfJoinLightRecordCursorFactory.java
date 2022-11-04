@@ -108,6 +108,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

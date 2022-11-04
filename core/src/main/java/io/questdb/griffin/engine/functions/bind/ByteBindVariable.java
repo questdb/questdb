@@ -26,9 +26,9 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.CharSink;
 
 class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     byte value;
@@ -54,7 +54,7 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("?::byte");
     }
 }

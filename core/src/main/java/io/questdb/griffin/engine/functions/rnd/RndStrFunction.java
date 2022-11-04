@@ -27,10 +27,11 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 class RndStrFunction extends StrFunction implements Function {
     private final int lo;
@@ -63,7 +64,7 @@ class RndStrFunction extends StrFunction implements Function {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("rnd_str(").put(lo).put(',').put(range + lo - 1).put(',').put(nullRate).put(')');
     }
 }

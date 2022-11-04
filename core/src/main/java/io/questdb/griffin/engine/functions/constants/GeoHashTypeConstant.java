@@ -29,7 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant {
     private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[ColumnType.GEO_HASH_MAX_BITS_LENGTH];
@@ -55,7 +55,7 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("GeoHashType");
     }
 

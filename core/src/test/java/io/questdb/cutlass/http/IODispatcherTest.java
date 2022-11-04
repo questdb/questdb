@@ -639,8 +639,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "d6\r\n" +
-                        "{\"query\":\"explain select 1 from x limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"    VirtualRecord\"],[\"      functions: [1]\"],[\"        Full forward scan on: x\"]],\"count\":4}\r\n" +
+                        "0112\r\n" +
+                        "{\"query\":\"explain select 1 from x limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"dataset\":[[\"Limit lo: 1\"],[\"    VirtualRecord\"],[\"      functions: [1]\"],[\"        DataFrame\"],[\"            Row forward scan\"],[\"            Frame forward scan on: x\"]],\"count\":6}\r\n" +
                         "00\r\n" +
                         "\r\n"
                 , 1);

@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class EqDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -128,7 +128,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg);
             if (negated) {
                 sink.put(" is not null");

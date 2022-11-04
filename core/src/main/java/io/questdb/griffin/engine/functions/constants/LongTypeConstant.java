@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class LongTypeConstant extends LongFunction implements TypeConstant {
     public static final LongTypeConstant INSTANCE = new LongTypeConstant();
@@ -39,7 +39,7 @@ public class LongTypeConstant extends LongFunction implements TypeConstant {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("LongType");
     }
 }

@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
@@ -148,7 +147,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("avg(Double(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "avg";
     }
 }

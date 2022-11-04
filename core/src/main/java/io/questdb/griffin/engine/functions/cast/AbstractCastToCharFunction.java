@@ -24,13 +24,13 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
 
 public abstract class AbstractCastToCharFunction extends CharFunction implements UnaryFunction {
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(getArg()).put("::char");
     }
 }

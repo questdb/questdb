@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;

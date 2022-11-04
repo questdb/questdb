@@ -72,6 +72,14 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         return indexDirection;
     }
 
+    int getSymbolKey() {
+        return symbolKey;
+    }
+
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     Function getFilter() {
         return filter;
     }

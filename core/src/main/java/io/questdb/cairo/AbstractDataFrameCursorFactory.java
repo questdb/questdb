@@ -57,6 +57,17 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                 );
     }
 
+    public String getColumnName(int idx, SqlExecutionContext executionContext) {
+        try (TableReader reader = executionContext.getCairoEngine().getReader(
+                executionContext.getCairoSecurityContext(),
+                tableName,
+                tableId,
+                tableVersion
+        )) {
+            return reader.getMetadata().getColumnName(idx);
+        }
+    }
+
     @Override
     public void close() {
     }

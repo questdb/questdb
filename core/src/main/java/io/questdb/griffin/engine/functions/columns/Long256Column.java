@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -76,8 +77,8 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("Long256(").put(columnIndex).put(')');
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
     }
 
 }

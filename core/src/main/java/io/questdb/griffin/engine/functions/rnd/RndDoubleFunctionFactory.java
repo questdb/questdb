@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RndDoubleFunctionFactory implements FunctionFactory {
 
@@ -70,7 +70,7 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(SIGNATURE);
         }
     }

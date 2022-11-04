@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public interface UnaryFunction extends Function {
     @Override
@@ -63,7 +64,7 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void toSink(CharSink sink) {
+    default void toPlan(PlanSink sink) {
         if (isOperator()) {
             sink.put(getSymbol()).put(getArg());
         } else {

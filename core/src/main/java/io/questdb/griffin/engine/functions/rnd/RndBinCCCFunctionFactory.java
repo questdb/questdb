@@ -36,7 +36,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RndBinCCCFunctionFactory implements FunctionFactory {
     @Override
@@ -113,7 +113,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("rnd_bin(").put(lo).put(',').put(range + lo - 1).put(',').put(nullRate - 1).put(')');
         }
     }
@@ -151,7 +151,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("rnd_bin(").put(this.sequence.len).put(',').put(nullRate - 1).put(')');
         }
     }

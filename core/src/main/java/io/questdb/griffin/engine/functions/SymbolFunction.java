@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 

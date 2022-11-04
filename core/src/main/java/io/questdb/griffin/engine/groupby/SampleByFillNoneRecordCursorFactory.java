@@ -114,8 +114,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillNone");
-        sink.attr("functions");
-        sink.val(recordFunctions);
+        sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
         sink.child(base);
     }
 }

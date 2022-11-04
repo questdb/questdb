@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 

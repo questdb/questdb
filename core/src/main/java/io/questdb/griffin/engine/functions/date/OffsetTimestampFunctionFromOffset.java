@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 class OffsetTimestampFunctionFromOffset extends TimestampFunction implements UnaryFunction {
     private final Function timestamp;
@@ -50,7 +50,7 @@ class OffsetTimestampFunctionFromOffset extends TimestampFunction implements Una
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(timestamp).put('+').put(offset);
     }
 }

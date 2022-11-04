@@ -400,10 +400,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(true);
-        sink.attr("groupByFunctions").val(vafList);
-        sink.attr("keyColumnIndex").val(keyColumnIndex);
+        sink.optAttr("groupByFunctions", vafList, true);
+        sink.attr("keyColumn").putBaseColumnNameNoRemap(keyColumnIndex);
         sink.attr("workers").val(workerCount);
         sink.child(base);
+    }
+
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     private class RostiRecordCursor implements RecordCursor {

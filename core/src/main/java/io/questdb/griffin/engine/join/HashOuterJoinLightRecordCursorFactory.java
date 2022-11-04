@@ -100,6 +100,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

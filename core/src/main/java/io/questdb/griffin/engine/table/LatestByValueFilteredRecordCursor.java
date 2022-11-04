@@ -28,15 +28,17 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor implements Plannable {
 
-    protected final int columnIndex;
-    protected final int symbolKey;
+    private final int columnIndex;
+    private final int symbolKey;
     private final Function filter;
     private boolean empty;
     private boolean hasNext;
@@ -56,6 +58,13 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     @Override
     public void close() {
         dataFrameCursor.close();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan");
+        sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolKey);
+        sink.attr("filter").val(filter);
     }
 
     @Override

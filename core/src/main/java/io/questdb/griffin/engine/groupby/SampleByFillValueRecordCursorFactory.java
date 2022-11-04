@@ -108,8 +108,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillValue");
-        sink.optAttr("groupByFunctions", cursor.groupByFunctions);
-        sink.optAttr("recordFunctions", recordFunctions);
+        sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
         sink.child(base);
     }
 

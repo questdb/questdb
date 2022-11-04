@@ -84,6 +84,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return baseFactory.getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }
@@ -101,8 +111,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("VirtualRecord");
-        sink.attr("functions");
-        sink.val(functions);
+        sink.optAttr("functions", functions, true);
         sink.child(baseFactory);
     }
 }

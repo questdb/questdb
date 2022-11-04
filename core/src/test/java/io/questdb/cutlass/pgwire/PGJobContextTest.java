@@ -2125,7 +2125,9 @@ if __name__ == "__main__":
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Limit lo: 10\n" +
-                                    "    Full forward scan on: xx\n",
+                                    "    DataFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: xx\n",
                             sink,
                             rs
                     );
@@ -2150,11 +2152,13 @@ if __name__ == "__main__":
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Sort light lo: 10\n" +
-                                    "    async filter\n" +
-                                    "      filter: Str(1)='\\n'\n" +
+                                    "    Async Filter\n" +
+                                    "      filter: str='\\n'\n" +
                                     "      preTouch: true\n" +
                                     "      workers: 2\n" +
-                                    "        Full forward scan on: xx\n",
+                                    "        DataFrame\n" +
+                                    "            Row forward scan\n" +
+                                    "            Frame forward scan on: xx\n",
                             sink,
                             rs
                     );

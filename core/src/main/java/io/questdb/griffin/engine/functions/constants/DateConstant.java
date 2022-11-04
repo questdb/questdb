@@ -25,9 +25,10 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
     public static final DateConstant NULL = new DateConstant(Numbers.LONG_NaN);
@@ -47,7 +48,7 @@ public class DateConstant extends DateFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(value);
     }
 }

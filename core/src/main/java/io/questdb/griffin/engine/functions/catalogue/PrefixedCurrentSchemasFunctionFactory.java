@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
@@ -84,7 +85,7 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("pg_catalog.current_schemas()");
         }
     }

@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UntypedFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class StringArrayTypeConstant extends UntypedFunction implements TypeConstant {
     public static final StringArrayTypeConstant INSTANCE = new StringArrayTypeConstant();
@@ -38,7 +38,7 @@ public class StringArrayTypeConstant extends UntypedFunction implements TypeCons
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("StringArrayType");
     }
 }

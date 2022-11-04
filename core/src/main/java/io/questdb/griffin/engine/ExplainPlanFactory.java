@@ -74,7 +74,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base);
+        cursor.of(base, executionContext);
         return cursor;
     }
 
@@ -89,12 +89,17 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             this.record = new ExplainPlanRecord(planSink);
         }
 
-        public void of(RecordCursorFactory base) {
-            planSink.clear();
-            base.toPlan(planSink);
-            planSink.end();
+        public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
+            //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
+            //on the other hand until we run it factories may be incomplete ...
+            //TODO: initialize factory hierarchy without paying the startup cost 
+            //try (RecordCursor cursor = base.getCursor(executionContext)) {
+            planSink.of(base, executionContext);
             rowCount = planSink.getLineCount();
             toTop();
+//            } finally {
+//                Misc.free(cursor);
+//            }
         }
 
         @Override

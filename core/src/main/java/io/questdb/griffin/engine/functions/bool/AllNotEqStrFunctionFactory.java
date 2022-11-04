@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
@@ -92,7 +92,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(arg).put(" <> all ").put(set);
         }
     }

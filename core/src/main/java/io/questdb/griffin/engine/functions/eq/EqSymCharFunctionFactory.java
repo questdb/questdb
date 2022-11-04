@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -95,6 +96,15 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
+        }
     }
 
     private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -123,6 +133,15 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             assert symbolTable != null;
             valueIndex = symbolTable.keyOf(SingleCharCharSequence.get(constant));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
         }
     }
 

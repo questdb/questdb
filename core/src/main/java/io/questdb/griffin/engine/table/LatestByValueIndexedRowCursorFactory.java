@@ -70,9 +70,7 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("LatestByValueIndexedRowCursor");
-        sink.attr("direction").val(BitmapIndexReader.NAME_BACKWARD);
-        sink.attr("usesIndex").val(isUsingIndex());
-        sink.attr("symbolFilter").val("Symbol(").val(columnIndex).val(")=").val(symbolKey);
+        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnNameNoRemap(columnIndex);
+        sink.attr("filter").putBaseColumnNameNoRemap(columnIndex).val('=').val(symbolKey);
     }
 }

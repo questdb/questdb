@@ -24,13 +24,14 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToByteFunction extends ByteFunction implements UnaryFunction {
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(getArg()).put("::byte");
     }
 }

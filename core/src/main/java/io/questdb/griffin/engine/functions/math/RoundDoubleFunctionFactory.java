@@ -37,7 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class RoundDoubleFunctionFactory implements FunctionFactory {
     @Override
@@ -106,7 +106,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("round(").put(left).put(',').put(right).put(')');
         }
     }
@@ -136,7 +136,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("round(").put(arg).put(',').put(scale).put(')');
         }
     }
@@ -166,7 +166,7 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("round(").put(arg).put(',').put(-scale).put(')');
         }
     }

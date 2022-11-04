@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class ShortConstant extends ShortFunction implements ConstantFunction {
     public static final ShortConstant ZERO = new ShortConstant((short) 0);
@@ -46,7 +46,7 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put(value);
     }
 }

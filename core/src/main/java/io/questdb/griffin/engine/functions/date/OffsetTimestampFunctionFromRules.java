@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 class OffsetTimestampFunctionFromRules extends TimestampFunction implements UnaryFunction {
     private final Function timestamp;
@@ -54,7 +54,7 @@ class OffsetTimestampFunctionFromRules extends TimestampFunction implements Unar
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         sink.put("to_utc(").put(timestamp).put(',').put(multiplier).put(')');
     }
 }

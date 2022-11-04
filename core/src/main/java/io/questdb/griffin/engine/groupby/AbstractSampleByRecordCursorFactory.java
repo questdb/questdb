@@ -56,6 +56,11 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

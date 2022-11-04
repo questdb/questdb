@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
@@ -90,7 +90,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.put("null::symbol");
         } else {

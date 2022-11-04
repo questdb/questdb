@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -39,6 +40,9 @@ public class PlanSink {
     private String childIndent;
     private String attrIndent;
     private final IntList eolIndexes;
+    private final ObjStack<RecordCursorFactory> factoryStack;
+    private SqlExecutionContext executionContext;
+    private boolean useBaseMetadata;
 
     public PlanSink() {
         this.sink = new EscapingStringSink();
@@ -47,6 +51,7 @@ public class PlanSink {
         this.childIndent = "    ";
         this.eolIndexes = new IntList();
         this.eolIndexes.add(0);
+        this.factoryStack = new ObjStack<>();
     }
 
     public void reset() {
@@ -56,6 +61,18 @@ public class PlanSink {
         this.childIndent = "    ";
         this.eolIndexes.clear();
         this.eolIndexes.add(0);
+        this.factoryStack.clear();
+        this.executionContext = null;
+    }
+
+    public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        clear();
+        this.executionContext = executionContext;
+        if (factory != null) {
+            factoryStack.push(factory);
+            factory.toPlan(this);
+        }
+        end();
     }
 
     public PlanSink type(CharSequence type) {
@@ -79,7 +96,24 @@ public class PlanSink {
         return this;
     }
 
-    public PlanSink optAttr(CharSequence name, ObjList<?> value) {
+    public PlanSink optAttr(CharSequence name, Plannable value) {
+        if (value != null) {
+            if (value instanceof ConstantFunction && ((ConstantFunction) value).isNullConstant()) {
+                return this;
+            }
+            attr(name).val(value);
+        }
+        return this;
+    }
+
+    public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata) {
+        this.useBaseMetadata = useBaseMetadata;
+        optAttr(name, value);
+        this.useBaseMetadata = false;
+        return this;
+    }
+
+    public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value) {
         if (value != null && value.size() > 0) {
             attr(name).val(value);
         }
@@ -128,11 +162,107 @@ public class PlanSink {
         return this;
     }
 
+    public PlanSink val(ObjList<? extends Plannable> s) {
+        if (s != null) {
+            put('[');
+            for (int i = 0, n = s.size(); i < n; i++) {
+                if (i > 0) {
+                    val(',');
+                }
+                val(s.get(i));
+            }
+            put(']');
+        }
+        return this;
+    }
+
     public PlanSink val(Sinkable s) {
         if (s != null) {
             sink.put(s);
         }
         return this;
+    }
+
+    public PlanSink val(Plannable s) {
+        if (s != null) {
+            s.toPlan(this);
+        } else {
+            sink.put("null");
+        }
+        return this;
+    }
+
+    public PlanSink val(Function s) {
+        if (s != null) {
+            s.toPlan(this);
+        } else {
+            sink.put("null");
+        }
+        return this;
+    }
+
+    public PlanSink put(Sinkable s) {
+        val(s);
+        return this;
+    }
+
+    public PlanSink put(RecordCursorFactory factory) {
+        child(factory);
+        return this;
+    }
+
+    public PlanSink put(CharSequence cs) {
+        sink.put(cs);
+        return this;
+    }
+
+    public PlanSink putColumnName(int no) {
+        if (useBaseMetadata) {
+            putBaseColumnName(no);
+        } else {
+            sink.put(factoryStack.peek().getColumnName(no, executionContext));
+        }
+        return this;
+    }
+
+    public PlanSink putBaseColumnName(int no) {
+        sink.put(factoryStack.peek().getBaseColumnName(no, executionContext));
+        return this;
+    }
+
+    public PlanSink putBaseColumnNameNoRemap(int no) {
+        sink.put(factoryStack.peek().getBaseColumnNameNoRemap(no, executionContext));
+        return this;
+    }
+
+    public PlanSink put(boolean b) {
+        sink.put(b);
+        return this;
+    }
+
+    public PlanSink put(char c) {
+        sink.put(c);
+        return this;
+    }
+
+    public PlanSink put(int i) {
+        sink.put(i);
+        return this;
+    }
+
+    public PlanSink put(double d) {
+        sink.put(d);
+        return this;
+    }
+
+    public PlanSink put(long l) {
+        sink.put(l);
+        return this;
+    }
+
+
+    public PlanSink put(Function f) {
+        return val(f);
     }
 
     public PlanSink child(CharSequence outer, Plannable inner) {
@@ -148,7 +278,14 @@ public class PlanSink {
     public PlanSink child(Plannable p) {
         depth++;
         newLine();
+        if (p instanceof RecordCursorFactory) {
+            //metadataStack.push(((RecordCursorFactory) p).getMetadata());
+            factoryStack.push((RecordCursorFactory) p);
+        }
         p.toPlan(this);
+        if (p instanceof RecordCursorFactory) {
+            factoryStack.pop();
+        }
         depth--;
 
         return this;
@@ -246,7 +383,13 @@ public class PlanSink {
                 super.put(c);
             }
         }
+    }
 
+    public StringSink getSink() {
+        return sink;
+    }
 
+    public void setUseBaseMetadata(boolean b) {
+        this.useBaseMetadata = b;
     }
 }

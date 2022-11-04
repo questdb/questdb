@@ -125,6 +125,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
     private void buildMap(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         long index = 0;
         while (baseCursor.hasNext()) {

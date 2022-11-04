@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 

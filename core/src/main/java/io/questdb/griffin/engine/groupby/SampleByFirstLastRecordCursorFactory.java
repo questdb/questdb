@@ -101,7 +101,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFirstLast");
-        sink.attr("groupByColIdx").val(groupBySymbolColIndex);
+        sink.attr("groupByColumn").putColumnName(groupBySymbolColIndex);
+        sink.child(base);
     }
 
     @Override
@@ -130,6 +131,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             Misc.free(pageFrameCursor);
             throw e;
         }
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override

@@ -60,7 +60,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("show_columns");
-        sink.meta("tableName").val(tableName);
+        sink.meta("of").val(tableName);
     }
 
     private class ShowColumnsCursor implements RecordCursor {

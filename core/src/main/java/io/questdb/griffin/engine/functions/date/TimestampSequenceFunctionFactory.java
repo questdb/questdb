@@ -37,7 +37,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class TimestampSequenceFunctionFactory implements FunctionFactory {
     @Override
@@ -92,7 +92,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("timestamp_sequence(").put(start).put(',').put(longIncrement).put(')');
         }
 
@@ -143,7 +143,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("timestamp_sequence(").put(start).put(',').put(longIncrement).put(')');
         }
 

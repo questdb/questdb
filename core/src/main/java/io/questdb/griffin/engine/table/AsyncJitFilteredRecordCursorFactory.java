@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
@@ -156,6 +157,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
@@ -243,7 +249,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         atom.preTouchColumns(record, rows);
     }
 
-    private static class AsyncJitFilterAtom extends AsyncFilterAtom implements Sinkable {
+    private static class AsyncJitFilterAtom extends AsyncFilterAtom implements Plannable {
 
         final CompiledFilter compiledFilter;
         final MemoryCARW bindVarMemory;
@@ -279,8 +285,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public void toSink(CharSink sink) {
-            super.toSink(sink);
+        public void toPlan(PlanSink sink) {
+            super.toPlan(sink);
         }
 
         private void prepareBindVarMemory(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -359,10 +365,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("async jit filter");
-        if (limitLoFunction != null) {
-            sink.attr("limit").val(limitLoFunction);
-        }
+        sink.type("Async JIT Filter");
+        sink.optAttr("limit", limitLoFunction);
         sink.attr("filter").val(filterAtom);
         sink.attr("preTouch").val(preTouchColumns);
         sink.attr("workers").val(workerCount);

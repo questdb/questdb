@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAccumulator;
 import java.util.function.LongBinaryOperator;
@@ -123,7 +122,7 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("max(Long(").put(columnIndex).put("))");
+    public String getSymbol() {
+        return "max";
     }
 }

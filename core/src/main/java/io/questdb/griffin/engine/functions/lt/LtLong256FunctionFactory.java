@@ -35,7 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class LtLong256FunctionFactory implements FunctionFactory {
     @Override
@@ -93,7 +93,7 @@ public class LtLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put(left);
             if (negated) {
                 sink.put(">=");

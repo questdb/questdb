@@ -40,7 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.str.CharSink;
+import io.questdb.griffin.PlanSink;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
     private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
@@ -112,7 +112,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toSink(CharSink sink) {
+        public void toPlan(PlanSink sink) {
             sink.put("to_timestamp(").put(arg).put(')');
         }
     }
