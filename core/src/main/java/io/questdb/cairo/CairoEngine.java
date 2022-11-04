@@ -303,7 +303,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return reader;
     }
 
-    public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
+    public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
 
