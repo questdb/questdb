@@ -124,7 +124,7 @@ public class NullMemoryMRTest {
 
     @Test
     public void testGrow() {
-        // this method does nothing. Make sure it doesn corrupt state of singleton and
+        // this method does nothing. Make sure it doesn't corrupt state of singleton and
         // doesn't throw exception
         NullMemoryMR.INSTANCE.extend(100000);
     }

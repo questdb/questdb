@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
@@ -250,6 +250,17 @@ public class InsertTest extends AbstractGriffinTest {
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
                 "insert into tab select 1, '123456'",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testInsertAsWith() throws Exception {
+        assertInsertTimestamp(
+                "seq\tts\n" +
+                        "1\t1970-01-01T00:00:00.123456Z\n",
+                "insert into tab with x as (select 1, '123456') select * from x",
                 null,
                 false
         );
@@ -499,6 +510,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             try {
                 compiler.compile("insert into balances values (1, 'USD')", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(37, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=3, actual=2, tuple=1]");
@@ -701,6 +713,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select x ac  from long_sequence(10)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "select clause must provide timestamp column");
@@ -714,6 +727,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp of existing table");
@@ -754,6 +768,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select x ac, rnd_int() id from long_sequence(10)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "expected timestamp column");
@@ -766,10 +781,11 @@ public class InsertTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table test (a timestamp)", sqlExecutionContext);
             try {
-                compiler.compile("insert into test values ('2013')", sqlExecutionContext);
-            } catch (SqlException e) {
-                Assert.assertEquals(25, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: STRING -> TIMESTAMP");
+                executeInsert("insert into test values ('foobar')");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                Assert.assertEquals(0, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `foobar` [STRING -> TIMESTAMP]");
             }
         });
     }
@@ -794,6 +810,7 @@ public class InsertTest extends AbstractGriffinTest {
 
             try {
                 compiler.compile("insert into t values  (timestamp with time zone)", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(47, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
@@ -847,6 +864,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table trades (sym symbol)", sqlExecutionContext);
             try {
                 compiler.compile("insert into trades VALUES ('USDJPY'), (1), ('USDFJD');", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(39, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: INT -> SYMBOL [from=1, to=sym]");
@@ -862,6 +880,7 @@ public class InsertTest extends AbstractGriffinTest {
             // No comma delimiter between rows
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY')(2, 'USDFJD');", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(39, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "',' expected");
@@ -870,6 +889,7 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), ();", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(42, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -878,6 +898,7 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row with comma delimiter inside
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (,);", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(57, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -886,6 +907,7 @@ public class InsertTest extends AbstractGriffinTest {
             // Empty row column
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'), (3,);", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(59, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Expression expected");
@@ -894,6 +916,7 @@ public class InsertTest extends AbstractGriffinTest {
             // Multi row insert can't end in comma token
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), (2, 'USDFJD'),;", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(55, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "'(' expected");
@@ -907,6 +930,7 @@ public class InsertTest extends AbstractGriffinTest {
             compiler.compile("create table trades (i int, sym symbol)", sqlExecutionContext);
             try {
                 compiler.compile("insert into trades VALUES (1, 'USDJPY'), ('USDFJD');", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(50, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "row value count does not match column count [expected=2, actual=1, tuple=2]");

@@ -958,7 +958,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Ignore("Implicit transactions need to be implemented before enabling this test")
     @Test
-    public void testImplicitTransactionIsCommitedAtEndOfBlock() throws Exception {
+    public void testImplicitTransactionIsCommittedAtEndOfBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 test.connection.setAutoCommit(false);

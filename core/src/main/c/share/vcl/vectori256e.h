@@ -568,7 +568,7 @@ static inline Vec32c operator >> (Vec32c const a, int b) {
     return Vec32c(a.get_low() >> b, a.get_high() >> b);
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec32c & operator >>= (Vec32c & a, int b) {
     a = a >> b;
     return a;
@@ -844,7 +844,7 @@ static inline Vec32uc operator >> (Vec32uc const a, int32_t b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec32uc & operator >>= (Vec32uc & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -1574,7 +1574,7 @@ static inline Vec16us operator >> (Vec16us const a, int b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec16us & operator >>= (Vec16us & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -3021,7 +3021,7 @@ static inline Vec4uq operator >> (Vec4uq const a, int32_t b) {
     return a >> (uint32_t)b;
 }
 
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec4uq & operator >>= (Vec4uq & a, uint32_t b) {
     a = a >> b;
     return a;

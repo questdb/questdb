@@ -214,14 +214,14 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testGetWeeks() throws Exception {
+    public void testGetWeeks() {
         Assert.assertEquals(52, Timestamps.getWeeks(2017));
         Assert.assertEquals(52, Timestamps.getWeeks(2021));
         Assert.assertEquals(53, Timestamps.getWeeks(2020));
     }
 
     @Test
-    public void testGetDayOfTheWeekOfEndOfYear() throws Exception {
+    public void testGetDayOfTheWeekOfEndOfYear() {
         Assert.assertEquals(0, Timestamps.getDayOfTheWeekOfEndOfYear(2017));
         Assert.assertEquals(1, Timestamps.getDayOfTheWeekOfEndOfYear(1984));
         Assert.assertEquals(2, Timestamps.getDayOfTheWeekOfEndOfYear(2019));
@@ -568,7 +568,7 @@ public class TimestampsTest {
     @Test
     public void testParseTimestampNotNullLocale() {
         try {
-            // we deliberately mangle timezone so that function begins to rely on locale to resole text
+            // we deliberately mangle timezone so that function begins to rely on locale to resolve text
             TimestampFormatUtils.parseUTCTimestamp("2020-01-10T15:00:01.000143Zz");
             Assert.fail();
         } catch (NumericException ignored) {
