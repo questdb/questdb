@@ -92,8 +92,11 @@ public class AtomicIntList {
     }
 
     public int get(int index) {
-        int[] data = this.data;
+        // First we read position, then data as they're written in the reverse order.
+        // That's because it's a grow-only list, so the data array can only grow
+        // once we've read the position.
         int pos = this.pos;
+        int[] data = this.data;
         if (index >= pos) {
             throw new IndexOutOfBoundsException(index);
         }
@@ -112,7 +115,6 @@ public class AtomicIntList {
     @Override
     public String toString() {
         CharSink b = Misc.getThreadLocalBuilder();
-
         int[] data = this.data;
         int pos = this.pos;
         b.put('[');
