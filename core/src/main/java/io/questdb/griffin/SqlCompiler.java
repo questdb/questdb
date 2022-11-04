@@ -1126,11 +1126,7 @@ public class SqlCompiler implements Closeable {
                                 executionContext.getCairoSecurityContext(),
                                 queryModel.getTableName().token
                         )) {
-                    if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-                        optimiser.optimiseUpdate(queryModel, executionContext, metadata);
-                    } else {
-                        optimiser.validateUpdateColumns(queryModel, metadata);
-                    }
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata);
                     return model;
                 }
             default:
@@ -1707,17 +1703,18 @@ public class SqlCompiler implements Closeable {
     UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
         final String updateTableName = updateQueryModel.getUpdateTableName();
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-            // Update QueryModel structure is
-            // QueryModel with SET column expressions
-            // |-- QueryModel of select-virtual or select-choose of data selected for update
-            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                    updateTableName,
-                    selectQueryModel,
-                    updateQueryModel,
-                    executionContext
-            );
 
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions
+        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                updateTableName,
+                selectQueryModel,
+                updateQueryModel,
+                executionContext
+        );
+
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
                     updateTableName,
                     selectQueryModel.getTableId(),
@@ -1726,6 +1723,8 @@ public class SqlCompiler implements Closeable {
                     recordCursorFactory
             );
         } else {
+            recordCursorFactory.close();
+
             if (selectQueryModel.containsJoin()) {
                 throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
             }

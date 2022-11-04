@@ -649,6 +649,43 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateViaWal_SQLFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                try {
+                    executeOperation("UPDATE " + tableName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
+                    fail("Expected SQLException is not thrown");
+                } catch (SqlException e) {
+                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
+                }
+                drainWalQueue();
+                assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+                try {
+                    executeOperation("UPDATE " + tableCopyName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
+                    fail("Expected SQLException is not thrown");
+                } catch (SqlException e) {
+                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
+                }
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testWalTxnRepublishing() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

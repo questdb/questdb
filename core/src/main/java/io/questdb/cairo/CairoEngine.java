@@ -243,8 +243,19 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName) {
+        return getMetadata(securityContext, tableName, TableUtils.ANY_TABLE_VERSION);
+    }
+
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, CharSequence tableName, long structureVersion) {
         try {
-            return metadataPool.get(tableName);
+            final TableRecordMetadata metadata =  metadataPool.get(tableName);
+            if (structureVersion != TableUtils.ANY_TABLE_VERSION && metadata.getStructureVersion() != structureVersion) {
+                // rename to StructureVersionException?
+                final ReaderOutOfDateException ex = ReaderOutOfDateException.of(tableName, metadata.getTableId(), metadata.getTableId(), structureVersion, metadata.getStructureVersion());
+                metadata.close();
+                throw ex;
+            }
+            return metadata;
         } catch (CairoException e) {
             tryRepairTable(securityContext, tableName, e);
         }
