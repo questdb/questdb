@@ -853,7 +853,13 @@ public final class SqlParser {
 
     private void parseCreateTableIndexDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
         expectTok(lexer, '(');
-        final int columnIndex = getCreateTableColumnIndex(model, expectLiteral(lexer).token, lexer.lastTokenPosition());
+        final CharSequence columnName = expectLiteral(lexer).token;
+        final int position = lexer.lastTokenPosition();
+        final int columnIndex = getCreateTableColumnIndex(model, columnName, position);
+        final int columnType = model.getColumnType(columnIndex);
+        if (columnType > -1 && !ColumnType.isSymbol(columnType)) {
+            throw SqlException.$(position, "indexes are supported only for SYMBOL columns: ").put(columnName);
+        }
 
         if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
             int errorPosition = lexer.getPosition();
@@ -1439,7 +1445,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (isSelectKeyword(tok)) {
+        if (isSelectKeyword(tok) || isWithKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());

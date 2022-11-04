@@ -1277,6 +1277,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableIndexUnsupportedColumnType() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE INDEX, " + // INDEX is not supported for non-SYMBOL columns
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR",
+                30,
+                "',' or ')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableIndexUnsupportedColumnType2() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP), " +
+                        "INDEX (b) " + // INDEX is not supported for non-SYMBOL columns
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR",
+                60,
+                "indexes are supported only for SYMBOL columns: b"
+        );
+    }
+
+    @Test
     public void testCreateTableCacheCapacity() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
@@ -2037,7 +2068,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndex() throws SqlException {
         assertCreateTable(
                 "create table x (" +
-                        "a INT index capacity 256," +
+                        "a SYMBOL capacity 128 cache index capacity 256," +
                         " b BYTE," +
                         " c SHORT," +
                         " t TIMESTAMP," +
@@ -2052,7 +2083,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " timestamp(t)" +
                         " partition by MONTH",
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2074,7 +2105,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
                 "create table x (" +
-                        "a INT index capacity 16," +
+                        "a SYMBOL capacity 128 cache index capacity 16," +
                         " b BYTE," +
                         " c SHORT," +
                         " t TIMESTAMP," +
@@ -2089,7 +2120,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " timestamp(t)" +
                         " partition by MONTH",
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2111,7 +2142,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2127,7 +2158,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 10000000) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "max index block capacity is");
     }
 
@@ -2135,7 +2166,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityInvalid() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2151,7 +2182,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                174,
+                177,
                 "bad integer");
     }
 
@@ -2159,7 +2190,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2175,7 +2206,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 1) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "min index block capacity is");
     }
 
@@ -2183,7 +2214,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityLow2() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2199,7 +2230,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -10) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "min index block capacity is");
     }
 
