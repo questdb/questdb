@@ -36,6 +36,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
 
 import java.io.Closeable;
+import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -45,12 +46,12 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
-    private final MutableCharSink[] sink;
     private final StringSink[] fileNameSinks;
-    private final ObjList<DirectLongList> partitionList;
-    private final ObjList<TxnScoreboard> txnScoreboards;
-    private final ObjList<TxReader> txnReaders;
     private final AtomicBoolean halted = new AtomicBoolean(false);
+    private final ObjList<DirectLongList> partitionList;
+    private final MutableCharSink[] sink;
+    private final ObjList<TxReader> txnReaders;
+    private final ObjList<TxnScoreboard> txnScoreboards;
 
     public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
@@ -79,45 +80,76 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    private static void processPartition(
+    private static void deletePartitionDirectory(
             FilesFacade ff,
             Path path,
             int tableRootLen,
-            TxReader txReader,
-            TxnScoreboard txnScoreboard,
             long partitionTimestamp,
             int partitionBy,
-            DirectLongList partitionList,
-            int lo,
-            int hi
+            long previousNameVersion
     ) {
-        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
-        if (partitionInTxnFile) {
-            processPartition0(
-                    ff,
-                    path,
-                    tableRootLen,
-                    txReader,
-                    txnScoreboard,
-                    partitionTimestamp,
-                    partitionBy,
-                    partitionList,
-                    lo,
-                    hi
-            );
+        path.trimTo(tableRootLen);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+        TableUtils.txnPartitionConditionally(path, previousNameVersion);
+        path.$();
+        if (ff.isSoftLink(path)) {
+            // in windows ^ ^ will return false, but that is ok as the behaviour
+            // is to delete the link, not the contents of the target. in *nix
+            // systems we can simply unlink, which deletes the link and leaves
+            // the contents of the target intact
+            if (ff.unlink(path) == 0) {
+                LOG.info().$("purged by unlink [path=").$(path).I$();
+                return;
+            } else {
+                LOG.error().$("failed to unlink, will delete [path=").$(path).I$();
+            }
+        }
+        long errno;
+        if ((errno = ff.rmdir(path)) == 0) {
+            LOG.info()
+                    .$("purged [path=").$(path)
+                    .I$();
         } else {
-            processDetachedPartition(
-                    ff,
-                    path,
-                    tableRootLen,
-                    txReader,
-                    txnScoreboard,
-                    partitionTimestamp,
-                    partitionBy,
-                    partitionList,
-                    lo,
-                    hi
-            );
+            LOG.info()
+                    .$("partition purge failed [path=").$(path)
+                    .$(", errno=").$(errno)
+                    .I$();
+        }
+    }
+
+    private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
+        int index = Chars.lastIndexOf(fileNameSink, '.');
+
+        int len = fileNameSink.length();
+        if (index < 0) {
+            index = len;
+        }
+        try {
+            if (index < len) {
+                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
+                // When reader locks transaction 100 it opens partition version .99 or lower.
+                // Also, when there is no transaction version in the name, it is counted as -1.
+                // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
+                // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
+                // sort to sort 2 x 64bit unsigned integers
+                partitionList.add(partitionVersion + 1);
+            } else {
+                // This should be -1, but it is only possible to correctly sort 2 unsigned longs
+                // as 128bit integer sort
+                // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
+                partitionList.add(0);
+            }
+
+            try {
+                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
+                partitionList.add(partitionTs);
+                System.out.printf("TOTO %s, %d%n", fileNameSink, partitionTs);
+            } catch (NumericException e) {
+                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
+                partitionList.setPos(partitionList.size() - 1); // remove partition version record
+            }
+        } catch (NumericException e) {
+            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
         }
     }
 
@@ -163,6 +195,48 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             } else {
                 break;
             }
+        }
+    }
+
+    private static void processPartition(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxReader txReader,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            int partitionBy,
+            DirectLongList partitionList,
+            int lo,
+            int hi
+    ) {
+        boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
+        if (partitionInTxnFile) {
+            processPartition0(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
+        } else {
+            processDetachedPartition(
+                    ff,
+                    path,
+                    tableRootLen,
+                    txReader,
+                    txnScoreboard,
+                    partitionTimestamp,
+                    partitionBy,
+                    partitionList,
+                    lo,
+                    hi
+            );
         }
     }
 
@@ -214,32 +288,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    private static void deletePartitionDirectory(
-            FilesFacade ff,
-            Path path,
-            int tableRootLen,
-            long partitionTimestamp,
-            int partitionBy,
-            long previousNameVersion
-    ) {
-        path.trimTo(tableRootLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        TableUtils.txnPartitionConditionally(path, previousNameVersion);
-        path.slash$();
-
-        long errno;
-        if ((errno = ff.rmdir(path)) == 0) {
-            LOG.info()
-                    .$("purged [path=").$(path)
-                    .I$();
-        } else {
-            LOG.info()
-                    .$("partition purge failed [path=").$(path)
-                    .$(", errno=").$(errno)
-                    .I$();
-        }
-    }
-
     private void discoverPartitions(
             FilesFacade ff,
             MutableCharSink sink,
@@ -258,20 +306,27 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
-        long p = ff.findFirst(path);
-        if (p > 0) {
-            try {
-                do {
-                    long fileName = ff.findName(p);
-                    if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
-                        // extract txn, partition ts from name
-                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                ff.findClose(p);
+        for (File file : new File(path.toString()).listFiles()) {
+            if (file.isDirectory()) { // links to folders count as directory as well
+                fileNameSink.clear();
+                fileNameSink.put(file.getName());
+                parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
             }
         }
+        // TODO: this code does not work in the presence of soft links
+        //        long p = ff.findFirst(path);
+        //        if (p > 0) {
+        //            try {
+        //                do {
+        //                    long fileName = ff.findName(p);
+        //                    if (Files.isDir(fileName, ff.findType(p), fileNameSink)) {
+        //                        // extract txn, partition ts from name
+        //                        parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
+        //                    }
+        //                } while (ff.findNext(p) > 0);
+        //            } finally {
+        //                ff.findClose(p);
+        //            }
 
         // find duplicate partitions
         assert partitionList.size() % 2 == 0;
@@ -356,40 +411,5 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         );
         subSeq.done(cursor);
         return true;
-    }
-
-    private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
-        int index = Chars.lastIndexOf(fileNameSink, '.');
-
-        int len = fileNameSink.length();
-        if (index < 0) {
-            index = len;
-        }
-        try {
-            if (index < len) {
-                long partitionVersion = Numbers.parseLong(fileNameSink, index + 1, len);
-                // When reader locks transaction 100 it opens partition version .99 or lower.
-                // Also, when there is no transaction version in the name, it is counted as -1.
-                // By adding +1 here we kill 2 birds in with one stone, partition versions are aligned with
-                // txn scoreboard reader locks and no need to add -1 which allows us to use 128bit
-                // sort to sort 2 x 64bit unsigned integers
-                partitionList.add(partitionVersion + 1);
-            } else {
-                // This should be -1, but it is only possible to correctly sort 2 unsigned longs
-                // as 128bit integer sort
-                // Set 0 instead of -1 and revert it later on. There should be not possible to have .0 in the partition name
-                partitionList.add(0);
-            }
-
-            try {
-                long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
-                partitionList.add(partitionTs);
-            } catch (NumericException e) {
-                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
-                partitionList.setPos(partitionList.size() - 1); // remove partition version record
-            }
-        } catch (NumericException e) {
-            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
-        }
     }
 }
