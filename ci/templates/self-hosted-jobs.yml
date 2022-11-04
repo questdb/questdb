@@ -21,3 +21,18 @@ jobs:
       jdk: "1.11"
     steps:
       - template: steps.yml
+  - job: macos_arm64
+    displayName: "on macos-m1"
+    pool:
+      name: "m1"
+      vmImage:
+    timeoutInMinutes: 60
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    steps:
+    - bash: |
+        echo "Test"
+        uname -a
+        pwd
+        ls -la 
+      displayName: "Test"
+
