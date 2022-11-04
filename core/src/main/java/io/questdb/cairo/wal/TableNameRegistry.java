@@ -87,7 +87,9 @@ public class TableNameRegistry implements Closeable {
             tableName = reverseNonWalTableNameRegistry.get(systemTableName);
             if (tableName == null) {
                 tableName = TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
-                reverseNonWalTableNameRegistry.putIfAbsent(systemTableName, tableName);
+                if (tableName != null) {
+                    reverseNonWalTableNameRegistry.putIfAbsent(systemTableName, tableName);
+                }
             }
         }
 
@@ -158,7 +160,7 @@ public class TableNameRegistry implements Closeable {
                 if (operation == OPERATION_REMOVE) {
                     // remove from registry
                     walSystemTableNameRegistry.remove(tableNameStr);
-                    // do not remove from reverse registry, it should be already overwritten
+                    reverseWalTableNameRegistry.remove(systemName);
                     deletedRecordsFound++;
                 } else {
                     boolean systemNameExists = reverseWalTableNameRegistry.get(systemName) != null;
@@ -202,8 +204,8 @@ public class TableNameRegistry implements Closeable {
 
     public String rename(CharSequence oldName, CharSequence newName, String systemTableName) {
         if (walSystemTableNameRegistry.putIfAbsent(newName, systemTableName) == null) {
-            appendEntry(newName, systemTableName);
             removeEntry(oldName, systemTableName);
+            appendEntry(newName, systemTableName);
 
             String newTableNameStr = Chars.toString(newName);
             reverseWalTableNameRegistry.put(systemTableName, newTableNameStr);

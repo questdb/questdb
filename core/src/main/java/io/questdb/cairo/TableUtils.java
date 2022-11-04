@@ -44,7 +44,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -171,13 +170,17 @@ public final class TableUtils {
         return count;
     }
 
-    public static void convertSystemToTableName(StringSink systemTableName) {
+    public static String toTableNameFromSystemName(String systemTableName) {
         int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
-        if (suffixIndex != -1) {
-            for (int i = systemTableName.length() - 1; i >= suffixIndex; i--) {
-                systemTableName.deleteCharAt(i);
-            }
+        if (suffixIndex == -1) {
+            return systemTableName;
         }
+
+        if (suffixIndex != systemTableName.length() - 1) {
+            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
+            return null;
+        }
+        return systemTableName.substring(0, suffixIndex);
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -463,10 +466,6 @@ public final class TableUtils {
             throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
         }
         return columnCount;
-    }
-
-    public static long getColumnHash(MemoryR metaMem, int columnIndex) {
-        return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 16);
     }
 
     public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
@@ -1061,14 +1060,6 @@ public final class TableUtils {
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
-    }
-
-    public static String toTableNameFromSystemName(String systemTableName) {
-        int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
-        if (suffixIndex != -1) {
-            return systemTableName.substring(0, suffixIndex);
-        }
-        return systemTableName;
     }
 
     public static void txnPartition(CharSink path, long txn) {

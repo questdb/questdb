@@ -283,7 +283,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void checkDropped() {
         if (metadata.isDropped()) {
-            throw TableDroppedException.instance().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
+            throw CairoException.nonCritical().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
         }
     }
 

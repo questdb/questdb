@@ -57,7 +57,6 @@ import java.io.Closeable;
 import java.util.ServiceLoader;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompiler implements Closeable {
@@ -2704,7 +2703,7 @@ public class SqlCompiler implements Closeable {
         private transient SqlExecutionContext currentExecutionContext;
         private final FindVisitor sqlDatabaseBackupOnFind = (pUtf8NameZ, type) -> {
             if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-                convertSystemToTableName(fileNameSink);
+                engine.getTableNameBySystemName(fileNameSink);
                 try {
                     backupTable(fileNameSink, currentExecutionContext);
                 } catch (CairoException e) {

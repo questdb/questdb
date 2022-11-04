@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableDroppedException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
@@ -53,6 +53,7 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.COLUMN_VERSION_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+@SuppressWarnings("SameParameterValue")
 public class WalTableSqlTest extends AbstractGriffinTest {
     @BeforeClass
     public static void setUpStatic() {
@@ -379,7 +380,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 try {
                     walWriter1.commit();
                     Assert.fail();
-                } catch (TableDroppedException e) {
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped ");
                 }
                 MatcherAssert.assertThat(walWriter1.isDistressed(), Matchers.is(true));
 
@@ -387,7 +389,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 try {
                     addColumn(walWriter2, "sym3", ColumnType.SYMBOL);
                     Assert.fail();
-                } catch (TableDroppedException e) {
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped ");
                 }
                 MatcherAssert.assertThat(walWriter2.isDistressed(), Matchers.is(true));
 
@@ -400,7 +403,8 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
                     walWriter3.apply(dropAlter, true);
                     Assert.fail();
-                } catch (TableDroppedException e) {
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped ");
                 }
                 MatcherAssert.assertThat(walWriter3.isDistressed(), Matchers.is(true));
 
@@ -501,6 +505,104 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
                     "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
                     "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+        });
+    }
+
+    @Test
+    public void testDropPartitionRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = testName.getMethodName() + "_new";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
+                    " from long_sequence(2)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            compile("alter table " + tableName + " drop partition list '2022-02-24'");
+            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
+            compile("rename table " + tableName + " to " + newTableName);
+
+            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
+            Assert.assertEquals(table2SystemName, newTableSystemName);
+
+            drainWalQueue();
+
+            assertSql(newTableName, "x\tsym2\tts\n" +
+                    "2\tEF\t2022-02-25T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testDropRemovesFromCatalogFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String tableNameNonWal = testName.getMethodName() + "_non_wal";
+
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            compile("create table " + tableNameNonWal + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+
+            assertSql("all_tables()", "table\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables()", "name\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+
+
+            compile("drop table " + tableName);
+
+            assertSql("all_tables()", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables()", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
+
+            drainWalQueue();
+
+            assertSql("all_tables()", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables()", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
+
+
+            engine.getTableSequencerAPI().reopen();
+
+            assertSql("all_tables()", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables()", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
+
+            compile("drop table " + tableNameNonWal);
+
+            assertSql("all_tables()", "table\n");
+            assertSql("select name from tables()", "name\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n");
         });
     }
 
@@ -640,33 +742,10 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             assertSql("select name from tables()", "name\n" +
                     newTableName + "\n");
-        });
-    }
-
-    @Test
-    public void testDropPartitionRenameTable() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new";
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
-                    " from long_sequence(2)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-
-            compile("alter table " + tableName + " drop partition list '2022-02-24'");
-            String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
-            compile("rename table " + tableName + " to " + newTableName);
-
-            String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
-            Assert.assertEquals(table2SystemName, newTableSystemName);
-
-            drainWalQueue();
-
-            assertSql(newTableName, "x\tsym2\tts\n" +
-                    "2\tEF\t2022-02-25T00:00:00.000000Z\n");
+            assertSql("select table from all_tables()", "table\n" +
+                    newTableName + "\n");
+            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+                    newTableName + "\n");
         });
     }
 
@@ -737,6 +816,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
+    @SuppressWarnings("resource")
     private void checkTableFilesDropped(String sysTableName, String partition, String fileName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
         MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
@@ -751,6 +831,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
     }
 
+    @SuppressWarnings("resource")
     private void checkWalFilesRemoved(String sysTableName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(true));

@@ -776,11 +776,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWalRecreateDistressedSequencerAttempts() {
-        return 3;
-    }
-
-    @Override
     public int getWalTxnNotificationQueueCapacity() {
         return 4096;
     }
@@ -830,13 +825,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isO3QuickSortEnabled() {
-        return false;
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
     }
 
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isO3QuickSortEnabled() {
+        return false;
     }
 
     @Override

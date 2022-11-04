@@ -23,10 +23,7 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -36,8 +33,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-
-import static io.questdb.cairo.TableUtils.convertSystemToTableName;
+import org.jetbrains.annotations.NotNull;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -62,7 +58,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of();
+        return cursor.of(executionContext.getCairoEngine());
     }
 
     @Override
@@ -72,7 +68,9 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private class TableListRecordCursor implements RecordCursor {
         private final StringSink sink = new StringSink();
+        private CairoEngine engine;
         private final TableListRecord record = new TableListRecord();
+        private String tableName = null;
         private long findPtr = 0;
 
         @Override
@@ -99,7 +97,10 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
                 if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                    return true;
+                    tableName = engine.getTableNameBySystemName(sink);
+                    if (tableName != null) {
+                        return true;
+                    }
                 }
             }
         }
@@ -124,7 +125,8 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
             return -1;
         }
 
-        private TableListRecordCursor of() {
+        private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {
+            this.engine = cairoEngine;
             toTop();
             return this;
         }
@@ -133,8 +135,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getStr(int col) {
                 if (col == 0) {
-                    convertSystemToTableName(sink);
-                    return sink;
+                    return tableName;
                 }
                 return null;
             }

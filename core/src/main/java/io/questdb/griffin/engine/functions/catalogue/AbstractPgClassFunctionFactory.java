@@ -38,7 +38,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.TableUtils.convertSystemToTableName;
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 
@@ -127,6 +126,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.of(executionContext.getCairoEngine());
             cursor.toTop();
             return cursor;
         }
@@ -153,8 +153,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private final int plimit;
         private final int[] intValues = new int[28];
         private final long tempMem;
+        private CairoEngine engine;
         private long findFileStruct = 0;
         private int fixedRelPos = -1;
+        private String tableName;
 
         public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
@@ -220,6 +222,10 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             return false;
         }
 
+        public void of(CairoEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public void toTop() {
             findFileStruct = ff.findClose(findFileStruct);
@@ -239,6 +245,11 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 if (Files.isDir(pUtf8NameZ, type, sink)) {
                     path.trimTo(plimit);
                     if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
+                        tableName = engine.getTableNameBySystemName(sink);
+                        if (tableName == null) {
+                            continue;
+                        }
+
                         // open metadata file and read id
                         long fd = ff.openRO(path);
                         if (fd > -1) {
@@ -377,8 +388,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStr(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    convertSystemToTableName(sink);
-                    return sink;
+                    return tableName;
                 }
                 return null;
             }
@@ -396,8 +406,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public int getStrLen(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    convertSystemToTableName(sink);
-                    return sink.length();
+                    return engine.getTableNameBySystemName(sink).length();
                 }
                 return -1;
             }
@@ -406,8 +415,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             private CharSequence getName(StringSink sink) {
                 sink.clear();
                 if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    convertSystemToTableName(sink);
-                    return sink;
+                    return engine.getTableNameBySystemName(sink);
                 } else {
                     return null;
                 }
