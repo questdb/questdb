@@ -25,6 +25,7 @@ const allowedSubTypes = [
   "http",
   "conf",
   "ui",
+  "wal"
 ];
 
 const failMessage = `
