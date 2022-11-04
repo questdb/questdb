@@ -332,7 +332,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 entry.writeLock();
             }
 
-            if (!entry.isDistressed()) {
+            if (!entry.isDistressed() && !entry.isClosed()) {
                 return entry;
             } else {
                 if (lock == SequencerLockType.READ) {
