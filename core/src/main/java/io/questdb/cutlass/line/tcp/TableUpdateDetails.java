@@ -101,7 +101,6 @@ public class TableUpdateDetails implements Closeable {
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             this.localDetailsArray[i] = new ThreadLocalDetails(
-                    engine.getConfiguration(),
                     configuration,
                     netIoJobs[i].getUnusedSymbolCaches(),
                     writer.getMetadata().getColumnCount()
@@ -349,7 +348,6 @@ public class TableUpdateDetails implements Closeable {
         private TxReader txReader;
 
         ThreadLocalDetails(
-                CairoConfiguration configuration,
                 LineTcpReceiverConfiguration lineTcpReceiverConfiguration,
                 ObjList<SymbolCache> unusedSymbolCaches,
                 int columnCount
