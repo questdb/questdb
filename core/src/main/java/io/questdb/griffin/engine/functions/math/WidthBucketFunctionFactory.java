@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.math;
 
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -32,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.QuarternaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class WidthBucketFunctionFactory implements FunctionFactory {
@@ -41,12 +44,13 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-        private final Function operandFunc;
+        private final Function operand_func;
         private final Function low_func;
         private final Function high_func;
         private final Function count_func;
@@ -79,11 +83,23 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        @Nullable
         public int getInt(Record rec) {
             double operand = operand_func.getDouble(rec);
             double low = low_func.getDouble(rec);
             double high = high_func.getDouble(rec);
             int count = count_func.getInt(rec);
+
+            if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN || !(count > 0) || (low == high)) {
+                return Numbers.INT_NaN;
+            }
+
+            if (low > high) { // Swap low and high
+                double tmp = low;
+                low = high;
+                high = tmp;
+            }
+
             if (operand < low) {
                 return 0;
             } else if (operand > high) {
