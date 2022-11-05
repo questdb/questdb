@@ -1834,14 +1834,9 @@ class SqlOptimiser {
     private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) {
         // at this point order by should be on the nested model of this model :)
         QueryModel unionModel = model.getUnionModel();
-        QueryModel parent = model;
-        while (unionModel != null) {
-            parent.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
-
-            parent = unionModel;
-            unionModel = unionModel.getUnionModel();
+        if (unionModel != null) {
+            model.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
         }
-
 
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
