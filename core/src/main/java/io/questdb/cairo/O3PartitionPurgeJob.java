@@ -36,7 +36,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
