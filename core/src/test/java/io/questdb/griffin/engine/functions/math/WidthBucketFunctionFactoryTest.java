@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.std.Numbers;
+
 import org.junit.Test;
 
 public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -60,6 +62,16 @@ public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest 
     public void testAboveRange() throws SqlException {
         call(108.233, 53.169, 91.209, 8).andAssert(9);
     }
+
+	@Test
+	public void testNullInt() throws SqlException {
+		call(108.233, 53.169, 91.209, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+	}
+
+	@Test
+	public void testNullDouble() throws SqlException {
+		call(108.233, Double.NaN, 91.209, 8).andAssert(Numbers.INT_NaN);
+	}
 
     @Override
     protected FunctionFactory getFunctionFactory() {
