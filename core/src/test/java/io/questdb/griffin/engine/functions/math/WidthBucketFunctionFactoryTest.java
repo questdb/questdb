@@ -74,17 +74,17 @@ public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest 
 	}
 
 	@Test
-	public void testEqualLimitEqual() throws SqlException {
+	public void testEqualRangeEqual() throws SqlException {
 		call(108.233, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
 	}
 
 	@Test
-	public void testEqualLimitLow() throws SqlException {
+	public void testEqualRangeLow() throws SqlException {
 		call(53.245, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
 	}
 
 	@Test
-	public void testEqualLimitHigh() throws SqlException {
+	public void testEqualRangeHigh() throws SqlException {
 		call(245.357, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
 	}
 
