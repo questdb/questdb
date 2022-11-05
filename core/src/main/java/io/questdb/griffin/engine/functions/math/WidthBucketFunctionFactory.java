@@ -94,12 +94,6 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NaN;
             }
 
-            if (low > high) { // Swap low and high
-                double tmp = low;
-                low = high;
-                high = tmp;
-            }
-
             if (operand < low) {
                 return 0;
             } else if (operand > high) {
