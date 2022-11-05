@@ -148,7 +148,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
-    //protected abstract boolean isSupportedTable(RecordMetadata metadata);
     private void lock(FilesFacade ff) {
         try {
             path.trimTo(rootLen);
@@ -265,10 +264,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             long partitionSize
     ) {
-        boolean isIndexed=false;
+        boolean isIndexed = false;
         tempStringSink.clear();
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
-
 
         if (columnIndex == REBUILD_ALL_COLUMNS) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -285,6 +283,10 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                     );
                 }
             }
+            //To validate if the table has any index or not
+            if (isIndexed) {
+                throw CairoException.nonCritical().put(unsupportedTableMessage);
+            }
         } else {
             if (isSupportedColumn(metadata, columnIndex)) {
                 reindexColumn(
@@ -300,11 +302,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 throw CairoException.nonCritical().put(unsupportedColumnMessage);
             }
         }
-        //To validate if the table has any index or not
-        if(isIndexed) {
-            throw CairoException.nonCritical().put(unsupportedTableMessage);
-        }
-
     }
 
     private void reindexPartition(
