@@ -25,12 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
-
 
 import static io.questdb.cairo.TableUtils.dFile;
 
@@ -64,26 +66,28 @@ public class DropIndexOperator extends PurgingOperator {
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                 long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1L);
 
-                // bump up column version, metadata will be updated later
-                tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
-                final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                if (columnTop != -1L) {
+                    // bump up column version, metadata will be updated later
+                    tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
+                    final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
-                // create hard link to column data
-                // src
-                partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
-                // hard link
-                partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
-                if (-1 == ff.hardLink(path, other)) {
-                    throw CairoException.instance(ff.errno())
-                            .put("cannot hardLink [src=").put(path)
-                            .put(", hardLink=").put(other)
-                            .put(']');
+                    // create hard link to column data
+                    // src
+                    partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
+                    // hard link
+                    partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
+                    if (-1 == ff.hardLink(path, other)) {
+                        throw CairoException.instance(ff.errno())
+                                .put("cannot hardLink [src=").put(path)
+                                .put(", hardLink=").put(other)
+                                .put(']');
+                    }
+
+                    // add to cleanup tasks, the index will be removed in due time
+                    updateColumnIndexes.add(columnIndex);
+                    cleanupColumnVersions.add(columnIndex, columnVersion, pTimestamp, pVersion);
+                    rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
                 }
-
-                // add to cleanup tasks, the index will be removed in due time
-                updateColumnIndexes.add(columnIndex);
-                cleanupColumnVersions.add(columnIndex, columnVersion, pTimestamp, pVersion);
-                rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
             }
         } catch (Throwable th) {
             LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
