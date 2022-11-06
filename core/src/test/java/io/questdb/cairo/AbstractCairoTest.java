@@ -607,6 +607,7 @@ public abstract class AbstractCairoTest {
                 code.run();
                 engine.releaseInactive();
                 engine.releaseInactiveCompilers();
+                engine.releaseInactiveTableSequencers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {

@@ -69,9 +69,9 @@ public class TableTransactionLog implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(txnMem);
-        Misc.free(txnMetaMem);
-        Misc.free(txnMetaMemIndex);
+        txnMem.close(false);
+        txnMetaMem.close(false);
+        txnMetaMemIndex.close(false);
     }
 
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {

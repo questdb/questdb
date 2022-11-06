@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -84,11 +85,13 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public void close() {
-        schemaLock.writeLock().lock();
-        try {
-            closeLocked();
-        } finally {
-            schemaLock.writeLock().unlock();
+        if (!closed) {
+            schemaLock.writeLock().lock();
+            try {
+                closeLocked();
+            } finally {
+                schemaLock.writeLock().unlock();
+            }
         }
     }
 
@@ -290,6 +293,7 @@ public class TableSequencerImpl implements TableSequencer {
             Misc.free(tableTransactionLog);
             Misc.free(walIdGenerator);
             Misc.free(path);
+            Unsafe.getUnsafe().fullFence();
         }
     }
 
