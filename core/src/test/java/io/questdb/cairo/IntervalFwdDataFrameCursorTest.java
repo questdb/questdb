@@ -397,8 +397,10 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
             }
             final TableReaderRecord record = new TableReaderRecord();
-            final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", -1, 0, new RuntimeIntervalModel(intervals), timestampIndex);
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC)) {
+            try (
+                    final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory("x", -1, 0, new RuntimeIntervalModel(intervals), timestampIndex);
+                    final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)
+            ) {
 
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -438,16 +440,16 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertFalse(cursor.reload());
                 }
-            }
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
-                writer.removeColumn("a");
-            }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    writer.removeColumn("a");
+                }
 
-            try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC);
-                Assert.fail();
-            } catch (ReaderOutOfDateException ignored) {
+                try {
+                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException ignored) {
+                }
             }
         });
     }

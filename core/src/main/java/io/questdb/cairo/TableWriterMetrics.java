@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.MetricsRegistry;
-import org.jetbrains.annotations.TestOnly;
 
 public class TableWriterMetrics {
 
@@ -55,9 +54,24 @@ public class TableWriterMetrics {
         physicallyWrittenRowCounter.add(rows);
     }
 
-    @TestOnly
-    public long committedRows() {
-        return committedRowCounter.get();
+    public long getCommitCount() {
+        return commitCounter.getValue();
+    }
+
+    public long getO3CommitCount() {
+        return o3CommitCounter.getValue();
+    }
+
+    public long getCommittedRows() {
+        return committedRowCounter.getValue();
+    }
+
+    public long getRollbackCount() {
+        return rollbackCounter.getValue();
+    }
+
+    public long getPhysicallyWrittenRows() {
+        return physicallyWrittenRowCounter.getValue();
     }
 
     public void incrementCommits() {
@@ -70,10 +84,5 @@ public class TableWriterMetrics {
 
     public void incrementRollbacks() {
         rollbackCounter.inc();
-    }
-
-    @TestOnly
-    public long physicallyWrittenRows() {
-        return physicallyWrittenRowCounter.get();
     }
 }

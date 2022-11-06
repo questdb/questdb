@@ -70,7 +70,7 @@ public class TelemetryTest extends AbstractCairoTest {
                     compiler.compile("drop table telemetry", sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table 'telemetry' does not exist");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=telemetry]");
                 }
             }
         });

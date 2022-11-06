@@ -355,3 +355,16 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo0
     }
     return -1;
 }
+
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_resolvePort
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct sockaddr_in resolved_addr;
+    memset(&resolved_addr, 0, sizeof(resolved_addr));
+    socklen_t resolved_addr_len = sizeof(resolved_addr);
+    if (getsockname(
+            fd,
+            (struct sockaddr *)&resolved_addr,
+            &resolved_addr_len) == -1)
+        return -1;
+    return ntohs(resolved_addr.sin_port);
+}

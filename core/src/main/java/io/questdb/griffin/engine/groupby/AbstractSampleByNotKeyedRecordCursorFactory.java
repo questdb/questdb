@@ -46,10 +46,15 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (baseCursor.hasNext()) {
-            return initFunctionsAndCursor(executionContext, baseCursor);
+        try {
+            if (baseCursor.hasNext()) {
+                return initFunctionsAndCursor(executionContext, baseCursor);
+            }
+            Misc.free(baseCursor);
+            return EmptyTableNoSizeRecordCursor.INSTANCE;
+        } catch (Throwable ex) {
+            Misc.free(baseCursor);
+            throw ex;
         }
-        Misc.free(baseCursor);
-        return EmptyTableNoSizeRecordCursor.INSTANCE;
     }
 }

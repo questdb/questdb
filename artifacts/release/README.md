@@ -24,7 +24,7 @@ Publishing release will create a git tag on the latest master.
 Compile using maven on Windows, Linux and FreeBSD and upload to GH release
 
 ```bash
-mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
+mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
 
 ## Release Docker image
@@ -70,6 +70,12 @@ https://questdb.slab.com/posts/how-to-release-a-new-aws-ami-w7rkjimy
 You need to SSH to the demo box. Either from your desktop, or AWS console via web browser:
 
 https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
+
+## Release helm chart
+
+This can be done from a unit env, Linux or OSX:
+
+https://questdb.slab.com/posts/publish-helm-charts-zq0s8kj7
 
 ## Update pom.xml to snapshot
 

@@ -26,7 +26,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB core</name>
-    <description>QuestDB is high performance SQL time series database</description>
+    <description>QuestDB a is high performance SQL time series database</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -35,10 +35,10 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <web.console.version>0.0.2</web.console.version>
+        <web.console.version>0.0.8</web.console.version>
     </properties>
 
-    <version>6.5</version>
+    <version>6.5.5-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -85,6 +85,7 @@
                 <version>3.8.1</version>
                 <configuration>
                     <compilerArgs>
+                        <arg>${compilerArg0}</arg>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
                     </compilerArgs>
@@ -204,28 +205,6 @@
                     </properties>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.2.0</version>
-                <executions>
-                    <execution>
-                        <id>attach-javadocs</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <additionalJOptions>
-                        <additionalJOption>${compilerArg1}</additionalJOption>
-                        <additionalJOption>${compilerArg2}</additionalJOption>
-                    </additionalJOptions>
-                    <sourceFileExcludes>
-                        <sourceFileExclude>${excludePattern1}</sourceFileExclude>
-                    </sourceFileExcludes>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
 
@@ -234,6 +213,29 @@
             <id>maven-central-release</id>
             <build>
                 <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <additionalJOptions>
+                                <additionalJOption>${compilerArg0}</additionalJOption>
+                                <additionalJOption>${compilerArg1}</additionalJOption>
+                                <additionalJOption>${compilerArg2}</additionalJOption>
+                            </additionalJOptions>
+                            <sourceFileExcludes>
+                                <sourceFileExclude>${excludePattern1}</sourceFileExclude>
+                            </sourceFileExcludes>
+                        </configuration>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-source-plugin</artifactId>
@@ -304,7 +306,7 @@
                                 <configuration>
                                     <url>https://registry.npmjs.org/@questdb/web-console/-/web-console-${web.console.version}.tgz</url>
                                     <outputFileName>web-console.tgz</outputFileName>
-                                    <outputDirectory>${project.build.outputDirectory}/site/</outputDirectory>
+                                    <outputDirectory>${project.build.directory}/site/</outputDirectory>
                                     <unpack>true</unpack>
                                 </configuration>
                             </execution>
@@ -523,6 +525,7 @@
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <compilerArg0>-XDignore.symbol.file</compilerArg0>
                 <excludePattern1>module-info.java</excludePattern1>
                 <excludeTestPattern1>module-info.java</excludeTestPattern1>
                 <javac.compile.source>1.8</javac.compile.source>
@@ -604,9 +607,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.hamcrest</groupId>
+            <artifactId>hamcrest-library</artifactId>
+            <version>1.3</version> <!-- should be kept in sync with junit's pom -->
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.3.3</version>
+            <version>42.4.1</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

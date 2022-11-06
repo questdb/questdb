@@ -31,7 +31,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getLimit() {
-        return 128;
+        return 64;
     }
 
     @Override

@@ -182,7 +182,7 @@ PhysicalSeedVIA:
         mov     eax, 1
         rep stosb
 %ELSE        
-        db 0F3H, 00FH, 0A7H, 0C0H      ; rep xstore instuction
+        db 0F3H, 00FH, 0A7H, 0C0H      ; rep xstore instruction
 %ENDIF
 T200:        
         test    esi, 1
@@ -197,7 +197,7 @@ T200:
         mov     eax, 1
         rep stosb
 %ELSE        
-        db 0F3H, 00FH, 0A7H, 0C0H      ; rep xstore instuction
+        db 0F3H, 00FH, 0A7H, 0C0H      ; rep xstore instruction
 %ENDIF
         pop     rax
         mov     [rbx], eax             ; store the last 4 bytes

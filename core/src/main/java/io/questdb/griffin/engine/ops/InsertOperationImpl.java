@@ -104,7 +104,7 @@ public class InsertOperationImpl implements InsertOperation {
         private TableWriter writer = null;
 
         @Override
-        public long execute() {
+        public long execute() throws SqlException {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
                 row.append(writer);

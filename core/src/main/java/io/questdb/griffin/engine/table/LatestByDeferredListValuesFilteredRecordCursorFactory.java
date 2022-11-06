@@ -96,7 +96,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     private void lookupDeferredSymbol(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // If symbol values are restricted by a list in the qyert by syntax
+        // If symbol values are restricted by a list in the query by syntax
         // sym in ('val1', 'val2', 'val3')
         // or similar we need to resolve string values into int symbol keys to search the table faster.
         // Resolve values to int keys and save them in cursor.getSymbolKeys() set.

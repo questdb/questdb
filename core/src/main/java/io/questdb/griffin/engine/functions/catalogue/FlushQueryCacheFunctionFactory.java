@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 
 public class FlushQueryCacheFunctionFactory implements FunctionFactory {
 
@@ -77,6 +78,7 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
                     LOG.error().$("cannot publish flush query cache event to a full queue").$();
                     return false;
                 }
+                Os.pause();
             }
         }
 

@@ -947,7 +947,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 try {
                     return new TestMicroClock(TimestampFormatUtils.parseTimestamp("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
-                    throw CairoException.instance(0).put("numeric");
+                    throw CairoException.critical(0).put("numeric");
                 }
             }
         };

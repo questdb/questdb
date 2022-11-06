@@ -1174,6 +1174,7 @@ class SqlOptimiser {
 
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
+        final CharSequence alias;
         if (index > -1) {
             // there is a possibility that column references join table, but in a different way
             // for example. main column could be tab1.y and the "missing" one just "y"
@@ -1189,7 +1190,7 @@ class SqlOptimiser {
                     final QueryModel jm = validatingModel.getJoinModels().getQuick(i);
                     if (jm.getAliasToColumnMap().keyIndex(node.token) < 0) {
                         if (found) {
-                            throw SqlException.ambiguousColumn(node.position);
+                            throw SqlException.ambiguousColumn(node.position, node.token);
                         }
                         if (jm.getAlias() != null) {
                             sink.put(jm.getAlias().token);
@@ -1212,16 +1213,25 @@ class SqlOptimiser {
             }
 
             // this is the first time we see this column and must create alias
-            CharSequence alias = createColumnAlias(node, translatingModel);
+            alias = createColumnAlias(node, translatingModel);
             QueryColumn column = queryColumnPool.next().of(alias, node);
             // add column to both models
             addColumnToTranslatingModel(column, translatingModel, validatingModel);
             if (innerModel != null) {
                 innerModel.addBottomUpColumn(column);
             }
-            return nextLiteral(alias, node.position);
+        } else {
+            // It might be the case that we previously added the column to
+            // the translating model, but not to the inner one.
+            alias = map.valueAtQuick(index);
+            if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
+                QueryColumn column = translatingModel.getAliasToColumnMap().get(alias);
+                assert column != null;
+                // but equally, column may already be referenced by translating model
+                innerModel.addBottomUpColumn(column, true);
+            }
         }
-        return nextLiteral(map.valueAtQuick(index), node.position);
+        return nextLiteral(alias, node.position);
     }
 
     private void doRewriteOrderByPositionForUnionModels(QueryModel model, QueryModel parent, QueryModel next) throws SqlException {
@@ -1824,14 +1834,9 @@ class SqlOptimiser {
     private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) {
         // at this point order by should be on the nested model of this model :)
         QueryModel unionModel = model.getUnionModel();
-        QueryModel parent = model;
-        while (unionModel != null) {
-            parent.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
-
-            parent = unionModel;
-            unionModel = unionModel.getUnionModel();
+        if (unionModel != null) {
+            model.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
         }
-
 
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
@@ -2090,8 +2095,7 @@ class SqlOptimiser {
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
-                throw SqlException.$(tableNamePosition, "" +
-                        "table does not exist [name=").put(tableName).put(']');
+                throw SqlException.$(tableNamePosition, "table does not exist [table=").put(tableName).put(']');
             }
         }
 
@@ -3327,17 +3331,6 @@ class SqlOptimiser {
             }
         }
 
-        if (sampleBy != null && baseModel.getTimestamp() != null && innerVirtualModel.getColumnNameToAliasMap().excludes(baseModel.getTimestamp().token)) {
-            createSelectColumn0(
-                    baseModel.getTimestamp().token,
-                    baseModel.getTimestamp(),
-                    baseModel,
-                    translatingModel,
-                    innerVirtualModel,
-                    analyticModel
-            );
-        }
-
         if (useInnerModel) {
             final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             useInnerModel = false;
@@ -3359,6 +3352,42 @@ class SqlOptimiser {
                 if (!column.getAst().token.equals(column.getAlias())) {
                     translationIsRedundant = false;
                     break;
+                }
+            }
+        }
+
+        if (sampleBy != null && baseModel.getTimestamp() != null) {
+            CharSequence timestamp = baseModel.getTimestamp().token;
+            // does model already select timestamp column?
+            if (innerVirtualModel.getColumnNameToAliasMap().excludes(timestamp)) {
+                // no, do we rename columns? does model select timestamp under a new name?
+                if (translationIsRedundant) {
+                    // columns were not renamed
+                    createSelectColumn0(
+                            baseModel.getTimestamp().token,
+                            baseModel.getTimestamp(),
+                            baseModel,
+                            translatingModel,
+                            innerVirtualModel,
+                            analyticModel
+                    );
+                } else {
+                    // columns were renamed,
+                    if (translatingModel.getColumnNameToAliasMap().excludes(timestamp)) {
+                        // make alias name
+                        CharacterStoreEntry e = characterStore.newEntry();
+                        e.put(baseModel.getName()).put('.').put(timestamp);
+                        if (translatingModel.getColumnNameToAliasMap().excludes(e.toImmutable())) {
+                            createSelectColumn0(
+                                    baseModel.getTimestamp().token,
+                                    baseModel.getTimestamp(),
+                                    baseModel,
+                                    translatingModel,
+                                    innerVirtualModel,
+                                    analyticModel
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -3560,35 +3589,35 @@ class SqlOptimiser {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
-    private int validateColumnAndGetModelIndex(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
+    private int validateColumnAndGetModelIndex(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
         if (dot == -1) {
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(column)) {
+                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(columnName)) {
                     continue;
                 }
 
                 if (index != -1) {
-                    throw SqlException.ambiguousColumn(position);
+                    throw SqlException.ambiguousColumn(position, columnName);
                 }
 
                 index = i;
             }
 
             if (index == -1) {
-                throw SqlException.invalidColumn(position, column);
+                throw SqlException.invalidColumn(position, columnName);
             }
 
         } else {
-            index = model.getModelAliasIndex(column, 0, dot);
+            index = model.getModelAliasIndex(columnName, 0, dot);
 
             if (index == -1) {
                 throw SqlException.$(position, "Invalid table name or alias");
             }
 
-            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(column, dot + 1, column.length())) {
-                throw SqlException.invalidColumn(position, column);
+            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnName, dot + 1, columnName.length())) {
+                throw SqlException.invalidColumn(position, columnName);
             }
 
         }

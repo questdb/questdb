@@ -29,8 +29,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,18 +44,17 @@ import org.jetbrains.annotations.NotNull;
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
-    private final Map dataMap;
-    private final VirtualFunctionSkewedSymbolRecordCursor cursor;
+    private final GroupByRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
 
     public GroupByRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             RecordMetadata groupByMetadata,
@@ -65,12 +64,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         super(groupByMetadata);
         // sink will be storing record columns to map key
         try {
-            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
-            this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions);
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            this.cursor = new GroupByRecordCursor(recordFunctions, updater, keyTypes, valueTypes, configuration);
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
             throw e;
@@ -80,28 +79,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         Misc.freeObjList(recordFunctions);
-        Misc.free(dataMap);
         Misc.free(base);
+        Misc.free(cursor);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        dataMap.clear();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
 
         try {
             Function.init(recordFunctions, baseCursor, executionContext);
-            final Record baseRecord = baseCursor.getRecord();
-            final int n = groupByFunctions.size();
-            while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                final MapKey key = dataMap.withKey();
-                mapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
-            }
-            cursor.of(baseCursor, dataMap.getCursor());
+            cursor.of(baseCursor, circuitBreaker);
             // init all record function for this cursor, in case functions require metadata and/or symbol tables
             return cursor;
         } catch (Throwable e) {
@@ -127,5 +116,59 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.attr("groupByFunctions").val(groupByFunctions);
         sink.attr("recordFunctions").val(recordFunctions);
         sink.child(base);
+    }
+
+    class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
+        private final Map dataMap;
+        private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        private boolean isOpen;
+
+        public GroupByRecordCursor(
+                ObjList<Function> functions,
+                GroupByFunctionsUpdater groupByFunctionsUpdater,
+                @Transient @NotNull ArrayColumnTypes keyTypes,
+                @Transient @NotNull ArrayColumnTypes valueTypes,
+                CairoConfiguration configuration
+        ) {
+            super(functions);
+            this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
+            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+            this.isOpen = true;
+        }
+
+        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    dataMap.reopen();
+                }
+                final Record baseRecord = baseCursor.getRecord();
+                while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final MapKey key = dataMap.withKey();
+                    mapSink.copy(baseRecord, key);
+                    MapValue value = key.createValue();
+                    if (value.isNew()) {
+                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    } else {
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    }
+                }
+                super.of(baseCursor, dataMap.getCursor());
+            } catch (Throwable e) {
+                close();
+                throw e;
+            }
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(dataMap);
+                Misc.clearObjList(groupByFunctions);
+                super.close();
+            }
+        }
     }
 }

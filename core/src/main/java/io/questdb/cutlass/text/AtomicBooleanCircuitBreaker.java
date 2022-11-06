@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.ShutdownFlag;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -38,7 +37,7 @@ public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
     }
 
     public boolean isCanceled() {
-        return canceledFlag.get() || ShutdownFlag.INSTANCE.isShutdown();
+        return canceledFlag.get();
     }
 
     public void reset() {

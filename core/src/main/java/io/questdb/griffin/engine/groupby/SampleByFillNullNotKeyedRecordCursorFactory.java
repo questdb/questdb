@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
@@ -40,6 +37,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     private final SampleByFillValueNotKeyedRecordCursor cursor;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             RecordMetadata groupByMetadata,
@@ -57,8 +55,10 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
+            final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     groupByFunctions,
+                    groupByFunctionsUpdater,
                     recordFunctions,
                     SampleByFillNullRecordCursorFactory.createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     peeker,

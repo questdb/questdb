@@ -37,6 +37,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.Matchers;
 import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -104,8 +106,13 @@ public class SecurityTest extends AbstractGriffinTest {
                 int nCalls = nCheckInterruptedCalls.incrementAndGet();
                 long max = circuitBreakerCallLimit;
                 if (nCalls > max || MicrosecondClockImpl.INSTANCE.getTicks() > deadline) {
-                    throw CairoException.instance(0).put("Interrupting SQL processing, max calls is ").put(max);
+                    throw CairoException.critical(0).put("Interrupting SQL processing, max calls is ").put(max);
                 }
+            }
+
+            @Override
+            public void statefulThrowExceptionIfTrippedNoThrottle() {
+                statefulThrowExceptionIfTripped();
             }
 
             @Override
@@ -136,6 +143,16 @@ public class SecurityTest extends AbstractGriffinTest {
             public long getFd() {
                 return -1;
             }
+
+            @Override
+            public void unsetTimer() {
+
+            }
+
+            @Override
+            public boolean isTimerSet() {
+                return false;
+            }
         };
 
         readOnlyExecutionContext = new SqlExecutionContextImpl(memoryRestrictedEngine, 1)
@@ -155,6 +172,14 @@ public class SecurityTest extends AbstractGriffinTest {
         AbstractGriffinTest.tearDownStatic();
         Misc.free(memoryRestrictedCompiler);
         Misc.free(memoryRestrictedEngine);
+    }
+
+    @After
+    public void tearDown() {
+        //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
+        memoryRestrictedEngine.getTableIdGenerator().close();
+        memoryRestrictedEngine.clear();
+        super.tearDown();
     }
 
     @Test
@@ -632,7 +657,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                MatcherAssert.assertThat(ex.toString(), Matchers.containsString("limit of 2 resizes exceeded"));
             }
         });
     }
@@ -779,7 +804,7 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMemoryRstrictionsWithFullFatOuterJoin() throws Exception {
+    public void testMemoryRestrictionsWithFullFatOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             compiler.compile("create table tb1 as (select" +
@@ -884,11 +909,11 @@ public class SecurityTest extends AbstractGriffinTest {
                 nCheckInterruptedCalls.set(0);
                 code.run();
                 engine.releaseInactive();
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals("engine's busy writer count", 0, engine.getBusyWriterCount());
+                Assert.assertEquals("engine's busy reader count", 0, engine.getBusyReaderCount());
                 memoryRestrictedEngine.releaseInactive();
-                Assert.assertEquals(0, memoryRestrictedEngine.getBusyWriterCount());
-                Assert.assertEquals(0, memoryRestrictedEngine.getBusyReaderCount());
+                Assert.assertEquals("restricted engine's busy writer count", 0, memoryRestrictedEngine.getBusyWriterCount());
+                Assert.assertEquals("restricted engine's busy reader count", 0, memoryRestrictedEngine.getBusyReaderCount());
             } finally {
                 engine.clear();
                 memoryRestrictedEngine.clear();

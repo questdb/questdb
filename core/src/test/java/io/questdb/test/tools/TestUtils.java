@@ -25,7 +25,6 @@
 package io.questdb.test.tools;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -33,7 +32,6 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -48,14 +46,18 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
+import static org.hamcrest.Matchers.*;
+
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.Arrays;
+import java.sql.Timestamp;
+import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -67,7 +69,6 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -90,17 +91,17 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
-        long rc = connectAddrInfo(fd, sockAddrInfo);
-        if (rc != 0) {
-            Assert.fail("could not connect, errno=" + Os.errno());
-        }
-    }
-
     public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
+        }
+    }
+
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
@@ -594,21 +595,11 @@ public final class TestUtils {
     }
 
     public static void copyDirectory(Path src, Path dst, int dirMode) {
-        if (Files.mkdir(dst, dirMode) != 0) {
+        if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
-
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        final int srcLen = src.length();
-        final int dstLen = dst.length();
-        ff.walk(
-                src, (pUtf8NameZ, type) -> {
-                    src.concat(pUtf8NameZ).$();
-                    dst.trimTo(dstLen).concat(src.address() + srcLen).$();
-                    ff.mkdirs(dst, dirMode);
-                    ff.copy(src, dst);
-                }
-        );
+        Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
@@ -632,8 +623,17 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+            int partitionCount
+    ) throws NumericException, SqlException {
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
@@ -645,9 +645,27 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        compiler.compile(
+                createPopulateTableStmt(
+                        tableName,
+                        tableModel,
+                        totalRows,
+                        startDate,
+                        partitionCount
+                ),
+                sqlExecutionContext
+        );
+    }
 
-        long increment = 0;
+    public static String createPopulateTableStmt(
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
             assert partitionAddMethod != null;
@@ -722,7 +740,7 @@ public final class TestUtils {
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
-        compiler.compile(sql.toString(), sqlExecutionContext);
+        return sql.toString();
     }
 
     public static void createTestPath(CharSequence root) {
@@ -734,11 +752,27 @@ public final class TestUtils {
         }
     }
 
+    public static Timestamp createTimestamp(long epochMicros) {
+        // constructor requires epoch millis
+        Timestamp ts = new Timestamp(epochMicros / 1000);
+        ts.setNanos((int) ((epochMicros % 1_000_000) * 1000));
+        return ts;
+    }
+
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
             CairoConfiguration configuration,
-            Metrics metrics
+            Metrics metrics,
+            Log log
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
@@ -748,9 +782,8 @@ public final class TestUtils {
         ) {
             try {
                 if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine, null, null);
-                    pool.start(LOG);
+                    setupWorkerPool(pool, engine);
+                    pool.start(log);
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
@@ -764,12 +797,17 @@ public final class TestUtils {
         }
     }
 
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Log log
     ) throws Exception {
-        execute(pool, runner, configuration, Metrics.disabled());
+        execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
     @NotNull
@@ -777,6 +815,24 @@ public final class TestUtils {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
         return new Rnd(s0, s1);
+    }
+
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        return new Rnd(s0, s1);
+    }
+
+    public static String getCsvRoot() {
+        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
+        try {
+            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
+            return new File(rootSource.toURI()).getParent();
+        } catch (URISyntaxException e) {
+            throw new AssertionError("missing test-import.csv", e);
+        }
     }
 
     public static int getJavaVersion() {
@@ -819,12 +875,6 @@ public final class TestUtils {
         };
     }
 
-    public static int[] getWorkerAffinity(int workerCount) {
-        int[] res = new int[workerCount];
-        Arrays.fill(res, -1);
-        return res;
-    }
-
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
         Assert.assertNotNull(compiledQuery.getInsertOperation());
@@ -833,6 +883,71 @@ public final class TestUtils {
             insertMethod.execute();
             insertMethod.commit();
         }
+    }
+
+    public static String insertFromSelectPopulateTableStmt(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+
+        StringBuilder insertFromSelect = new StringBuilder();
+        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                case ColumnType.INT:
+                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    insertFromSelect.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    insertFromSelect.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    insertFromSelect.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    insertFromSelect.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    insertFromSelect.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    insertFromSelect.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    insertFromSelect.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    insertFromSelect.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    insertFromSelect.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                insertFromSelect.append("," + Misc.EOL);
+            }
+        }
+        insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
+        insertFromSelect.append(")" + Misc.EOL);
+        return insertFromSelect.toString();
     }
 
     public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
@@ -902,6 +1017,14 @@ public final class TestUtils {
             case ColumnType.LONG256:
                 r.getLong256(i, sink);
                 break;
+            case ColumnType.LONG128:
+                long long128Hi = r.getLong128Hi(i);
+                long long128Lo = r.getLong128Lo(i);
+                if (!Long128Util.isNull(long128Hi, long128Lo)) {
+                    UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
+                break;
             default:
                 break;
         }
@@ -961,7 +1084,36 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+    }
+
+    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
+        WorkerPoolConfiguration config = new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[1];
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+        };
+        WorkerPool pool = new WorkerPool(config, Metrics.disabled().health());
+        TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null);
+        try {
+            pool.assign(processingJob);
+            pool.freeOnExit(processingJob);
+            pool.start(null);
+            task.run();
+        } finally {
+            pool.halt();
+        }
     }
 
     public static long toMemory(CharSequence sequence) {
@@ -975,6 +1127,17 @@ public final class TestUtils {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
         }
+    }
+
+    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
     }
 
     private static void putGeoHash(long hash, int bits, CharSink sink) {
@@ -1024,55 +1187,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
-        }
-    }
-
-    public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
-        WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return new int[1];
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-
-            @Override
-            public boolean isEnabled() {
-                return true;
-            }
-        };
-        WorkerPool pool = new WorkerPool(config, Metrics.disabled());
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            pool.assign(processingJob);
-            pool.start(null);
-            task.run();
-        } finally {
-            pool.halt();
-        }
-    }
-
-    public static String getCsvRoot() {
-        URL rootSource = TestUtils.class.getResource("/csv/test-import.csv");
-        try {
-            assert rootSource != null : "huh, somebody deleted from test-import.csv?";
-            return new File(rootSource.toURI()).getParent();
-        } catch (URISyntaxException e) {
-            throw new AssertionError("missing test-import.csv", e);
-        }
     }
 }

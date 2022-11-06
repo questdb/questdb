@@ -25,11 +25,15 @@
 package io.questdb.mp;
 
 public interface WorkerPoolConfiguration {
-    int[] getWorkerAffinity();
+    default int[] getWorkerAffinity() {
+        return null;
+    }
 
     int getWorkerCount();
 
-    boolean haltOnError();
+    default boolean haltOnError() {
+        return false;
+    }
 
     default boolean isDaemonPool() {
         return false;
@@ -49,5 +53,9 @@ public interface WorkerPoolConfiguration {
 
     default long getSleepTimeout() {
         return 100;
+    }
+
+    default boolean isEnabled() {
+        return true;
     }
 }

@@ -89,4 +89,38 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 true
         );
     }
+
+    @Test
+    public void testMaxDateOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "min\n" +
+                        "\n",
+                "select min(f) from tab",
+                "create table tab as (select cast(null as date) f from long_sequence(33))",
+                null,
+                "insert into tab select 9223372036854775807L from long_sequence(1)",
+                "min\n" +
+                        "292278994-08-17T07:12:55.807Z\n",
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testKeyedMaxDateOrNullThenMaxLong() throws Exception {
+        assertQuery(
+                "i\tmin\n" +
+                        "1\t\n",
+                "select i, min(f) from tab",
+                "create table tab as (select cast(1 as int) i, cast(null as date) f from long_sequence(33))",
+                null,
+                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
+                "i\tmin\n" +
+                        "1\t292278994-08-17T07:12:55.807Z\n",
+                true,
+                true,
+                true
+        );
+    }
 }

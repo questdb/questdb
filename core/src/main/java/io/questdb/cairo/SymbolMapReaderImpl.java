@@ -131,14 +131,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             offsetFileName(path.trimTo(plen), columnName, columnNameTxn);
             if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
-                throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
             long len = ff.length(path);
             if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-                throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
+                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
 
             // open "offset" memory and make sure we start appending from where
@@ -230,15 +230,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence cachedValue(int key) {
-        String symbol = cache.getQuiet(key);
+        final String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
     }
 
     private CharSequence fetchAndCache(int key) {
-        String symbol;
-        CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        final CharSequence cs = uncachedValue(key);
         assert cs != null;
-        cache.extendAndSet(key, symbol = Chars.toString(cs));
+        final String symbol = Chars.toString(cs);
+        cache.extendAndSet(key, symbol);
         return symbol;
     }
 

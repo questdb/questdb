@@ -204,6 +204,13 @@ final public class Dates {
         return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
     }
 
+    public static int getDayOfYear(long millis) {
+        int year = getYear(millis);
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMillis(year, leap);
+        return (int)((millis - yearStart) / DAY_MILLIS) + 1;
+    }
+
     public static int getDayOfWeek(long millis) {
         // 1970-01-01 is Thursday.
         long d;
@@ -230,6 +237,16 @@ final public class Dates {
             }
         }
         return 1 + (int) ((d + 4) % 7);
+    }
+
+    public static int getWeekOfYear(long millis) {
+        return getDayOfYear(millis) / 7 + 1;
+    }
+
+    public static int getWeekOfMonth(long millis) {
+        int year = getYear(millis);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(millis, year, getMonthOfYear(millis, year, leap), leap) / 7 + 1;
     }
 
     public static long getDaysBetween(long a, long b) {

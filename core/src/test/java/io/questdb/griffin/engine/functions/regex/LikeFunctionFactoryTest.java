@@ -38,7 +38,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testEmptyLikeString() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -63,7 +62,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -118,7 +116,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -145,7 +142,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtStart() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -170,7 +166,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringPercentageAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -195,7 +190,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringUnderscoreAndPercentage() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -220,7 +214,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testLikeStringUnderscoreAtStartAndEnd() throws Exception {
         assertMemoryLeak(() -> {
-
             String sql = "create table x as (\n" +
                     "select cast('ABCGE' as string) as name from long_sequence(1)\n" +
                     "union\n" +
@@ -244,10 +237,7 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
-
         assertMemoryLeak(() -> {
-
-
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select * from x where not name like 'H'", sqlExecutionContext).getRecordCursorFactory()) {
@@ -263,8 +253,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
-
-
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
 
             try (RecordCursorFactory factory = compiler.compile("select * from x where not name like 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
@@ -278,14 +266,15 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNull() throws Exception {
+    public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
             try {
-                compiler.compile("select * from x where name like null", sqlExecutionContext);
+                compiler.compile("select * from x where name like rnd_str('foo','bar')", sqlExecutionContext);
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(32, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL input not supported for like");
+                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
             }
         });
     }

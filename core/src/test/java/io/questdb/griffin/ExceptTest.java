@@ -95,7 +95,7 @@ public class ExceptTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-
+            snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true, true, true);
             }
@@ -125,6 +125,7 @@ public class ExceptTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select * from x except y", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, true, true, false);
             }
@@ -154,6 +155,7 @@ public class ExceptTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true, true, true);
             }
@@ -176,6 +178,7 @@ public class ExceptTest extends AbstractGriffinTest {
                     sqlExecutionContext
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x except y except z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, true, true, false);
             }

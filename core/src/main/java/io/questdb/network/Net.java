@@ -226,6 +226,8 @@ public final class Net {
 
     public static native int recvmmsg(long fd, long msgvec, int vlen);
 
+    public native static int resolvePort(long fd);
+
     public static native int send(long fd, long ptr, int len);
 
     public native static int sendTo(long fd, long ptr, int len, long sockaddr);

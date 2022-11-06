@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -188,6 +186,9 @@ public class GroupByUtils {
                         case ColumnType.GEOLONG:
                             fun = GeoLongColumn.newInstance(keyColumnIndex - 1, type);
                             break;
+                        case ColumnType.LONG128:
+                            fun = Long128Column.newInstance(keyColumnIndex - 1);
+                            break;
                         default:
                             fun = BinColumn.newInstance(keyColumnIndex - 1);
                             break;
@@ -254,24 +255,6 @@ public class GroupByUtils {
     public static void toTop(ObjList<? extends Function> args) {
         for (int i = 0, n = args.size(); i < n; i++) {
             args.getQuick(i).toTop();
-        }
-    }
-
-    public static void updateExisting(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeNext(value, record);
-        }
-    }
-
-    public static void updateNew(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).computeFirst(value, record);
-        }
-    }
-
-    public static void updateEmpty(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value) {
-        for (int i = 0; i < n; i++) {
-            groupByFunctions.getQuick(i).setEmpty(value);
         }
     }
 
@@ -352,21 +335,11 @@ public class GroupByUtils {
                     break;
                 default:
                     throw SqlException.$(key.position, "unsupported type of expression");
-
             }
         }
 
-
         if (explicitKeyColumnCount < inferredKeyColumnCount) {
             throw SqlException.$(model.getModelPosition(), "not enough columns in group by");
-        }
-    }
-
-    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
-        if (value.isNew()) {
-            updateNew(groupByFunctions, n, value, record);
-        } else {
-            updateExisting(groupByFunctions, n, value, record);
         }
     }
 }

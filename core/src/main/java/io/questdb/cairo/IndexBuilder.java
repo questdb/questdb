@@ -146,7 +146,7 @@ public class IndexBuilder extends RebuildColumnBase {
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$("could not create index [name=").utf8(path).$(']').$();
-                throw CairoException.instance(ff.errno()).put("could not create index [name=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
             LOG.info().$("writing ").utf8(path).$();
         } finally {
@@ -161,7 +161,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 // This is fine, index can be corrupt, rewriting is what we try to do here
                 LOG.info().$("index file did not exist, file will be re-written [path=").utf8(path).I$();
             } else {
-                throw CairoException.instance(ff.errno()).put("cannot remove index file");
+                throw CairoException.critical(ff.errno()).put("cannot remove index file");
             }
         }
     }

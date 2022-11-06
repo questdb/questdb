@@ -210,11 +210,10 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
 
                     Assert.assertEquals(ALTER, compile("alter table x drop partition where timestamp > 0 ", sqlExecutionContext).getType());
 
-                    String expectedAfterDrop = "count\n" +
-                            "0\n";
-
-                    assertPartitionResult(expectedAfterDrop, "2018");
-                    assertPartitionResult(expectedAfterDrop, "2020");
+                    String zeroCount = "count\n0\n";
+                    for (int i = 2018; i < 2025; i++) {
+                        assertPartitionResult(zeroCount, String.valueOf(i));
+                    }
                 }
         );
     }
@@ -313,10 +312,10 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-            createX("DAY", 720000000);
+                    createX("DAY", 720000000);
 
-            String expectedBeforeDrop = "count\n" +
-                    "120\n";
+                    String expectedBeforeDrop = "count\n" +
+                            "120\n";
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");

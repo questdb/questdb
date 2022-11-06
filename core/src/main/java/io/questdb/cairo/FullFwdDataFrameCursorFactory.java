@@ -26,20 +26,21 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
     private FullBwdDataFrameCursor bwdCursor;
 
-    public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
-        super(engine, tableName, tableId, tableVersion);
+    public FullFwdDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
+        super(tableName, tableId, tableVersion);
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (order == ORDER_ASC || order == ORDER_ANY) {
-            return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+            return cursor.of(getReader(executionContext));
         }
 
         // Create backward scanning cursor when needed. Factory requesting backward cursor must
@@ -47,7 +48,7 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
         if (bwdCursor == null) {
             bwdCursor = new FullBwdDataFrameCursor();
         }
-        return bwdCursor.of(getReader(executionContext.getCairoSecurityContext()));
+        return bwdCursor.of(getReader(executionContext));
     }
 
     @Override

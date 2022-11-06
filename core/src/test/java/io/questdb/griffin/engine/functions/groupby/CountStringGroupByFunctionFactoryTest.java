@@ -77,6 +77,58 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t0\n" +
+                        "b\t0\n" +
+                        "c\t0\n",
+                "select a, count_distinct(cast(null as STRING)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t1\n" +
+                        "b\t1\n" +
+                        "c\t1\n",
+                "select a, count_distinct('42') from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExpression() throws Exception {
+        final String expected = "a\tcount_distinct\n" +
+                "a\t3\n" +
+                "b\t3\n" +
+                "c\t3\n";
+        assertQuery(
+                expected,
+                "select a, count_distinct(concat(s, s)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+        // self-concatenation shouldn't affect the number of distinct values,
+        // so the result should stay the same
+        assertSql("select a, count_distinct(s) from x", expected);
+    }
+
+    @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
                 "ts\tcount_distinct\n" +

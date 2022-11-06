@@ -72,7 +72,7 @@ struct long_3x {
 #if RADIX_SHUFFLE == 0
 
 template<uint16_t sh, typename T>
-inline void radix_shuffle(uint64_t *counts, T *src, T *dest, uint64_t size) {
+inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, uint64_t size) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size; x++) {
         const auto digit = (src[x] >> sh) & 0xffu;

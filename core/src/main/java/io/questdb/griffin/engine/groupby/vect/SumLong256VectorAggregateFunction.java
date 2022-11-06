@@ -117,8 +117,8 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
     }
 
     @Override

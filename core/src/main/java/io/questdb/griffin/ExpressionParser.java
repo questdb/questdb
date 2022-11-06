@@ -146,7 +146,7 @@ class ExpressionParser {
     }
 
     private boolean isTypeQualifier() {
-        return opStack.size() >= 2 && SqlKeywords.isColonColonKeyword(opStack.peek(1).token);
+        return opStack.size() >= 2 && SqlKeywords.isColonColon(opStack.peek(1).token);
     }
 
     private int onNode(ExpressionParserListener listener, ExpressionNode node, int argStackDepth) throws SqlException {

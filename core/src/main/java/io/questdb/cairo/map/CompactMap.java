@@ -92,7 +92,7 @@ import org.jetbrains.annotations.TestOnly;
  * entry will be stored in bucket, which can be computed directly from
  * this hash code.
  */
-public class CompactMap implements Map {
+public class CompactMap implements Map, Reopenable {
     public static final byte BITS_DIRECT_HIT = (byte) 0b10000000;
     public static final byte BITS_DISTANCE = 0b01111111;
     public static final int jumpDistancesLen = 126;
@@ -130,7 +130,7 @@ public class CompactMap implements Map {
     private final long entryKeyOffset;
     private final int valueColumnCount;
     private final CompactMapRecord record;
-    private final int nResizes;
+    private int nResizes;
     private final int maxResizes;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
@@ -158,11 +158,11 @@ public class CompactMap implements Map {
             this.value = new CompactMapValue(entries, columnOffsets);
             this.record = new CompactMapRecord(entries, columnOffsets, value);
             this.cursor = new CompactMapCursor(record);
-            nResizes = 0;
+            this.nResizes = 0;
             this.maxResizes = maxResizes;
         } catch (Throwable e) {
             Misc.free(this.entries);
-            Misc.free(entrySlots);
+            Misc.free(this.entrySlots);
             throw e;
         }
     }
@@ -174,6 +174,7 @@ public class CompactMap implements Map {
         currentEntryOffset = 0;
         currentEntrySize = 0;
         size = 0;
+        nResizes = 0;
     }
 
     @Override
@@ -191,6 +192,11 @@ public class CompactMap implements Map {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @Override
+    public void reopen() {
+        clear();
     }
 
     @Override
@@ -268,8 +274,11 @@ public class CompactMap implements Map {
                 case ColumnType.LONG256:
                     sz = Long256.BYTES;
                     break;
+                case ColumnType.LONG128:
+                    sz = 2 * Long.BYTES;
+                    break;
                 default:
-                    throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+                    throw CairoException.critical(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
             }
             columnOffsets[startPosition + i] = o;
             o += sz;
@@ -474,6 +483,11 @@ public class CompactMap implements Map {
         }
 
         @Override
+        public void putLong128LittleEndian(long hi, long lo) {
+            entries.putLong128LittleEndian(hi, lo);
+        }
+
+        @Override
         public void putShort(short value) {
             entries.putShort(value);
         }
@@ -638,6 +652,7 @@ public class CompactMap implements Map {
 
         private void grow() {
             if (nResizes < maxResizes) {
+                nResizes++;
                 // resize offsets virtual memory
                 long appendPosition = entries.getAppendOffset();
                 try {

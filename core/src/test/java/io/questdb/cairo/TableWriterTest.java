@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -60,100 +61,6 @@ public class TableWriterTest extends AbstractCairoTest {
     public static final String PRODUCT = "product";
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
-
-    @Test
-    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
-        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
-        assertMemoryLeak(() -> {
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            AtomicInteger columnsAdded = new AtomicInteger();
-            AtomicInteger insertCount = new AtomicInteger();
-            int totalColAddCount = 1000;
-            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
-            int tableId = 11;
-
-            String tableName = "testAddColumnConcurrentWithDataUpdates";
-            try (Path path = new Path()) {
-                try (
-                        MemoryMARW mem = Vm.getCMARWInstance();
-                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                ) {
-                    model.timestamp();
-                    TableUtils.createTable(
-                            configuration,
-                            mem,
-                            path,
-                            model,
-                            tableId
-                    );
-                }
-            }
-
-            // Write data in a loop getting writer in and out of pool
-            Thread writeDataThread = new Thread(() -> {
-                    TestUtils.await(barrier);
-                    int i = 0;
-                    while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
-                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
-                            TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
-                            row.append();
-                            writer.commit();
-                            insertCount.incrementAndGet();
-                        } catch (EntryUnavailableException ex) {
-                            // continue
-                        } catch (Throwable e) {
-                            exceptions.add(e);
-                            LOG.error().$(e).$();
-                            throw e;
-                        }
-                    }
-            });
-
-            Thread addColumnsThread = new Thread(() -> {
-                try {
-                    TestUtils.await(barrier);
-                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
-                    for (int i = 0; i < totalColAddCount; i++) {
-                        alterOperationBuilder.clear();
-                        String columnName = "col" + i;
-                        alterOperationBuilder
-                                .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
-                        AlterOperation alterOperation = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
-                            if (writer != null) {
-                                writer.publishAsyncWriterCommand(alterOperation);
-                            }
-                        }
-                        columnsAdded.incrementAndGet();
-                    }
-                } catch (Throwable e) {
-                    exceptions.add(e);
-                    LOG.error().$(e).$();
-                    throw e;
-                }
-            });
-            writeDataThread.start();
-            addColumnsThread.start();
-
-            writeDataThread.join();
-            addColumnsThread.join();
-
-            if (exceptions.size() != 0) {
-                for (Throwable ex : exceptions) {
-                    ex.printStackTrace();
-                }
-                Assert.fail();
-            }
-            Assert.assertTrue(insertCount.get() > 0);
-
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
-            }
-
-            LOG.infoW().$("total reload count ").$(insertCount.get()).$();
-        });
-    }
 
     @Test
     public void tesFrequentCommit() throws Exception {
@@ -273,6 +180,100 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
             Assert.assertEquals(2 * count, writer.size());
         }
+    }
+
+    @Test
+    public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            AtomicInteger columnsAdded = new AtomicInteger();
+            AtomicInteger insertCount = new AtomicInteger();
+            int totalColAddCount = 1000;
+            writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
+            int tableId = 11;
+
+            String tableName = "testAddColumnConcurrentWithDataUpdates";
+            try (Path path = new Path()) {
+                try (
+                        MemoryMARW mem = Vm.getCMARWInstance();
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                ) {
+                    model.timestamp();
+                    TableUtils.createTable(
+                            configuration,
+                            mem,
+                            path,
+                            model,
+                            tableId
+                    );
+                }
+            }
+
+            // Write data in a loop getting writer in and out of pool
+            Thread writeDataThread = new Thread(() -> {
+                TestUtils.await(barrier);
+                int i = 0;
+                while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                        TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
+                        row.append();
+                        writer.commit();
+                        insertCount.incrementAndGet();
+                    } catch (EntryUnavailableException ex) {
+                        // continue
+                    } catch (Throwable e) {
+                        exceptions.add(e);
+                        LOG.error().$(e).$();
+                        throw e;
+                    }
+                }
+            });
+
+            Thread addColumnsThread = new Thread(() -> {
+                try {
+                    TestUtils.await(barrier);
+                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
+                    for (int i = 0; i < totalColAddCount; i++) {
+                        alterOperationBuilder.clear();
+                        String columnName = "col" + i;
+                        alterOperationBuilder
+                                .ofAddColumn(0, tableName, tableId)
+                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                        AlterOperation alterOperation = alterOperationBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
+                            if (writer != null) {
+                                writer.publishAsyncWriterCommand(alterOperation);
+                            }
+                        }
+                        columnsAdded.incrementAndGet();
+                    }
+                } catch (Throwable e) {
+                    exceptions.add(e);
+                    LOG.error().$(e).$();
+                    throw e;
+                }
+            });
+            writeDataThread.start();
+            addColumnsThread.start();
+
+            writeDataThread.join();
+            addColumnsThread.join();
+
+            if (exceptions.size() != 0) {
+                for (Throwable ex : exceptions) {
+                    ex.printStackTrace();
+                }
+                Assert.fail();
+            }
+            Assert.assertTrue(insertCount.get() > 0);
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
+            }
+
+            LOG.infoW().$("total reload count ").$(insertCount.get()).$();
+        });
     }
 
     @Test
@@ -811,16 +812,16 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
+                public boolean allocate(long fd, long size) {
+                    return !fail && super.allocate(fd, size);
+                }
+
+                @Override
                 public long read(long fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
                     return super.read(fd, buf, len, offset);
-                }
-
-                @Override
-                public boolean allocate(long fd, long size) {
-                    return !fail && super.allocate(fd, size);
                 }
             }
 
@@ -1419,19 +1420,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name, opts);
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name, opts);
+                }
+                return super.openRW(name, opts);
             }
         }, false);
     }
@@ -1445,19 +1446,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "productName.i")) {
-                    return fd = super.openRW(name, opts);
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
             public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
                 return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "productName.i")) {
+                    return fd = super.openRW(name, opts);
+                }
+                return super.openRW(name, opts);
             }
         }, false);
     }
@@ -1702,7 +1703,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int findNext(long findPtr) {
                 if (--count == 0) {
-                    throw CairoException.instance(0).put("FindNext failed");
+                    throw CairoException.critical(0).put("FindNext failed");
                 }
                 return super.findNext(findPtr);
             }
@@ -1716,7 +1717,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringInvalid() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("ooo", 15, GeoHashes.NULL));
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoStr("ooo", 15, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `ooo` [STRING -> GEOHASH(3c)]", e.getFlyweightMessage());
+            }
+        });
     }
 
     @Test
@@ -1736,7 +1744,14 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashAsStringShorterThanType() throws Exception {
-        TestUtils.assertMemoryLeak(() -> assertGeoStr("g912j", 44, GeoHashes.NULL));
+        assertMemoryLeak(() -> {
+            try {
+                assertGeoStr("g912j", 44, GeoHashes.NULL);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertEquals("inconvertible value: `g912j` [STRING -> GEOHASH(44b)]", e.getFlyweightMessage());
+            }
+        });
     }
 
     @Test
@@ -1907,17 +1922,17 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (TableWriter writer = new TableWriter(configuration, "weather", metrics)) {
                 TableWriter.Row r;
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-31"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-31"));
                 r.putDouble(0, 1.0);
                 r.append();
 
                 // Out of order
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-01-30"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-01-30"));
                 r.putDouble(0, 1.0);
                 r.cancel();
 
                 // Back in order
-                r = writer.newRow(IntervalUtils.parseFloorPartialDate("2021-02-01"));
+                r = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2021-02-01"));
                 r.putDouble(0, 1.0);
                 r.append();
 
@@ -1926,8 +1941,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             long[] expectedTs = new long[]{
-                    IntervalUtils.parseFloorPartialDate("2021-01-31"),
-                    IntervalUtils.parseFloorPartialDate("2021-02-01")
+                    IntervalUtils.parseFloorPartialTimestamp("2021-01-31"),
+                    IntervalUtils.parseFloorPartialTimestamp("2021-02-01")
             };
             try (TableReader reader = new TableReader(configuration, "weather")) {
                 int col = reader.getMetadata().getColumnIndex("timestamp");
@@ -1940,6 +1955,63 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedTs.length, i);
             }
         });
+    }
+
+    @Test
+    public void testO3PartitionTruncate() throws Exception {
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        final String tableName = "testO3PartitionTruncate";
+
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("productId", ColumnType.LONG256)
+                .timestamp()
+        ) {
+            CairoTestUtils.create(model);
+
+            try (TableWriter writer = new TableWriter(configuration, model.getName(), Metrics.disabled())) {
+                // Add 46 rows in partition 2020-07-13T00
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2020-07-13");
+                long increment = Timestamps.SECOND_MICROS;
+                int rows = 46;
+                for (int i = 0; i < rows; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putLong256(0, i, i, i, i);
+                    row.append();
+                    ts += increment;
+                }
+                writer.commit();
+
+                // Add 1 row in order in partition 2020-07-13T00
+                TableWriter.Row row = writer.newRow(ts + 2 * increment);
+                row.putLong256(0, 1, 1, 1, 1);
+                row.append();
+
+                // Add 1 row ooo in partition 2020-07-13T00
+                row = writer.newRow(ts + 1);
+                row.putLong256(0, 1, 1, 1, 1);
+                row.append();
+
+                // Add 1 row out of order in partition 2020-07-13T01
+                row = writer.newRow(ts + Timestamps.HOUR_MICROS);
+                row.putLong256(0, 2, 2, 2, 2);
+                row.append();
+
+                // Write rows to go beyond page in partition 2020-07-13T00
+                int rowCount = (int) (Files.PAGE_SIZE / 32);
+                for (int i = 0; i < rowCount; i++) {
+                    TableWriter.Row row2 = writer.newRow(ts);
+                    row2.putLong256(0, i, i, i, i);
+                    row2.append();
+                    ts += increment;
+                }
+
+                writer.commit();
+            }
+
+            try (TableReader rdr = new TableReader(configuration, tableName)) {
+                TestUtils.printCursor(rdr.getCursor(), rdr.getMetadata(), true, sink, TestUtils.printer);
+            }
+        }
     }
 
     @Test
@@ -2668,6 +2740,52 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackRestoreNullSetters() throws Exception {
+        assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 1);
+            long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+            Rnd rnd = new Rnd();
+            final long increment = 60000L * 1000L;
+            try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
+                ts = populateProducts(writer, rnd, ts, 5, increment);
+                writer.commit();
+
+                long maxTs = ts;
+                ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                populateProducts(writer, rnd, ts, 5, increment);
+
+                writer.rollback();
+
+                ts = maxTs;
+                int nullRows = 10;
+                for (int i = 0; i < nullRows; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.append();
+                }
+
+                writer.commit();
+            }
+
+            assertTable("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
+                    "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
+                    "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
+                    "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
+                    "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
+                    "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
+                    "NaN\t\t\t\tNaN\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", PRODUCT);
+        });
+    }
+
+    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
     }
@@ -3158,6 +3276,12 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
+    }
+
+    protected void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        }
     }
 
     private void create(FilesFacade ff, int partitionBy, int N) {
@@ -3903,19 +4027,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 long fd = -1;
 
                 @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, "bin.i")) {
-                        return fd = super.openRW(name, opts);
-                    }
-                    return super.openRW(name, opts);
-                }
-
-                @Override
                 public boolean allocate(long fd, long size) {
                     if (fd == this.fd) {
                         return false;
                     }
                     return super.allocate(fd, size);
+                }
+
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, "bin.i")) {
+                        return fd = super.openRW(name, opts);
+                    }
+                    return super.openRW(name, opts);
                 }
             }
             final X ff = new X();

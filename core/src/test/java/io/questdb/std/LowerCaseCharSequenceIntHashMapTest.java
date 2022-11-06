@@ -145,4 +145,35 @@ public class LowerCaseCharSequenceIntHashMapTest {
             }
         }
     }
+
+    @Test
+    public void testEqualsAndHashCode() {
+        final int items = 100;
+
+        final LowerCaseCharSequenceIntHashMap mapA = new LowerCaseCharSequenceIntHashMap();
+        final LowerCaseCharSequenceIntHashMap mapB = new LowerCaseCharSequenceIntHashMap();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        for (int i = 0; i < items; i++) {
+            mapA.put(Integer.toString(i), i);
+        }
+
+        Assert.assertNotEquals(mapA, mapB);
+
+        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the maps.
+        for (int i = items - 1; i > -1; i--) {
+            mapB.put(Integer.toString(i), i);
+        }
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        mapA.clear();
+        mapB.clear();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+    }
 }

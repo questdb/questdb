@@ -59,7 +59,7 @@ public class IOURingImpl implements IOURing {
         this.facade = facade;
         final long res = facade.create(capacity);
         if (res < 0) {
-            throw CairoException.instance((int) -res).put("Cannot create io_uring instance");
+            throw CairoException.critical((int) -res).put("Cannot create io_uring instance");
         }
         this.ringAddr = res;
 

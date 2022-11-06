@@ -36,14 +36,13 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     private final RuntimeIntrinsicIntervalModel intervals;
 
     public IntervalBwdDataFrameCursorFactory(
-            CairoEngine engine,
             String tableName,
             int tableId,
             long tableVersion,
             RuntimeIntrinsicIntervalModel intervals,
             int timestampIndex
     ) {
-        super(engine, tableName, tableId, tableVersion);
+        super(tableName, tableId, tableVersion);
         this.cursor = new IntervalBwdDataFrameCursor(intervals, timestampIndex);
         this.intervals = intervals;
     }
@@ -51,7 +50,7 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (order == ORDER_DESC || order == ORDER_ANY) {
-            cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
+            cursor.of(getReader(executionContext), executionContext);
             return cursor;
         }
         throw new UnsupportedOperationException();
@@ -64,6 +63,7 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
 
     @Override
     public void close() {
+        super.close();
         Misc.free(intervals);
     }
 

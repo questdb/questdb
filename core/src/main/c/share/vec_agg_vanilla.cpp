@@ -45,16 +45,14 @@ int64_t sumInt_Vanilla(int32_t *pi, int64_t count) {
 
 int32_t minInt_Vanilla(int32_t *pi, int64_t count) {
     const int32_t *lim = pi + count;
-    int32_t min = I_MAX;
-    bool hasData = false;
+    int32_t min = I_MIN;
     for (; pi < lim; pi++) {
         const int32_t i = *pi;
-        if (i != I_MIN && i < min) {
+        if (i != I_MIN && (i < min || min == I_MIN)) {
             min = i;
-            hasData = true;
         }
     }
-    return hasData ? min : I_MIN;
+    return min;
 }
 
 int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
@@ -69,7 +67,6 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
     }
     return max;
 }
-
 
 double sumDouble_Vanilla(double *d, int64_t count) {
     const double *lim = d + count;
@@ -170,15 +167,14 @@ int64_t sumLong_Vanilla(int64_t *pl, int64_t count) {
 
 int64_t minLong_Vanilla(int64_t *pl, int64_t count) {
     const int64_t *lim = pl + count;
-    int64_t min = L_MAX;
+    int64_t min = L_MIN;
     for (; pl < lim; pl++) {
-        int64_t l = *pl;
-        if (l != L_MIN && l < min) {
+        const int64_t l = *pl;
+        if (l != L_MIN && (l < min || min == L_MIN)) {
             min = l;
         }
     }
-    // all null?
-    return min == L_MAX ? L_MIN : min;
+    return min;
 }
 
 int64_t maxLong_Vanilla(int64_t *pl, int64_t count) {

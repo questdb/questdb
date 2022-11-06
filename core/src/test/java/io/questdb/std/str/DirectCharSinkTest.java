@@ -25,6 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class DirectCharSinkTest {
@@ -61,7 +62,8 @@ public class DirectCharSinkTest {
                 "string 28\n" +
                 "string 29\n";
 
-        try (DirectCharSink sink = new DirectCharSink(16)) {
+        final int initialCapacity = 16;
+        try (DirectCharSink sink = new DirectCharSink(initialCapacity)) {
             for (int i = 0; i < 30; i++) {
                 sink.put("string ").put(i).put('\n');
             }
@@ -71,6 +73,12 @@ public class DirectCharSinkTest {
                 sink.put("string ").put(i).put('\n');
             }
             TestUtils.assertEquals(expected, sink);
+
+            Assert.assertTrue(sink.length() > 0);
+            Assert.assertTrue(sink.getCapacity() >= sink.length());
+            sink.resetCapacity();
+            Assert.assertEquals(0, sink.length());
+            Assert.assertEquals(initialCapacity, sink.getCapacity());
         }
     }
 }

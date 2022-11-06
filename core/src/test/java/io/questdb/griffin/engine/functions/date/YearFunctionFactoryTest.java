@@ -33,7 +33,7 @@ public class YearFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "year\n" +
                         "1997\n",
-                "select year(to_timestamp('1997-04-11T22:00:30.555555Z'))",
+                "select year('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,
@@ -47,7 +47,7 @@ public class YearFunctionFactoryTest extends AbstractGriffinTest {
         assertQuery(
                 "year\n" +
                         "1901\n",
-                "select year(to_timestamp('1901-07-11T22:00:30.555998Z'))",
+                "select year('1901-07-11T22:00:30.555998Z'::timestamp)",
                 null,
                 null,
                 true,

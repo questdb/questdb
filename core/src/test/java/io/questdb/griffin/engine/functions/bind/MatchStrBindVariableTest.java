@@ -105,7 +105,7 @@ public class MatchStrBindVariableTest extends AbstractGriffinTest {
                 "x where s ~ s",
                 "create table x as (select rnd_str() s from long_sequence(100))",
                 12,
-                "not implemented: dynamic patter would be very slow to execute"
+                "not implemented: dynamic pattern would be very slow to execute"
         );
     }
 }

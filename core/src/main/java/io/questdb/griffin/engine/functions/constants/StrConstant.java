@@ -42,7 +42,7 @@ public class StrConstant extends StrFunction implements ConstantFunction {
             this.length = TableUtils.NULL_LEN;
         } else {
             if (Chars.startsWith(value, '\'')) {
-                this.value = Chars.toString(value, 1, value.length() - 1);
+                this.value = Chars.toString(value, 1, value.length() - 1, value.charAt(0));
             } else {
                 this.value = Chars.toString(value);
             }

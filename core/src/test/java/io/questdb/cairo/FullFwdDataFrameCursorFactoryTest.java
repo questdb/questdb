@@ -73,25 +73,26 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, 0);
-            long count = 0;
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC)) {
-                DataFrame frame;
-                while ((frame = cursor.next()) != null) {
-                    count += frame.getRowHi() - frame.getRowLo();
+            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID, 0)) {
+                long count = 0;
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC)) {
+                    DataFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        count += frame.getRowHi() - frame.getRowLo();
+                    }
                 }
-            }
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-            Assert.assertEquals(M, count);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(M, count);
 
-            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
-                writer.removeColumn("b");
-            }
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
+                    writer.removeColumn("b");
+                }
 
-            try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC);
-                Assert.fail();
-            } catch (ReaderOutOfDateException ignored) {
+                try {
+                    factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_ASC);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException ignored) {
+                }
             }
         });
     }

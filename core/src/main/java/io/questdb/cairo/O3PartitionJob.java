@@ -26,8 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -56,7 +55,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path pathToTable,
             int partitionBy,
             ObjList<MemoryMA> columns,
-            ObjList<MemoryCARW> oooColumns,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long srcOooLo,
             long srcOooHi,
             long srcOooMax,
@@ -543,7 +542,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final Path pathToTable = task.getPathToTable();
         final int partitionBy = task.getPartitionBy();
         final ObjList<MemoryMA> columns = task.getColumns();
-        final ObjList<MemoryCARW> oooColumns = task.getO3Columns();
+        final ReadOnlyObjList<? extends MemoryCR> oooColumns = task.getO3Columns();
         final long srcOooLo = task.getSrcOooLo();
         final long srcOooHi = task.getSrcOooHi();
         final long srcOooMax = task.getSrcOooMax();
@@ -712,7 +711,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void publishOpenColumnTasks(
             long txn,
             ObjList<MemoryMA> columns,
-            ObjList<MemoryCARW> oooColumns,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
             Path pathToTable,
             long srcOooLo,
             long srcOooHi,
@@ -792,8 +791,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                 final boolean notTheTimestamp = i != timestampIndex;
-                final MemoryARW oooMem1 = oooColumns.getQuick(colOffset);
-                final MemoryARW oooMem2 = oooColumns.getQuick(colOffset + 1);
+                final MemoryCR oooMem1 = oooColumns.getQuick(colOffset);
+                final MemoryCR oooMem2 = oooColumns.getQuick(colOffset + 1);
                 final MemoryMA mem1 = columns.getQuick(colOffset);
                 final MemoryMA mem2 = columns.getQuick(colOffset + 1);
                 final long activeFixFd;

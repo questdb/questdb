@@ -42,6 +42,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class TxnTest extends AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(TxnTest.class);
 
@@ -76,7 +78,7 @@ public class TxnTest extends AbstractCairoTest {
                 }
 
                 try (Path path = new Path()) {
-                    path.of(configuration.getRoot()).concat(tableName);
+                    path.of(configuration.getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf).ofRW(path, PartitionBy.DAY)) {
                         // Add lots of partitions
@@ -173,7 +175,7 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -280,7 +282,7 @@ public class TxnTest extends AbstractCairoTest {
                             Path path = new Path();
                             TxReader txReader = new TxReader(ff)
                     ) {
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                        path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path, PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -381,7 +383,7 @@ public class TxnTest extends AbstractCairoTest {
                     Path path = new Path();
                     TxWriter txWriter = new TxWriter(ff)
             ) {
-                path.of(engine.getConfiguration().getRoot()).concat(tableName);
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path, PartitionBy.HOUR);
 
                 start.await();

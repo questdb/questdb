@@ -30,10 +30,11 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.MutableCharSink;
 
 final class LineTcpUtils {
+
     public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
-            throw CairoException.instance(0).put("invalid UTF8 in value for ").put(utf8CharSeq);
+            throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
         }
     }
 
@@ -45,7 +46,7 @@ final class LineTcpUtils {
         return utf8CharSeq;
     }
 
-    static CharSequence utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+    static String utf8BytesToString(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
         for (int i = 0, n = utf8CharSeq.length(); i < n; i++) {
             tempSink.put(utf8CharSeq.charAt(i));

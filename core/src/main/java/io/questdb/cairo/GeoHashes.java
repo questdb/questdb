@@ -68,6 +68,24 @@ public class GeoHashes {
             's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
     };
 
+    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
+        final int bits = ColumnType.getGeoHashBits(prefixType);
+        final int columnSize = ColumnType.sizeOf(columnType);
+        final int columnBits = ColumnType.getGeoHashBits(columnType);
+
+        if (hash == NULL || bits > columnBits) {
+            throw NumericException.INSTANCE;
+        }
+
+        final int shift = columnBits - bits;
+        long norm = hash << shift;
+        long mask = GeoHashes.bitmask(bits, shift);
+        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
+
+        prefixes.add(norm);
+        prefixes.add(mask);
+    }
+
     public static void appendBinary(long hash, int bits, CharSink sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
@@ -134,8 +152,8 @@ public class GeoHashes {
     }
 
     public static long fromCoordinatesDegUnsafe(double lat, double lon, int bits) {
-        long latq = (long)Math.scalb((lat + 90.0) / 180.0, 32);
-        long lngq = (long)Math.scalb((lon + 180.0) / 360.0, 32);
+        long latq = (long) Math.scalb((lat + 90.0) / 180.0, 32);
+        long lngq = (long) Math.scalb((lon + 180.0) / 360.0, 32);
         return Numbers.interleaveBits(latq, lngq) >>> (64 - bits);
     }
 
@@ -159,24 +177,6 @@ public class GeoHashes {
         return fromString(geohash, start, start + Math.min(length, MAX_STRING_LENGTH));
     }
 
-    public static void addNormalizedGeoPrefix(long hash, int prefixType, int columnType, final LongList prefixes) throws NumericException {
-        final int bits = ColumnType.getGeoHashBits(prefixType);
-        final int columnSize = ColumnType.sizeOf(columnType);
-        final int columnBits = ColumnType.getGeoHashBits(columnType);
-
-        if (hash == NULL || bits > columnBits) {
-            throw NumericException.INSTANCE;
-        }
-
-        final int shift = columnBits - bits;
-        long norm = hash << shift;
-        long mask = GeoHashes.bitmask(bits, shift);
-        mask |= 1L << (columnSize * 8 - 1); // set the most significant bit to ignore null from prefix matching
-
-        prefixes.add(norm);
-        prefixes.add(mask);
-    }
-
     public static long fromStringTruncatingNl(CharSequence hash, int start, int end, int toBits) throws NumericException {
         if (start == end) {
             return NULL;
@@ -186,7 +186,7 @@ public class GeoHashes {
         if (fromBits < toBits) {
             throw NumericException.INSTANCE;
         }
-        return ColumnType.truncateGeoHashBits(fromString(hash, start, start + chars), fromBits, toBits);
+        return widen(fromString(hash, start, start + chars), fromBits, toBits);
     }
 
     public static long fromStringTruncatingNl(long lo, long hi, int bits) throws NumericException {
@@ -202,7 +202,20 @@ public class GeoHashes {
         for (long p = lo, limit = p + chars; p < limit; p++) {
             geohash = appendChar(geohash, (char) Unsafe.getUnsafe().getByte(p)); // base32
         }
-        return ColumnType.truncateGeoHashBits(geohash, actualBits, bits);
+        return widen(geohash, actualBits, bits);
+    }
+
+    public static int getBitFlags(int columnType) {
+        if (!ColumnType.isGeoHash(columnType)) {
+            return 0;
+        }
+        final int bits = ColumnType.getGeoHashBits(columnType);
+        if (bits > 0 && bits % 5 == 0) {
+            // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
+            return -bits / 5;
+        }
+        // Value to be serialized as bit array.
+        return bits;
     }
 
     public static long getGeoLong(int type, Function func, Record rec) {
@@ -242,17 +255,8 @@ public class GeoHashes {
         return start < len;
     }
 
-    public static int getBitFlags(int columnType) {
-        if (!ColumnType.isGeoHash(columnType)) {
-            return 0;
-        }
-        final int bits = ColumnType.getGeoHashBits(columnType);
-        if (bits > 0 && bits % 5 == 0) {
-            // It's 5 bit per char. If it's integer number of chars value to be serialized as chars
-            return -bits / 5;
-        }
-        // Value to be serialized as bit array.
-        return bits;
+    public static long widen(long hash, int fromBits, int toBits) {
+        return hash >> (fromBits - toBits);
     }
 
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {

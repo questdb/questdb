@@ -20,20 +20,26 @@ public class MemoryTagGauge implements Gauge {
 
     @Override
     public void inc() {
-        //do nothing as this gauge is RO view of memory tag stats  
+        // do nothing as this gauge is RO view of memory tag stats
     }
 
     @Override
     public void dec() {
-        //do nothing as this gauge is RO view of memory tag stats
+        // do nothing as this gauge is RO view of memory tag stats
+    }
+
+    @Override
+    public void add(long value) {
+        // do nothing as this gauge is RO view of memory tag stats
+    }
+
+    @Override
+    public long getValue() {
+        return Unsafe.getMemUsedByTag(memoryTag);
     }
 
     public String getName() {
         return MemoryTag.nameOf(memoryTag);
-    }
-
-    private long getValue() {
-        return Unsafe.getMemUsedByTag(memoryTag);
     }
 
     @Override

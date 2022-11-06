@@ -245,7 +245,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         if (ColumnType.isString(dynamicFunction.getType())) {
             CharSequence value = dynamicFunction.getStr(null);
             try {
-                return IntervalUtils.parseFloorPartialDate(value);
+                return IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NaN;
             }

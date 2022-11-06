@@ -31,10 +31,51 @@
 #include <time.h>
 #include "../share/os.h"
 
+#ifdef __APPLE__
+
+#include <mach/mach_init.h>
+#include <mach/task.h>
+
+#endif
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *e, jclass cp) {
     return getpid();
 }
+
+#ifdef __APPLE__
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
+        (JNIEnv *e, jclass cl) {
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+    kern_return_t status = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount);
+    if ( status != KERN_SUCCESS){
+        return (jlong)0L;
+    }
+    return (jlong)info.resident_size;
+}
+
+#else
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
+        (JNIEnv *e, jclass cl) {
+    FILE* fd = fopen("/proc/self/statm", "r");
+    if (fd == NULL) {
+        return 0L;
+    }
+    long rss = 0L;
+    int res = fscanf(fd, "%*s%ld", &rss);
+    fclose(fd);
+
+    if ( res == 1 ){
+        return rss * sysconf(_SC_PAGESIZE);
+    } else {
+        return 0L;
+    }
+}
+
+#endif
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_currentTimeMicros
         (JNIEnv *e, jclass cl) {

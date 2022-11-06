@@ -26,4 +26,6 @@ package io.questdb.cairo.sql;
 
 public interface AnalyticSPI {
     long getAddress(long recordAddress, int columnIndex);
+
+    Record getRecordAt(long recordOffset);
 }

@@ -153,7 +153,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getQueryCacheRowCount() {
-        return 16;
+        return 4;
     }
 
     @Override
@@ -192,22 +192,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
-    public int[] getWorkerAffinity() {
-        return new int[]{-1, -1};
-    }
-
-    @Override
     public int getWorkerCount() {
         return 2;
     }
 
     @Override
-    public boolean haltOnError() {
-        return false;
+    public String getPoolName() {
+        return "http";
     }
 }

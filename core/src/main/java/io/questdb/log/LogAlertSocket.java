@@ -95,9 +95,9 @@ public class LogAlertSocket implements Closeable {
         this.defaultPort = defaultPort;
         parseAlertTargets();
         this.inBufferSize = inBufferSize;
-        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.inBufferPtr = Unsafe.malloc(inBufferSize, MemoryTag.NATIVE_LOGGER);
         this.outBufferSize = outBufferSize;
-        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.outBufferPtr = Unsafe.malloc(outBufferSize, MemoryTag.NATIVE_LOGGER);
         this.reconnectDelay = reconnectDelay;
     }
 
@@ -105,11 +105,11 @@ public class LogAlertSocket implements Closeable {
     public void close() {
         freeSocketAndAddress();
         if (outBufferPtr != 0) {
-            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outBufferPtr, outBufferSize, MemoryTag.NATIVE_LOGGER);
             outBufferPtr = 0;
         }
         if (inBufferPtr != 0) {
-            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(inBufferPtr, inBufferSize, MemoryTag.NATIVE_LOGGER);
             inBufferPtr = 0;
         }
     }

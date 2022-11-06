@@ -77,7 +77,7 @@ public class TextDelimiterScanner implements Closeable {
         this.lineCountLimit = configuration.getTextAnalysisMaxLines();
         this.matrixRowSize = 256 * Integer.BYTES;
         this.matrixSize = matrixRowSize * lineCountLimit;
-        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_DEFAULT);
+        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
         this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
     }
@@ -93,7 +93,7 @@ public class TextDelimiterScanner implements Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
     }
 
     private void bumpCountAt(int line, byte bytePosition, int increment) {

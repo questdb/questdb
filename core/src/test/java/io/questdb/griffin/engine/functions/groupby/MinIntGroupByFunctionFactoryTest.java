@@ -136,6 +136,23 @@ public class MinIntGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMaxIntOrNull() throws Exception {
+        assertQuery(
+                "a\tmin\n" +
+                        "1\tNaN\n",
+                "select a, min(f) from tab",
+                "create table tab as (select cast(1 as int) a, cast(null as int) f from long_sequence(33))",
+                null,
+                "insert into tab select 1, 2147483647 from long_sequence(1)",
+                "a\tmin\n" +
+                        "1\t2147483647\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSampleFill() throws Exception {
         assertQuery("b\tmin\tk\n" +
                         "\t-1792928964\t1970-01-03T00:00:00.000000Z\n" +

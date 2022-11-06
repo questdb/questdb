@@ -147,7 +147,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             ExpressionNode ast = column.getAst();
             int resultSetColumnType = getMetadata().getColumnType(i);
             if (ast.rhs != null) {
-                if (SqlKeywords.isLastFunction(ast.token)) {
+                if (SqlKeywords.isLastKeyword(ast.token)) {
                     firstLastIndex[i] = LAST_OUT_INDEX;
                 } else if (SqlKeywords.isFirstKeyword(ast.token)) {
                     firstLastIndex[i] = FIRST_OUT_INDEX;

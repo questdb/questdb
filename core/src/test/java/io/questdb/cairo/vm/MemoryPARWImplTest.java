@@ -25,7 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ConversionException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TestRecord;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -771,9 +771,11 @@ public class MemoryPARWImplTest {
             try {
                 mem.putLong256(padded);
                 Assert.fail();
-            } catch (ConversionException ex) {
-                Assert.assertTrue(ex.getMessage().contains("invalid long256"));
-                Assert.assertTrue(ex.getMessage().contains(padded));
+            } catch (ImplicitCastException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "inconvertible value: `JUNK0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfedMOREJUNK` [STRING -> LONG256]"
+                );
             }
         }
     }

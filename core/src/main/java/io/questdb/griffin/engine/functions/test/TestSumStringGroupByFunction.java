@@ -43,7 +43,7 @@ import org.jetbrains.annotations.NotNull;
 public class TestSumStringGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     // allocate just to test that close() is correctly invoked
-    private final long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+    private final long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_FUNC_RSS);
     private int valueIndex;
 
     public TestSumStringGroupByFunction(@NotNull Function arg) {
@@ -52,7 +52,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
 
     @Override
     public void close() {
-        Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(mem, 1024, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override

@@ -24,10 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -87,7 +84,7 @@ public class LineUdpParserSupport {
                     case ColumnType.BYTE:
                         long v = Numbers.parseLong(value, 0, value.length() - 1);
                         if (v < Byte.MIN_VALUE || v > Byte.MAX_VALUE) {
-                            throw CairoException.instance(0)
+                            throw CairoException.nonCritical()
                                     .put("line protocol integer is out of byte bounds [columnIndex=")
                                     .put(columnIndex)
                                     .put(", v=")
@@ -161,7 +158,7 @@ public class LineUdpParserSupport {
                         // unsupported types and null are ignored
                         break;
                 }
-            } catch (NumericException e) {
+            } catch (NumericException | ImplicitCastException e) {
                 LOG.info()
                         .$("cast error [value=")
                         .$(value).$(", toType=")

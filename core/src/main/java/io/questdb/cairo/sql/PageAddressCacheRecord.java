@@ -61,7 +61,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public void close() {
-        Misc.freeObjList(symbolTableCache);
+        Misc.freeObjListIfCloseable(symbolTableCache);
     }
 
     @Override
@@ -148,6 +148,24 @@ public class PageAddressCacheRecord implements Record, Closeable {
             return NullMemoryMR.INSTANCE.getLong(0);
         }
         return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2 + 8);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2);
     }
 
     @Override
@@ -284,7 +302,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         this.pageAddressCache = pageAddressCache;
         frameIndex = 0;
         rowIndex = 0;
-        Misc.freeObjList(symbolTableCache);
+        Misc.freeObjListIfCloseable(symbolTableCache);
         symbolTableCache.clear();
     }
 
@@ -303,7 +321,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             if (len + Long.BYTES + offset <= pageLimit) {
                 return view.of(address + Long.BYTES, len);
             }
-            throw CairoException.instance(0)
+            throw CairoException.critical(0)
                     .put("Bin is outside of file boundary [offset=")
                     .put(offset)
                     .put(", len=")
@@ -347,7 +365,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
             if (len + 4 + offset <= size) {
                 return view.of(address + Vm.STRING_LENGTH_BYTES, len);
             }
-            throw CairoException.instance(0)
+            throw CairoException.critical(0)
                     .put("String is outside of file boundary [offset=")
                     .put(offset)
                     .put(", len=")

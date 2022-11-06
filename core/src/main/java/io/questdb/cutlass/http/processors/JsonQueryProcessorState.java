@@ -93,7 +93,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private short queryType;
-    private QuietClosable asyncOperation;
+    private QuietCloseable asyncOperation;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -127,7 +127,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         record = null;
         if (null != recordCursorFactory) {
             if (queryCacheable) {
-                QueryCache.getInstance().push(query, recordCursorFactory);
+                QueryCache.getThreadLocalInstance().push(query, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }
@@ -167,10 +167,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
         this.quoteLargeNum = Chars.equalsNc("true", request.getUrlParam("quoteLargeNum"))
                 || Chars.equalsNc("con", request.getUrlParam("src"));
-    }
-
-    public LogRecord debug() {
-        return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
     public LogRecord error() {
@@ -222,7 +218,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return statementTimeout;
     }
 
-    public void setOperationFuture(QuietClosable op, OperationFuture fut) {
+    public void setOperationFuture(QuietCloseable op, OperationFuture fut) {
         asyncOperation = op;
         operationFuture = fut;
     }
@@ -250,8 +246,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 $(']').$();
     }
 
-    public void logSyntaxError(SqlException e) {
-        info().$("syntax-error [q=`").utf8(query).$("`, at=").$(e.getPosition()).$(", message=`").utf8(e.getFlyweightMessage()).$('`').$(']').$();
+    public void logSqlError(FlyweightMessageContainer container) {
+        info().$("sql error [q=`").utf8(query).$("`, at=").$(container.getPosition()).$(", message=`").utf8(container.getFlyweightMessage()).$('`').$(']').$();
     }
 
     public void logTimings() {
@@ -578,6 +574,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.NULL:
                     socket.put("null");
                     break;
+                case ColumnType.LONG128:
+                    throw new UnsupportedOperationException();
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid

@@ -612,7 +612,7 @@ public class UnionTest extends AbstractGriffinTest {
                     "union all " +
                     "z " +
                     ")", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, false);
+                assertCursor(expected2, factory, false, true, true);
             }
         });
     }
@@ -1126,5 +1126,40 @@ public class UnionTest extends AbstractGriffinTest {
                     false
             );
         });
+    }
+
+    @Test
+    public void testUnionAllWithLargeNumberOfSubqueries() throws Exception {
+        testLargeNumberOfSubqueries("union all", 100);
+    }
+
+    @Test
+    public void testUnionWithLargeNumberOfSubqueries() throws Exception {
+        testLargeNumberOfSubqueries("union", 1);
+    }
+
+    @Test
+    public void testExceptWithLargeNumberOfSubqueries() throws Exception {
+        testLargeNumberOfSubqueries("except", 0);
+    }
+
+    @Test
+    public void testIntersectWithLargeNumberOfSubqueries() throws Exception {
+        testLargeNumberOfSubqueries("intersect", 1);
+    }
+
+    public void testLargeNumberOfSubqueries(String operation, int expectedCount) throws Exception {
+        assertMemoryLeak(() -> {
+            sink.clear();
+            sink.put("select count(*) cnt from ( ");
+            sink.put(" select 'a' as a, 'b' as b, 'c' as c ");
+            for (int i = 0; i < 99; i++) {
+                sink.put(operation).put(" select 'a' as a, 'b' as b, 'c' as c ");
+            }
+            sink.put(')');
+
+            assertQuery("cnt\n" + expectedCount + "\n", sink.toString(), null, false, true);
+        });
+
     }
 }

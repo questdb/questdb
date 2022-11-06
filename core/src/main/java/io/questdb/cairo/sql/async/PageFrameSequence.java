@@ -98,9 +98,19 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
-            final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
-            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker)) {
+            final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
+            boolean nothingProcessed = true;
+            try {
+                nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this);
+            } catch (Throwable e) {
+                LOG.error()
+                        .$("await error [id=").$(id)
+                        .$(", ex=").$(e)
+                        .I$();
+            }
+
+            if (nothingProcessed) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
                     // Discard collect items.
@@ -136,7 +146,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         pageAddressCache.clear();
-        symbolTableSource = Misc.free(symbolTableSource);
+        symbolTableSource = Misc.freeIfCloseable(symbolTableSource);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -153,7 +163,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(circuitBreaker);
+        this.clear();
+        Misc.freeIfCloseable(circuitBreaker);
         Misc.free(record);
     }
 
@@ -197,7 +208,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         .I$();
             }
         } catch (Throwable e) {
-            this.symbolTableSource = Misc.free(this.symbolTableSource);
+            this.symbolTableSource = Misc.freeIfCloseable(this.symbolTableSource);
             throw e;
         }
         return this;
@@ -290,7 +301,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // Not our task, nothing to collect. Go for another spin.
                     collectSubSeq.done(cursor);
                 }
-            } else {
+            } else if (cursor == -1) {
                 if (dispatch()) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
@@ -303,6 +314,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     return LOCAL_TASK_CURSOR;
                 }
                 return -1;
+            } else {
+                Os.pause();
             }
         }
     }
@@ -346,7 +359,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     reducePubSeq.done(cursor);
                     dispatched = true;
                     break;
-                } else {
+                } else if (cursor == -1) {
                     idle = false;
                     // start stealing work to unload the queue
                     if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
@@ -354,6 +367,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     dispatchStartFrameIndex = i;
                     break OUT;
+                } else {
+                    Os.pause();
                 }
             }
         }
@@ -387,7 +402,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             PageAddressCacheRecord record,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
             Os.pause();
             return false;
         }
@@ -404,7 +419,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         try {
             if (isActive()) {
-                PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this);
+                PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this, this);
             }
         } catch (Throwable e) {
             cancel();

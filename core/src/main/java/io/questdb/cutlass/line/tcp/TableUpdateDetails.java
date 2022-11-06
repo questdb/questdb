@@ -38,6 +38,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
@@ -218,8 +219,11 @@ public class TableUpdateDetails implements Closeable {
         }
         if (writer != null) {
             final long commitInterval = writer.getCommitInterval();
+            long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-            nextCommitTime += commitInterval;
+            // Do not commit row by row if the commit takes longer than commitInterval.
+            // Exclude time to commit from the commit interval.
+            nextCommitTime += commitInterval + millisecondClock.getTicks() - start;
         }
         return nextCommitTime;
     }
@@ -288,10 +292,10 @@ public class TableUpdateDetails implements Closeable {
         private final Path path = new Path();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
-        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
+        private final DirectByteCharSequenceIntHashMap columnIndexByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         // maps column names to their types
         // will be populated for dynamically added columns only
-        private final CharSequenceIntHashMap columnTypeByNameUtf8 = new CharSequenceIntHashMap();
+        private final DirectByteCharSequenceIntHashMap columnTypeByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -331,7 +335,7 @@ public class TableUpdateDetails implements Closeable {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
-                    throw CairoException.instance(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
+                    throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
                 }
                 path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
                 SymbolCache symCache;
@@ -348,7 +352,9 @@ public class TableUpdateDetails implements Closeable {
                     if (this.txReader == null) {
                         this.txReader = new TxReader(filesFacade);
                     }
-                    this.txReader.ofRO(path, reader.getPartitionedBy());
+                    int pathLen = path.length();
+                    this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
+                    path.trimTo(pathLen);
                     this.clean = false;
                 }
 

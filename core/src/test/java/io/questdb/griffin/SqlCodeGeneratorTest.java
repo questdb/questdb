@@ -58,122 +58,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("row_number\tprice\tts\n" +
-                        "0\t42\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t42\t1970-01-02T03:46:40.000000Z\n" +
-                        "2\t42\t1970-01-03T07:33:20.000000Z\n" +
-                        "3\t42\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t42\t1970-01-05T15:06:40.000000Z\n" +
-                        "5\t42\t1970-01-06T18:53:20.000000Z\n" +
-                        "6\t42\t1970-01-07T22:40:00.000000Z\n" +
-                        "7\t42\t1970-01-09T02:26:40.000000Z\n" +
-                        "8\t42\t1970-01-10T06:13:20.000000Z\n" +
-                        "9\t42\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by price order by ts), price, ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " 42 price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("row_number\n" +
-                        "2\n" +
-                        "5\n" +
-                        "1\n" +
-                        "0\n" +
-                        "4\n" +
-                        "0\n" +
-                        "3\n" +
-                        "2\n" +
-                        "1\n" +
-                        "0\n",
-                "select row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery("price\tsymbol\tts\trow_number\n" +
-                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t2\n" +
-                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t5\n" +
-                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t1\n" +
-                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t0\n" +
-                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t4\n" +
-                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t0\n" +
-                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t3\n" +
-                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t2\n" +
-                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t1\n" +
-                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t0\n",
-                "select *, row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
-                        "2\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "5\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
-                        "1\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
-                        "0\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "4\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "0\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "3\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "2\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "1\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "0\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by symbol order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -287,6 +171,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -311,6 +197,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("y", 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t:y\n" +
                                     "1\t10\n" +
@@ -336,6 +224,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\t$1\n" +
                                     "1\t10\n" +
@@ -361,6 +251,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 10);
+
+                snapshotMemoryUsage();
                 try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = $1", sqlExecutionContext).getRecordCursorFactory()) {
                     assertCursor("x\n" +
                                     "10\n",
@@ -368,7 +260,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true,
                             true,
                             false
-
                     );
                 }
             }
@@ -381,6 +272,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY", sqlExecutionContext);
             try {
                 compiler.compile("select * from alcatel_traffic_tmp where deviceName in ($n1)", sqlExecutionContext).getRecordCursorFactory();
+                Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -1946,6 +1838,35 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 false,
                 false,
                 true);
+    }
+
+    @Test
+    public void testImplicitCastStrToDouble() throws Exception {
+        assertQuery("column\tprice\n" +
+                        "80.43224099968394\t0.8043224099968393\n" +
+                        "28.45577791213847\t0.2845577791213847\n" +
+                        "93.4460485739401\t0.9344604857394011\n" +
+                        "79.05675319675964\t0.7905675319675964\n" +
+                        "88.99286912289664\t0.8899286912289663\n" +
+                        "11.427984775756228\t0.11427984775756228\n" +
+                        "42.17768841969397\t0.4217768841969397\n" +
+                        "72.61136209823621\t0.7261136209823622\n" +
+                        "66.93837147631712\t0.6693837147631712\n" +
+                        "87.56771741121929\t0.8756771741121929\n",
+                "select '100'*price, price from trades",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) price," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -3610,11 +3531,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         try {
                             assertCursor(
                                     "a\tb\tk\n" +
-                                            "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
+                                            "5.942010834028011\tPEHN\t1970-08-03T02:53:20.000000Z\n",
                                     factory,
                                     true,
                                     true,
-                                    false
+                                    false,
+                                    false,
+                                    // we need to pass the engine here, so the global test context won't do
+                                    AllowAllSqlSecurityContext.instance(engine)
                             );
                             Assert.fail();
                         } catch (CairoException e) {
@@ -5210,6 +5134,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor("x\n" +
                                 "1\n" +
@@ -5226,7 +5151,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         true,
                         true,
                         true
-
                 );
             }
         });
@@ -7490,6 +7414,56 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 >= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 > t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 <= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLessNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 < t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
         );
     }
 

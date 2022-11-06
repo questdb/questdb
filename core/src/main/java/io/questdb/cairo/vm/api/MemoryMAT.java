@@ -24,10 +24,8 @@
 
 package io.questdb.cairo.vm.api;
 
-import java.io.Closeable;
-
-//mapped appendable tailing 
-public interface MemoryMAT extends Closeable {
+//mapped appendable tailing
+public interface MemoryMAT extends MemoryA {
 
     @Override
     void close();
@@ -37,6 +35,4 @@ public interface MemoryMAT extends Closeable {
     long getAppendOffset();
 
     void jumpTo(long offset);
-
-    void putLong128(long a, long b);
 }

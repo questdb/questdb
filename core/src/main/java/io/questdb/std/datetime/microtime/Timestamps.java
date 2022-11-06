@@ -339,7 +339,7 @@ final public class Timestamps {
     }
 
     public static int getDayOfTheWeekOfEndOfYear(int year) {
-        return (year + Math.abs(year / 4) + Math.abs(year / 100) + Math.abs(year / 400)) % 7;
+        return (year + Math.abs(year / 4) - Math.abs(year / 100) + Math.abs(year / 400)) % 7;
     }
 
     public static int getDayOfWeek(long micros) {
@@ -368,6 +368,13 @@ final public class Timestamps {
             }
         }
         return 1 + (int) ((d + 4) % 7);
+    }
+
+    public static int getDayOfYear(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMicros(year, leap);
+        return (int) ((micros - yearStart) / DAY_MICROS) + 1;
     }
 
     public static long getDaysBetween(long a, long b) {
@@ -412,6 +419,16 @@ final public class Timestamps {
         return Math.abs(a - b) / HOUR_MICROS;
     }
 
+    /**
+     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
+     *
+     * @param micros epoch microseconds
+     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
+     */
+    public static long getIsoWeekMicrosOffset(long micros) {
+        return ((getDayOfWeek(micros) <= 3) ? 4 : -3) * DAY_MICROS;
+    }
+
     // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
     // so in early January or late December the ISO year may be different from the Gregorian year.
     // See the getWeek() method for more information.
@@ -429,6 +446,25 @@ final public class Timestamps {
         return y;
     }
 
+    /**
+     * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
+     *
+     * @param year of timestamp
+     * @return difference in the days from the start of the year (January 1st) and the first ISO week
+     */
+    public static int getIsoYearDayOffset(int year) {
+        int dayOfTheWeekOfEndOfPreviousYear = getDayOfTheWeekOfEndOfYear(year - 1);
+        return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
+    }
+
+    public static int getMicrosOfMilli(long micros) {
+        if (micros > -1) {
+            return (int) (micros % MILLI_MICROS);
+        } else {
+            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
+        }
+    }
+
     public static long getMicrosOfMinute(long micros) {
         if (micros > -1) {
             return micros % MINUTE_MICROS;
@@ -439,9 +475,9 @@ final public class Timestamps {
 
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
-            return (int) (micros % MILLI_MICROS);
+            return (int) (micros % SECOND_MICROS);
         } else {
-            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
+            return (int) (SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS));
         }
     }
 
@@ -586,6 +622,16 @@ final public class Timestamps {
         return w;
     }
 
+    public static int getWeekOfMonth(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
+    }
+
+    public static int getWeekOfYear(long micros) {
+        return getDayOfYear(micros) / 7 + 1;
+    }
+
     public static int getWeeks(int y) {
         if (getDayOfTheWeekOfEndOfYear(y) == 4 || getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
             return 53;
@@ -657,6 +703,53 @@ final public class Timestamps {
         } else {
             return millis + (7 - (thisDow - dow)) * DAY_MICROS;
         }
+    }
+
+    public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || Numbers.notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (Numbers.notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 9 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 9) {
+            val *= 10;
+            i++;
+        }
+
+        val /= 1000;
+
+        return Numbers.encodeLowHighInts(negative ? val : -val, len);
     }
 
     public static long parseOffset(CharSequence in) {
@@ -860,6 +953,12 @@ final public class Timestamps {
         return utc + offset;
     }
 
+    public static String toUSecString(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
+        return sink.toString();
+    }
+
     public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
         return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
     }
@@ -879,7 +978,7 @@ final public class Timestamps {
                     RESOLUTION_MICROS
             );
             offset = zoneRules.getOffset(timestampWithTimezone);
-            // getOffst really needs UTC date, not local
+            // getOffset really needs UTC date, not local
             offset = zoneRules.getOffset(timestampWithTimezone - offset);
             return timestampWithTimezone - offset;
 

@@ -44,11 +44,14 @@ public final class Files {
     public static final char SEPARATOR;
     public static final int POSIX_FADV_SEQUENTIAL;
     public static final int POSIX_FADV_RANDOM;
+    public static final int POSIX_MADV_SEQUENTIAL;
+    public static final int POSIX_MADV_RANDOM;
     public static final int FILES_RENAME_OK = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
+    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
 
     private Files() {
         // Prevent construction.
@@ -125,13 +128,23 @@ public final class Files {
         return lpsz != null && exists0(lpsz.address());
     }
 
+    public static native long noop();
+
     public static void fadvise(long fd, long offset, long len, int advise) {
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             fadvise0(fd, offset, len, advise);
         }
     }
 
+    public static void madvise(long address, long len, int advise) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            madvise0(address, len, advise);
+        }
+    }
+
     public static native void fadvise0(long fd, long offset, long len, int advise);
+
+    public static native void madvise0(long address, long len, int advise);
 
     public native static void findClose(long findPtr);
 
@@ -220,7 +233,7 @@ public final class Files {
     public static int mkdirs(Path path, int mode) {
         for (int i = 0, n = path.length(); i < n; i++) {
             char c = path.charAt(i);
-            if (c == File.separatorChar) {
+            if (c == Files.SEPARATOR) {
 
                 // do not attempt to create '/' on linux or 'C:\' on Windows
                 if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
@@ -233,22 +246,18 @@ public final class Files {
                 if (path.length() > 0 && !Files.exists(path)) {
                     int r = Files.mkdir(path, mode);
                     if (r != 0) {
-                        path.put(i, File.separatorChar);
+                        path.put(i, Files.SEPARATOR);
                         return r;
                     }
                 }
-                path.put(i, File.separatorChar);
+                path.put(i, Files.SEPARATOR);
             }
         }
         return 0;
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        return mmap(fd, len, offset, flags, 0, memoryTag);
-    }
-
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
-        long address = mmap0(fd, len, offset, flags, baseAddress);
+        long address = mmap0(fd, len, offset, flags, 0);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
@@ -389,6 +398,10 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getPosixMadvRandom();
+
+    private native static int getPosixMadvSequential();
+
     private static native int getFileSystemStatus(long lpszName);
 
     private native static int close0(long fd);
@@ -443,13 +456,17 @@ public final class Files {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
+        SEPARATOR = File.separatorChar;
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
+            POSIX_MADV_RANDOM = getPosixMadvRandom();
+            POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
         } else {
-            POSIX_FADV_SEQUENTIAL = 0;
-            POSIX_FADV_RANDOM = 0;
+            POSIX_FADV_SEQUENTIAL = -1;
+            POSIX_FADV_RANDOM = -1;
+            POSIX_MADV_SEQUENTIAL = -1;
+            POSIX_MADV_RANDOM = -1;
         }
     }
 }

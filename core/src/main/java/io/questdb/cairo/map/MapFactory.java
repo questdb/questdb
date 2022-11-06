@@ -79,7 +79,7 @@ public class MapFactory {
                     configuration.getSqlMapMaxPages()
             );
         }
-        throw CairoException.instance(0).put("unknown map type: ").put(mapType);
+        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
     public static Map createMap(
@@ -106,7 +106,7 @@ public class MapFactory {
                     configuration.getSqlMapMaxPages()
             );
         }
-        throw CairoException.instance(0).put("unknown map type: ").put(mapType);
+        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
 }

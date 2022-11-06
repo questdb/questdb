@@ -43,6 +43,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean attachPartitionCopy() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return conf.enableTestFactories();
     }
@@ -50,6 +55,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getAnalyticColumnPoolCapacity() {
         return conf.getAnalyticColumnPoolCapacity();
+    }
+
+    @Override
+    public String getAttachPartitionSuffix() {
+        return conf.getAttachPartitionSuffix();
     }
 
     @Override
@@ -120,11 +130,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public double getColumnPurgeRetryDelayMultiplier() {
         return conf.getColumnPurgeRetryDelayMultiplier();
-    }
-
-    @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return conf.getColumnPurgeRetryLimitDays();
     }
 
     @Override
@@ -363,11 +368,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return conf.getO3PartitionUpdateQueueCapacity();
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return conf.getO3PurgeDiscoveryQueueCapacity();
     }
@@ -433,8 +433,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return conf.getReplaceFunctionMaxBufferLength();
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
     }
 
     @Override
@@ -785,6 +785,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterEnabled() {
         return conf.isSqlParallelFilterEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
+        return conf.isSqlParallelFilterPreTouchEnabled();
     }
 
     @Override

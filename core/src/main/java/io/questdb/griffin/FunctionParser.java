@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -133,6 +134,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return NullConstant.NULL;
             case ColumnType.LONG256:
                 return Long256Column.newInstance(index);
+            case ColumnType.LONG128:
+                return Long128Column.newInstance(index);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")
@@ -147,15 +150,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
-        if (name != null && name.length() > 0) {
-            switch (name.charAt(0)) {
-                case ':':
-                    return createNamedParameter(position, name);
-                case '$':
-                    return parseIndexedParameter(position, name);
-                default:
-                    return new StrConstant(name);
+        if (name != null) {
+            if(name.length() > 0) {
+                switch (name.charAt(0)) {
+                    case ':':
+                        return createNamedParameter(position, name);
+                    case '$':
+                        return parseIndexedParameter(position, name);
+                    default:
+                        return new StrConstant(name);
+                }
             }
+            else return StrConstant.EMPTY;
         }
         return NullConstant.NULL;
     }
@@ -379,7 +385,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         try {
             LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
-        } catch (SqlException e) {
+        } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
             throw e;
         } catch (Throwable e) {
@@ -398,7 +404,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private long convertToTimestamp(CharSequence str, int position) throws SqlException {
         try {
-            return IntervalUtils.parseFloorPartialDate(str);
+            return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(position);
         }
@@ -742,7 +748,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     AbstractUnaryTimestampFunction castFn;
                     if (argTypeTag == ColumnType.STRING) {
-                        castFn = new CastStrToTimestampFunctionFactory.Func(position, arg);
+                        castFn = new CastStrToTimestampFunctionFactory.Func(arg);
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
                     }
@@ -760,7 +766,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                    return new CastStrToTimestampFunctionFactory.Func(function);
                 }
                 if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);

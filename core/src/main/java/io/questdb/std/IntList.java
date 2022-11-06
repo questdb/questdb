@@ -125,21 +125,6 @@ public class IntList implements Mutable {
     }
 
     /**
-     * Returns element at the specified position or null, if element index is
-     * out of bounds. This is an alternative to throwing runtime exception or
-     * doing preemptive check.
-     *
-     * @param index position of element
-     * @return element at the specified position.
-     */
-    public int getQuiet(int index) {
-        if (index < pos) {
-            return buffer[index];
-        }
-        return NO_ENTRY_VALUE;
-    }
-
-    /**
      * {@inheritDoc}
      */
     @Override

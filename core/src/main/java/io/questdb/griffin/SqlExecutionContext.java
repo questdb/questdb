@@ -61,6 +61,10 @@ public interface SqlExecutionContext extends Closeable {
 
     int getWorkerCount();
 
+    default int getSharedWorkerCount() {
+        return getWorkerCount();
+    }
+
     Rnd getRandom();
 
     default Rnd getAsyncRandom() {
@@ -69,11 +73,11 @@ public interface SqlExecutionContext extends Closeable {
 
     void setRandom(Rnd rnd);
 
-    CairoEngine getCairoEngine();
+    @NotNull CairoEngine getCairoEngine();
 
     long getRequestFd();
 
-    SqlExecutionCircuitBreaker getCircuitBreaker();
+    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
 
     void storeTelemetry(short event, short origin);
 
@@ -86,6 +90,8 @@ public interface SqlExecutionContext extends Closeable {
             boolean isOrdered,
             boolean baseSupportsRandomAccess
     );
+
+    void clearAnalyticContext();
 
     void initNow();
 

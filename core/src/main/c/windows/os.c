@@ -24,6 +24,7 @@
 
 #include <processthreadsapi.h>
 #include <errhandlingapi.h>
+#include <psapi.h>
 
 #define SECURITY_WIN32
 
@@ -37,6 +38,17 @@
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *e, jclass cl) {
     return (jint) GetCurrentProcessId();
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Os_getRss
+        (JNIEnv *e, jclass cl) {
+    PROCESS_MEMORY_COUNTERS procInfo;
+    BOOL status = GetProcessMemoryInfo(GetCurrentProcess(), &procInfo, sizeof(procInfo));
+    if ( status != 0 ) {
+        return (jlong) procInfo.WorkingSetSize;
+    } else {
+        return (jlong)0L;
+    }
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno

@@ -52,7 +52,7 @@ public interface MapWriter extends SymbolCountProvider {
             mem.close();
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-                throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
+                throw CairoException.critical(ff.errno()).put("Cannot create ").put(path);
             }
 
             mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);

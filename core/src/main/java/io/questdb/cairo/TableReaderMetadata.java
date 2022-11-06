@@ -158,7 +158,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             transitionMeta = Vm.getMRInstance();
         }
 
-        transitionMeta.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+        transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
         if (transitionMeta.size() >= TableUtils.META_OFFSET_STRUCTURE_VERSION + 8
                 && txnStructureVersion != transitionMeta.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION)) {
             // No match
@@ -166,16 +166,16 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
 
         tmpValidationMap.clear();
-        TableUtils.validate(transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        TableUtils.validateMeta(transitionMeta, tmpValidationMap, ColumnType.VERSION);
         return TableUtils.createTransitionIndex(transitionMeta, this);
     }
 
     public TableReaderMetadata deferredInit(Path path, int expectedVersion) {
         this.path.of(path).$();
         try {
-            this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             this.columnNameIndexMap.clear();
-            TableUtils.validate(metaMem, this.columnNameIndexMap, expectedVersion);
+            TableUtils.validateMeta(metaMem, this.columnNameIndexMap, expectedVersion);
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);

@@ -104,8 +104,8 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
     }
 
     @Override

@@ -29,8 +29,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 
 public class DirectUnboundedByteSink extends AbstractCharSink {
-    private final long address;
+    private long address;
     private long _wptr;
+
+    public DirectUnboundedByteSink() {
+    }
 
     public DirectUnboundedByteSink(long address) {
         this.address = _wptr = address;
@@ -40,8 +43,16 @@ public class DirectUnboundedByteSink extends AbstractCharSink {
         _wptr = address + len;
     }
 
+    public long getAddress() {
+        return address;
+    }
+
     public int length() {
         return (int) (_wptr - address);
+    }
+
+    public void of(long address) {
+        this.address = _wptr = address;
     }
 
     @Override

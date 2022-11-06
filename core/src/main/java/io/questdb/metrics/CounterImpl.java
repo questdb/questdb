@@ -44,7 +44,7 @@ class CounterImpl implements Counter {
     }
 
     @Override
-    public long get() {
+    public long getValue() {
         return counter.sum();
     }
 

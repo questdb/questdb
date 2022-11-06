@@ -150,4 +150,21 @@ public class PathTest {
 
         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
     }
+
+    @Test
+    public void testParent() {
+        try (
+                Path path = new Path();
+                Path expected = new Path()
+        ) {
+            Assert.assertEquals("", path.parent().toString());
+            Assert.assertEquals("" + Files.SEPARATOR, path.put(Files.SEPARATOR).parent().toString());
+
+            expected.concat("A").concat("B").concat("C").$();
+            path.of(expected).concat("D").$();
+            Assert.assertEquals(expected.toString(), path.parent().toString());
+            path.of(expected).concat("D").slash$();
+            Assert.assertEquals(expected.toString(), path.parent().toString());
+        }
+    }
 }

@@ -49,6 +49,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class DropIndexTest extends AbstractGriffinTest {
 
     private static final String tableName = "sensors";
@@ -586,7 +588,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)
             );
-            // check index files have been dropped
+            // check index files exist
             Assert.assertEquals(expectedDFiles * 2,
                     countFiles("temperature", 0L, DropIndexTest::isIndexFile)
             );
@@ -632,7 +634,9 @@ public class DropIndexTest extends AbstractGriffinTest {
             int indexValueBlockSize
     ) {
         try (TxReader txReader = new TxReader(ff)) {
-            txReader.ofRO(path, partitionedBy);
+            int pathLen = path.length();
+            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
+            path.trimTo(pathLen);
             txReader.unsafeLoadAll();
             Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
             Assert.assertEquals(expectedReaderVersion, txReader.getTxn());

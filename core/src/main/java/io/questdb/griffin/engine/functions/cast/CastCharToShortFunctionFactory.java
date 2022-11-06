@@ -59,7 +59,8 @@ public class CastCharToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
-            return (short) arg.getChar(rec);
+            final byte v = (byte) (arg.getChar(rec) - '0');
+            return v > -1 && v < 10 ? v : 0;
         }
     }
 }

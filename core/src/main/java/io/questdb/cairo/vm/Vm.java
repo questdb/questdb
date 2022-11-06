@@ -119,6 +119,10 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
+    public static MemoryCMOR getMemoryCMOR() {
+        return new MemoryCMORImpl();
+    }
+
     public static MemoryMA getSmallMAInstance(FilesFacade ff, LPSZ name, int memoryTag, long opts) {
         return new MemoryCMARWImpl(ff, name, ff.getPageSize(), -1, memoryTag, opts);
     }

@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.metrics.Gauge;
+import io.questdb.metrics.GaugeImpl;
 import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,6 +41,35 @@ public class AssociativeCacheTest {
         Assert.assertEquals("1", cache.peek("X"));
         Assert.assertEquals("2", cache.peek("Y"));
         Assert.assertEquals("3", cache.peek("Z"));
+        Assert.assertEquals("1", cache.poll("X"));
+        Assert.assertEquals("2", cache.poll("Y"));
+        Assert.assertEquals("3", cache.poll("Z"));
+        Assert.assertNull(cache.poll("X"));
+        Assert.assertNull(cache.poll("Y"));
+        Assert.assertNull(cache.poll("Z"));
+    }
+
+    @Test
+    public void testGaugeUpdates() {
+        Gauge gauge = new GaugeImpl("foobar");
+        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge);
+        Assert.assertEquals(0, gauge.getValue());
+        for (int i = 0; i < 10; i++) {
+            cache.put(Integer.toString(i), Integer.toString(i));
+            Assert.assertEquals(i + 1, gauge.getValue());
+        }
+
+        cache.poll("0");
+        Assert.assertEquals(9, gauge.getValue());
+        // Second poll() on the same key should be ignored.
+        cache.poll("0");
+        Assert.assertEquals(9, gauge.getValue());
+        // put() should insert value for key-value pair cleared by poll().
+        cache.put("0", "42");
+        Assert.assertEquals(10, gauge.getValue());
+
+        cache.clear();
+        Assert.assertEquals(0, gauge.getValue());
     }
 
     @Test

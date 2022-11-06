@@ -53,6 +53,8 @@ public class RecordSinkFactory {
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
         final int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
+        final int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
+        final int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
         final int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         final int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
@@ -72,6 +74,7 @@ public class RecordSinkFactory {
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
+        final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128LittleEndian", "(JJ)V");
         final int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
         final int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
         final int wPutChar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putChar", "(C)V");
@@ -95,7 +98,7 @@ public class RecordSinkFactory {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 5, 3);
 
         int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
@@ -206,6 +209,18 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetLong256, 1);
                     asm.invokeInterface(wPutLong256, 1);
+                    break;
+                case ColumnType.LONG128:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetLong128Hi, 1);
+
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetLong128Lo, 1);
+
+                    asm.invokeInterface(wPutLong128, 4);
                     break;
                 case ColumnType.RECORD:
                     asm.aload(2);

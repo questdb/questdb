@@ -64,6 +64,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean attachPartitionCopy() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -71,6 +76,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
+    }
+
+    @Override
+    public String getAttachPartitionSuffix() {
+        return ".attachable";
     }
 
     @Override
@@ -126,11 +136,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return getColumnPurgeQueueCapacity();
-    }
-
-    @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return 7;
     }
 
     @Override
@@ -380,7 +385,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getO3ColumnMemorySize() {
-        return 16 * Numbers.SIZE_1MB;
+        return 8 * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -399,17 +404,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return 1024;
     }
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
     }
 
@@ -474,7 +479,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getReplaceFunctionMaxBufferLength() {
+    public int getStrFunctionMaxBufferLength() {
         return 1024 * 1024;
     }
 

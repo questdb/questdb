@@ -51,10 +51,10 @@ public class EngineMigration {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final CairoConfiguration configuration = engine.getConfiguration();
         int tempMemSize = 8;
-        long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_DEFAULT);
+        long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try (
-                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryARW virtualMem = Vm.getARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
                 Path path = new Path();
                 MemoryMARW rwMemory = Vm.getMARWInstance()
         ) {
@@ -109,7 +109,7 @@ public class EngineMigration {
                 }
             }
         } finally {
-            Unsafe.free(mem, tempMemSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem, tempMemSize, MemoryTag.NATIVE_MIG);
         }
     }
 
@@ -132,7 +132,7 @@ public class EngineMigration {
 
             LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
             if (ff.copy(src.$(), toTemp.$()) < 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+                throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }
         } finally {
             toTemp.trimTo(copyPathLen);

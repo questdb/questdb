@@ -28,11 +28,11 @@ import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
-class GaugeImpl implements Gauge {
+public class GaugeImpl implements Gauge {
     private final LongAdder counter;
     private final CharSequence name;
 
-    GaugeImpl(CharSequence name) {
+    public GaugeImpl(CharSequence name) {
         this.name = name;
         this.counter = new LongAdder();
     }
@@ -45,6 +45,16 @@ class GaugeImpl implements Gauge {
     @Override
     public void dec() {
         counter.decrement();
+    }
+
+    @Override
+    public void add(long value) {
+        counter.add(value);
+    }
+
+    @Override
+    public long getValue() {
+        return counter.sum();
     }
 
     @Override

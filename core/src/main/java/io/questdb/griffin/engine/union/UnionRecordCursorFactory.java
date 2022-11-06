@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
-    private final Map map;
 
     public UnionRecordCursorFactory(
             CairoConfiguration configuration,
@@ -49,14 +48,14 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
             ColumnTypes valueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        this.map = MapFactory.createMap(configuration, metadata, valueTypes);
+        Map map = MapFactory.createMap(configuration, metadata, valueTypes);
         this.cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
     }
 
     @Override
     public void _close() {
+        Misc.free(cursor);
         super._close();
-        Misc.free(map);
     }
 
     @Override

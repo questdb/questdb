@@ -41,6 +41,37 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testPartitionByOrderByAcceptsDesc() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("desc", " desc");
+    }
+
+    @Test
+    public void testPartitionByOrderByAcceptsAsc() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("asc", "");
+    }
+
+    @Test
+    public void testPartitionByOrderByAcceptsDefault() throws SqlException {
+        assertPartitionByOverOrderByAcceptsDirection("", "");
+    }
+
+    private void assertPartitionByOverOrderByAcceptsDirection(String orderInQuery, String orderInModel) throws SqlException {
+        assertQuery("select-choose ts, temperature from " +
+                        "(select-analytic [ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ")] ts, temperature, row_number() rid over (partition by timestamp_floor('y',ts) order by temperature" + orderInModel + ") " +
+                        "from (select [ts, temperature] from weather) where rid = 0) inq order by ts",
+                "select ts, temperature from \n" +
+                        "( \n" +
+                        "  select ts, temperature,  \n" +
+                        "         row_number() over (partition by timestamp_floor('y', ts) order by temperature " + orderInQuery + ")  rid \n" +
+                        "  from weather \n" +
+                        ") inq \n" +
+                        "where rid = 0 \n" +
+                        "order by ts\n",
+                modelOf("weather").col("ts", ColumnType.TIMESTAMP).col("temperature", ColumnType.FLOAT)
+        );
+    }
+
+    @Test
     public void testSampleByEndingWithSemicolon() throws SqlException {
         assertQuery(
                 "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
@@ -76,6 +107,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual cast(123,double) x from (long_sequence(1))",
                 "select 123::float8 x");
+    }
+
+    @Test
+    public void testSelectEscapedStringLiteral() throws SqlException {
+        assertQuery(
+                "select-virtual 'test''quotes' test''quotes from (long_sequence(1))",
+                "select 'test''quotes'");
+    }
+
+    @Test
+    public void testSelectEscapedQuotedIdentifier() throws SqlException {
+        assertQuery(
+                "select-virtual 'test' quoted\"\"id from (long_sequence(1))",
+                "select 'test' as \"quoted\"\"id\"");
     }
 
     @Test
@@ -1027,6 +1072,43 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableLike() throws Exception {
+        assertCreateTable("create table x (like y)",
+                "create table x (like y)");
+    }
+
+    @Test
+    public void testCreateLikeTableNameAsDot() throws Exception {
+        assertSyntaxError(
+                "create table newtab ( like . )",
+                27,
+                "'.' is an invalid table name");
+    }
+
+    @Test
+    public void testCreateLikeTableNameWithDot() throws Exception {
+        assertSyntaxError(
+                "create table x (like Y.z)",
+                22,
+                "unexpected token: .");
+    }
+
+    @Test
+    public void testCreateLikeTableNameFullOfHacks() throws Exception {
+        assertSyntaxError(
+                "create table x (like '../../../')",
+                21,
+                "'.' is not allowed");
+    }
+
+    @Test
+    public void testCreateLikeTableInvalidSyntax() throws Exception {
+        assertSyntaxError("create table x (like y), index(s1)",
+                23,
+                "unexpected token: ");
+    }
+
+    @Test
     public void testCreateTableMissing() throws Exception {
         assertSyntaxError(
                 "create",
@@ -1191,6 +1273,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "partition by YEAR index",
                 61,
                 "',' or ')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableIndexUnsupportedColumnType() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE INDEX, " + // INDEX is not supported for non-SYMBOL columns
+                        "c CHAR, " +
+                        "t TIMESTAMP) " +
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR",
+                30,
+                "',' or ')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableIndexUnsupportedColumnType2() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c CHAR, " +
+                        "t TIMESTAMP), " +
+                        "INDEX (b) " + // INDEX is not supported for non-SYMBOL columns
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR",
+                60,
+                "indexes are supported only for SYMBOL columns: b"
         );
     }
 
@@ -1955,7 +2068,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndex() throws SqlException {
         assertCreateTable(
                 "create table x (" +
-                        "a INT index capacity 256," +
+                        "a SYMBOL capacity 128 cache index capacity 256," +
                         " b BYTE," +
                         " c SHORT," +
                         " t TIMESTAMP," +
@@ -1970,7 +2083,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " timestamp(t)" +
                         " partition by MONTH",
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -1992,7 +2105,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
                 "create table x (" +
-                        "a INT index capacity 16," +
+                        "a SYMBOL capacity 128 cache index capacity 16," +
                         " b BYTE," +
                         " c SHORT," +
                         " t TIMESTAMP," +
@@ -2007,7 +2120,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " timestamp(t)" +
                         " partition by MONTH",
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2029,7 +2142,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2045,7 +2158,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 10000000) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "max index block capacity is");
     }
 
@@ -2053,7 +2166,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityInvalid() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2069,7 +2182,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                174,
+                177,
                 "bad integer");
     }
 
@@ -2077,7 +2190,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityLow() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2093,7 +2206,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity 1) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "min index block capacity is");
     }
 
@@ -2101,7 +2214,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableOutOfPlaceIndexCapacityLow2() throws Exception {
         assertSyntaxError(
                 "create table x (" +
-                        "a INT, " +
+                        "a SYMBOL, " +
                         "b BYTE, " +
                         "c SHORT, " +
                         "t TIMESTAMP, " +
@@ -2117,7 +2230,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ", index (x capacity -10) " +
                         "timestamp(t) " +
                         "partition by MONTH",
-                173,
+                176,
                 "min index block capacity is");
     }
 
@@ -3274,6 +3387,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING)
                         .col("c", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertMissingClosingQuote() throws Exception {
+        assertSyntaxError("insert into x values ('abc)",
+                22,
+                "unclosed quoted string?",
+                modelOf("x")
+                        .col("a", ColumnType.STRING));
     }
 
     @Test
@@ -4558,7 +4680,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMissingTableInSubQuery() throws Exception {
-        // todo: 24 is the correct position
         assertSyntaxError(
                 "with x as (select a from) x",
                 25,
@@ -4712,7 +4833,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT \n" +
                         "a\n" +
                         "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
-                        "select *", // <-- dangling 'select *'
+                        "select * from long_sequence(1)",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.SYMBOL)
@@ -6441,6 +6562,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select tab2.*, a.* from tab1 a join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardOnly() throws Exception {
+        assertFailure(
+                "select *",
+                "create table tab (seq long)",
+                7,
+                "'from' expected"
+        );
+    }
+
+    @Test
+    public void testSelectWildcardTabNoFrom() throws Exception {
+        assertFailure(
+                "select * tab",
+                "create table tab (seq long)",
+                9,
+                "'from' expected"
         );
     }
 

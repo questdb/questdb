@@ -113,7 +113,7 @@ public final class SerialCsvFileImporter implements Closeable {
                     textLoader.configureColumnDelimiter(columnDelimiter);
                 }
                 textLoader.setForceHeaders(forceHeader);
-                textLoader.setSkipRowsWithExtraValues(false);
+                textLoader.setSkipLinesWithExtraValues(false);
                 textLoader.parse(buf, buf + n, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
                 int read;

@@ -259,8 +259,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord error() {
-        // Same as errorW()
-        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
+        return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
     }
 
     @Override

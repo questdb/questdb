@@ -24,10 +24,10 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 
-public interface HttpMinServerConfiguration extends WorkerPoolAwareConfiguration {
+public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
 
     IODispatcherConfiguration getDispatcherConfiguration();
 

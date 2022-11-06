@@ -42,7 +42,7 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperator extends PurgingOperator implements QuietClosable {
+public class UpdateOperator extends PurgingOperator implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
 
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
@@ -90,7 +90,8 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
 
             // Check that table structure hasn't changed between planning and executing the UPDATE
             if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
-                throw ReaderOutOfDateException.of(tableName);
+                throw ReaderOutOfDateException.of(tableName, tableId, writerMetadata.getId(),
+                        tableVersion, tableWriter.getStructureVersion());
             }
 
             // Select the rows to be updated
@@ -134,7 +135,7 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     if (rowId < lastRowId) {
                         // We're assuming, but not enforcing the fact that
                         // factory produces rows in incrementing order.
-                        throw CairoException.instance(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
+                        throw CairoException.critical(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 
@@ -142,15 +143,16 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     final long currentRow = Rows.toLocalRowID(rowId);
 
                     if (rowPartitionIndex != partitionIndex) {
-                        LOG.info()
-                                .$("updating partition [partitionIndex=").$(partitionIndex)
-                                .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                                .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                .$(", affectedColumnCount=").$(affectedColumnCount)
-                                .$(", prevRow=").$(prevRow)
-                                .$(", minRow=").$(minRow)
-                                .I$();
                         if (partitionIndex > -1) {
+                            LOG.info()
+                                    .$("updating partition [partitionIndex=").$(partitionIndex)
+                                    .$(", rowPartitionIndex=").$(rowPartitionIndex)
+                                    .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                    .$(", affectedColumnCount=").$(affectedColumnCount)
+                                    .$(", prevRow=").$(prevRow)
+                                    .$(", minRow=").$(minRow)
+                                    .I$();
+
                             copyColumns(
                                     partitionIndex,
                                     affectedColumnCount,
@@ -396,6 +398,10 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
+                    break;
+                case ColumnType.LONG128:
+                    dstFixMem.putLong(masterRecord.getLong128Lo(i));
+                    dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")

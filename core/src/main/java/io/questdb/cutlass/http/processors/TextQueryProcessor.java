@@ -73,13 +73,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             int workerCount
     ) {
-        this(configuration, engine, workerCount, null, null);
+        this(configuration, engine, workerCount, workerCount, null, null);
     }
 
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
             int workerCount,
+            int sharedWorkerCount,
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
@@ -87,7 +88,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
         this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
         this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
@@ -108,7 +109,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return (tok.charAt(i++) | 32) == '/'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i)) == 'p';
+                && (tok.charAt(i) | 32) == 'p';
     }
 
     public void execute(
@@ -118,7 +119,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
-            state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
+            state.recordCursorFactory = QueryCache.getThreadLocalInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getCairoSecurityContext(),
@@ -150,11 +151,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             if (state.recordCursorFactory != null) {
                 try {
                     boolean runQuery = true;
-                    do {
+                    for (int retries = 0; runQuery; retries++) {
                         try {
                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                             runQuery = false;
                         } catch (ReaderOutOfDateException e) {
+                            if (retries == ReaderOutOfDateException.MAX_RETRY_ATTEMPS) {
+                                throw e;
+                            }
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -164,7 +168,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                             state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
-                    } while (runQuery);
+                    }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     header(context.getChunkedResponseSocket(), state, 200);
                     resumeSend(context);
@@ -179,8 +183,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
-        } catch (SqlException e) {
-            syntaxError(context.getChunkedResponseSocket(), e, state);
+        } catch (SqlException | ImplicitCastException e) {
+            syntaxError(context.getChunkedResponseSocket(), state, e);
             readyForNextRequest(context);
         } catch (CairoException | CairoError e) {
             internalError(context.getChunkedResponseSocket(), e, state);
@@ -368,7 +372,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
-        metrics.healthCheck().incrementUnhandledErrors();
+        metrics.health().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);
     }
 
@@ -516,6 +520,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
                 break;
+            case ColumnType.LONG128:
+                throw new UnsupportedOperationException();
             default:
                 assert false;
         }
@@ -565,14 +571,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void syntaxError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
-            TextQueryProcessorState state
+            TextQueryProcessorState state,
+            FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         info(state)
                 .$("syntax-error [q=`").utf8(state.query)
-                .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$("`, at=").$(container.getPosition())
+                .$(", message=`").$(container.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state);
+        sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
     }
 }

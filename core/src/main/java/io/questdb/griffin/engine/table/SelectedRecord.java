@@ -89,6 +89,16 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        return base.getLong128Hi(getColumnIndex(col));
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return base.getLong128Lo(getColumnIndex(col));
+    }
+
+    @Override
     public void getLong256(int col, CharSink sink) {
         base.getLong256(getColumnIndex(col), sink);
     }

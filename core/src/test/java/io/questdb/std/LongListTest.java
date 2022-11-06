@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -343,6 +344,22 @@ public class LongListTest {
         list.sort();
 
         assertOrderedAsc(list);
+    }
+
+    @Test
+    public void testInsertFromSource() {
+        LongList src = new LongList();
+        src.add(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
+        LongList dst = new LongList();
+        dst.insertFromSource(0, src, 0, src.size());
+        TestUtils.assertEquals(src, dst);
+
+        dst.clear();
+        dst.add(-1L, -2L, -3L, -4L);
+        dst.insertFromSource(4, src, 4, src.size());
+        LongList expected = new LongList();
+        expected.add(-1L, -2L, -3L, -4L, 5L, 6L, 7L, 8L);
+        Assert.assertEquals(expected, dst);
     }
 
     private void assertOrderedAsc(LongList list) {

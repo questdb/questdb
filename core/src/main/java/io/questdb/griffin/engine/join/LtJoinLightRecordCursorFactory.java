@@ -43,7 +43,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
 public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final Map joinKeyMap;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterKeySink;
@@ -63,9 +62,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
+
+        Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         this.cursor = new LtJoinLightRecordCursor(
                 columnSplit,
                 joinKeyMap,
@@ -77,10 +77,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        joinKeyMap.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
+        cursor.close();
     }
 
     @Override
@@ -94,6 +94,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -117,6 +118,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         private Record masterRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
+        private boolean isOpen;
 
         public LtJoinLightRecordCursor(
                 int columnSplit,
@@ -130,6 +132,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
             this.joinKeyMap = joinKeyMap;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
+            this.isOpen = true;
         }
 
         @Override
@@ -202,14 +205,26 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            joinKeyMap.clear();
-            slaveTimestamp = Long.MIN_VALUE;
-            lastSlaveRowID = Long.MIN_VALUE;
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.joinKeyMap.reopen();
+            }
+            this.slaveTimestamp = Long.MIN_VALUE;
+            this.lastSlaveRowID = Long.MIN_VALUE;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
             this.slaveRecord = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecord);
+            this.record.of(masterRecord, slaveRecord);
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                joinKeyMap.close();
+                super.close();
+                isOpen = false;
+            }
         }
     }
 }

@@ -36,6 +36,8 @@
 #else
 #include <unistd.h>
 #include <sys/fcntl.h>
+#include <sys/param.h>
+#include <sys/mount.h>
 #endif
 
 static inline jlong _io_questdb_std_Files_mremap0
@@ -165,6 +167,236 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         return 1;
     }
 }
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    struct statfs sb;
+    if (statfs((const char *) lpszName, &sb) == 0) {
+        switch (sb.f_type) {
+            case 0xadf5:
+                strcpy((char *) lpszName, "ADFS");
+                return sb.f_type;
+            case 0xadff:
+                strcpy((char *) lpszName, "AFFS");
+                return sb.f_type;
+            case 0x0187:
+                strcpy((char *) lpszName, "AUTOFS");
+                return sb.f_type;
+            case 0x62646576:
+                strcpy((char *) lpszName, "BDEVFS");
+                return sb.f_type;
+            case 0x42465331:
+                strcpy((char *) lpszName, "BEFS");
+                return sb.f_type;
+            case 0x1badface:
+                strcpy((char *) lpszName, "BFS");
+                return sb.f_type;
+            case 0x42494e4d:
+                strcpy((char *) lpszName, "BINFMTFS");
+                return sb.f_type;
+            case 0xcafe4a11:
+                strcpy((char *) lpszName, "BPF_FS");
+                return sb.f_type;
+            case 0x9123683e:
+                strcpy((char *) lpszName, "BTRFS");
+                return sb.f_type;
+            case 0x27e0eb:
+                strcpy((char *) lpszName, "CGROUP");
+                return sb.f_type;
+            case 0x63677270:
+                strcpy((char *) lpszName, "CGROUP2");
+                return sb.f_type;
+            case 0xff534d42:
+                strcpy((char *) lpszName, "CIFS");
+                return sb.f_type;
+            case 0x73757245:
+                strcpy((char *) lpszName, "CODA");
+                return sb.f_type;
+            case 0x012ff7b7:
+                strcpy((char *) lpszName, "COH");
+                return sb.f_type;
+            case 0x28cd3d45:
+                strcpy((char *) lpszName, "CRAMFS");
+                return sb.f_type;
+            case 0x64626720:
+                strcpy((char *) lpszName, "DEBUGFS");
+                return sb.f_type;
+            case 0x1373:
+                strcpy((char *) lpszName, "DEVFS");
+                return sb.f_type;
+            case 0x1cd1:
+                strcpy((char *) lpszName, "DEVPTS");
+                return sb.f_type;
+            case 0xf15f:
+                strcpy((char *) lpszName, "ECRYPTFS");
+                return sb.f_type;
+            case 0xde5e81e4:
+                strcpy((char *) lpszName, "EFIVARFS");
+                return sb.f_type;
+            case 0x00414a53:
+                strcpy((char *) lpszName, "EFS");
+                return sb.f_type;
+            case 0x137d:
+                strcpy((char *) lpszName, "EXT");
+                return sb.f_type;
+            case 0xef51:
+                strcpy((char *) lpszName, "EXT2_OLD");
+                return sb.f_type;
+            case 0xf2f52010:
+                strcpy((char *) lpszName, "F2FS");
+                return sb.f_type;
+            case 0x65735546:
+                strcpy((char *) lpszName, "FUSE");
+                return sb.f_type;
+            case 0x4244:
+                strcpy((char *) lpszName, "HFS");
+                return sb.f_type;
+            case 0x00c0ffee:
+                strcpy((char *) lpszName, "HOSTFS");
+                return sb.f_type;
+            case 0xf995e849:
+                strcpy((char *) lpszName, "HPFS");
+                return sb.f_type;
+            case 0x958458f6:
+                strcpy((char *) lpszName, "HUGETLBFS");
+                return sb.f_type;
+            case 0x9660:
+                strcpy((char *) lpszName, "ISOFS");
+                return sb.f_type;
+            case 0x72b6:
+                strcpy((char *) lpszName, "JFFS2");
+                return sb.f_type;
+            case 0x3153464a:
+                strcpy((char *) lpszName, "JFS");
+                return sb.f_type;
+            case 0x19800202:
+                strcpy((char *) lpszName, "MQUEUE");
+                return sb.f_type;
+            case 0x4d44:
+                strcpy((char *) lpszName, "MSDOS");
+                return sb.f_type;
+            case 0x11307854:
+                strcpy((char *) lpszName, "MTD_INODE_FS");
+                return sb.f_type;
+            case 0x564c:
+                strcpy((char *) lpszName, "NCP");
+                return sb.f_type;
+            case 0x6969:
+                strcpy((char *) lpszName, "NFS");
+                return sb.f_type;
+            case 0x3434:
+                strcpy((char *) lpszName, "NILFS");
+                return sb.f_type;
+            case 0x6e736673:
+                strcpy((char *) lpszName, "NSFS");
+                return sb.f_type;
+            case 0x5346544e:
+                strcpy((char *) lpszName, "NTFS_SB");
+                return sb.f_type;
+            case 0x7461636f:
+                strcpy((char *) lpszName, "OCFS2");
+                return sb.f_type;
+            case 0x9fa1:
+                strcpy((char *) lpszName, "OPENPROM");
+                return sb.f_type;
+            case 0x794c7630:
+                strcpy((char *) lpszName, "OVERLAYFS");
+                return -1 * ((jlong) sb.f_type);
+            case 0x50495045:
+                strcpy((char *) lpszName, "PIPEFS");
+                return sb.f_type;
+            case 0x9fa0:
+                strcpy((char *) lpszName, "PROC");
+                return sb.f_type;
+            case 0x6165676c:
+                strcpy((char *) lpszName, "PSTOREFS");
+                return sb.f_type;
+            case 0x002f:
+                strcpy((char *) lpszName, "QNX4");
+                return sb.f_type;
+            case 0x68191122:
+                strcpy((char *) lpszName, "QNX6");
+                return sb.f_type;
+            case 0x858458f6:
+                strcpy((char *) lpszName, "RAMFS");
+                return sb.f_type;
+            case 0x52654973:
+                strcpy((char *) lpszName, "REISERFS");
+                return sb.f_type;
+            case 0x7275:
+                strcpy((char *) lpszName, "ROMFS");
+                return sb.f_type;
+            case 0x73636673:
+                strcpy((char *) lpszName, "SECURITYFS");
+                return sb.f_type;
+            case 0xf97cff8c:
+                strcpy((char *) lpszName, "SELINUX");
+                return sb.f_type;
+            case 0x43415d53:
+                strcpy((char *) lpszName, "SMACK");
+                return sb.f_type;
+            case 0x517b:
+                strcpy((char *) lpszName, "SMB");
+                return sb.f_type;
+            case 0xfe534d42:
+                strcpy((char *) lpszName, "SMB2");
+                return sb.f_type;
+            case 0x534f434b:
+                strcpy((char *) lpszName, "SOCKFS");
+                return sb.f_type;
+            case 0x73717368:
+                strcpy((char *) lpszName, "SQUASHFS");
+                return sb.f_type;
+            case 0x62656572:
+                strcpy((char *) lpszName, "SYSFS");
+                return sb.f_type;
+            case 0x012ff7b6:
+                strcpy((char *) lpszName, "SYSV2");
+                return sb.f_type;
+            case 0x012ff7b5:
+                strcpy((char *) lpszName, "SYSV4");
+                return sb.f_type;
+            case 0x01021994:
+                strcpy((char *) lpszName, "TMPFS");
+                return sb.f_type;
+            case 0x74726163:
+                strcpy((char *) lpszName, "TRACEFS");
+                return sb.f_type;
+            case 0x15013346:
+                strcpy((char *) lpszName, "UDF");
+                return sb.f_type;
+            case 0x00011954:
+                strcpy((char *) lpszName, "UFS");
+                return sb.f_type;
+            case 0x9fa2:
+                strcpy((char *) lpszName, "USBDEVICE");
+                return sb.f_type;
+            case 0x01021997:
+                strcpy((char *) lpszName, "V9FS");
+                return -1 * ((jlong) sb.f_type);
+            case 0xa501fcf5:
+                strcpy((char *) lpszName, "VXFS");
+                return sb.f_type;
+            case 0xabba1974:
+                strcpy((char *) lpszName, "XENFS");
+                return sb.f_type;
+            case 0x012ff7b4:
+                strcpy((char *) lpszName, "XENIX");
+                return sb.f_type;
+            case 0x58465342:
+                strcpy((char *) lpszName, "XFS");
+                return sb.f_type;
+            case 0xEF53: // ext2, ext3, ext4
+                strcpy((char *) lpszName, "ext4");
+                return -1 * ((jlong) sb.f_type);
+            default:
+                strcpy((char *) lpszName, "unknown");
+                return sb.f_type;
+        }
+    }
+    return 0;
+}
+
 #endif
 
 

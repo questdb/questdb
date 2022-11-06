@@ -42,7 +42,7 @@ import java.io.Closeable;
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
-    public static final Closeable CLEANER = Path::clearThreadLocals;
+    public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
     private long ptr;
     private long wptr;
@@ -330,6 +330,25 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
+        return this;
+    }
+
+    public Path parent() {
+        if (len > 0) {
+            int idx = len - 1;
+            char last = (char) Unsafe.getUnsafe().getByte(ptr + idx);
+            if (last == Files.SEPARATOR || last == '\0') {
+                if (idx < 2) {
+                    return this;
+                }
+                idx--;
+            }
+            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(ptr + idx) != Files.SEPARATOR) {
+                idx--;
+            }
+            len = idx;
+            wptr = ptr + len;
+        }
         return this;
     }
 

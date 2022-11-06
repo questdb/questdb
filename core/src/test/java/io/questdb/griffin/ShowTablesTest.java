@@ -75,7 +75,7 @@ public class ShowTablesTest extends AbstractGriffinTest {
                 assertQuery("columnName\tcolumnType\ncust_id\tINT\nccy\tSYMBOL\nbalance\tDOUBLE\n", "show columns from balances2", null, false, sqlExecutionContext, false);
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.toString().contains("'balances2' is not a valid table"));
+                Assert.assertTrue(ex.toString().contains("table does not exist"));
             }
         });
     }

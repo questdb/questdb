@@ -56,4 +56,14 @@ public interface ScalarFunction extends Function {
     default Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    default long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long getLong128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

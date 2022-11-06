@@ -38,6 +38,8 @@ public interface FilesFacade {
 
     int copy(LPSZ from, LPSZ to);
 
+    int copyRecursive(Path src, Path dst, int dirMode);
+
     int errno();
 
     boolean exists(LPSZ path);
@@ -45,6 +47,8 @@ public interface FilesFacade {
     boolean exists(long fd);
 
     void fadvise(long fd, long offset, long len, int advise);
+
+    void madvise(long address, long len, int advise);
 
     long findClose(long findPtr);
 
@@ -68,6 +72,10 @@ public interface FilesFacade {
 
     int hardLink(LPSZ src, LPSZ hardLink);
 
+    int hardLinkDirRecursive(Path src, Path dst, int dirMode);
+
+    boolean isCrossDeviceCopyError(int errno);
+
     boolean isRestrictedFileSystem();
 
     void iterateDir(LPSZ path, FindVisitor func);
@@ -83,8 +91,6 @@ public interface FilesFacade {
     int mkdirs(Path path, int mode);
 
     long mmap(long fd, long len, long offset, int flags, int memoryTag);
-
-    long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag);
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 

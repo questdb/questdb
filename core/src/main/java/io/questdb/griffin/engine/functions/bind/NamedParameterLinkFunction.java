@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -206,7 +205,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableName);
         if (base == null) {
-            throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
+            throw SqlException.position(0).put("undefined bind variable: ").put(variableName);
         }
         assert base.getType() == type;
         base.init(symbolTableSource, executionContext);

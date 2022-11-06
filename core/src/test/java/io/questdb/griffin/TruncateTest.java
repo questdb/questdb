@@ -112,7 +112,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                     ") timestamp (k) partition by day"
                     );
 
-                    compile("alter table testTruncateWithColumnTop add column colum_with_top int");
+                    compile("alter table testTruncateWithColumnTop add column column_with_top int");
 
                     compile(
                             "insert into testTruncateWithColumnTop " +
@@ -120,7 +120,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                     " cast(x as int) i," +
                                     " rnd_symbol('msft','ibm', 'googl') sym," +
                                     " timestamp_sequence('1970-01-01T12', 10000) k," +
-                                    " x as colum_with_top " +
+                                    " x as column_with_top " +
                                     " from long_sequence(1000)"
                     );
 
@@ -141,11 +141,11 @@ public class TruncateTest extends AbstractGriffinTest {
                                     " cast(x as int) i," +
                                     " rnd_symbol('msft','ibm', 'googl') sym," +
                                     " timestamp_sequence('1970-01-01T12', 10000) k, " +
-                                    " x as colum_with_top " +
+                                    " x as column_with_top " +
                                     " from long_sequence(1000)"
                     );
 
-                    assertSql("select colum_with_top from testTruncateWithColumnTop limit -2", "colum_with_top\n" +
+                    assertSql("select column_with_top from testTruncateWithColumnTop limit -2", "column_with_top\n" +
                             "999\n" +
                             "1000\n");
                 }
@@ -259,7 +259,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [0]: table busy");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [-1]: table busy");
             }
 
             releaseBarrier.await();
@@ -315,7 +315,7 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");
             }
 
             assertQuery(
@@ -499,7 +499,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });
@@ -555,7 +555,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
                     Assert.fail();
                 } catch (ReaderOutOfDateException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y']");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot be used because table schema has changed [table='y'");
                 }
             }
         });

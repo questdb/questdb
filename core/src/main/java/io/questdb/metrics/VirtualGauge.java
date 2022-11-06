@@ -15,18 +15,24 @@ public class VirtualGauge implements Gauge {
         this.provider = statProvider;
     }
 
-    public long getValue() {
-        return provider.getValue();
-    }
-
     @Override
     public void inc() {
-        //do nothing as this gauge is RO view of some stat
+        // do nothing as this gauge is RO view of some stat
     }
 
     @Override
     public void dec() {
-        //do nothing as this gauge is RO view of some stat
+        // do nothing as this gauge is RO view of some stat
+    }
+
+    @Override
+    public void add(long value) {
+        // do nothing as this gauge is RO view of some stat
+    }
+
+    @Override
+    public long getValue() {
+        return provider.getValue();
     }
 
     private CharSequence getName() {

@@ -24,7 +24,6 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.concurrent.locks.LockSupport;
@@ -39,8 +38,8 @@ public class SOCountDownLatch implements CountDownLatchSPI {
         VALUE_OFFSET = Unsafe.getFieldOffset(SOCountDownLatch.class, "count");
     }
 
-    private volatile int count = 0;
-    private volatile Thread waiter = null;
+    private volatile int count;
+    private volatile Thread waiter;
 
     public SOCountDownLatch(int count) {
         this.count = count;
@@ -52,7 +51,7 @@ public class SOCountDownLatch implements CountDownLatchSPI {
     public void await() {
         this.waiter = Thread.currentThread();
         while (getCount() > 0) {
-            Os.pause();
+            LockSupport.park();
         }
     }
 
@@ -68,7 +67,6 @@ public class SOCountDownLatch implements CountDownLatchSPI {
             long elapsed = System.nanoTime() - start;
 
             if (elapsed < nanos) {
-                // this could be spurious wakeup, ignore if count is non-zero
                 if (getCount() == 0) {
                     return true;
                 }

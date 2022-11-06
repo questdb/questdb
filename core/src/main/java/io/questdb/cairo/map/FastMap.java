@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-public class FastMap implements Map {
+public class FastMap implements Map, Reopenable {
 
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
@@ -85,7 +85,18 @@ public class FastMap implements Map {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
-    @TestOnly
+    public FastMap(
+            int pageSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int memoryTag
+    ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, memoryTag, memoryTag);
+    }
+
     FastMap(
             int pageSize,
             @Transient ColumnTypes keyTypes,
@@ -95,18 +106,33 @@ public class FastMap implements Map {
             HashFunction hashFunction,
             int maxResizes
     ) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, hashFunction, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+    }
+
+    @TestOnly
+    FastMap(
+            int pageSize,
+            @Transient ColumnTypes keyTypes,
+            @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            HashFunction hashFunction,
+            int maxResizes,
+            int mapMemoryTag,
+            int listMemoryTag
+    ) {
         assert pageSize > 3;
         assert loadFactor > 0 && loadFactor < 1d;
         this.initialKeyCapacity = keyCapacity;
         this.initialPageSize = pageSize;
         this.loadFactor = loadFactor;
-        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, MemoryTag.NATIVE_FAST_MAP);
+        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize, mapMemoryTag);
         this.kLimit = kStart + pageSize;
         this.keyCapacity = (int) (keyCapacity / loadFactor);
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
-        this.offsets = new DirectLongList(this.keyCapacity, MemoryTag.NATIVE_FAST_MAP_LONG_LIST);
+        this.offsets = new DirectLongList(this.keyCapacity, listMemoryTag);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(0);
         this.hashFunction = hashFunction;
@@ -150,9 +176,12 @@ public class FastMap implements Map {
                     case ColumnType.LONG256:
                         offset += Long256.BYTES;
                         break;
+                    case ColumnType.LONG128:
+                        offset += 16;
+                        break;
                     default:
                         close();
-                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
                 }
             }
             this.value = new FastMapValue(valueOffsets);
@@ -174,6 +203,13 @@ public class FastMap implements Map {
         this.cursor = new FastMapCursor(record, this);
     }
 
+    public void reopen() {
+        if (kStart == 0) {
+            //handles both mem and offsets
+            restoreInitialCapacity();
+        }
+    }
+
     @Override
     public void clear() {
         kPos = kStart;
@@ -184,10 +220,13 @@ public class FastMap implements Map {
 
     @Override
     public final void close() {
-        offsets = Misc.free(offsets);
+        Misc.free(offsets);
         if (kStart != 0) {
             Unsafe.free(kStart, capacity, MemoryTag.NATIVE_FAST_MAP);
-            kStart = 0;
+            kLimit = kStart = kPos = 0;
+            free = 0;
+            size = 0;
+            capacity = 0;
         }
     }
 
@@ -216,6 +255,7 @@ public class FastMap implements Map {
         return key.init();
     }
 
+    @Override
     public void restoreInitialCapacity() {
         this.kStart = kPos = Unsafe.realloc(this.kStart, this.kLimit - this.kStart, this.capacity = initialPageSize, MemoryTag.NATIVE_FAST_MAP);
         this.kLimit = kStart + this.initialPageSize;
@@ -223,6 +263,7 @@ public class FastMap implements Map {
         this.keyCapacity = this.keyCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(this.keyCapacity);
         this.mask = this.keyCapacity - 1;
         this.free = (int) (this.keyCapacity * loadFactor);
+        this.offsets.resetCapacity();
         this.offsets.setCapacity(this.keyCapacity);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(0);
@@ -479,7 +520,7 @@ public class FastMap implements Map {
             } else {
                 long len = value.length() + 4;
                 if (len > Integer.MAX_VALUE) {
-                    throw CairoException.instance(0).put("binary column is too large");
+                    throw CairoException.nonCritical().put("binary column is too large");
                 }
 
                 checkSize((int) len);
@@ -552,6 +593,15 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
             appendAddress += Long256.BYTES;
+            writeOffset();
+        }
+
+        @Override
+        public void putLong128LittleEndian(long hi, long lo) {
+            checkSize(16);
+            Unsafe.getUnsafe().putLong(appendAddress, lo);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
+            appendAddress += 16;
             writeOffset();
         }
 
@@ -701,7 +751,7 @@ public class FastMap implements Map {
         private void writeOffset() {
             long len = appendAddress - startAddress;
             if (len > Integer.MAX_VALUE) {
-                throw CairoException.instance(0).put("row data is too large");
+                throw CairoException.critical(0).put("row data is too large");
             }
             Unsafe.getUnsafe().putInt(nextColOffset, (int) len);
             nextColOffset += 4;

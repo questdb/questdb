@@ -28,8 +28,13 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Mutable;
 
-public interface GroupByFunction extends Function {
+public interface GroupByFunction extends Function, Mutable {
+
+    @Override
+    default void clear() {
+    }
 
     default void interpolateBoundary(MapValue mapValue1,
                                      MapValue mapValue2,

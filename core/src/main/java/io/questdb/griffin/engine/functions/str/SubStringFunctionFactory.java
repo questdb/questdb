@@ -146,7 +146,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
                 return null;
             }
             if (len < 0) {
-                throw CairoException.instance(0).put("negative substring length is not allowed");
+                throw CairoException.nonCritical().put("negative substring length is not allowed");
             }
 
             sink.clear();

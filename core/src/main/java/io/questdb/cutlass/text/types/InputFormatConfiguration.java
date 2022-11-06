@@ -149,7 +149,7 @@ public class InputFormatConfiguration {
             // we will copy buffer twice to parse json, but luckily contents should be small
             // and we should be parsing this only once on startup
             byte[] heapBuffer = new byte[4096];
-            long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_DEFAULT);
+            long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             try {
                 int len;
                 while ((len = stream.read(heapBuffer)) > 0) {
@@ -161,7 +161,7 @@ public class InputFormatConfiguration {
                 }
                 jsonLexer.clear();
             } finally {
-                Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(memBuffer, heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             }
         } catch (IOException e) {
             throw JsonException.$(0, "could not read input format config [confRoot=").put(confRoot)

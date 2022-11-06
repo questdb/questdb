@@ -39,7 +39,6 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
-import io.questdb.std.QuietClosable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;

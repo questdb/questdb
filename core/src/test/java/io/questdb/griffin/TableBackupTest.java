@@ -371,7 +371,7 @@ public class TableBackupTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(18, e.getPosition());
-                TestUtils.assertEquals("'tb2' is not  a valid table", e.getFlyweightMessage());
+                TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
             }
         });
     }
@@ -504,7 +504,7 @@ public class TableBackupTest {
                 mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Backup dir for table \"testTable1\" already exists"));
+                Assert.assertTrue(ex.getMessage().contains("Backup dir for table \"testTable1\" already exists"));
             }
         });
     }

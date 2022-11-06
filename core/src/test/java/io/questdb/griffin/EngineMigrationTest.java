@@ -1512,7 +1512,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         // Remove first partition
         to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
         if (ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$()) != 0) {
-            throw CairoException.instance(ff.errno()).put("cannot remove ").put(to);
+            throw CairoException.critical(ff.errno()).put("cannot remove ").put(to);
         }
 
         // Rename last partition from 1970-01-04 to 1970-01-04.4
@@ -1520,7 +1520,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         to.trimTo(0).put(from).put(".4");
 
         if (ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$()) != Files.FILES_RENAME_OK) {
-            throw CairoException.instance(ff.errno()).put("cannot rename to ").put(to);
+            throw CairoException.critical(ff.errno()).put("cannot rename to ").put(to);
         }
     }
 }

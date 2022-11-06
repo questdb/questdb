@@ -87,37 +87,38 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.commit();
                 Assert.assertEquals(N, w.size());
 
-                FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID,0);
-                final TableReaderRecord record = new TableReaderRecord();
+                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory("x", TableUtils.ANY_TABLE_ID,0)) {
+                    final TableReaderRecord record = new TableReaderRecord();
 
-                try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC)) {
-                    printCursor(record, cursor);
+                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC)) {
+                        printCursor(record, cursor);
 
-                    TestUtils.assertEquals(expected, sink);
+                        TestUtils.assertEquals(expected, sink);
 
-                    // now add some more rows
+                        // now add some more rows
 
-                    timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row row = w.newRow(timestamp);
-                        row.putInt(0, rnd.nextInt());
-                        row.putInt(1, rnd.nextInt());
-                        row.append();
-                        timestamp += increment;
+                        timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
+                        for (int i = 0; i < N; i++) {
+                            TableWriter.Row row = w.newRow(timestamp);
+                            row.putInt(0, rnd.nextInt());
+                            row.putInt(1, rnd.nextInt());
+                            row.append();
+                            timestamp += increment;
+                        }
+                        w.commit();
+
+                        Assert.assertTrue(cursor.reload());
+                        printCursor(record, cursor);
+                        TestUtils.assertEquals(expectedNext + expected, sink);
                     }
-                    w.commit();
 
-                    Assert.assertTrue(cursor.reload());
-                    printCursor(record, cursor);
-                    TestUtils.assertEquals(expectedNext + expected, sink);
-                }
+                    w.removeColumn("a");
 
-                w.removeColumn("a");
-
-                try {
-                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                    try {
+                        factory.getCursor(AllowAllSqlSecurityContext.instance(engine), ORDER_DESC);
+                        Assert.fail();
+                    } catch (ReaderOutOfDateException ignored) {
+                    }
                 }
             }
         });

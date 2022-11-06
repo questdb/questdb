@@ -45,9 +45,18 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
+    boolean attachPartitionCopy();
+
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();
+
+    // the '+' is used to prevent overlap with table names
+    default String getArchivedCrashFilePrefix() {
+        return "crash+";
+    }
+
+    String getAttachPartitionSuffix();
 
     DateFormat getBackupDirTimestampFormat();
 
@@ -77,8 +86,6 @@ public interface CairoConfiguration {
     long getColumnPurgeRetryDelayLimit();
 
     double getColumnPurgeRetryDelayMultiplier();
-
-    int getColumnPurgeRetryLimitDays();
 
     int getColumnPurgeTaskPoolCapacity();
 
@@ -120,8 +127,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    boolean getWallEnabledDefault();
-
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();
@@ -134,6 +139,10 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    default IOURingFacade getIOURingFacade() {
+        return IOURingFacadeImpl.INSTANCE;
+    }
+
     long getIdleCheckInterval();
 
     long getInactiveReaderTTL();
@@ -142,18 +151,11 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
-    // null input root disables "copy" sql
-    CharSequence getSqlCopyInputRoot();
-
-    CharSequence getSqlCopyInputWorkRoot();
-
-    long getSqlCopyMaxIndexChunkSize();
-
-    int getSqlCopyQueueCapacity();
-
     int getInsertPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    int getMaxCrashFiles();
 
     int getMaxFileNameLength();
 
@@ -185,9 +187,12 @@ public interface CairoConfiguration {
 
     int getO3PartitionQueueCapacity();
 
-    int getO3PartitionUpdateQueueCapacity();
-
     int getO3PurgeDiscoveryQueueCapacity();
+
+    // the '+' is used to prevent overlap with table names
+    default String getOGCrashFilePrefix() {
+        return "hs_err_pid+";
+    }
 
     int getPageFrameReduceColumnListCapacity();
 
@@ -220,11 +225,11 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
+    int getStrFunctionMaxBufferLength();
+
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
-
-    int getReplaceFunctionMaxBufferLength();
 
     CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
@@ -270,6 +275,17 @@ public interface CairoConfiguration {
     double getSqlCompactMapLoadFactor();
 
     int getSqlCopyBufferSize();
+
+    // null input root disables "copy" sql
+    CharSequence getSqlCopyInputRoot();
+
+    CharSequence getSqlCopyInputWorkRoot();
+
+    int getSqlCopyLogRetentionDays();
+
+    long getSqlCopyMaxIndexChunkSize();
+
+    int getSqlCopyQueueCapacity();
 
     int getSqlDistinctTimestampKeyCapacity();
 
@@ -318,8 +334,6 @@ public interface CairoConfiguration {
 
     int getSqlMapKeyCapacity();
 
-    int getSqlSmallMapKeyCapacity();
-
     int getSqlMapMaxPages();
 
     int getSqlMapMaxResizes();
@@ -333,6 +347,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
+
+    int getSqlSmallMapKeyCapacity();
 
     int getSqlSortKeyMaxPages();
 
@@ -356,6 +372,8 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
+    boolean getWallEnabledDefault();
+
     int getWithClauseModelPoolCapacity();
 
     long getWorkStealTimeoutNanos();
@@ -372,6 +390,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isIOURingEnabled();
+
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
@@ -387,23 +407,5 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterEnabled();
 
-    default IOURingFacade getIOURingFacade() {
-        return IOURingFacadeImpl.INSTANCE;
-    }
-
-    int getSqlCopyLogRetentionDays();
-
-    boolean isIOURingEnabled();
-
-    int getMaxCrashFiles();
-
-    // the '+' is used to prevent overlap with table names
-    default String getOGCrashFilePrefix() {
-        return "hs_err_pid+";
-    }
-
-    // the '+' is used to prevent overlap with table names
-    default String getArchivedCrashFilePrefix() {
-        return "crash+";
-    }
+    boolean isSqlParallelFilterPreTouchEnabled();
 }

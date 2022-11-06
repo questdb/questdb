@@ -147,7 +147,7 @@ public final class PartitionBy {
         try {
             return getPartitionDirFormatMethod(partitionBy).parse(partitionName, null);
         } catch (NumericException e) {
-            final CairoException ee = CairoException.instance(0);
+            final CairoException ee = CairoException.critical(0);
             switch (partitionBy) {
                 case DAY:
                     ee.put("'YYYY-MM-DD'");
@@ -176,7 +176,7 @@ public final class PartitionBy {
                 leap = Timestamps.isLeapYear(y);
                 m = Timestamps.getMonthOfYear(timestamp, y, leap);
                 d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
-                TimestampFormatUtils.append000(path, y);
+                TimestampFormatUtils.appendYear000(path, y);
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
                 path.put('-');
@@ -192,7 +192,7 @@ public final class PartitionBy {
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
                 m = Timestamps.getMonthOfYear(timestamp, y, leap);
-                TimestampFormatUtils.append000(path, y);
+                TimestampFormatUtils.appendYear000(path, y);
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
 
@@ -205,7 +205,7 @@ public final class PartitionBy {
             case YEAR:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
-                TimestampFormatUtils.append000(path, y);
+                TimestampFormatUtils.appendYear000(path, y);
                 if (calculatePartitionMax) {
                     return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
                 }
@@ -216,7 +216,7 @@ public final class PartitionBy {
                 m = Timestamps.getMonthOfYear(timestamp, y, leap);
                 d = Timestamps.getDayOfMonth(timestamp, y, m, leap);
                 int h = Timestamps.getHourOfDay(timestamp);
-                TimestampFormatUtils.append000(path, y);
+                TimestampFormatUtils.appendYear000(path, y);
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
                 path.put('-');

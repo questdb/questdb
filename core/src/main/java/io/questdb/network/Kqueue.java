@@ -51,8 +51,8 @@ public final class Kqueue implements Closeable {
         this.kqf = kqf;
         this.capacity = capacity;
         this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
-        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         this.kq = kqf.kqueue();
         Files.bumpFileCount(this.kq);
     }
@@ -60,8 +60,8 @@ public final class Kqueue implements Closeable {
     @Override
     public void close() {
         kqf.getNetworkFacade().close(kq, LOG);
-        Unsafe.free(this.changeList, bufferSize, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(this.changeList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
     }
 
     public long getData() {

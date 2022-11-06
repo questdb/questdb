@@ -103,7 +103,7 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             case ColumnType.GEOINT:
             case ColumnType.GEOLONG:
                 throw SqlException.position(position)
-                        .put("CAST cannot decrease precision from GEOHASH(")
+                        .put("CAST cannot narrow values from GEOHASH(")
                         .put(fromBits)
                         .put("b) to GEOHASH(")
                         .put(toBits)

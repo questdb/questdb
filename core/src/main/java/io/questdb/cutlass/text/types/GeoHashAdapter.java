@@ -54,7 +54,7 @@ public final class GeoHashAdapter extends AbstractTypeAdapter {
     }
 
     @Override
-    public boolean probe(CharSequence text) {
+    public boolean probe(DirectByteCharSequence text) {
         throw new UnsupportedOperationException();
     }
 

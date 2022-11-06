@@ -26,7 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.str.CharSink;
 
-class NullGauge implements Gauge {
+public class NullGauge implements Gauge {
     public static final NullGauge INSTANCE = new NullGauge();
 
     private NullGauge() {
@@ -38,6 +38,15 @@ class NullGauge implements Gauge {
 
     @Override
     public void dec() {
+    }
+
+    @Override
+    public void add(long value) {
+    }
+
+    @Override
+    public long getValue() {
+        return 0;
     }
 
     @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -57,13 +58,20 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     @Override
     public void close() {
-        filter.close();
-        super.close();
+        if (isOpen()) {
+            filter.close();
+            map.close();
+            super.close();
+        }
     }
 
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        map.clear();
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+
+        if (!isOpen()) {
+            map.reopen();
+        }
         filter.init(this, executionContext);
 
         DataFrame frame;
@@ -74,6 +82,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 if (filter.getBool(recordA)) {
                     MapKey key = map.withKey();

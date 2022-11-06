@@ -24,15 +24,19 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -48,15 +52,53 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            PGWireServer.PGConnectionContextFactory contextFactory
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
+    }
+
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return PGWireServer.create(
+        return createPGWireServer(
                 configuration,
-                null,
-                LOG,
                 engine,
+                new TestWorkerPool(configuration.getWorkerCount(), metrics),
                 compiler.getFunctionFactoryCache(),
+                snapshotAgent
+        );
+    }
+
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
                 snapshotAgent,
-                metrics
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                )
         );
     }
 
@@ -71,17 +113,24 @@ public class BasePGTest extends AbstractGriffinTest {
             public long getTimeout() {
                 return maxQueryTime;
             }
+
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK) ? 0 : super.getCircuitBreakerThrottle();//fail on first check
+            }
+
+            //should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because 
+            //Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
+            @Override
+            public MillisecondClock getClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
+            }
         };
 
-        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration() {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(workerCount);
             }
 
             @Override
@@ -120,15 +169,15 @@ public class BasePGTest extends AbstractGriffinTest {
         }
     }
 
-    protected Connection getConnection(boolean simple, boolean binary) throws SQLException {
+    protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
         if (simple) {
-            return getConnection(Mode.Simple, binary, -2);
+            return getConnection(Mode.Simple, port, binary, -2);
         } else {
-            return getConnection(Mode.Extended, binary, -2);
+            return getConnection(Mode.Extended, port, binary, -2);
         }
     }
 
-    protected Connection getConnection(boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+    protected Connection getConnection(int port, boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
@@ -137,10 +186,11 @@ public class BasePGTest extends AbstractGriffinTest {
         properties.setProperty("preferQueryMode", simple ? Mode.Simple.value : Mode.Extended.value);
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnection(Mode mode, boolean binary, int prepareThreshold) throws SQLException {
+    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
         properties.setProperty("password", "quest");
@@ -154,7 +204,8 @@ public class BasePGTest extends AbstractGriffinTest {
         TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
         //use this line to switch to local postgres
         //return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
     }
 
     @NotNull
@@ -193,12 +244,22 @@ public class BasePGTest extends AbstractGriffinTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 8812;
+                        return 0;  // Bind to ANY port.
                     }
+                };
+            }
+        };
+    }
 
+    @NotNull
+    protected DefaultPGWireConfiguration getStdPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return new DefaultIODispatcherConfiguration() {
                     @Override
-                    public boolean getPeerNoLinger() {
-                        return false;
+                    public int getBindPort() {
+                        return 0;  // Bind to ANY port.
                     }
                 };
             }

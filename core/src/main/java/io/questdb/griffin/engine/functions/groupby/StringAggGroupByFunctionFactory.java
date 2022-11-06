@@ -98,6 +98,11 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void clear() {
+            sink.resetCapacity();
+        }
+
+        @Override
         public void close() {
             sink.close();
         }

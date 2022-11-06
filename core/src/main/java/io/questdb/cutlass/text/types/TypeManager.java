@@ -135,7 +135,7 @@ public class TypeManager implements Mutable {
                     return adapter;
                 }
             default:
-                throw CairoException.instance(0).put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
+                throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
     }
 

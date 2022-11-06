@@ -24,26 +24,30 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.WorkerPoolAwareConfiguration;
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     private final static ReceiverFactory GENERIC_FACTORY =
-            (configuration, engine, workerPool, localPool, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -204,7 +208,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true, null, null, metrics);
+                factory.create(receiverCfg, engine, null, true,  0, null, null, metrics);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }
@@ -236,7 +240,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                     "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null, metrics)) {
+                try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, 0, null, null, metrics)) {
                     // create table
                     try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
                             .col("colour", ColumnType.SYMBOL)
@@ -281,6 +285,17 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         });
     }
 
-    private interface ReceiverFactory extends WorkerPoolAwareConfiguration.ServerFactory<AbstractLineProtoUdpReceiver, LineUdpReceiverConfiguration> {
+    @FunctionalInterface
+    private interface ReceiverFactory {
+        AbstractLineProtoUdpReceiver create(
+                io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration configuration,
+                CairoEngine engine,
+                WorkerPool workerPool,
+                boolean isWorkerPoolLocal,
+                int sharedWorkerCount,
+                @Nullable FunctionFactoryCache functionFactoryCache,
+                @Nullable DatabaseSnapshotAgent snapshotAgent,
+                Metrics metrics
+        );
     }
 }

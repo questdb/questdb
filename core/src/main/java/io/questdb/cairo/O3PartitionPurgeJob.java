@@ -39,6 +39,8 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+
 public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
@@ -253,7 +255,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         Path path = Path.getThreadLocal(root);
         path.concat(tableName).slash$();
         sink.clear();
-        path.slash$();
         partitionList.clear();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
@@ -284,8 +285,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int tableRootLen = path.length();
         try {
             txnScoreboard.ofRO(path);
-            path.trimTo(tableRootLen);
-            txReader.ofRO(path, partitionBy);
+            txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, this.configuration.getMillisecondClock(), this.configuration.getSpinLockTimeout());
 
             for (int i = 0; i < n; i += 2) {
@@ -358,7 +358,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         return true;
     }
 
-    private void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
+    private static void parsePartitionDateVersion(StringSink fileNameSink, DirectLongList partitionList, CharSequence tableName, DateFormat partitionByFormat) {
         int index = Chars.lastIndexOf(fileNameSink, '.');
 
         int len = fileNameSink.length();
@@ -385,11 +385,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long partitionTs = partitionByFormat.parse(fileNameSink, 0, index, null);
                 partitionList.add(partitionTs);
             } catch (NumericException e) {
-                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+                LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
                 partitionList.setPos(partitionList.size() - 1); // remove partition version record
             }
         } catch (NumericException e) {
-            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).$(']').$();
+            LOG.error().$("unknown directory [table=").utf8(tableName).$(", dir=").utf8(fileNameSink).I$();
         }
     }
 }

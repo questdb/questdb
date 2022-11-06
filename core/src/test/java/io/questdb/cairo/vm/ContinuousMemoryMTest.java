@@ -388,7 +388,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
         withMem((rwMem, roMem) -> {
             final int N = 10_000_000;
             for (int i = 0; i < N; i++) {
-                rwMem.putLong128(rnd.nextLong(), rnd.nextLong());
+                rwMem.putLong128LittleEndian(rnd.nextLong(), rnd.nextLong());
             }
 
             roMem.extend(rwMem.size());
@@ -799,8 +799,8 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     private void assertLong128(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
-            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
             Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L + 8L));
+            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
         }
     }
 

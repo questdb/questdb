@@ -33,6 +33,7 @@ public class EntryLockedException extends CairoException {
     public static EntryLockedException instance(CharSequence reason) {
         EntryLockedException ex = tlException.get();
         ex.message.clear();
+        ex.errno = CairoException.NON_CRITICAL;
         ex.put("table busy [reason=").put(reason).put("]");
         return ex;
     }

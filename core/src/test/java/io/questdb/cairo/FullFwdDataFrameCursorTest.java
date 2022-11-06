@@ -887,7 +887,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRowCount, rowCount);
     }
 
-    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
+    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expectedRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
 
@@ -907,7 +907,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
         }
 
-        Assert.assertEquals(expecteRowCount, rowCount);
+        Assert.assertEquals(expectedRowCount, rowCount);
     }
 
     private long assertIndex(TableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, DataFrame frame, int direction) {
@@ -1034,8 +1034,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 public boolean wasCalled() {
                     return invoked;
                 }
-
-
             };
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -1052,6 +1050,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             eRnd.syncWith(rnd);
 
             long timestamp = 0;
+            boolean closeFailed = false;
             try (TableWriter writer = new TableWriter(configuration, "ABC", metrics)) {
                 for (int i = 0; i < (long) N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1065,7 +1064,9 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 // closing should fail
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "remove");
+                closeFailed = true;
             }
+            Assert.assertTrue(closeFailed);
 
             new TableWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
 

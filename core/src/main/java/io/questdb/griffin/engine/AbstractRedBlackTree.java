@@ -24,14 +24,13 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.Reopenable;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
-import java.io.Closeable;
-
-public abstract class AbstractRedBlackTree implements Mutable, Closeable {
+public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     // parent is at offset 0
     protected static final int O_LEFT = 8;
     // P(8) + L + R + C(1) + REF
@@ -60,7 +59,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
 
     @Override
     public void close() {
+        root = -1;
         Misc.free(mem);
+    }
+
+    @Override
+    public void reopen() {
+        mem.reopen();
     }
 
     public long size() {
@@ -123,24 +128,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Closeable {
             p = parentOf(current);
             long ch = current;
             while (p != -1 && ch == rightOf(p)) {
-                ch = p;
-                p = parentOf(p);
-            }
-        }
-        return p;
-    }
-
-    protected static long predecessor(long current) {
-        long p = leftOf(current);
-        if (p != EMPTY) {
-            long r;
-            while ((r = rightOf(p)) != EMPTY) {
-                p = r;
-            }
-        } else {
-            p = parentOf(current);
-            long ch = current;
-            while (p != EMPTY && ch == leftOf(p)) {
                 ch = p;
                 p = parentOf(p);
             }

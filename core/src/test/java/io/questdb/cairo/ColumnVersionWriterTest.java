@@ -29,10 +29,12 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Formatter;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicLong;
@@ -345,5 +347,236 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" + // No changes
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                0
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       1      10\n", // Gets added
+                2
+        );
+    }
+
+    @Test
+    public void testUpsertPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n" +
+                        "       4       7      -1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       1       0      -1      10\n" +
+                        "       2       2       1     111\n" +
+                        "       2      11       2       1\n" +
+                        "       2      15       2    1001\n" +
+                        "       3       0       3     110\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0       3     110\n" +
+                        "       4       7      -1      10\n",
+                0, 2, 4
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionDstContainsPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n" +
+                        "       3      11       1       8\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       5      12\n" +
+                        "       2      12       5      12\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n",
+                2
+        );
+    }
+
+    @Test
+    public void testRemovePartitionColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
+            ) {
+                CVStringTable.setupColumnVersionWriter(w, "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n"
+                );
+
+                w.commit();
+                w.removePartition(0);
+                w.commit();
+
+                String expected = "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n";
+
+                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedList()));
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedList()));
+            }
+        });
+    }
+
+    private static void assertUpsertPartitionFromSourceCV(
+            String srcExpected,
+            String dstExpected,
+            String dstUpsertFromSrcExpected,
+            long... partitionTimestamp
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w1 = new ColumnVersionWriter(ff, path.of(root).concat("_cv1").$(), 0);
+                    ColumnVersionWriter w2 = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
+            ) {
+                CVStringTable.setupColumnVersionWriter(w1, srcExpected);
+                CVStringTable.setupColumnVersionWriter(w2, dstExpected);
+                for (long p : partitionTimestamp) {
+                    w2.copyPartition(p, w1);
+                }
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
+                w2.commit();
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedList()));
+            }
+        });
+    }
+
+    private static abstract class CVStringTable {
+        private static final Formatter strF = new Formatter(new SinkFormatterAdapter());
+
+        static String asTable(LongList cachedList) {
+            sink.clear();
+            strF.format("%8s%8s%8s%8s\n", "pts", "colIdx", "colTxn", "colTop");
+            for (int i = 0; i < cachedList.size(); i++) {
+                strF.format("%8d", cachedList.getQuick(i));
+                if (i > 0 && (i + 1) % ColumnVersionWriter.BLOCK_SIZE == 0) {
+                    sink.put('\n');
+                }
+            }
+            return sink.toString();
+        }
+
+        static void setupColumnVersionWriter(ColumnVersionWriter w, String expectedTable) {
+            long[] values = parseColumnVersionTable(expectedTable);
+            for (int i = 0; i < values.length; i += ColumnVersionWriter.BLOCK_SIZE) {
+                w.upsert(
+                        values[i],
+                        (int) values[i + ColumnVersionWriter.COLUMN_INDEX_OFFSET],
+                        values[i + ColumnVersionWriter.COLUMN_NAME_TXN_OFFSET],
+                        values[i + ColumnVersionWriter.COLUMN_TOP_OFFSET]);
+            }
+            TestUtils.assertEquals(expectedTable, asTable(w.getCachedList()));
+        }
+
+        private static long[] parseColumnVersionTable(String table) {
+            String[] rows = table.split("\n");
+            long[] values = new long[(rows.length - 1) * ColumnVersionWriter.BLOCK_SIZE]; // minus header
+            for (int i = 1, k = 0; i < rows.length; i++) {
+                String[] columns = rows[i].split("\\s+");
+                assert columns.length == 5;
+                for (int j = 1; j < columns.length; j++) {
+                    values[k++] = Long.parseLong(columns[j]);
+                }
+            }
+            assert values.length > 0 && values.length % ColumnVersionWriter.BLOCK_SIZE == 0;
+            return values;
+        }
+
+        private static final class SinkFormatterAdapter extends StringSink implements Appendable {
+            @Override
+            public Appendable append(CharSequence csq) {
+                sink.put(csq);
+                return this;
+            }
+
+            @Override
+            public Appendable append(CharSequence csq, int start, int end) {
+                sink.put(csq, start, end);
+                return this;
+            }
+
+            @Override
+            public Appendable append(char c) {
+                sink.put(c);
+                return this;
+            }
+        }
     }
 }

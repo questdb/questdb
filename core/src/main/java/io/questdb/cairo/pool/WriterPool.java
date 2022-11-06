@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -75,8 +74,6 @@ public class WriterPool extends AbstractPool {
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
-    private final int rootLen;
     private final MicrosecondClock clock;
     private final CharSequence root;
     @NotNull
@@ -97,8 +94,6 @@ public class WriterPool extends AbstractPool {
         this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
-        this.path.concat(this.root);
-        this.rootLen = this.path.length();
         this.metrics = metrics;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
@@ -202,7 +197,7 @@ public class WriterPool extends AbstractPool {
         }
 
         // try to change owner
-        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| Unsafe.cas(e, ENTRY_OWNER, thread, thread)*/)) {
+        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| (e.owner == thread)*/)) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
             if (lockAndNotify(thread, e, tableName, lockReason)) {
                 return OWNERSHIP_REASON_NONE;
@@ -238,7 +233,7 @@ public class WriterPool extends AbstractPool {
                 // calling thread must be trying to unlock writer that hasn't been locked.
                 // This qualifies for "illegal state".
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-                throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
+                throw CairoException.critical(0).put("Writer ").put(name).put(" is not locked");
             }
 
             if (newTable) {
@@ -256,7 +251,8 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path.trimTo(rootLen).concat(name));
+                    Path path = Path.getThreadLocal(root).concat(name);
+                    TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -275,7 +271,7 @@ public class WriterPool extends AbstractPool {
             LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
-            throw CairoException.instance(0).put("Not lock owner of ").put(name);
+            throw CairoException.critical(0).put("Not lock owner of ").put(name);
         }
     }
 
@@ -345,7 +341,6 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        Misc.free(path);
         LOG.info().$("closed").$();
     }
 
@@ -513,7 +508,8 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
         assertLockReasonIsNone(lockReason);
-        TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
+        Path path = Path.getThreadLocal(root).concat(tableName);
+        TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();

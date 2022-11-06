@@ -358,9 +358,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Function function = parseFunction("COUNT()", metadata, functionParser);
         Assert.assertEquals(ColumnType.LONG, function.getType());
-        Assert.assertEquals(
-                "io.questdb.griffin.engine.functions.groupby.CountGroupByFunction",
-                function.getClass().getCanonicalName());
+        Assert.assertEquals(CountLongGroupByFunction.class, function.getClass());
     }
 
     @Test

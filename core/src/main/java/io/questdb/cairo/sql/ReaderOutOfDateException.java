@@ -29,6 +29,8 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 
 public class ReaderOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
+    public static final int MAX_RETRY_ATTEMPS = 10;
+
     private static final ThreadLocal<ReaderOutOfDateException> tlException = new ThreadLocal<>(ReaderOutOfDateException::new);
     private static final String prefix = "cached query plan cannot be used because table schema has changed [table='";
     private final StringSink message = (StringSink)new StringSink().put(prefix);
@@ -39,6 +41,20 @@ public class ReaderOutOfDateException extends RuntimeException implements Flywei
         assert (ex = new ReaderOutOfDateException()) != null;
         ex.message.clear(prefix.length());
         ex.message.put(tableName).put("']");
+        return ex;
+    }
+
+    public static ReaderOutOfDateException of(CharSequence tableName, int expectedTableId, int actualTableId,
+                                              long expectedTableVersion, long actualTableVersion) {
+        ReaderOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new ReaderOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(tableName)
+                .put("', expectedTableId=").put(expectedTableId)
+                .put(", actualTableId=").put(actualTableId)
+                .put(", expectedTableVersion=").put(expectedTableVersion)
+                .put(", actualTableVersion=").put(actualTableVersion).put(']');
         return ex;
     }
 

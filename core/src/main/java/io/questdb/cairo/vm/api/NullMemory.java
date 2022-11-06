@@ -46,10 +46,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-    }
-
-    @Override
     public void zero() {
     }
 
@@ -63,7 +59,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-
     }
 
     @Override
@@ -102,7 +97,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putByte(byte b) {
+    public void putByte(byte value) {
         throw new UnsupportedOperationException();
     }
 
@@ -132,7 +127,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putLong128(long l1, long l2) {
+    public void putLongLong(long l0, long l1) {
         throw new UnsupportedOperationException();
     }
 
@@ -273,7 +268,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 
@@ -345,10 +340,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void replacePage(long address, long size) {
     }
 
     @Override

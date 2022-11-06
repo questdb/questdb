@@ -286,7 +286,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         void putEntry(long timestamp, long offset, long length) {
-            memory.putLong128(timestamp, offset);
+            memory.putLongLong(timestamp, offset);
             indexChunkSize += INDEX_ENTRY_SIZE;
             dataSize += length;
         }
@@ -696,7 +696,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         long len = ff.length(fd);
         if (len == -1) {
-            throw CairoException.instance(ff.errno()).put(
+            throw CairoException.critical(ff.errno()).put(
                             "could not get length of file [path=").put(path)
                     .put(']');
         }
