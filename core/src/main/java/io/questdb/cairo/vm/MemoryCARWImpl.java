@@ -164,6 +164,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
         size = nPages << sizeMsb;
         final long oldSize = size();
+
+        // sometimes the resize request ends up being the same
+        // as existing memory size
+        if (size == oldSize) {
+            return;
+        }
+
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
