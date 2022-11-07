@@ -25,13 +25,40 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     static final String table = "other";
     static final String targetColumnName = "value";
+
+    private final boolean walEnabled;
+
+    public LineTcpInsertOtherTypesTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name="{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        });
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
+    }
 
     @Test
     public void testInsertTimestampTableExists() throws Exception {
@@ -852,17 +879,21 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 false);
     }
 
-    protected void assertTypeNoTable(String expected, CharSequence[] values, boolean isTag) throws Exception {
+    private void assertTypeNoTable(String expected, CharSequence[] values, boolean isTag) throws Exception {
         assertType(ColumnType.UNDEFINED, expected, values, isTag);
     }
 
-    protected void assertType(int columnType, String expected, CharSequence[] values, boolean isTag) throws Exception {
-        if (columnType != ColumnType.UNDEFINED) {
-            try (TableModel model = new TableModel(configuration, table, PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
-            }
-        }
+    private void assertType(int columnType, String expected, CharSequence[] values, boolean isTag) throws Exception {
         runInContext(() -> {
+            if (columnType != ColumnType.UNDEFINED) {
+                try (TableModel model = new TableModel(configuration, table, PartitionBy.DAY)) {
+                    model.col(targetColumnName, columnType).timestamp();
+                    engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                }
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable(table));
+                }
+            }
             sink.clear();
             long ts = 0L;
             for (int i = 0; i < values.length; i++) {
@@ -877,9 +908,16 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
+            mayDrainWalQueue();
             try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), table)) {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 }

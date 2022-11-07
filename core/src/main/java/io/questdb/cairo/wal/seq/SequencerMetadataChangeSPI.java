@@ -27,9 +27,9 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.UpdateOperator;
-import io.questdb.cairo.wal.TableWriterSPI;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 
-public interface SequencerTableWriterSPI extends TableWriterSPI {
+public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
 
     @Override
     default void addIndex(CharSequence columnName, int indexValueBlockSize) {
@@ -42,18 +42,28 @@ public interface SequencerTableWriterSPI extends TableWriterSPI {
     }
 
     @Override
-    default AttachDetachStatus detachPartition(long partitionTimestamp) {
-        throw CairoException.critical(0).put("detach partition does not update sequencer metadata");
-    }
-
-    @Override
     default void changeCacheFlag(int columnIndex, boolean isCacheOn) {
         throw CairoException.critical(0).put("change cache flag does not update sequencer metadata");
     }
 
     @Override
+    default AttachDetachStatus detachPartition(long partitionTimestamp) {
+        throw CairoException.critical(0).put("detach partition does not update sequencer metadata");
+    }
+
+    @Override
     default void dropIndex(CharSequence columnName) {
         throw CairoException.critical(0).put("drop index does not update sequencer metadata");
+    }
+
+    @Override
+    default long getCommitInterval() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default long getMetaMaxUncommittedRows() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -79,6 +89,16 @@ public interface SequencerTableWriterSPI extends TableWriterSPI {
     @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
+    }
+
+    @Override
+    default void tick() {
+        // no-op
+    }
+
+    @Override
+    default void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
+        throw CairoException.critical(0).put("change commit interval does not update sequencer metadata");
     }
 }
 

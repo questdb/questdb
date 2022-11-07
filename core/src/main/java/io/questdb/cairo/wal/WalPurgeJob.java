@@ -43,26 +43,27 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
-    private final MillisecondClock millisecondClock;
-    private final long spinLockTimeout;
+    private final long checkInterval;
+    private final MicrosecondClock clock;
+    private final StringSink debugBuffer = new StringSink();
+    private final IntHashSet discoveredWalIds = new IntHashSet();
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final MicrosecondClock clock;
-    private final long checkInterval;
-    private final TxReader txReader;
+    private final MillisecondClock millisecondClock;
     private final Path path = new Path();
-    private final NativeLPSZ tableName = new NativeLPSZ();
-    private final NativeLPSZ walName = new NativeLPSZ();
     private final NativeLPSZ segmentName = new NativeLPSZ();
-    private final IntHashSet discoveredWalIds = new IntHashSet();
+    private final long spinLockTimeout;
+    private final NativeLPSZ tableName = new NativeLPSZ();
+    private final TxReader txReader;
+    private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
+    private final NativeLPSZ walName = new NativeLPSZ();
     private final IntHashSet walsInUse = new IntHashSet();
     private final FindVisitor discoverWalDirectoriesIterFunc = this::discoverWalDirectoriesIter;
-    private final WalInfoDataFrame walInfoDataFrame = new WalInfoDataFrame();
-    private final StringSink debugBuffer = new StringSink();
-    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
+    private long last = 0;
     private int walId;
-    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
+    private final FindVisitor deleteClosedSegmentsIterFunc = this::deleteClosedSegmentsIter;
     private int walsLatestSegmentId;
+    private final FindVisitor deleteUnreachableSegmentsIterFunc = this::deleteUnreachableSegmentsIter;
     private final FindVisitor broadSweepIterFunc = this::broadSweepIter;
     private long last = 0;
     private final ReentrantLock runLock = new ReentrantLock();
@@ -104,6 +105,19 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     /**
+     * Validate equivalent of "^\d+$" regex.
+     */
+    private static boolean matchesSegmentName(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Validate equivalent of "^wal\d+$" regex.
      */
     private static boolean matchesWalNamePattern(CharSequence name) {
@@ -123,19 +137,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        return true;
-    }
-
-    /**
-     * Validate equivalent of "^\d+$" regex.
-     */
-    private static boolean matchesSegmentName(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
         return true;
     }
 
@@ -360,23 +361,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    @Override
-    protected boolean runSerially() {
-        final long t = clock.getTicks();
-        if (last + checkInterval < t) {
-            last = t;
-            // do nothing if the snapshot is running (holding the lock)
-            if (runLock.tryLock()) {
-                try {
-                    broadSweep();
-                } finally {
-                    runLock.unlock();
-                }
-            }
-        }
-        return false;
-    }
-
     private boolean segmentIsReapable(int segmentId, int walsLatestSegmentId) {
         return segmentId < walsLatestSegmentId;
     }
@@ -426,12 +410,29 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         return !couldObtainLock(setWalLockPath(tableName, walId));
     }
 
+    @Override
+    protected boolean runSerially() {
+        final long t = clock.getTicks();
+        if (last + checkInterval < t) {
+            last = t;
+            // do nothing if the snapshot is running (holding the lock)
+            if (runLock.tryLock()) {
+                try {
+                    broadSweep();
+                } finally {
+                    runLock.unlock();
+                }
+            }
+        }
+        return false;
+    }
+
     /**
      * Table of columns grouping segment information. One row per walId.
      */
     private static class WalInfoDataFrame {
-        public IntList walIds = new IntList();
         public IntList segmentIds = new IntList();
+        public IntList walIds = new IntList();
 
         public void add(int walId, int segmentId) {
             walIds.add(walId);

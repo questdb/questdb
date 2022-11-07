@@ -69,7 +69,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         indexBuilder = Misc.free(indexBuilder);
     }
 
-    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws SqlException, ReaderOutOfDateException {
+    public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws ReaderOutOfDateException {
 
         LOG.info().$("updating [table=").$(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
 
@@ -119,6 +119,9 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
+            // TODO: getCursor will open partitions where their path may be a soft link to the partition in
+            //  cold storage, which we want to keep read only. For now updates on such partitions do not fail,
+            //  i.e. they go through and modify the cold storage file system.
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 
@@ -234,6 +237,9 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
         } catch (ReaderOutOfDateException e) {
             tableWriter.rollbackUpdate();
             throw e;
+        } catch (SqlException e) {
+            tableWriter.rollbackUpdate();
+            throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
         } catch (Throwable th) {
             LOG.error().$("could not update").$(th).$();
             tableWriter.rollbackUpdate();
@@ -314,7 +320,7 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             long currentRow,
             Record masterRecord,
             long firstUpdatedRowId
-    ) throws SqlException {
+    ) {
         final TableRecordMetadata tableMetadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(rowPartitionIndex);
         for (int i = 0; i < affectedColumnCount; i++) {
@@ -404,8 +410,8 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
                     break;
                 default:
-                    throw SqlException.$(0, "Column type ")
-                            .put(ColumnType.nameOf(columnType))
+                    throw CairoException.nonCritical()
+                            .put("Column type ").put(ColumnType.nameOf(columnType))
                             .put(" not supported for updates");
             }
         }

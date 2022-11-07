@@ -41,24 +41,26 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             boolean symbolTableStatic,
             int writerIndex
     ) {
-        add(
-                new TableColumnMetadata(
-                        columnName,
-                        columnType,
-                        columnIndexed,
-                        indexValueBlockCapacity,
-                        symbolTableStatic,
-                        null,
-                        writerIndex
-                )
-        );
+        if (columnType > -1L) {
+            add(
+                    new TableColumnMetadata(
+                            columnName,
+                            columnType,
+                            columnIndexed,
+                            indexValueBlockCapacity,
+                            symbolTableStatic,
+                            null,
+                            writerIndex
+                    )
+            );
+        }
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
         this.tableName = tableName;
         this.tableId = tableId;
-        this.timestampIndex = timestampIndex;
+        this.timestampIndex = compressedTimestampIndex;
         // todo: suspended
         this.structureVersion = structureVersion;
         // todo: maxUncommittedRows where from ?

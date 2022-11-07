@@ -44,10 +44,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
-    private long ptr;
-    private long wptr;
     private int capacity;
     private int len;
+    private long ptr;
+    private long wptr;
 
     public Path() {
         this(255);
@@ -83,10 +83,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path $() {
-        if (1 + (wptr - ptr) >= capacity) {
-            extend((int) (16 + (wptr - ptr)));
+        if (wptr == ptr || Unsafe.getUnsafe().getByte(wptr - 1) != (byte) 0) {
+            if (1 + (wptr - ptr) >= capacity) {
+                extend((int) (16 + (wptr - ptr)));
+            }
+            Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         }
-        Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         return this;
     }
 
@@ -104,13 +106,18 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return capacity;
     }
 
+    @Override
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(ptr + index);
+    }
+
     /**
      * Removes trailing zero from path to allow reuse of path as parent.
      *
      * @return instance of this
      */
     public Path chop$() {
-        trimTo(this.length());
+        trimTo(length());
         return this;
     }
 
@@ -162,83 +169,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public Path put(CharSequence str) {
-        int l = str.length();
-        if (l + len >= capacity) {
-            extend(l + len);
-        }
-        Chars.asciiStrCpy(str, l, wptr);
-        wptr += l;
-        len += l;
-        return this;
-    }
-
-    @Override
-    public CharSink put(CharSequence cs, int lo, int hi) {
-        int l = hi - lo;
-        if (l + len >= capacity) {
-            extend(l + len);
-        }
-        Chars.asciiStrCpy(cs, lo, l, wptr);
-        wptr += l;
-        len += l;
-        return this;
-    }
-
-    @Override
-    public Path put(char c) {
-        if (1 + len >= capacity) {
-            extend(16 + len);
-        }
-        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
-        len++;
-        return this;
-    }
-
-    @Override
-    public Path put(int value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
-    public Path put(long value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        if (len + this.len >= capacity) {
-            extend(len);
-        }
-        Chars.asciiCopyTo(chars, start, len, wptr);
-        wptr += len;
-        return this;
-    }
-
-    @Override
-    public void putUtf8Special(char c) {
-        if (c == '/' && Os.type == Os.WINDOWS) {
-            put('\\');
-        } else {
-            put(c);
-        }
-    }
-
-    @Override
     public final int length() {
         return len;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
     }
 
     public Path of(CharSequence str) {
@@ -308,6 +240,76 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         Unsafe.getUnsafe().putByte(ptr + index, (byte) c);
     }
 
+    @Override
+    public Path put(CharSequence str) {
+        int l = str.length();
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.asciiStrCpy(str, l, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    @Override
+    public CharSink put(CharSequence cs, int lo, int hi) {
+        int l = hi - lo;
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.asciiStrCpy(cs, lo, l, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    @Override
+    public Path put(char c) {
+        if (1 + len >= capacity) {
+            extend(16 + len);
+        }
+        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
+        len++;
+        return this;
+    }
+
+    @Override
+    public Path put(int value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
+    public Path put(long value) {
+        super.put(value);
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        if (len + this.len >= capacity) {
+            extend(len);
+        }
+        Chars.asciiCopyTo(chars, start, len, wptr);
+        wptr += len;
+        return this;
+    }
+
+    @Override
+    public void putUtf8Special(char c) {
+        if (c == '/' && Os.type == Os.WINDOWS) {
+            put('\\');
+        } else {
+            put(c);
+        }
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
+    }
+
     public Path seekZ() {
         int count = 0;
         while (count < capacity + 1) {
@@ -366,23 +368,23 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         encodeUtf8(str, from, to);
     }
 
+    private boolean missingTrailingSeparator() {
+        return len > 0 && Unsafe.getUnsafe().getByte(wptr - 1) != Files.SEPARATOR;
+    }
+
     protected final void ensureSeparator() {
         if (missingTrailingSeparator()) {
             Unsafe.getUnsafe().putByte(wptr, (byte) Files.SEPARATOR);
             wptr++;
-            this.len++;
+            len++;
         }
     }
 
-    private void extend(int len) {
+    void extend(int len) {
         long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1, MemoryTag.NATIVE_PATH);
         long d = wptr - ptr;
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;
-    }
-
-    private boolean missingTrailingSeparator() {
-        return len > 0 && Unsafe.getUnsafe().getByte(wptr - 1) != Files.SEPARATOR;
     }
 }

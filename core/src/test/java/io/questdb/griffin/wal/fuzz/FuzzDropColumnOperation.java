@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.wal.fuzz;
 
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.IntList;
@@ -37,18 +36,13 @@ public class FuzzDropColumnOperation implements FuzzTransactionOperation {
     private final String columnName;
 
     public FuzzDropColumnOperation(RecordMetadata tableModel, String columnName) {
-
         this.columnName = columnName;
     }
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
-        try {
-            AlterOperation alter = new AlterOperationBuilder().ofDropColumn(0, tableName, tableId).ofDropColumn(columnName).build();
-            tableWriter.apply(alter, true);
-            return true;
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
+        AlterOperation alter = new AlterOperationBuilder().ofDropColumn(0, tableName, tableId).ofDropColumn(columnName).build();
+        tableWriter.apply(alter, true);
+        return true;
     }
 }

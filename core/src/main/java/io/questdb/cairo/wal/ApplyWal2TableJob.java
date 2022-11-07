@@ -30,7 +30,6 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -49,12 +48,12 @@ import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
+    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     private static final int WAL_APPLY_FAILED = -2;
-    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private final CairoEngine engine;
-    private final SqlToOperation sqlToOperation;
     private final IntLongHashMap lastAppliedSeqTxns = new IntLongHashMap();
+    private final SqlToOperation sqlToOperation;
     private final WalEventReader walEventReader;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
@@ -117,37 +116,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return useful;
     }
 
-    @Override
-    protected boolean doRun(int workerId, long cursor) {
-        final CharSequence tableName;
-        final int tableId;
-        final long seqTxn;
-
-        try {
-            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
-            tableId = walTxnNotificationTask.getTableId();
-            tableName = walTxnNotificationTask.getTableName();
-            seqTxn = walTxnNotificationTask.getTxn();
-        } finally {
-            // Don't hold the queue until the all the transactions applied to the table
-            subSeq.done(cursor);
-        }
-
-        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
-            // Check, maybe we already processed this table to higher txn.
-            final long lastAppliedSeqTxn = processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
-            if (lastAppliedSeqTxn > -1L) {
-                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
-            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
-                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
-                engine.getTableSequencerAPI().suspendTable(tableName);
-            }
-        } else {
-            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableName).$(", txn=").$(seqTxn).I$();
-        }
-        return true;
-    }
-
     private void applyOutstandingWalTransactions(
             TableWriter writer,
             CairoEngine engine,
@@ -166,7 +134,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long seqTxn = transactionLogCursor.getTxn();
 
                     if (seqTxn != writer.getSeqTxn() + 1) {
-                        throw CairoException.critical(0).put("Unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1).put(" but was ").put(seqTxn);
+                        throw CairoException.critical(0)
+                                .put("unexpected sequencer transaction, expected ").put(writer.getSeqTxn() + 1)
+                                .put(" but was ").put(seqTxn);
                     }
 
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
@@ -180,7 +150,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         @SuppressWarnings("UnnecessaryLocalVariable") final int newStructureVersion = segmentId;
                         if (writer.getStructureVersion() != newStructureVersion - 1) {
                             throw CairoException.critical(0)
-                                    .put("Unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                                    .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
                                     .put(", tableStructureVersion=").put(writer.getStructureVersion())
                                     .put(']');
                         }
@@ -193,21 +163,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
 
                         if (hasNext) {
-                            try {
-                                structuralChangeCursor.next().apply(writer, true);
-                                writer.setSeqTxn(seqTxn);
-                            } catch (SqlException e) {
-                                throw CairoException.critical(0)
-                                        .put("cannot apply structure change from WAL to table [error=")
-                                        .put(e.getFlyweightMessage()).put(']');
-                            }
+                            structuralChangeCursor.next().apply(writer, true);
+                            writer.setSeqTxn(seqTxn);
                         } else {
                             // Something messed up in sequencer.
                             // There is a transaction in WAL but no structure change record.
                             // TODO: make sequencer distressed and try to reconcile on sequencer opening
                             //  or skip the transaction?
                             throw CairoException.critical(0)
-                                    .put("cannot apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                    .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                     .put(newStructureVersion)
                                     .put(']');
                         }
@@ -242,6 +206,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
                     break;
                 case TRUNCATE:
+                    // TODO(puzpuzpuz): this implementation is broken because of ILP I/O threads' symbol cache
+                    //                  and also concurrent table readers
                     writer.setSeqTxn(seqTxn);
                     writer.truncate();
                     break;
@@ -266,10 +232,45 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
-        } catch (SqlException ex) {
-            LOG.error().$("error applying UPDATE SQL to wal table [table=")
-                    .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
-            // This is fine, some syntax error, we should block WAL processing if SQL is not valid
+        } catch (CairoException e) {
+            if (e.isWALTolerable()) {
+                // This is fine, some syntax error, we should block WAL processing if SQL is not valid
+                LOG.error().$("error applying UPDATE SQL to wal table [table=")
+                        .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
+            } else {
+                throw e;
+            }
         }
+    }
+
+    @Override
+    protected boolean doRun(int workerId, long cursor) {
+        final CharSequence tableName;
+        final int tableId;
+        final long seqTxn;
+
+        try {
+            WalTxnNotificationTask walTxnNotificationTask = queue.get(cursor);
+            tableId = walTxnNotificationTask.getTableId();
+            tableName = walTxnNotificationTask.getTableName();
+            seqTxn = walTxnNotificationTask.getTxn();
+        } finally {
+            // Don't hold the queue until the all the transactions applied to the table
+            subSeq.done(cursor);
+        }
+
+        if (lastAppliedSeqTxns.get(tableId) < seqTxn) {
+            // Check, maybe we already processed this table to higher txn.
+            final long lastAppliedSeqTxn = processWalTxnNotification(tableName, tableId, engine, sqlToOperation);
+            if (lastAppliedSeqTxn > -1L) {
+                lastAppliedSeqTxns.put(tableId, lastAppliedSeqTxn);
+            } else if (lastAppliedSeqTxn == WAL_APPLY_FAILED) {
+                lastAppliedSeqTxns.put(tableId, Long.MAX_VALUE);
+                engine.getTableSequencerAPI().suspendTable(tableName);
+            }
+        } else {
+            LOG.debug().$("Skipping WAL processing for table, already processed [table=").$(tableName).$(", txn=").$(seqTxn).I$();
+        }
+        return true;
     }
 }

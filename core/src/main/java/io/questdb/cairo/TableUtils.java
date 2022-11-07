@@ -915,7 +915,7 @@ public final class TableUtils {
                 Vect.setMemoryFloat(addr, Float.NaN, count);
                 break;
             case ColumnType.SYMBOL:
-                Vect.setMemoryInt(addr, -1, count);
+                Vect.setMemoryInt(addr, SymbolTable.VALUE_IS_NULL, count);
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:

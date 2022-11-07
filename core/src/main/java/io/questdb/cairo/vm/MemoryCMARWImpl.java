@@ -40,10 +40,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
-    private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
-    private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
+    private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private long minMappedMemorySize = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
@@ -67,9 +67,134 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
+    public void close(boolean truncate, byte truncateMode) {
+        if (pageAddress != 0) {
+            long appendOffset = getAppendOffset();
+            long truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
+            long sz = Math.min(size, truncateSize);
+            if (appendOffset < sz) {
+                Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+            }
+            ff.munmap(pageAddress, size, memoryTag);
+            this.pageAddress = 0;
+            try {
+                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize, truncateMode);
+            } finally {
+                fd = -1;
+            }
+        }
+        if (fd != -1) {
+            ff.close(fd);
+            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+            fd = -1;
+        }
+        size = 0;
+        ff = null;
+    }
+
+    @Override
+    public void close() {
+        close(true);
+    }
+
+    @Override
+    public void extend(long newSize) {
+        if (newSize > size) {
+            extend0(newSize);
+        }
+    }
+
+    @Override
+    public long getAppendAddress() {
+        return appendAddress;
+    }
+
+    @Override
+    public long getAppendAddressSize() {
+        return lim - appendAddress;
+    }
+
+    @Override
+    public long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return extendSegmentMsb;
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
+        assert appendAddress <= lim;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, -1, memoryTag, opts);
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
+        this.minMappedMemorySize = extendSegmentSize;
+        this.madviseOpts = madviseOpts;
+        openFile(ff, name, opts);
+        map(ff, name, size, memoryTag);
+    }
+
+    @Override
+    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag) {
+        close();
+        assert fd > 0;
+        this.ff = ff;
+        this.extendSegmentMsb = ff.getMapPageSize();
+        this.minMappedMemorySize = this.extendSegmentMsb;
+        this.fd = fd;
+        map(ff, name, size, memoryTag);
+    }
+
+    @Override
+    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
+        of(ff, fd, null, size, memoryTag);
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        putLong256(hexString, start, end, long256Acceptor);
+    }
+
+    @Override
+    public void setTruncateSize(long size) {
+        jumpTo(size);
+    }
+
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
+    }
+
+    @Override
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
+        this.fd = fd;
+        map(ff, null, offset, memoryTag);
+    }
+
+    public void sync(boolean async) {
+        if (pageAddress != 0 && ff.msync(pageAddress, size, async) == 0) {
+            return;
+        }
+        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -124,133 +249,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void close(boolean truncate, byte truncateMode) {
-        if (pageAddress != 0) {
-            long appendOffset = getAppendOffset();
-            long truncateSize = truncateMode == Vm.TRUNCATE_TO_PAGE ? Files.ceilPageSize(appendOffset) : appendOffset;
-            long sz = Math.min(size, truncateSize);
-            if (appendOffset < sz) {
-                Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
-            }
-            ff.munmap(pageAddress, size, memoryTag);
-            this.pageAddress = 0;
-            try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, truncateSize, truncateMode);
-            } finally {
-                fd = -1;
-            }
-        }
-        if (fd != -1) {
-            ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
-        }
-        size = 0;
-        ff = null;
-    }
-
-    @Override
-    public long getAppendAddress() {
-        return appendAddress;
-    }
-
-    @Override
-    public long getAppendAddressSize() {
-        return lim - appendAddress;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, -1, memoryTag, opts);
-    }
-
-    @Override
-    public void switchTo(long fd, long offset, byte truncateMode) {
-        close(true, truncateMode);
-        this.fd = fd;
-        map(ff, null, offset, memoryTag);
-    }
-
-    @Override
-    public void close() {
-        close(true);
-    }
-
-    @Override
-    public void extend(long newSize) {
-        if (newSize > size) {
-            extend0(newSize);
-        }
-    }
-
-    @Override
-    public long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        return extendSegmentMsb;
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        putLong256(hexString, start, end, long256Acceptor);
-    }
-
-    @Override
-    public void skip(long bytes) {
-        checkAndExtend(appendAddress + bytes);
-        appendAddress += bytes;
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-        this.minMappedMemorySize = extendSegmentSize;
-        this.madviseOpts = madviseOpts;
-        openFile(ff, name, opts);
-        map(ff, name, size, memoryTag);
-    }
-
-    @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long size, int memoryTag) {
-        close();
-        assert fd > 0;
-        this.ff = ff;
-        this.extendSegmentMsb = ff.getMapPageSize();
-        this.minMappedMemorySize = this.extendSegmentMsb;
-        this.fd = fd;
-        map(ff, name, size, memoryTag);
-    }
-
-    @Override
-    public void of(FilesFacade ff, long fd, @Nullable CharSequence name, long extendSegmentSize, long size, int memoryTag) {
-        of(ff, fd, null, size, memoryTag);
-        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
-    }
-
-    @Override
-    public void setTruncateSize(long size) {
-        jumpTo(size);
-    }
-
-    public void sync(boolean async) {
-        if (pageAddress != 0 && ff.msync(pageAddress, size, async) == 0) {
-            return;
-        }
-        LOG.error().$("could not msync [fd=").$(fd).$(']').$();
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {
@@ -288,6 +289,23 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         appendAddress = pageAddress + offset;
     }
 
+    private void map0(FilesFacade ff, long size) {
+        try {
+            this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
+            this.lim = pageAddress + size;
+            ff.madvise(pageAddress, size, madviseOpts);
+        } catch (Throwable e) {
+            close(false);
+            throw e;
+        }
+    }
+
+    private void openFile(FilesFacade ff, LPSZ name, long opts) {
+        close();
+        this.ff = ff;
+        fd = TableUtils.openFileRWOrFail(ff, name, opts);
+    }
+
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size, int memoryTag) {
         this.memoryTag = memoryTag;
         // file either did not exist when length() was called or empty
@@ -306,22 +324,5 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         } else {
             LOG.debug().$("open [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
         }
-    }
-
-    private void map0(FilesFacade ff, long size) {
-        try {
-            this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
-            this.lim = pageAddress + size;
-            ff.madvise(pageAddress, size, madviseOpts);
-        } catch (Throwable e) {
-            close(false);
-            throw e;
-        }
-    }
-
-    private void openFile(FilesFacade ff, LPSZ name, long opts) {
-        close();
-        this.ff = ff;
-        fd = TableUtils.openFileRWOrFail(ff, name, opts);
     }
 }

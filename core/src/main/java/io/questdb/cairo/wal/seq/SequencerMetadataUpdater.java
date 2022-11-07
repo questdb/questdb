@@ -26,7 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
 
-public class SequencerMetadataUpdater implements SequencerTableWriterSPI {
+public class SequencerMetadataUpdater implements SequencerMetadataChangeSPI {
     private final SequencerMetadata metadata;
     private final CharSequence tableName;
 

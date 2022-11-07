@@ -153,7 +153,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             try (
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -598,6 +597,43 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateViaWal_SQLFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                try {
+                    executeOperation("UPDATE " + tableName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
+                    fail("Expected SQLException is not thrown");
+                } catch (SqlException e) {
+                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
+                }
+                drainWalQueue();
+                assertFalse(engine.getTableSequencerAPI().isSuspended(tableName));
+
+                try {
+                    executeOperation("UPDATE " + tableCopyName + " SET INT=systimestamp()", CompiledQuery.UPDATE);
+                    fail("Expected SQLException is not thrown");
+                } catch (SqlException e) {
+                    assertTrue(e.getFlyweightMessage().toString().contains("inconvertible types: TIMESTAMP -> INT"));
+                }
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testUpdateViaWal_Simple() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -717,34 +753,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
-    }
-
-    protected static void drainWalQueue(boolean cleanup) throws IOException {
-        class QueueCleanerJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
-            public QueueCleanerJob(CairoEngine engine) {
-                super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
-            }
-
-            @Override
-            public void close() throws IOException {
-            }
-
-            @Override
-            protected boolean doRun(int workerId, long cursor) {
-                try {
-                    queue.get(cursor);
-                } finally {
-                    subSeq.done(cursor);
-                }
-                return true;
-            }
-        }
-
-        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
-        while (job.run(0)) {
-            // run until empty
-        }
-        ((Closeable) job).close();
     }
 
     private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
@@ -875,5 +883,33 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         if (tableId > 0) {
             drainWalQueue();
         }
+    }
+
+    protected static void drainWalQueue(boolean cleanup) throws IOException {
+        class QueueCleanerJob extends AbstractQueueConsumerJob<WalTxnNotificationTask> implements Closeable {
+            public QueueCleanerJob(CairoEngine engine) {
+                super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
+            }
+
+            @Override
+            public void close() throws IOException {
+            }
+
+            @Override
+            protected boolean doRun(int workerId, long cursor) {
+                try {
+                    queue.get(cursor);
+                } finally {
+                    subSeq.done(cursor);
+                }
+                return true;
+            }
+        }
+
+        AbstractQueueConsumerJob<?> job = cleanup ? new QueueCleanerJob(engine) : new ApplyWal2TableJob(engine, 1, 1);
+        while (job.run(0)) {
+            // run until empty
+        }
+        ((Closeable) job).close();
     }
 }

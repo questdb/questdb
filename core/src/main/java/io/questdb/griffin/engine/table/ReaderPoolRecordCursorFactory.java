@@ -37,22 +37,16 @@ import java.util.Iterator;
 import java.util.Map;
 
 public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final int TABLE_COLUMN_INDEX = 0;
+    private static final RecordMetadata METADATA;
     private static final int OWNER_COLUMN_INDEX = 1;
+    private static final int TABLE_COLUMN_INDEX = 0;
     private static final int TIMESTAMP_COLUMN_INDEX = 2;
     private static final int TXN_COLUMN_INDEX = 3;
-
-    private static final RecordMetadata METADATA;
     private final CairoEngine cairoEngine;
 
     public ReaderPoolRecordCursorFactory(CairoEngine cairoEngine) {
         super(METADATA);
         this.cairoEngine = cairoEngine;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
     }
 
     @Override
@@ -62,54 +56,66 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         return readerPoolCursor;
     }
 
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", ColumnType.STRING))
-                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", ColumnType.LONG))
-                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP))
-                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", ColumnType.LONG));
-        METADATA = metadata;
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     private static class ReaderPoolCursor implements RecordCursor {
-        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
-        private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
+        private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
-        private CharSequence tableName;
+        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private long owner;
+        private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
+        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
+        private CharSequence tableName;
         private long timestamp;
         private long txn;
-        private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
-        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException("RecordB not implemented");
+        }
+
+        @Override
+        public boolean hasNext() {
+            return tryAdvance();
+        }
 
         public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
             toTop();
         }
 
-        private boolean tryAdvance() {
-            TableReader reader;
-            do {
-                if (!selectPoolEntry()) {
-                    return false;
-                }
-                // Volatile read because the owner is set by other thread(s).
-                // It ensures everything the other thread wrote to other fields before (volatile) writing the 'owner'
-                // will become visible too (Synchronizes-With Order).
-                // This does not imply the individual fields will be consistent. Why? There are other threads modifying
-                // entries concurrently with us reading them. So e.g. the 'reader' field can be changed after we read
-                // 'owner'. So what's the point of volatile read? It ensures we don't read arbitrary stale data.
-                owner = poolEntry.getOwnerVolatile(allocationIndex);
-                timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);
-                reader = poolEntry.getTenant(allocationIndex);
-                allocationIndex++;
-            } while (reader == null);
-            txn = reader.getTxn();
-            return true;
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException("Random access not implemented");
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            iterator = readerPoolEntries.entrySet().iterator();
+            allocationIndex = 0;
+            poolEntry = null;
+            tableName = null;
         }
 
         private boolean selectPoolEntry() {
-            for (;;) {
+            for (; ; ) {
                 if (poolEntry == null) {
                     // either we just started the iteration or the last Entry did not have
                     // anything chained. let's advance in the CHM iterator
@@ -133,44 +139,40 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             }
         }
 
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return tryAdvance();
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException("RecordB not implemented");
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException("Random access not implemented");
-        }
-
-        @Override
-        public void toTop() {
-            iterator = readerPoolEntries.entrySet().iterator();
-            allocationIndex = 0;
-            poolEntry = null;
-            tableName = null;
-        }
-
-        @Override
-        public long size() {
-            return -1;
+        private boolean tryAdvance() {
+            TableReader reader;
+            do {
+                if (!selectPoolEntry()) {
+                    return false;
+                }
+                // Volatile read because the owner is set by other thread(s).
+                // It ensures everything the other thread wrote to other fields before (volatile) writing the 'owner'
+                // will become visible too (Synchronizes-With Order).
+                // This does not imply the individual fields will be consistent. Why? There are other threads modifying
+                // entries concurrently with us reading them. So e.g. the 'reader' field can be changed after we read
+                // 'owner'. So what's the point of volatile read? It ensures we don't read arbitrary stale data.
+                owner = poolEntry.getOwnerVolatile(allocationIndex);
+                timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);
+                reader = poolEntry.getTenant(allocationIndex);
+                allocationIndex++;
+            } while (reader == null);
+            txn = reader.getTxn();
+            return true;
         }
 
         private class ReaderPoolEntryRecord implements Record {
+            @Override
+            public long getLong(int col) {
+                switch (col) {
+                    case OWNER_COLUMN_INDEX:
+                        return owner;
+                    case TXN_COLUMN_INDEX:
+                        return txn;
+                    default:
+                        throw CairoException.nonCritical().put("unsupported column number. [column=").put(col).put("]");
+                }
+            }
+
             @Override
             public CharSequence getStr(int col) {
                 assert col == TABLE_COLUMN_INDEX;
@@ -190,18 +192,15 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 assert col == TIMESTAMP_COLUMN_INDEX;
                 return timestamp;
             }
-
-            @Override
-            public long getLong(int col) {
-                switch (col) {
-                    case OWNER_COLUMN_INDEX:
-                        return owner;
-                    case TXN_COLUMN_INDEX:
-                        return txn;
-                    default:
-                        throw CairoException.nonCritical().put("unsupported column number. [column=").put(col).put("]");
-                }
-            }
         }
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", ColumnType.STRING))
+                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", ColumnType.LONG))
+                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP))
+                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", ColumnType.LONG));
+        METADATA = metadata;
     }
 }

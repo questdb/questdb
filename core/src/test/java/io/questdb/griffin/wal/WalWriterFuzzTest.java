@@ -54,7 +54,7 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.
-// This improves coverate. To debug failures in CI find the line logging random seeds
+// This improves coverage. To debug failures in CI find the line logging random seeds
 // and change line
 // Rnd rnd = TestUtils.generateRandom(LOG);
 // to
@@ -64,28 +64,29 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 // When the same timestamp is used in multiple transactions
 // the order of records when executed in parallel WAL writing is not guaranteed.
 // The creates failures in tests that assume that the order of records is preserved.
-// There are already measures to prevent invalid data generation but it still can happen.
-// In order to verify that the test is not broken we check that there are no duplicate timestamps for the record where the comparison fails.
+// There are already measures to prevent invalid data generation, but it still can happen.
+// In order to verify that the test is not broken we check that there are no duplicate
+// timestamps for the record where the comparison fails.
 //
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
-    private int initialRowCount;
-    private int fuzzRowCount;
-    private boolean isO3;
     private double cancelRowsProb;
-    private double notSetProb;
-    private double nullSetProb;
-    private double rollbackProb;
+    private double colRenameProb;
     private double collAddProb;
     private double collRemoveProb;
-    private double colRenameProb;
     private double dataAddProb;
-    private int transactionCount;
-    private int strLen;
-    private int symbolStrLenMax;
-    private int symbolCountMax;
+    private int fuzzRowCount;
+    private int initialRowCount;
+    private boolean isO3;
+    private double notSetProb;
+    private double nullSetProb;
     private int partitionCount;
+    private double rollbackProb;
+    private int strLen;
+    private int symbolCountMax;
+    private int symbolStrLenMax;
+    private int transactionCount;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -131,6 +132,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd1 = TestUtils.generateRandom(LOG);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
+        setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
+        runFuzz(rnd1);
+    }
+
+    @Test
+    public void testWalWriteRollbackHeavyToFix() throws Exception {
+        Rnd rnd1 = new Rnd(628706008284375L, 1667487965450L);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
         setFuzzCounts(rnd1.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd1);
@@ -370,6 +379,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         if (increment) {
                             structureVersion.incrementAndGet();
                         }
+
+                        // CREATE TABLE may release all inactive sequencers occasionally, so we do the same
+                        // to make sure that there are no races between WAL writers and the engine.
+                        engine.releaseInactiveTableSequencers();
                     }
                 } catch (Throwable e) {
                     errors.add(e);

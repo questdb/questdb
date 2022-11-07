@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
@@ -171,12 +170,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 });
     }
 
-    static void addColumn(TableWriterAPI writer, String columnName) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
-    }
-
     private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, Runnable runnable) throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -223,5 +216,11 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         } catch (Throwable e) {
             exception.set(e);
         }
+    }
+
+    static void addColumn(TableWriterAPI writer, String columnName) {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.ofAddColumn(columnName, 11, ColumnType.INT, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
     }
 }

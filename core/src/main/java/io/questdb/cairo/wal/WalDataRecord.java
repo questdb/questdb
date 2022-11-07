@@ -35,8 +35,8 @@ import io.questdb.std.str.CharSink;
 import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
 
 public class WalDataRecord implements Record, Sinkable {
-    private long recordIndex = 0;
     private WalReader reader;
+    private long recordIndex = 0;
 
     @Override
     public BinarySequence getBin(int col) {
@@ -67,6 +67,13 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
+    public char getChar(int col) {
+        final long offset = recordIndex * Character.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getChar(offset);
+    }
+
+    @Override
     public double getDouble(int col) {
         final long offset = recordIndex * Double.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
@@ -81,6 +88,34 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
+    public byte getGeoByte(int col) {
+        final long offset = recordIndex * Byte.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        final long offset = recordIndex * Integer.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        final long offset = recordIndex * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        final long offset = recordIndex * Short.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
     public int getInt(int col) {
         final long offset = recordIndex * Integer.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
@@ -92,27 +127,6 @@ public class WalDataRecord implements Record, Sinkable {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    @Override
-    public short getShort(int col) {
-        final long offset = recordIndex * Short.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getShort(offset);
-    }
-
-    @Override
-    public char getChar(int col) {
-        final long offset = recordIndex * Character.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getChar(offset);
-    }
-
-    @Override
-    public CharSequence getStr(int col) {
-        final long offset = recordIndex * Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getStr(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
@@ -134,6 +148,29 @@ public class WalDataRecord implements Record, Sinkable {
         final long offset = recordIndex * Long256.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
+    }
+
+    public long getRecordIndex() {
+        return recordIndex;
+    }
+
+    @Override
+    public long getRowId() {
+        return Rows.toRowID(0, recordIndex);
+    }
+
+    @Override
+    public short getShort(int col) {
+        final long offset = recordIndex * Short.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getShort(offset);
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        final long offset = recordIndex * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getStr(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
@@ -161,64 +198,13 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        final long offset = recordIndex * Byte.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? GeoHashes.BYTE_NULL : reader.getColumn(absoluteColumnIndex).getByte(offset);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        final long offset = recordIndex * Short.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? GeoHashes.SHORT_NULL : reader.getColumn(absoluteColumnIndex).getShort(offset);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        final long offset = recordIndex * Integer.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? GeoHashes.INT_NULL : reader.getColumn(absoluteColumnIndex).getInt(offset);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        final long offset = recordIndex * Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return offset < 0 ? GeoHashes.NULL : reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    @Override
     public long getTimestamp(int col) {
         return col == reader.getTimestampIndex() ? getDesignatedTimestamp(col) : getLong(col);
-    }
-
-    private long getDesignatedTimestamp(int col) {
-        final long offset = 2 * recordIndex * Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    // only for tests
-    @SuppressWarnings("SameParameterValue")
-    long getDesignatedTimestampRowId(int col) {
-        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset);
-    }
-
-    @Override
-    public long getRowId() {
-        return Rows.toRowID(0, recordIndex);
     }
 
     @Override
     public long getUpdateRowId() {
         throw new UnsupportedOperationException("UPDATE is not supported in WAL");
-    }
-
-    public long getRecordIndex() {
-        return recordIndex;
     }
 
     public void incrementRecordIndex() {
@@ -237,5 +223,19 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public void toSink(CharSink sink) {
         sink.put("WalReaderRecord [recordIndex=").put(recordIndex).put(']');
+    }
+
+    private long getDesignatedTimestamp(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    // only for tests
+    @SuppressWarnings("SameParameterValue")
+    long getDesignatedTimestampRowId(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
     }
 }

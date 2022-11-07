@@ -33,6 +33,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -52,9 +53,15 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class DropIndexTest extends AbstractGriffinTest {
 
-    private static final String tableName = "sensors";
     private static final String columnName = "sensor_id";
+    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
+            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
+            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
+            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
+            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
+            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
     private static final int indexBlockValueSize = 32;
+    private static final String tableName = "sensors";
     private static final String CREATE_TABLE_STMT = "CREATE TABLE " + tableName + " AS (" +
             "    SELECT" +
             "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
@@ -65,19 +72,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
             ", INDEX(temperature CAPACITY 4) " +
             "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
-
-
-    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
-            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
-            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
-            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
-            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
-            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
-
-
-    protected static SqlExecutionContext sqlExecutionContext2;
     protected static SqlCompiler compiler2;
-
+    protected static SqlExecutionContext sqlExecutionContext2;
     private static Path path;
     private static int tablePathLen;
 
@@ -104,54 +100,95 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropIndexSyntaxErrors0() throws Exception {
-        assertFailure(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
-                CREATE_TABLE_STMT,
-                43,
-                "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
-        );
+    public void dropIndexColumnTop() throws SqlException, NumericException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+            model.col("a", ColumnType.INT);
+            model.timestamp("ts");
+            createPopulateTable(model, 5, "2022-02-24", 2);
+        }
+        compile("alter table " + tableName + " add column sym symbol index");
+        compile("insert into " + tableName +
+                " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n" +
+                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
+                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
+                "5\t2022-02-24T02:36:40.000000Z\tC\n");
+
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        compile("alter table " + tableName + " alter column sym drop index");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n" +
+                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
+                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
+                "5\t2022-02-24T02:36:40.000000Z\tC\n");
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym = 'A'", "a\tts\tsym\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n");
     }
 
     @Test
-    public void testDropIndexSyntaxErrors1() throws Exception {
-        assertFailure(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
-                CREATE_TABLE_STMT,
-                47,
-                "'index' expected"
-        );
-    }
+    public void dropIndexColumnTopLastPartition() throws SqlException, NumericException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+            model.col("a", ColumnType.INT);
+            model.timestamp("ts");
+            createPopulateTable(model, 5, "2022-02-24", 2);
+        }
+        compile("alter table " + tableName + " add column sym symbol index");
 
-    @Test
-    public void testDropIndexSyntaxErrors2() throws Exception {
-        assertFailure(
-                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,",
-                CREATE_TABLE_STMT,
-                53,
-                "unexpected token [,] while trying to drop index"
-        );
-    }
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
 
-    @Test
-    public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
-        assertMemoryLeak(() -> {
-            compile(
-                    "CREATE TABLE підрахунок AS (" +
-                            "  select " +
-                            "    rnd_symbol('K1', 'K2') колонка " +
-                            "  from long_sequence(317)" +
-                            ")",
-                    sqlExecutionContext
-            );
-            engine.releaseAllWriters();
-            assertFailure(
-                    "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
-                    null,
-                    12,
-                    "Column is not indexed [name=колонка][errno=-100]"
-            );
-        });
+        compile("alter table " + tableName + " alter column sym drop index");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym = 'A'", "a\tts\tsym\n");
     }
 
     @Test
@@ -160,17 +197,17 @@ public class DropIndexTest extends AbstractGriffinTest {
             int numberOfCalls = 0;
 
             @Override
+            public int errno() {
+                return numberOfCalls < 5 ? super.errno() : -1;
+            }
+
+            @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
                 ++numberOfCalls;
                 if (numberOfCalls < 5) {
                     return super.hardLink(src, hardLink);
                 }
                 return -1;
-            }
-
-            @Override
-            public int errno() {
-                return numberOfCalls < 5 ? super.errno() : -1;
             }
         };
 
@@ -187,9 +224,9 @@ public class DropIndexTest extends AbstractGriffinTest {
             try {
                 compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
-                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(
                         PartitionBy.HOUR,
@@ -216,6 +253,27 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "CREATE TABLE підрахунок AS (" +
+                            "  select " +
+                            "    rnd_symbol('K1', 'K2') колонка " +
+                            "  from long_sequence(317)" +
+                            ")",
+                    sqlExecutionContext
+            );
+            engine.releaseAllWriters();
+            assertFailure(
+                    "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
+                    null,
+                    12,
+                    "Column is not indexed [name=колонка][errno=-100]"
+            );
+        });
+    }
+
+    @Test
     public void testDropIndexPartitionedByDayTable() throws Exception {
         dropIndexOfIndexedColumn(PartitionBy.DAY);
     }
@@ -223,38 +281,6 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexPartitionedByHourTable() throws Exception {
         dropIndexOfIndexedColumn(PartitionBy.HOUR);
-    }
-
-    @Test
-    public void testDropIndexStructureOfTableAndColumnIncrease() throws Exception {
-        assertMemoryLeak(configuration.getFilesFacade(), () -> {
-            compile(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
-            checkMetadataAndTxn(
-                    PartitionBy.DAY,
-                    1,
-                    0,
-                    0,
-                    true,
-                    indexBlockValueSize
-            );
-            assertSql(tableName, expected);
-            executeOperation(
-                    dropIndexStatement(),
-                    CompiledQuery.ALTER
-            );
-            path.trimTo(tablePathLen);
-            checkMetadataAndTxn(
-                    PartitionBy.DAY,
-                    2,
-                    1,
-                    1,
-                    false,
-                    configuration.getIndexValueBlockSize()
-            );
-            assertSql(tableName, expected);
-            Assert.assertEquals(2, countDFiles(1L));
-            Assert.assertEquals(0, countIndexFiles(1L));
-        });
     }
 
     @Test
@@ -407,8 +433,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 if (fail instanceof EntryUnavailableException) {
                     // reason can be Alter table execute or Engine cleanup (unknown)
                     TestUtils.assertContains(fail.getMessage(), "table busy [reason=");
-                }
-                else if (fail instanceof SqlException) {
+                } else if (fail instanceof SqlException) {
                     TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
                 }
             } catch (EntryUnavailableException e) {
@@ -440,6 +465,182 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(5, countDFiles(1L));
             Assert.assertEquals(0, countIndexFiles(1L));
         });
+    }
+
+    @Test
+    public void testDropIndexStructureOfTableAndColumnIncrease() throws Exception {
+        assertMemoryLeak(configuration.getFilesFacade(), () -> {
+            compile(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
+            checkMetadataAndTxn(
+                    PartitionBy.DAY,
+                    1,
+                    0,
+                    0,
+                    true,
+                    indexBlockValueSize
+            );
+            assertSql(tableName, expected);
+            executeOperation(
+                    dropIndexStatement(),
+                    CompiledQuery.ALTER
+            );
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    PartitionBy.DAY,
+                    2,
+                    1,
+                    1,
+                    false,
+                    configuration.getIndexValueBlockSize()
+            );
+            assertSql(tableName, expected);
+            Assert.assertEquals(2, countDFiles(1L));
+            Assert.assertEquals(0, countIndexFiles(1L));
+        });
+    }
+
+    @Test
+    public void testDropIndexSyntaxErrors0() throws Exception {
+        assertFailure(
+                "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
+                CREATE_TABLE_STMT,
+                43,
+                "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
+        );
+    }
+
+    @Test
+    public void testDropIndexSyntaxErrors1() throws Exception {
+        assertFailure(
+                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
+                CREATE_TABLE_STMT,
+                47,
+                "'index' expected"
+        );
+    }
+
+    @Test
+    public void testDropIndexSyntaxErrors2() throws Exception {
+        assertFailure(
+                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,",
+                CREATE_TABLE_STMT,
+                53,
+                "unexpected token [,] while trying to drop index"
+        );
+    }
+
+    private static void checkMetadataAndTxn(
+            int partitionedBy,
+            long expectedReaderVersion,
+            long expectedStructureVersion,
+            long expectedColumnVersion,
+            boolean isColumnIndexed,
+            int indexValueBlockSize
+    ) {
+        checkMetadataAndTxn(
+                path,
+                columnName,
+                partitionedBy,
+                expectedReaderVersion,
+                expectedStructureVersion,
+                expectedColumnVersion,
+                isColumnIndexed,
+                indexValueBlockSize
+        );
+    }
+
+    private static void checkMetadataAndTxn(
+            Path path,
+            String columnName,
+            int partitionedBy,
+            long expectedReaderVersion,
+            long expectedStructureVersion,
+            long expectedColumnVersion,
+            boolean isColumnIndexed,
+            int indexValueBlockSize
+    ) {
+        try (TxReader txReader = new TxReader(ff)) {
+            int pathLen = path.length();
+            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
+            path.trimTo(pathLen);
+            txReader.unsafeLoadAll();
+            Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
+            Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
+            Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
+            Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertEquals(partitionedBy, metadata.getPartitionBy());
+                Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());
+                int columnIndex = metadata.getColumnIndex(columnName);
+                Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
+                Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
+            }
+        }
+    }
+
+    private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
+        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
+                (String) configuration.getRoot(),
+                tableName
+        );
+        try (Stream<?> stream = Files.find(
+                tablePath,
+                Integer.MAX_VALUE,
+                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
+        )) {
+            return stream.count();
+        }
+    }
+
+    private static String dropIndexStatement() {
+        sink.clear();
+        return sink.put("ALTER TABLE ").put(tableName)
+                .put(" ALTER COLUMN ").put(columnName)
+                .put(" DROP INDEX")
+                .toString();
+    }
+
+    private static boolean isDataFile(
+            java.nio.file.Path tablePath,
+            java.nio.file.Path filePath,
+            String columnName,
+            long txn
+    ) {
+        final String fn = filePath.getFileName().toString();
+        boolean isDFile = !filePath.getParent().equals(tablePath);
+        if (!isDFile) {
+            return false;
+        }
+        return fn.endsWith(columnName + (txn < 1 ? ".d" : ".d." + txn));
+    }
+
+    private static boolean isIndexFile(
+            java.nio.file.Path tablePath,
+            java.nio.file.Path filePath,
+            String columnName,
+            long txn
+    ) {
+        final String fn = filePath.getFileName().toString();
+        boolean isIndexFile = !filePath.getParent().equals(tablePath);
+        if (!isIndexFile) {
+            return false;
+        }
+        String K = columnName + ".k";
+        String V = columnName + ".v";
+        if (txn > 0) {
+            K = K + "." + txn;
+            V = V + "." + txn;
+        }
+        return fn.endsWith(K) || fn.endsWith(V);
+    }
+
+    private long countDFiles(long txn) throws IOException {
+        return countFiles(columnName, txn, DropIndexTest::isDataFile);
+    }
+
+    private long countIndexFiles(long txn) throws IOException {
+        return countFiles(columnName, txn, DropIndexTest::isIndexFile);
     }
 
     private void dropIndexOfIndexedColumn(int partitionedBy) throws Exception {
@@ -510,122 +711,8 @@ public class DropIndexTest extends AbstractGriffinTest {
         });
     }
 
-    private static String dropIndexStatement() {
-        sink.clear();
-        return sink.put("ALTER TABLE ").put(tableName)
-                .put(" ALTER COLUMN ").put(columnName)
-                .put(" DROP INDEX")
-                .toString();
-    }
-
-    private static void checkMetadataAndTxn(
-            int partitionedBy,
-            long expectedReaderVersion,
-            long expectedStructureVersion,
-            long expectedColumnVersion,
-            boolean isColumnIndexed,
-            int indexValueBlockSize
-    ) {
-        checkMetadataAndTxn(
-                path,
-                columnName,
-                partitionedBy,
-                expectedReaderVersion,
-                expectedStructureVersion,
-                expectedColumnVersion,
-                isColumnIndexed,
-                indexValueBlockSize
-        );
-    }
-
-    private static void checkMetadataAndTxn(
-            Path path,
-            String columnName,
-            int partitionedBy,
-            long expectedReaderVersion,
-            long expectedStructureVersion,
-            long expectedColumnVersion,
-            boolean isColumnIndexed,
-            int indexValueBlockSize
-    ) {
-        try (TxReader txReader = new TxReader(ff)) {
-            int pathLen = path.length();
-            txReader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionedBy);
-            path.trimTo(pathLen);
-            txReader.unsafeLoadAll();
-            Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
-            Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
-            Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
-            Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                Assert.assertEquals(partitionedBy, metadata.getPartitionBy());
-                Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());
-                int columnIndex = metadata.getColumnIndex(columnName);
-                Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
-                Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
-            }
-        }
-    }
-
-    private long countIndexFiles(long txn) throws IOException {
-        return countFiles(columnName, txn, DropIndexTest::isIndexFile);
-    }
-
-    private long countDFiles(long txn) throws IOException {
-        return countFiles(columnName, txn, DropIndexTest::isDataFile);
-    }
-
-    private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
-        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
-                (String) configuration.getRoot(),
-                tableName
-        );
-        try (Stream<?> stream = Files.find(
-                tablePath,
-                Integer.MAX_VALUE,
-                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
-        )) {
-            return stream.count();
-        }
-    }
-
     @FunctionalInterface
     public interface FileChecker {
         boolean accepts(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn);
-    }
-
-    private static boolean isIndexFile(
-            java.nio.file.Path tablePath,
-            java.nio.file.Path filePath,
-            String columnName,
-            long txn
-    ) {
-        final String fn = filePath.getFileName().toString();
-        boolean isIndexFile = !filePath.getParent().equals(tablePath);
-        if (!isIndexFile) {
-            return false;
-        }
-        String K = columnName + ".k";
-        String V = columnName + ".v";
-        if (txn > 0) {
-            K = K + "." + txn;
-            V = V + "." + txn;
-        }
-        return fn.endsWith(K) || fn.endsWith(V);
-    }
-
-    private static boolean isDataFile(
-            java.nio.file.Path tablePath,
-            java.nio.file.Path filePath,
-            String columnName,
-            long txn
-    ) {
-        final String fn = filePath.getFileName().toString();
-        boolean isDFile = !filePath.getParent().equals(tablePath);
-        if (!isDFile) {
-            return false;
-        }
-        return fn.endsWith(columnName + (txn < 1 ? ".d" : ".d." + txn));
     }
 }

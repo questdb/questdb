@@ -30,7 +30,6 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -1672,7 +1671,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void prepareError(CairoException ex) {
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
-        prepareErrorResponse(-1, ex.getFlyweightMessage());
+        prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
         if (errno == CairoException.NON_CRITICAL) {
             LOG.error()
                     .$("error [msg=`").$(message).$('`')

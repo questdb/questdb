@@ -30,18 +30,45 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
 public class AlterOperationBuilder {
-    private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final LongList longList = new LongList();
+    private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final AlterOperation resultInstance;
-    // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
-    // to exception message using TableUtils.setSinkForPartition
     private short command;
-    private String tableName;
     private int tableId = -1;
+    private String tableName;
     private int tableNamePosition = -1;
 
+    // builder and the operation it is building share two lists.
     public AlterOperationBuilder() {
         this.resultInstance = new AlterOperation(longList, objCharList);
+    }
+
+    public void addColumnToList(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
+        longList.add(columnNamePosition);
+    }
+
+    public void addPartitionToList(long timestamp, int timestampPosition) {
+        longList.add(timestamp);
+        longList.add(timestampPosition);
+    }
+
+    public AlterOperation build() {
+        return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
     public void clear() {
@@ -54,16 +81,31 @@ public class AlterOperationBuilder {
         tableNamePosition = -1;
     }
 
-    public AlterOperation build() {
-        return resultInstance.of(command, tableName, tableId, tableNamePosition);
-    }
-
     public AlterOperationBuilder ofAddColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = ADD_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofAddColumn(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            boolean indexed,
+            int indexValueBlockCapacity
+    ) {
+        assert columnName != null && columnName.length() > 0;
+        objCharList.add(columnName);
+        longList.add(type);
+        longList.add(symbolCapacity);
+        longList.add(cache ? 1 : -1);
+        longList.add(indexed ? 1 : -1);
+        longList.add(indexValueBlockCapacity);
+        longList.add(columnNamePosition);
     }
 
     public AlterOperationBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
@@ -76,25 +118,8 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        this.command = DROP_INDEX;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        this.objCharList.add(columnName);
-        return this;
-    }
-
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
-        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
@@ -110,13 +135,11 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
-        assert columnName != null && columnName.length() > 0;
-        this.command = REMOVE_SYMBOL_CACHE;
+    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
+        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
-        this.objCharList.add(columnName);
         return this;
     }
 
@@ -134,11 +157,40 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int columnNamePosition) {
+        this.command = DROP_INDEX;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
+        this.longList.add(columnNamePosition);
+        return this;
+    }
+
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;
+        return this;
+    }
+
+    public void ofPartition(long timestamp) {
+        longList.add(timestamp);
+    }
+
+    public void ofPartition(long partitionTimestamp, int partitionNamePosition) {
+        longList.add(partitionTimestamp);
+        longList.add(partitionNamePosition);
+    }
+
+    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        assert columnName != null && columnName.length() > 0;
+        this.command = REMOVE_SYMBOL_CACHE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
         return this;
     }
 
@@ -150,45 +202,26 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
+    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
+        objCharList.add(columnName);
+        objCharList.add(newName);
+    }
+
+    public AlterOperationBuilder ofSetParamCommitLag(int tableNamePosition, String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(commitLag);
         this.tableId = tableId;
         return this;
     }
 
-    public AlterOperationBuilder ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
+    public AlterOperationBuilder ofSetParamUncommittedRows(int tableNamePosition, String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
+        this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.longList.add(maxUncommittedRows);
         this.tableId = tableId;
         return this;
-    }
-
-    public void ofRenameColumn(CharSequence columnName, CharSequence newName) {
-        objCharList.add(columnName);
-        objCharList.add(newName);
-    }
-
-    public void ofPartition(long timestamp) {
-        longList.add(timestamp);
-    }
-
-    public void ofAddColumn(
-            CharSequence columnName,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity
-    ) {
-        assert columnName != null && columnName.length() > 0;
-        objCharList.add(columnName);
-        longList.add(type);
-        longList.add(symbolCapacity);
-        longList.add(cache ? 1 : -1);
-        longList.add(indexed ? 1 : -1);
-        longList.add(indexValueBlockCapacity);
     }
 }

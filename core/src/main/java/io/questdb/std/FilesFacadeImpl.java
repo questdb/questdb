@@ -184,6 +184,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean isSoftLink(LPSZ softLink) {
+        return Files.isSoftLink(softLink);
+    }
+
+    @Override
     public void iterateDir(LPSZ path, FindVisitor func) {
         long p = findFirst(path);
         if (p > 0) {
@@ -296,6 +301,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int softLink(LPSZ src, LPSZ softLink) {
+        return Files.softLink(src, softLink);
+    }
+
+    @Override
     public int sync() {
         return Files.sync();
     }
@@ -308,6 +318,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
+    }
+
+    @Override
+    public int unlink(LPSZ softLink) {
+        return Files.unlink(softLink);
     }
 
     public void walk(Path path, FindVisitor func) {

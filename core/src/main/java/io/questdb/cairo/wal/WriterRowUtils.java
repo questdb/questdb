@@ -35,6 +35,23 @@ public class WriterRowUtils {
     private WriterRowUtils() {
     }
 
+    public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.GEOBYTE:
+                row.putByte(index, (byte) value);
+                break;
+            case ColumnType.GEOSHORT:
+                row.putShort(index, (short) value);
+                break;
+            case ColumnType.GEOINT:
+                row.putInt(index, (int) value);
+                break;
+            default:
+                row.putLong(index, value);
+                break;
+        }
+    }
+
     public static void putGeoStr(int index, CharSequence hash, int type, TableWriter.Row row) {
         long val;
         if (hash != null) {
@@ -58,22 +75,5 @@ public class WriterRowUtils {
             val = GeoHashes.NULL;
         }
         putGeoHash(index, val, type, row);
-    }
-
-    public static void putGeoHash(int index, long value, int columnType, TableWriter.Row row) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.GEOBYTE:
-                row.putByte(index, (byte) value);
-                break;
-            case ColumnType.GEOSHORT:
-                row.putShort(index,(short) value);
-                break;
-            case ColumnType.GEOINT:
-                row.putInt(index,(int) value);
-                break;
-            default:
-                row.putLong(index, value);
-                break;
-        }
     }
 }

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -39,7 +40,7 @@ public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
 
     int getTableId();
 
-    String getTableName();
+    @Nullable String getTableName();
 
     int getTableNamePosition();
 
@@ -59,7 +60,7 @@ public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
         int OK = 0;
         int READER_OUT_OF_DATE = -1;
         int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
-        int SQL_OR_CAIRO_ERROR = -3;
+        int CAIRO_ERROR = -3;
         int UNEXPECTED_ERROR = -4;
     }
 }
