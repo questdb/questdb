@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
@@ -39,6 +41,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -254,7 +258,6 @@ public class FilesTest {
             } finally {
                 Misc.free(srcFilePath);
                 Misc.free(hardLinkFilePath);
-                temporaryFolder.delete();
             }
         });
     }
@@ -301,14 +304,13 @@ public class FilesTest {
                         Files.rmdir(p2);
                     }
                 }
-            } finally {
-                temporaryFolder.delete();
             }
         });
     }
 
     @Test
     public void testLastModified() throws Exception {
+        Log ignore = LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
@@ -577,6 +579,43 @@ public class FilesTest {
     }
 
     @Test
+    public void testSoftLinkAsciiName() throws Exception {
+        assertSoftLinkDoesNotPreserveFileContent("some_column.d");
+    }
+
+    @Test
+    public void testSoftLinkNonAsciiName() throws Exception {
+        assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
+    }
+
+    @Test
+    public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            File tmpFolder = temporaryFolder.newFolder("soft");
+            String fileName = "いくつかの列.d";
+            try (
+                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
+                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$();
+            ) {
+                Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+
+                // check that when listing it we can actually find it
+                File link = new File(softLinkFilePath.toString());
+                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                Assert.assertEquals(fileName + ".1", files.get(0).getName());
+
+                // however
+                Assert.assertFalse(link.exists());
+                Assert.assertFalse(link.canRead());
+                Assert.assertEquals(-1, Files.openRO(softLinkFilePath));
+                Assert.assertTrue(Files.remove(softLinkFilePath));
+            } finally {
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    @Test
     public void testTruncate() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
@@ -678,6 +717,54 @@ public class FilesTest {
         });
     }
 
+    @Test
+    public void testUnlink() throws Exception {
+        assertMemoryLeak(() -> {
+            File tmpFolder = temporaryFolder.newFolder("unlink");
+            final String fileName = "いくつかの列.d";
+            final String fileContent = "**unlink** deletes a name from the filesystem." + EOL +
+                    "If the name IS a symbolic link, the link is removed." + EOL +
+                    "If the name is the last link to the file, and no processes have" + EOL +
+                    "the file open, the file is deleted and the space it was using is " + EOL +
+                    "made available for reuse. Otherwise, if any process maintains the" + EOL +
+                    "file open, it will remain in existence until the last file descriptor" + EOL +
+                    "referring to it is closed." + EOL;
+
+
+            try (
+                    Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
+                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$();
+            ) {
+                createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
+
+                // create the soft link
+                createSoftLink(coldRoot, srcPath, linkPath);
+
+                // check contents are the same
+                assertEqualsFileContent(linkPath, fileContent);
+
+                // unlink soft link
+                Assert.assertEquals(0, Files.unlink(linkPath));
+
+                // check original file still exists and contents are the same
+                assertEqualsFileContent(srcPath, fileContent);
+
+                // however the link no longer exists
+                File link = new File(linkPath.toString());
+                Assert.assertFalse(link.exists());
+                Assert.assertFalse(link.canRead());
+                Assert.assertEquals(-1, Files.openRO(linkPath));
+            }
+        });
+    }
+
+    private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
+        Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
+        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+        Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
+    }
+
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
@@ -709,7 +796,7 @@ public class FilesTest {
         }
     }
 
-    private static void assertEqualsLinkedFileContent(Path path, String fileContent) {
+    private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
         long fd = -1L;
@@ -742,50 +829,103 @@ public class FilesTest {
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
-            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
-            Path hardLinkFilePath = null;
-            try {
-                final String EOL = System.lineSeparator();
-                final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
-                        "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
-                        "received signal power S through an analog communication channel subject to" + EOL +
-                        "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
-                        "C = B * log_2(1 + S/N)" + EOL + EOL +
-                        "where" + EOL + EOL +
-                        "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
-                        "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
-                        "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
-                        "signal);" + EOL +
-                        "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
-                        "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
-                        "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
-                        "watts (or volts squared); and" + EOL +
-                        "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
-                        "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
-                        "power ratio, not aslogarithmic decibels)." + EOL;
-
+            final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
+                    "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
+                    "received signal power S through an analog communication channel subject to" + EOL +
+                    "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
+                    "C = B * log_2(1 + S/N)" + EOL + EOL +
+                    "where" + EOL + EOL +
+                    "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
+                    "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
+                    "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
+                    "signal);" + EOL +
+                    "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
+                    "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
+                    "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
+                    "watts (or volts squared); and" + EOL +
+                    "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
+                    "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
+                    "power ratio, not aslogarithmic decibels)." + EOL;
+            try (
+                    Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
+                    Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath()).concat(fileName).put(".1").$()
+            ) {
                 createTempFile(srcFilePath, fileName, fileContent);
 
                 // perform the hard link
-                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
                 Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
 
                 // check content are the same
-                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
+                assertEqualsFileContent(hardLinkFilePath, fileContent);
 
                 // delete source file
                 Assert.assertTrue(Files.remove(srcFilePath));
 
                 // check linked file still exists and content are the same
-                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
-            } finally {
+                assertEqualsFileContent(hardLinkFilePath, fileContent);
+
                 Files.remove(srcFilePath);
-                Misc.free(srcFilePath);
                 if (null != hardLinkFilePath) {
                     Assert.assertTrue(Files.remove(hardLinkFilePath));
                 }
-                Misc.free(hardLinkFilePath);
-                temporaryFolder.delete();
+            }
+        });
+    }
+
+    private void assertSoftLinkDoesNotPreserveFileContent(String fileName) throws Exception {
+        assertMemoryLeak(() -> {
+            File tmpFolder = temporaryFolder.newFolder("soft");
+            final String fileContent = "A soft link is automatically interpreted and followed by the OS as " + EOL +
+                    "a path to another file, or directory, called the 'target'. The soft link is itself a " + EOL +
+                    "file that exists independently of its target. If the soft link is deleted, its target " + EOL +
+                    "remains unaffected. If a soft link points to a target, and the target is moved, renamed, " + EOL +
+                    "or deleted, the soft link is not automatically updated/deleted and continues to point" + EOL +
+                    "to the old target, now a non-existing file, or directory." + EOL +
+                    "Soft links may point to any file, or directory, irrespective of the volumes on which " + EOL +
+                    "both the link and the target reside." + EOL;
+
+            try (
+                    Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
+                    Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
+                    Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$();
+            ) {
+                createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
+
+                // create the soft link
+                createSoftLink(coldRoot, srcFilePath, softLinkFilePath);
+
+                // check contents are the same
+                assertEqualsFileContent(softLinkFilePath, fileContent);
+
+                // delete soft link
+                Assert.assertTrue(Files.remove(softLinkFilePath));
+
+                // check original file still exists and contents are the same
+                assertEqualsFileContent(srcFilePath, fileContent);
+
+                // create the soft link again
+                createSoftLink(coldRoot, srcFilePath, softLinkFilePath);
+
+                // rename the link
+                Assert.assertEquals(0, Files.rename(softLinkFilePath, softLinkRenamedFilePath));
+
+                // check contents are the same
+                assertEqualsFileContent(softLinkRenamedFilePath, fileContent);
+
+                // delete original file
+                Assert.assertTrue(Files.remove(srcFilePath));
+
+                // check that when listing the folder where the link is, we can actually find it
+                File link = new File(softLinkRenamedFilePath.toString());
+                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                Assert.assertEquals(fileName, files.get(0).getName());
+
+                // however, OS checks do check the existence of the file pointed to
+                Assert.assertFalse(link.exists());
+                Assert.assertFalse(link.canRead());
+                Assert.assertEquals(-1, Files.openRO(softLinkFilePath));
+                Assert.assertTrue(Files.remove(softLinkRenamedFilePath));
             }
         });
     }
@@ -796,4 +936,6 @@ public class FilesTest {
         Assert.assertTrue(Files.setLastModified(path, t));
         Assert.assertEquals(t, Files.getLastModified(path));
     }
+
+    private static final String EOL = System.lineSeparator();
 }
