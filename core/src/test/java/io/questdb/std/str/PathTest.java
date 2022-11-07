@@ -55,19 +55,10 @@ public class PathTest {
     }
 
     @Test
-    public void testDollar0() {
-        try(Path path = new Path()) {
-            path.$();
-            System.out.printf("");
-
-        }
-    }
-
-    @Test
     public void testDollarIdempotent() {
         final CharSequence tableName = "table_name";
         final AtomicInteger extendCount = new AtomicInteger();
-        try (Path path = new Path(0){
+        try (Path path = new Path(0) {
             @Override
             void extend(int len) {
                 super.extend(len);
@@ -75,7 +66,7 @@ public class PathTest {
             }
         }) {
             path.of(tableName).$();
-            for (int i=0; i < 50_000; i++) {
+            for (int i = 0; i < 3; i++) {
                 path.$();
                 Assert.assertEquals(1, extendCount.get());
             }
@@ -124,13 +115,6 @@ public class PathTest {
     }
 
     @Test
-    public void testPathThreadLocalDoesNotAllocateOnRelease() {
-        final long count = Unsafe.getMallocCount();
-        Path.clearThreadLocals();
-        Assert.assertEquals(count, Unsafe.getMallocCount());
-    }
-
-    @Test
     public void testPathOfPathUtf8() {
         Os.init();
 
@@ -163,6 +147,13 @@ public class PathTest {
         // Self copy
         path2.of(path2);
         TestUtils.assertEquals(path, path2);
+    }
+
+    @Test
+    public void testPathThreadLocalDoesNotAllocateOnRelease() {
+        final long count = Unsafe.getMallocCount();
+        Path.clearThreadLocals();
+        Assert.assertEquals(count, Unsafe.getMallocCount());
     }
 
     @Test
