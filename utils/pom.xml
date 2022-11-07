@@ -22,93 +22,93 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-  <groupId>org.example</groupId>
-  <artifactId>utils</artifactId>
-  <version>6.5.5-SNAPSHOT</version>
+    <groupId>org.example</groupId>
+    <artifactId>utils</artifactId>
+    <version>6.5.5</version>
 
-  <name>Command line utils for QuestDB</name>
+    <name>Command line utils for QuestDB</name>
 
-  <properties>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <maven.compiler.source>1.8</maven.compiler.source>
-    <maven.compiler.target>1.8</maven.compiler.target>
-  </properties>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+    </properties>
 
-  <dependencies>
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.13.2</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>com.google.code.gson</groupId>
-      <artifactId>gson</artifactId>
-      <version>2.9.0</version>
-    </dependency>
-    <dependency>
-      <groupId>org.questdb</groupId>
-      <artifactId>questdb</artifactId>
-      <version>6.5.5-SNAPSHOT</version>
-    </dependency>
-  </dependencies>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-shade-plugin</artifactId>
-        <version>3.2.1</version>
-        <executions>
-          <execution>
-            <phase>package</phase>
-            <goals>
-              <goal>shade</goal>
-            </goals>
-          </execution>
-        </executions>
-        <configuration>
-          <minimizeJar>true</minimizeJar>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
-
-  <profiles>
-    <profile>
-      <id>java8</id>
-      <properties>
-        <jdk.version>8</jdk.version>
-        <java.enforce.version>1.8.0_242</java.enforce.version>
-        <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-        <javac.compile.source>1.8</javac.compile.source>
-        <javac.compile.target>1.8</javac.compile.target>
-      </properties>
-      <activation>
-        <jdk>(,1.8]</jdk>
-      </activation>
-
-      <dependencies>
+    <dependencies>
         <dependency>
-          <groupId>org.jetbrains</groupId>
-          <artifactId>annotations</artifactId>
-          <version>16.0.2</version>
-          <scope>provided</scope>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
         </dependency>
-      </dependencies>
-    </profile>
-    <profile>
-      <id>java11+</id>
-      <properties>
-        <questdb.artifactid>questdb</questdb.artifactid>
-      </properties>
-      <activation>
-        <jdk>(1.8,)</jdk>
-      </activation>
-    </profile>
-  </profiles>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.9.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.questdb</groupId>
+            <artifactId>questdb</artifactId>
+            <version>6.5.5</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.2.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <minimizeJar>true</minimizeJar>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>java8</id>
+            <properties>
+                <jdk.version>8</jdk.version>
+                <java.enforce.version>1.8.0_242</java.enforce.version>
+                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <javac.compile.source>1.8</javac.compile.source>
+                <javac.compile.target>1.8</javac.compile.target>
+            </properties>
+            <activation>
+                <jdk>(,1.8]</jdk>
+            </activation>
+
+            <dependencies>
+                <dependency>
+                    <groupId>org.jetbrains</groupId>
+                    <artifactId>annotations</artifactId>
+                    <version>16.0.2</version>
+                    <scope>provided</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>java11+</id>
+            <properties>
+                <questdb.artifactid>questdb</questdb.artifactid>
+            </properties>
+            <activation>
+                <jdk>(1.8,)</jdk>
+            </activation>
+        </profile>
+    </profiles>
 </project>
