@@ -185,6 +185,26 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
     return link((const char *) pcharSrc, (const char *) pcharHardLink);
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
+    (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+
+    struct stat st;
+    if (lstat((const char *) pcharSoftLink, &st) == 0) {
+        return S_ISLNK(st.st_mode);
+    }
+    return JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharSoftLink) {
+    return symlink((const char *) pcharSrc, (const char *) pcharSoftLink);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink
+        (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+    return unlink((const char *) pcharSoftLink);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
         (JNIEnv *e, jclass cl, jlong pchar, jint mode) {
     return mkdir((const char *) pchar, (mode_t) mode);
@@ -388,6 +408,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->entry->d_type;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->entry->d_type == DT_LNK;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
