@@ -282,7 +282,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeOldLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        //System.out.println(path +" "+ Files.length(path));
         if (!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1))
             && clock.getTicks() - ff.getLastModified(path.$())*Timestamps.MILLI_MICROS > nLifeDuration) {
             if(!ff.remove(path)) {
