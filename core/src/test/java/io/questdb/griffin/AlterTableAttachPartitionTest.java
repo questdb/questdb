@@ -129,7 +129,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // update a row toward the end of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             txn++;
 
@@ -150,15 +150,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify cold storage folder exists
             Assert.assertTrue(Files.exists(other));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
 
             // update a row toward the beginning of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
 
             // verify content
@@ -220,9 +218,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify cold storage folder exists
             Assert.assertTrue(Files.exists(other));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
             // verify the link was removed
             other.of(configuration.getRoot())
@@ -289,9 +285,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify cold storage folder exists
             Assert.assertTrue(Files.exists(other));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
 
             path.of(configuration.getRoot())
@@ -424,7 +418,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // execute an update directly on the cold storage partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
