@@ -59,18 +59,21 @@ public class Mig655Test {
         final int currentVersion;
         try (
                 final MemoryARW virtualMem = Vm.getARWInstance(Files.PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_MIG_MMAP);
-                final Path path = new Path().of(dbRoot);
-                final Path other = new Path();
                 final MemoryMARW rwMemory = Vm.getMARWInstance();
-                final InputStream txnIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_txn");
-                final InputStream metaIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_meta")
+                final Path path = new Path().of(dbRoot);
+                final Path other = new Path()
         ) {
             // copy resources _txn and _meta into temp local files
-            Assert.assertNotNull(txnIs);
-            Assert.assertNotNull(metaIs);
-            final byte[] buffer = new byte[(int) Files.PAGE_SIZE];
-            copyToTempFile(txnIs, new File(dbRoot + Files.SEPARATOR + TableUtils.TXN_FILE_NAME), buffer);
-            copyToTempFile(metaIs, new File(dbRoot + Files.SEPARATOR + TableUtils.META_FILE_NAME), buffer);
+            try (
+                    final InputStream txnIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_txn");
+                    final InputStream metaIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_meta")
+            ) {
+                Assert.assertNotNull(txnIs);
+                Assert.assertNotNull(metaIs);
+                final byte[] buffer = new byte[(int) Files.PAGE_SIZE];
+                copyToTempFile(txnIs, new File(dbRoot + Files.SEPARATOR + TableUtils.TXN_FILE_NAME), buffer);
+                copyToTempFile(metaIs, new File(dbRoot + Files.SEPARATOR + TableUtils.META_FILE_NAME), buffer);
+            }
 
             // open _meta file and read current version, which should be 426
             final long metaFd = openFileRWOrFail(
@@ -171,14 +174,14 @@ public class Mig655Test {
         }
     }
 
-    private static void copyToTempFile(InputStream is, File src, byte[] buffer) throws IOException {
+    private static void copyToTempFile(InputStream src, File dst, byte[] buffer) throws IOException {
         Assert.assertEquals(Files.PAGE_SIZE, buffer.length);
-        try (FileOutputStream fos = new FileOutputStream(src)) {
-            for (int n; (n = is.read(buffer, 0, buffer.length)) > 0; ) {
-                fos.write(buffer, 0, n);
-            }
+        try (FileOutputStream dstFos = new FileOutputStream(dst)) {
+            int n = src.read(buffer, 0, buffer.length);
+            Assert.assertTrue(n > 0);
+            dstFos.write(buffer, 0, n);
         }
-        Assert.assertTrue(src.exists());
-        Assert.assertEquals(Files.PAGE_SIZE, src.length());
+        Assert.assertTrue(dst.exists());
+        Assert.assertTrue(dst.length() > 0);
     }
 }
