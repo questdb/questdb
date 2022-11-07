@@ -34,11 +34,7 @@
 #include <string.h>
 #include "net.h"
 #include <netdb.h>
-
-
-#define RESTARTABLE(_cmd, _result) do { \
-    _result = _cmd; \
-  } while(((int)_result == -1) && (errno == EINTR))
+#include "sysutil.h"
 
 int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
