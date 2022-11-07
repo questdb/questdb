@@ -340,6 +340,22 @@ public class CairoEngine implements Closeable, WriterSource {
         return metadataPool.get(systemTableName);
     }
 
+    public TableRecordMetadata getMetadata(CairoSecurityContext securityContext, String systemTableName, long structureVersion) {
+        try {
+            final TableRecordMetadata metadata = metadataPool.get(systemTableName);
+            if (structureVersion != TableUtils.ANY_TABLE_VERSION && metadata.getStructureVersion() != structureVersion) {
+                // rename to StructureVersionException?
+                final ReaderOutOfDateException ex = ReaderOutOfDateException.of(systemTableName, metadata.getTableId(), metadata.getTableId(), structureVersion, metadata.getStructureVersion());
+                metadata.close();
+                throw ex;
+            }
+            return metadata;
+        } catch (CairoException e) {
+            tryRepairTable(securityContext, systemTableName, e);
+        }
+        return metadataPool.get(systemTableName);
+    }
+
     public Metrics getMetrics() {
         return metrics;
     }
@@ -589,7 +605,7 @@ public class CairoEngine implements Closeable, WriterSource {
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=")
                         .$(pubSeq.current()).$(", table=").$(tableName)
-                        .$();
+                        .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher();
                 return;
@@ -628,6 +644,11 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void releaseInactiveCompilers() {
         sqlCompilerPool.releaseInactive();
+    }
+
+    @TestOnly
+    public void releaseInactiveTableSequencers() {
+        tableSequencerAPI.releaseInactive();
     }
 
     public void releaseReadersBySystemName(CharSequence systemTableName) {
@@ -701,7 +722,6 @@ public class CairoEngine implements Closeable, WriterSource {
         checkTableName(tableName);
         readerPool.unlock(getSystemTableName(tableName));
     }
-
     public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
         checkTableName(tableName);

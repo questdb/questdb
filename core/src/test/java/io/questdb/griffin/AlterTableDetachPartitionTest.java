@@ -51,8 +51,8 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
-    private static final Path path = new Path();
     private static final Path other = new Path();
+    private static final Path path = new Path();
     private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
@@ -80,7 +80,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION.name() + ", table=tab143, partition='2022-06-03']"
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
@@ -90,7 +90,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 null,
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_ALREADY_DETACHED.name() + ", table=tab143, partition='2022-06-03']",
+                "could not detach partition [table=tab143, detachStatus=DETACH_ERR_ALREADY_DETACHED",
                 () -> {
                     CharSequence systemTableName = engine.getSystemTableName("tab143");
                     path.of(configuration.getRoot())
@@ -237,11 +237,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        ATTACH_ERR_RENAME.name()
+                        "could not attach partition"
                 );
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        ATTACH_ERR_RENAME.name()
+                        "could not attach partition"
                 );
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
@@ -459,7 +459,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, timestampDay);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                        "failed to attach partition '2022-06-01': " + ATTACH_ERR_PARTITION_EXISTS.name()
+                        "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
                 );
                 assertContent(expected, tableName);
             }
@@ -486,7 +486,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab17",
                 "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
-                "could not detach [statusCode=" + DETACH_ERR_ACTIVE.name() + ", table=tab17, partition='2022-06-05']"
+                "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
     }
 
@@ -814,7 +814,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.rename(path, other) > -1);
 
                 // attempt to reattach
-                assertFailureCairo(
+                assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                         "Detached column [index=3, name=l, attribute=type] does not match current table metadata"
                 );
@@ -883,7 +883,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        "failed to attach partition '2022-06-01': " + ATTACH_ERR_MISSING_PARTITION.name()
+                        "could not attach partition [table=tabDetachAttachNotAttachable, detachStatus=ATTACH_ERR_MISSING_PARTITION"
                 );
             }
         });
@@ -1856,7 +1856,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     ff.close(fd);
                 }
 
-                assertFailureCairo(
+                assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                         "cannot read min, max timestamp from the column"
                 );
@@ -1893,14 +1893,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 FilesFacade ff = FilesFacadeImpl.INSTANCE;
                 Assert.assertEquals(0, ff.rename(src, dst));
-                assertFailureCairo("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
+                assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
                 // Existing partition but wrong folder name
                 dst = Path.PATH2.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst2 = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay2).put(configuration.getAttachPartitionSuffix()).slash$();
                 Assert.assertEquals(0, ff.rename(dst, dst2));
 
-                assertFailureCairo(
+                assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
                         "invalid timestamp column data in detached partition, data does not match partition directory name"
                 );
@@ -1943,7 +1943,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 "tab11",
                 "ALTER TABLE tab11 DETACH PARTITION LIST '2022-06-06'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION.name() + ", table=tab11, partition='2022-06-06']"
+                "could not detach partition [table=tab11, detachStatus=DETACH_ERR_MISSING_PARTITION"
         );
     }
 
@@ -1961,7 +1961,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 },
                 "tab111",
                 "ALTER TABLE tab111 DETACH PARTITION LIST '2022-06-03'",
-                "could not detach [statusCode=" + DETACH_ERR_MISSING_PARTITION_DIR.name() + ", table=tab111, partition='2022-06-03']"
+                "could not detach partition [table=tab111, detachStatus=DETACH_ERR_MISSING_PARTITION_DIR"
         );
     }
 
@@ -2138,7 +2138,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
                 // attempt to reattach
-                assertFailureCairo(
+                assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
                         expectedErrorMessage
                 );
@@ -2196,16 +2196,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         try {
             compile(operation, sqlExecutionContext);
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
-        }
-    }
-
-    private void assertFailureCairo(String operation, String errorMsg) throws SqlException {
-        try {
-            compile(operation, sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException e) {
+        } catch (SqlException | CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), errorMsg);
         }
     }

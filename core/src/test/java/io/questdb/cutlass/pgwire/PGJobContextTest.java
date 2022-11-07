@@ -121,14 +121,14 @@ public class PGJobContextTest extends BasePGTest {
 
     private final boolean walEnabled;
 
-    public PGJobContextTest(boolean walEnabled) {
-        this.walEnabled = walEnabled;
+    public PGJobContextTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameters
+    @Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {false}, {true}
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -2376,7 +2376,7 @@ if __name__ == "__main__":
      * }
      * </pre>
      */
-    public void testGoLangBoolean() throws Exception {
+    public void testGolangBoolean() throws Exception {
         skipOnWalRun(); // table not created
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
@@ -4605,7 +4605,8 @@ nodejs code:
                         insert.executeUpdate();
                         fail("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed", expected.getMessage());
+                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
+                                "  Position: 1", expected.getMessage());
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
@@ -7038,6 +7039,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {

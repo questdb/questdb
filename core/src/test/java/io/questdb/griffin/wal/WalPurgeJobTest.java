@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -41,7 +42,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 public class WalPurgeJobTest extends AbstractGriffinTest {
-
     @Test
     public void testClosedButUnappliedSegment() throws Exception {
         // Test two segment with changes committed to the sequencer, but never applied to the table.
@@ -146,7 +146,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(false, tableName, 1, 1);
             assertSegmentLockEngagement(true, tableName, 1, 0);
 
-            addColumn(walWriter1, "i1", ColumnType.INT);
+            addColumn(walWriter1, "i1");
             TableWriter.Row row2 = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
             row2.putLong(0, 2);
             row2.putInt(2, 2);
@@ -173,7 +173,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
                 row3.append();
                 walWriter2.commit();
 
-                addColumn(walWriter2, "i2", ColumnType.INT);
+                addColumn(walWriter2, "i2");
                 TableWriter.Row row4 = walWriter2.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-27"));
                 row4.putLong(0, 4);
                 row4.putInt(2, 4);
@@ -387,7 +387,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
             // Alter is committed.
-            addColumn(walWriter1, "i1", ColumnType.INT);
+            addColumn(walWriter1, "i1");
 
             // Row insert is rolled back.
             TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
@@ -623,6 +623,12 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
         });
+    }
+
+    static void addColumn(TableWriterAPI writer, String columnName) {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
     }
 
     static class MicrosecondClockMock implements MicrosecondClock {

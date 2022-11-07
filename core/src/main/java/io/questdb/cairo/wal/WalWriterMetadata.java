@@ -76,6 +76,15 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         addColumn0(columnName, columnType);
     }
 
+    @Override
+    public void of(String systemTableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.systemTableName = systemTableName;
+        this.tableId = tableId;
+        this.timestampIndex = timestampIndex;
+        this.suspended = suspended;
+        this.structureVersion = structureVersion;
+    }
+
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
         structureVersion++;
@@ -108,15 +117,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     @Override
     public boolean isWalEnabled() {
         return true;
-    }
-
-    @Override
-    public void of(String systemTableName, int tableId, int timestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.systemTableName = systemTableName;
-        this.tableId = tableId;
-        this.timestampIndex = timestampIndex;
-        this.suspended = suspended;
-        this.structureVersion = structureVersion;
     }
 
     public void removeColumn(CharSequence columnName) {

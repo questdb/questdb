@@ -33,7 +33,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
-    //these values should be covered in both JsonQueryProcessor and PGConnectionContext
+    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
     short SELECT = 1;
     short INSERT = 2;
     short TRUNCATE = 3;

@@ -312,6 +312,17 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsWith() throws Exception {
+        assertInsertTimestamp(
+                "seq\tts\n" +
+                        "1\t1970-01-01T00:00:00.123456Z\n",
+                "insert into tab with x as (select 1, '123456') select * from x",
+                null,
+                false
+        );
+    }
+
+    @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);

@@ -151,9 +151,25 @@ public final class Unsafe {
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
     }
 
+    /**
+     * This call has Atomic*#lazySet / memory_order_release semantics.
+     */
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
+    }
+
+    public static int arrayGetVolatile(int[] array, int index) {
+        assert index > -1 && index < array.length;
+        return Unsafe.getUnsafe().getIntVolatile(array, INT_OFFSET + ((long) index << INT_SCALE));
+    }
+
+    /**
+     * This call has Atomic*#lazySet / memory_order_release semantics.
+     */
+    public static void arrayPutOrdered(int[] array, int index, int value) {
+        assert index > -1 && index < array.length;
+        Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
     }
 
     public static long calloc(long size, int memoryTag) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -47,27 +48,31 @@ public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final String tableNameUtf16;
-    private final ThreadLocalDetails[] localDetailsArray;
-    private final int timestampIndex;
+    private final long defaultCommitInterval;
+    private final long defaultMaxUncommittedRows;
     private final CairoEngine engine;
+    private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final String tableNameUtf16;
+    private final int timestampIndex;
     private final long writerTickRowsCountMod;
-    private int writerThreadId;
+    private boolean assignedToJob = false;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
-    private TableWriter writer;
-    private boolean assignedToJob = false;
     private long lastMeasurementMillis = Long.MAX_VALUE;
-    private long nextCommitTime;
     private int networkIOOwnerCount = 0;
+    private long nextCommitTime;
+    private TableWriterAPI writerAPI;
     private volatile boolean writerInError;
+    // todo: rename
+    private MetadataChangeSPI writerSPI;
+    private int writerThreadId;
 
     TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
             CairoEngine engine,
-            TableWriter writer,
+            TableWriterAPI writer,
             int writerThreadId,
             NetworkIOJob[] netIoJobs,
             DefaultColumnTypes defaultColumnTypes
@@ -76,20 +81,31 @@ public class TableUpdateDetails implements Closeable {
         this.engine = engine;
         this.defaultColumnTypes = defaultColumnTypes;
         final int n = netIoJobs.length;
+        CairoConfiguration cairoConfiguration = engine.getConfiguration();
+        this.millisecondClock = cairoConfiguration.getMillisecondClock();
+        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
+        this.defaultCommitInterval = configuration.getCommitIntervalDefault();
+        this.defaultMaxUncommittedRows = cairoConfiguration.getMaxUncommittedRows();
+        this.writerAPI = writer;
+        TableRecordMetadata tableMetadata = writer.getMetadata();
+        this.timestampIndex = tableMetadata.getTimestampIndex();
+        this.tableNameUtf16 = Chars.toString(writer.getTableName());
+        if (writer instanceof MetadataChangeSPI) {
+            writerSPI = (MetadataChangeSPI) writer;
+            writerSPI.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
+            this.nextCommitTime = millisecondClock.getTicks() + writerSPI.getCommitInterval();
+        } else {
+            writerSPI = null;
+            this.nextCommitTime = millisecondClock.getTicks() + defaultCommitInterval;
+        }
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             this.localDetailsArray[i] = new ThreadLocalDetails(
-                    configuration, netIoJobs[i].getUnusedSymbolCaches(), writer.getMetadata().getColumnCount());
+                    configuration,
+                    netIoJobs[i].getUnusedSymbolCaches(),
+                    writer.getMetadata().getColumnCount()
+            );
         }
-        CairoConfiguration cairoConfiguration = engine.getConfiguration();
-        TableRecordMetadata tableMetadata = writer.getMetadata();
-        this.millisecondClock = cairoConfiguration.getMillisecondClock();
-        this.writerTickRowsCountMod = cairoConfiguration.getWriterTickRowsCountMod();
-        this.writer = writer;
-        this.timestampIndex = tableMetadata.getTimestampIndex();
-        this.tableNameUtf16 = writer.getTableName();
-        writer.updateCommitInterval(configuration.getCommitIntervalFraction(), configuration.getCommitIntervalDefault());
-        this.nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
     }
 
     public void addReference(int workerId) {
@@ -99,15 +115,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", tableName=").$(tableNameUtf16)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
-
-    }
-
-    public boolean isWriterInError() {
-        return writerInError;
-    }
-
-    public void setWriterInError() {
-        writerInError = true;
     }
 
     @Override
@@ -128,16 +135,17 @@ public class TableUpdateDetails implements Closeable {
         if (writerThreadId != Integer.MIN_VALUE) {
             LOG.info().$("closing table writer [tableName=").$(tableNameUtf16).$(']').$();
             closeLocals();
-            if (null != writer) {
+            if (null != writerAPI) {
                 try {
                     if (!writerInError) {
-                        writer.commit();
+                        writerAPI.commit();
                     }
                 } catch (Throwable ex) {
                     LOG.error().$("cannot commit writer transaction, rolling back before releasing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
                 } finally {
                     // returning to pool rolls back the transaction
-                    writer = Misc.free(writer);
+                    writerAPI = Misc.free(writerAPI);
+                    writerSPI = null;
                 }
             }
             writerThreadId = Integer.MIN_VALUE;
@@ -172,8 +180,8 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
-    public void setAssignedToJob(boolean assignedToJob) {
-        this.assignedToJob = assignedToJob;
+    public boolean isWriterInError() {
+        return writerInError;
     }
 
     public void removeReference(int workerId) {
@@ -186,26 +194,34 @@ public class TableUpdateDetails implements Closeable {
                 .I$();
     }
 
+    public void setAssignedToJob(boolean assignedToJob) {
+        this.assignedToJob = assignedToJob;
+    }
+
+    public void setWriterInError() {
+        writerInError = true;
+    }
+
     public void tick() {
-        if (writer != null) {
-            writer.tick();
+        if (writerSPI != null) {
+            writerSPI.tick();
         }
     }
 
     private void commit(boolean withLag) throws CommitFailedException {
-        if (writer.getUncommittedRowCount() > 0) {
+        if (writerAPI.getUncommittedRowCount() > 0) {
             try {
-                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writer.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
+                LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
                 if (withLag) {
-                    writer.commitWithLag();
+                    writerAPI.commitWithLag();
                 } else {
-                    writer.commit();
+                    writerAPI.commit();
                 }
             } catch (Throwable ex) {
                 setWriterInError();
                 LOG.error().$("could not commit [table=").$(tableNameUtf16).$(", e=").$(ex).I$();
                 try {
-                    writer.rollback();
+                    writerAPI.rollback();
                 } catch (Throwable th) {
                     LOG.error().$("could not perform emergency rollback [table=").$(tableNameUtf16).$(", e=").$(th).I$();
                 }
@@ -214,12 +230,26 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
+    private long getCommitInterval() {
+        if (writerSPI != null) {
+            return writerSPI.getCommitInterval();
+        }
+        return defaultCommitInterval;
+    }
+
+    private long getMetaMaxUncommittedRows() {
+        if (writerSPI != null) {
+            return writerSPI.getMetaMaxUncommittedRows();
+        }
+        return defaultMaxUncommittedRows;
+    }
+
     long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
-        if (writer != null) {
-            final long commitInterval = writer.getCommitInterval();
+        if (writerAPI != null) {
+            final long commitInterval = getCommitInterval();
             long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
             // Do not commit row by row if the commit takes longer than commitInterval.
@@ -230,31 +260,31 @@ public class TableUpdateDetails implements Closeable {
     }
 
     void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
-        final long rowsSinceCommit = writer.getUncommittedRowCount();
-        if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
+        final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
+        if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
                 // Tick without commit. Some tick commands may force writer to commit though.
-                writer.tick();
+                tick();
             }
             return;
         }
         LOG.debug().$("max-uncommitted-rows commit with lag [").$(tableNameUtf16).I$();
-        nextCommitTime = millisecondClock.getTicks() + writer.getCommitInterval();
+        nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
 
         try {
-            writer.commitWithLag();
+            writerAPI.commitWithLag();
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not commit line protocol measurement [tableName=").$(writer.getTableName())
+                    .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableName())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();
-            writer.rollback();
+            writerAPI.rollback();
             throw CommitFailedException.instance(th);
         }
 
         // Tick after commit.
-        writer.tick();
+        tick();
     }
 
     ThreadLocalDetails getThreadLocalDetails(int workerId) {
@@ -266,23 +296,24 @@ public class TableUpdateDetails implements Closeable {
         return timestampIndex;
     }
 
-    TableWriter getWriter() {
-        return writer;
+    TableWriterAPI getWriter() {
+        return writerAPI;
     }
 
     void releaseWriter(boolean commit) {
-        if (writer != null) {
+        if (writerAPI != null) {
             try {
                 if (commit) {
                     LOG.debug().$("release commit [table=").$(tableNameUtf16).I$();
-                    writer.commit();
+                    writerAPI.commit();
                 }
             } catch (Throwable ex) {
                 LOG.error().$("writer commit fails, force closing it [table=").$(tableNameUtf16).$(",ex=").$(ex).I$();
             } finally {
                 // writer or FS can be in a bad state
                 // do not leave writer locked
-                writer = Misc.free(writer);
+                writerAPI = Misc.free(writerAPI);
+                writerSPI = null;
             }
         }
     }
@@ -290,33 +321,38 @@ public class TableUpdateDetails implements Closeable {
     public class ThreadLocalDetails implements Closeable {
         static final int COLUMN_NOT_FOUND = -1;
         static final int DUPLICATED_COLUMN = -2;
-        private final Path path = new Path();
+        // tracking of processed columns by their name, duplicates will be ignored
+        // columns end up in this set only if their index cannot be resolved, i.e. new columns
+        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final DirectByteCharSequenceIntHashMap columnIndexByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         // maps column names to their types
         // will be populated for dynamically added columns only
         private final DirectByteCharSequenceIntHashMap columnTypeByNameUtf8 = new DirectByteCharSequenceIntHashMap();
-        private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
-        private final StringSink tempSink = new StringSink();
+        private final LineTcpReceiverConfiguration configuration;
+        private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
-        // tracking of processed columns by their name, duplicates will be ignored
-        // columns end up in this set only if their index cannot be resolved, i.e. new columns
-        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
-        private final LineTcpReceiverConfiguration configuration;
-        private int columnCount;
-        private String colName;
-        private TxReader txReader;
+        private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
+        private final StringSink tempSink = new StringSink();
+        private final ObjList<SymbolCache> unusedSymbolCaches;
         private boolean clean = true;
+        private String colName;
+        private int columnCount;
+        private TableRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
+        private TxReader txReader;
 
-        ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
-            this.configuration = configuration;
+        ThreadLocalDetails(
+                LineTcpReceiverConfiguration lineTcpReceiverConfiguration,
+                ObjList<SymbolCache> unusedSymbolCaches,
+                int columnCount
+        ) {
+            this.configuration = lineTcpReceiverConfiguration;
             // symbol caches are passed from the outside
             // to provide global lifecycle management for when ThreadLocalDetails cease to exist
             // the cache continue to live
@@ -330,13 +366,19 @@ public class TableUpdateDetails implements Closeable {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
             txReader = Misc.free(txReader);
+            latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         private SymbolCache addSymbolCache(int colWriterIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
                 int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
-                    throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
+                    if (writerSPI == null) {
+                        // In case of a WAL table, the change may be not yet applied to the end table - it's fine.
+                        return null;
+                    } else {
+                        throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
+                    }
                 }
 
                 CharSequence root = engine.getConfiguration().getRoot();
@@ -365,10 +407,58 @@ public class TableUpdateDetails implements Closeable {
 
                 long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
                 assert symIndex <= colWriterIndex;
-                symCache.of(engine.getConfiguration(), path, symbolNameTemp, symIndex, txReader, columnNameTxn);
+                symCache.of(
+                        engine.getConfiguration(),
+                        writerAPI,
+                        colWriterIndex,
+                        path,
+                        symbolNameTemp,
+                        symIndex,
+                        txReader,
+                        columnNameTxn
+                );
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
             }
+        }
+
+        private int getColumnWriterIndex(CharSequence colNameUtf16) {
+            assert latestKnownMetadata != null;
+            int colIndex = latestKnownMetadata.getColumnIndexQuiet(colNameUtf16);
+            if (colIndex < 0) {
+                return colIndex;
+            }
+            int writerColIndex = latestKnownMetadata.getWriterIndex(colIndex);
+            updateColumnTypeCache(colIndex, writerColIndex, latestKnownMetadata);
+            return writerColIndex;
+        }
+
+        private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
+            symbolNameTemp = null;
+            int symIndex = -1;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getWriterIndex(i) == colWriterIndex) {
+                    if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
+                        return -1;
+                    }
+                    symIndex++;
+                    symbolNameTemp = metadata.getColumnName(i);
+                    break;
+                }
+                if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                    symIndex++;
+                }
+            }
+            return symIndex;
+        }
+
+        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableRecordMetadata metadata) {
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypes.extendAndSet(writerColIndex, colType);
+            columnTypeMeta.extendAndSet(writerColIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
         void clear() {
@@ -389,6 +479,7 @@ public class TableUpdateDetails implements Closeable {
                 txReader.clear();
             }
             this.clean = true;
+            this.latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
         String getColName() {
@@ -408,7 +499,7 @@ public class TableUpdateDetails implements Closeable {
                 if (index > -1) {
                     // column has not been sent to the writer by name on this line before
                     // we can try to resolve column index using table reader
-                    colWriterIndex = getColumnWriterIndexFromReader(colNameUtf16);
+                    colWriterIndex = getColumnWriterIndex(colNameUtf16);
                     if (colWriterIndex > -1) {
                         // keys of this map will be checked against DirectByteCharSequence when get() is called
                         // DirectByteCharSequence.equals() compares chars created from each byte, basically it
@@ -436,19 +527,6 @@ public class TableUpdateDetails implements Closeable {
             return colWriterIndex;
         }
 
-        private int getColumnWriterIndexFromReader(CharSequence colNameUtf16) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
-                if (colIndex < 0) {
-                    return colIndex;
-                }
-                int writerColIndex = metadata.getWriterIndex(colIndex);
-                updateColumnTypeCache(colIndex, writerColIndex, metadata);
-                return writerColIndex;
-            }
-        }
-
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
@@ -462,27 +540,15 @@ public class TableUpdateDetails implements Closeable {
             return colType;
         }
 
-        private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
-            symbolNameTemp = null;
-            int symIndex = -1;
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (metadata.getWriterIndex(i) == colWriterIndex) {
-                    if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
-                        return -1;
-                    }
-                    symIndex++;
-                    symbolNameTemp = metadata.getColumnName(i);
-                    break;
-                }
-                if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                    symIndex++;
-                }
-            }
-            return symIndex;
-        }
-
         int getColumnTypeMeta(int colIndex) {
             return columnTypeMeta.getQuick(colIndex + 1); // first val accounts for new cols, index -1
+        }
+
+        long getStructureVersion() {
+            if (latestKnownMetadata != null) {
+                return latestKnownMetadata.getStructureVersion();
+            }
+            return -1;
         }
 
         SymbolLookup getSymbolLookup(int columnIndex) {
@@ -491,23 +557,31 @@ public class TableUpdateDetails implements Closeable {
                 if (symCache != null) {
                     return symCache;
                 }
-                return addSymbolCache(columnIndex);
+                SymbolLookup lookup = addSymbolCache(columnIndex);
+                if (lookup != null) {
+                    return lookup;
+                }
             }
             return NOT_FOUND_LOOKUP;
         }
 
-        void resetProcessedColumnsTracking() {
+        void resetStateIfNecessary() {
+            // First, reset processed column tracking.
             processedCols.setAll(columnCount, false);
             addedColsUtf16.clear();
-        }
-
-        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableReaderMetadata metadata) {
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypes.extendAndSet(writerColIndex, colType);
-            columnTypeMeta.extendAndSet(writerColIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
+            // Second, check if writer's structure version has changed
+            // compared with the known metadata.
+            if (latestKnownMetadata != null) {
+                long structureVersion = writerAPI.getStructureVersion();
+                if (latestKnownMetadata.getStructureVersion() != structureVersion) {
+                    // clear() frees latestKnownMetadata and sets it to null
+                    clear();
+                }
+            }
+            if (latestKnownMetadata == null) {
+                // Get the latest metadata.
+                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16);
+            }
         }
     }
 }

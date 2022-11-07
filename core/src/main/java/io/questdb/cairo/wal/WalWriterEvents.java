@@ -44,9 +44,9 @@ class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
-    private IntList initialSymbolCounts;
-    private long startOffset = 0;
+    private AtomicIntList initialSymbolCounts;
     private BoolList symbolNullValues;
+    private long startOffset = 0;
     private long txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 
@@ -191,7 +191,7 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, IntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, AtomicIntList initialSymbolCounts) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
         this.symbolNullValues = symbolNullValues;
@@ -211,11 +211,10 @@ class WalWriterEvents implements Closeable {
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
-        assert sql != null && sql.length() > 0;
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); //byte would be enough probably
+        eventMem.putInt(cmdType); // byte would be enough probably
         eventMem.putStr(sql);
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
@@ -223,21 +222,6 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
         return txn++;
-    }
-
-    void startTxn() {
-        final int numOfColumns = txnSymbolMaps.size();
-        for (int i = 0; i < numOfColumns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
-            if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
-                if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
-                    final int size = symbolMap.size();
-                    initialSymbolCounts.setQuick(i, initialCount + size);
-                    symbolMap.clear();
-                }
-            }
-        }
     }
 
     long truncate() {

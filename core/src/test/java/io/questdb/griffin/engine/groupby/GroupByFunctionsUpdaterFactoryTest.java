@@ -63,19 +63,14 @@ public class GroupByFunctionsUpdaterFactoryTest {
     private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
-            long value = mapValue.getLong(0);
-            mapValue.putLong(0, value + 1);
-        }
-
-        @Override
         public void computeFirst(MapValue mapValue, Record record) {
             mapValue.putLong(0, 1);
         }
 
         @Override
-        public void setNull(MapValue mapValue) {
-            mapValue.putLong(0, -1);
+        public void computeNext(MapValue mapValue, Record record) {
+            long value = mapValue.getLong(0);
+            mapValue.putLong(0, value + 1);
         }
 
         @Override
@@ -84,12 +79,17 @@ public class GroupByFunctionsUpdaterFactoryTest {
         }
 
         @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
+
+        @Override
         public void pushValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
-        public long getLong(Record rec) {
-            return 0;
+        public void setNull(MapValue mapValue) {
+            mapValue.putLong(0, -1);
         }
     }
 }

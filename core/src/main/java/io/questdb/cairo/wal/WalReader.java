@@ -44,20 +44,19 @@ import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
-
+    private final int columnCount;
+    private final ObjList<MemoryMR> columns;
+    private final WalDataCursor dataCursor = new WalDataCursor();
+    private final WalEventCursor eventCursor;
+    private final WalEventReader events;
     private final FilesFacade ff;
+    private final SequencerMetadata metadata;
     private final Path path;
     private final int rootLen;
-    private final SequencerMetadata metadata;
-    private final WalDataCursor dataCursor = new WalDataCursor();
-    private final WalEventReader events;
-    private final WalEventCursor eventCursor;
+    private final long rowCount;
+    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
     private final String tableName;
     private final String walName;
-    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
-    private final long rowCount;
-    private final ObjList<MemoryMR> columns;
-    private final int columnCount;
 
     public WalReader(CairoConfiguration configuration, CharSequence tableName, String systemTableName, CharSequence walName, int segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
@@ -161,18 +160,6 @@ public class WalReader implements Closeable {
         return rowCount;
     }
 
-    static int getPrimaryColumnIndex(int index) {
-        return index * 2 + 2;
-    }
-
-    int getRealColumnCount() {
-        return metadata.getRealColumnCount();
-    }
-
-    int getColumnCount() {
-        return columnCount;
-    }
-
     private void loadColumnAt(int columnIndex) {
         final int pathLen = path.length();
         try {
@@ -269,5 +256,17 @@ public class WalReader implements Closeable {
                 }
             }
         }
+    }
+
+    static int getPrimaryColumnIndex(int index) {
+        return index * 2 + 2;
+    }
+
+    int getColumnCount() {
+        return columnCount;
+    }
+
+    int getRealColumnCount() {
+        return metadata.getRealColumnCount();
     }
 }

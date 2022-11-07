@@ -37,7 +37,6 @@ import io.questdb.cairo.vm.api.*;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -69,7 +68,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -297,10 +296,10 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
-                partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                partitionTimestampHi = txWriter.getLastPartitionTimestamp();
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                this.partitionTimestampHi = txWriter.getLastPartitionTimestamp();
             } else {
-                partitionDirFmt = null;
+                this.partitionDirFmt = null;
             }
             this.commitInterval = calculateCommitInterval();
 
@@ -397,6 +396,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
+    @Override
     public void addColumn(
             CharSequence name,
             int type,
@@ -495,6 +495,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
+    @Override
     public void addIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
@@ -575,7 +576,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public long apply(AbstractOperation operation, long seqTxn) throws SqlException {
+    public long apply(AbstractOperation operation, long seqTxn) {
         try {
             setSeqTxn(seqTxn);
             long txnBefore = getTxn();
@@ -585,14 +586,16 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
             }
             return 0;
-        } catch (SqlException ex) {
+        } catch (CairoException ex) {
             // This is non-critical error, we can mark seqTxn as processed
-            try {
-                rollback(); // rollback in case on any dirty state
-                setSeqTxn(seqTxn);
-                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-            } catch (Throwable th2) {
-                LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+            if (ex.isWALTolerable()) {
+                try {
+                    rollback(); // rollback in case on any dirty state
+                    setSeqTxn(seqTxn);
+                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                } catch (Throwable th2) {
+                    LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+                }
             }
             throw ex;
         } catch (Throwable th) {
@@ -606,15 +609,16 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
     }
 
     @Override
-    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException, SqlException {
+    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         return operation.apply(this, contextAllowsAnyStructureChanges);
     }
 
     @Override
-    public long apply(UpdateOperation operation) throws SqlException {
+    public long apply(UpdateOperation operation) {
         return operation.apply(this, true);
     }
 
+    @Override
     public AttachDetachStatus attachPartition(long timestamp) {
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
@@ -755,6 +759,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public void changeCacheFlag(int columnIndex, boolean cache) {
         checkDistressed();
 
@@ -795,6 +800,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public long commit() {
         return commit(defaultCommitMode);
     }
@@ -803,10 +809,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return commit(commitMode, 0);
     }
 
+    @Override
     public long commitWithLag() {
         return commit(defaultCommitMode, metadata.getCommitLag());
     }
 
+    @Override
     public long commitWithLag(long lagMicros) {
         return commit(defaultCommitMode, lagMicros);
     }
@@ -1016,6 +1024,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return AttachDetachStatus.OK;
     }
 
+    @Override
     public void dropIndex(CharSequence columnName) {
 
         checkDistressed();
@@ -1095,6 +1104,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    @Override
     public long getCommitInterval() {
         return commitInterval;
     }
@@ -1111,6 +1121,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getMaxTimestamp();
     }
 
+    @Override
+    public long getMetaMaxUncommittedRows() {
+        return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
     public TableRecordMetadata getMetadata() {
         return metadata;
     }
@@ -1119,6 +1135,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return hasO3() ? getO3RowCount0() : 0;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -1150,8 +1167,15 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getSeqTxn();
     }
 
+    @Override
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
+    }
+
+    @Override
+    public int getSymbolCountWatermark(int columnIndex) {
+        // We don't need the watermark for non-WAL tables.
+        return -1;
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
@@ -1167,6 +1191,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return systemTableName;
     }
 
+    @Override
     public String getTableName() {
         return tableName;
     }
@@ -1187,6 +1212,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txnScoreboard;
     }
 
+    @Override
     public long getUncommittedRowCount() {
         return (masterRef - committedMasterRef) >> 1;
     }
@@ -1212,6 +1238,12 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
+    @Override
+    public Row newRow() {
+        return newRow(0L);
+    }
+
+    @Override
     public Row newRow(long timestamp) {
 
         switch (rowAction) {
@@ -1265,10 +1297,6 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
         txWriter.append();
         return row;
-    }
-
-    public Row newRow() {
-        return newRow(0L);
     }
 
     public void o3BumpErrorCount() {
@@ -1430,6 +1458,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public void removeColumn(CharSequence name) {
         checkDistressed();
         checkColumnName(name);
@@ -1497,9 +1526,10 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
             metadata.clearTimestampIndex();
         }
 
-        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+        LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$(path).$();
     }
 
+    @Override
     public boolean removePartition(long timestamp) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
@@ -1602,6 +1632,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return true;
     }
 
+    @Override
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -1610,7 +1641,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         final int index = getColumnIndex(currentName);
         final int type = metadata.getColumnType(index);
 
-        LOG.info().$("renaming column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+        LOG.info().$("renaming column '").utf8(currentName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$(path).$();
 
         commit();
 
@@ -1653,6 +1684,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
+    @Override
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -1694,6 +1726,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    @Override
     public void setMetaCommitLag(long commitLag) {
         try {
             commit();
@@ -1716,6 +1749,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         }
     }
 
+    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         try {
             commit();
@@ -1746,20 +1780,22 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         return txWriter.getRowCount() + getO3RowCount();
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Does not accept structure changes, e.g. equivalent to tick(false)
      * Some tick calls can result into transaction commit.
      */
+    @Override
     public void tick() {
         tick(false);
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Some tick calls can result into transaction commit.
+     *
      * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
-     *                             structure changes like column drop, rename
+     *                                         structure changes like column drop, rename
      */
     public void tick(boolean contextAllowsAnyStructureChanges) {
         // Some alter table trigger commit() which trigger tick()
@@ -1842,6 +1878,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
         LOG.info().$("truncated [name=").utf8(tableName).I$();
     }
 
+    @Override
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
         this.commitIntervalFraction = commitIntervalFraction;
         this.commitIntervalDefault = commitIntervalDefault;
@@ -4320,8 +4357,8 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                     .I$();
             errorCode = STRUCTURE_CHANGE_NOT_ALLOWED;
             errorMsg = "async cmd cannot change table structure while writer is busy";
-        } catch (SqlException | CairoException ex) {
-            errorCode = SQL_OR_CAIRO_ERROR;
+        } catch (CairoException ex) {
+            errorCode = CAIRO_ERROR;
             errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
@@ -5211,13 +5248,13 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    LOG.info().$("cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
 
                 if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
-                    LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
@@ -5226,7 +5263,7 @@ public class TableWriter implements TableWriterAPI, TableWriterSPI, Closeable {
 
             } while (index < retries);
 
-            throw CairoException.critical(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+            throw CairoException.critical(0).put("could not rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);

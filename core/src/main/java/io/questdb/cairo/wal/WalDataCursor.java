@@ -28,12 +28,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 
 public class WalDataCursor implements RecordCursor {
     private final WalDataRecord recordA = new WalDataRecord();
-    private WalReader reader;
     private long maxRecordIndex = -1;
+    private WalReader reader;
 
     @Override
     public void close() {
@@ -46,12 +45,12 @@ public class WalDataCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
+    public Record getRecordB() {
+        throw new UnsupportedOperationException("No B record for WAL");
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
+    public SymbolTable getSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -65,23 +64,8 @@ public class WalDataCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException("No B record for WAL");
-    }
-
-    @Override
-    public long size() {
-        return reader.size();
-    }
-
-    @Override
-    public void recordAt(Record record, long rowId) {
+    public SymbolTable newSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
-        recordA.jumpTo(-1);
     }
 
     public void of(WalReader reader) {
@@ -92,5 +76,20 @@ public class WalDataCursor implements RecordCursor {
 
         final long segmentSize = reader.openSegment();
         maxRecordIndex = segmentSize - 1;
+    }
+
+    @Override
+    public void recordAt(Record record, long rowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long size() {
+        return reader.size();
+    }
+
+    @Override
+    public void toTop() {
+        recordA.jumpTo(-1);
     }
 }

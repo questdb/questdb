@@ -29,7 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 
-public interface TableWriterSPI {
+public interface MetadataChangeSPI {
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
@@ -74,11 +74,15 @@ public interface TableWriterSPI {
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
-    AttachDetachStatus detachPartition(long partitionTimestamp);
-
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
+    AttachDetachStatus detachPartition(long partitionTimestamp);
+
     void dropIndex(CharSequence columnName);
+
+    long getCommitInterval();
+
+    long getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
 
@@ -97,4 +101,8 @@ public interface TableWriterSPI {
     void setMetaCommitLag(long commitLag);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
+
+    void tick();
+
+    void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault);
 }

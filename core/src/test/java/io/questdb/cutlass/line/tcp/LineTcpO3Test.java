@@ -45,20 +45,37 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUnboundedByteSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.zip.GZIPInputStream;
 
+@RunWith(Parameterized.class)
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
     private LineTcpReceiverConfiguration lineConfiguration;
     private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
+    private final boolean walEnabled;
+
+    public LineTcpO3Test(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name="{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        });
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -81,7 +98,13 @@ public class LineTcpO3Test extends AbstractCairoTest {
 
         PropServerConfiguration serverConf;
         Properties properties = new Properties();
-        try (InputStream is = LineTcpO3Test.class.getResourceAsStream(LineTcpO3Test.class.getSimpleName() + ".server.conf")) {
+        String name;
+        if (walEnabled) {
+            name = LineTcpO3Test.class.getSimpleName() + ".wal.server.conf";
+        } else {
+            name = LineTcpO3Test.class.getSimpleName() + ".server.conf";
+        }
+        try (InputStream is = LineTcpO3Test.class.getResourceAsStream(name)) {
             File mimeTypesFile = new File(new File(root.toString(), PropServerConfiguration.CONFIG_DIRECTORY), "mime.types");
             if (!mimeTypesFile.exists()) {
                 mimeTypesFile.getParentFile().mkdirs();
@@ -108,6 +131,12 @@ public class LineTcpO3Test extends AbstractCairoTest {
     public void tearDown() {
         engine = Misc.free(engine);
         TestUtils.removeTestPath(root);
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     @Test
@@ -184,8 +213,12 @@ public class LineTcpO3Test extends AbstractCairoTest {
                 haltLatch.await();
                 // stop pool twice and this is ok
                 sharedWorkerPool.halt();
+                mayDrainWalQueue();
 
-                TestUtils.printSql(compiler, sqlExecutionContext, "select * from " + "cpu", sink);
+                if (walEnabled) {
+                    Assert.assertTrue(isWalTable("cpu"));
+                }
+                TestUtils.printSql(compiler, sqlExecutionContext, "select * from cpu", sink);
                 readGzResource("selectAll1");
                 DirectUnboundedByteSink expectedSink = new DirectUnboundedByteSink(resourceAddress);
                 expectedSink.clear(resourceSize);

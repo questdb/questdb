@@ -43,7 +43,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -55,7 +54,7 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.
-// This improves coverate. To debug failures in CI find the line logging random seeds
+// This improves coverage. To debug failures in CI find the line logging random seeds
 // and change line
 // Rnd rnd = TestUtils.generateRandom(LOG);
 // to
@@ -65,8 +64,9 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 // When the same timestamp is used in multiple transactions
 // the order of records when executed in parallel WAL writing is not guaranteed.
 // The creates failures in tests that assume that the order of records is preserved.
-// There are already measures to prevent invalid data generation but it still can happen.
-// In order to verify that the test is not broken we check that there are no duplicate timestamps for the record where the comparison fails.
+// There are already measures to prevent invalid data generation, but it still can happen.
+// In order to verify that the test is not broken we check that there are no duplicate
+// timestamps for the record where the comparison fails.
 //
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
@@ -138,7 +138,6 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: fix this test
     public void testWalWriteRollbackHeavyToFix() throws Exception {
         Rnd rnd1 = new Rnd(628706008284375L, 1667487965450L);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0);
@@ -380,6 +379,10 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
                         if (increment) {
                             structureVersion.incrementAndGet();
                         }
+
+                        // CREATE TABLE may release all inactive sequencers occasionally, so we do the same
+                        // to make sure that there are no races between WAL writers and the engine.
+                        engine.releaseInactiveTableSequencers();
                     }
                 } catch (Throwable e) {
                     errors.add(e);

@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
@@ -149,12 +150,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     public boolean lock(CharSequence name) {
         Entry<T> e = getEntry(name);
         final long thread = Thread.currentThread().getId();
-        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
+        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeTenant(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
-                    } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
+                    } else if (Unsafe.arrayGetVolatile(e.allocations, i) == thread) {
                         // same thread, don't need to order reads
                         if (e.getTenant(i) != null) {
                             // this thread has busy reader, it should close first
@@ -168,9 +169,17 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
                     }
                 }
 
-                // prevent new entries from being created
-                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                    break;
+                // try to prevent new entries from being created
+                if (e.next == null) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                        break;
+                    } else if (e.nextStatus == NEXT_ALLOCATED) {
+                        // now we must wait until another thread that executes a get() call
+                        // assigns the newly created next entry
+                        while (e.next == null) {
+                            Os.pause();
+                        }
+                    }
                 }
 
                 e = e.next;
@@ -336,8 +345,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         private final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
         @SuppressWarnings("unchecked")
         private final T[] tenants = (T[]) new Object[ENTRY_SIZE];
-        @SuppressWarnings("unused")
-        int nextStatus = 0;
+        int nextStatus = NEXT_OPEN;
         private volatile long lockOwner = -1L;
         private volatile Entry<T> next;
 

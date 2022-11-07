@@ -1231,7 +1231,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                 try {
                     compile(query, sqlExecutionContext);
                     Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
-                } catch (SqlException | ImplicitCastException e) {
+                } catch (SqlException | ImplicitCastException | CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                 }

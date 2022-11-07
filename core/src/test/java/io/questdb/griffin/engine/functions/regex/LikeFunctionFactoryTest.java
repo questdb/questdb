@@ -236,6 +236,20 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonConstantExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where name like rnd_str('foo','bar')", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(32, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
+            }
+        });
+    }
+
+    @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
@@ -261,20 +275,6 @@ public class LikeFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     Assert.assertNotEquals(sink.toString().indexOf("XJ"), -1);
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testNonConstantExpression() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try {
-                compiler.compile("select * from x where name like rnd_str('foo','bar')", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(32, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
             }
         });
     }

@@ -57,7 +57,7 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         if (tableMetadata instanceof ColumnMetadataCollection) {
             for (int i = 0; i < columnCount; i++) {
                 TableColumnMetadata column = ((ColumnMetadataCollection) tableMetadata).getColumnMetadata(i);
-                if (column.getType() >= 0) {
+                if (!column.isDeleted()) {
                     metadata.add(column);
                     if (i == timestampIndex) {
                         metadata.setTimestampIndex(metadata.getColumnCount() - 1);

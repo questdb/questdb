@@ -40,14 +40,14 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.AttachDetachStatus.*;
+import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static int DIR_MODE = configuration.getMkDirMode();
     private final static StringSink partitions = new StringSink();
-    private Path path;
     private Path other;
+    private Path path;
 
     @Override
     @Before
@@ -254,8 +254,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -274,8 +274,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': "+ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -308,8 +308,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -846,8 +846,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
                             "Symbol index value file does not exist"
                     );
                 }
@@ -891,8 +891,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "Symbol index key file does not exist");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Symbol index key file does not exist");
                 }
             }
         });
@@ -924,8 +924,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': "+ ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });

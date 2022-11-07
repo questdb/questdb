@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Iterator;
 import java.util.function.Function;
 
 public class TableSequencerAPI implements QuietCloseable {
@@ -178,6 +177,7 @@ public class TableSequencerAPI implements QuietCloseable {
         return tableNameRegistry.getWalTableSystemName(tableName);
     }
 
+    @TestOnly
     public boolean isSuspended(final String systemTableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
             boolean isSuspended;
@@ -346,12 +346,12 @@ public class TableSequencerAPI implements QuietCloseable {
             entry = seqRegistry.computeIfAbsent(tableNameStr, this.createSequencerInstanceLambda);
             if (lock == SequencerLockType.READ) {
                 entry.readLock();
-            }
-            if (lock == SequencerLockType.WRITE) {
+            } else if (lock == SequencerLockType.WRITE) {
                 entry.writeLock();
             }
 
-            if (!entry.isDistressed()) {
+            boolean isDistressed = entry.isDistressed();
+            if (!isDistressed && !entry.isClosed()) {
                 return entry;
             } else {
                 if (lock == SequencerLockType.READ) {
@@ -360,7 +360,9 @@ public class TableSequencerAPI implements QuietCloseable {
                     entry.unlockWrite();
                 }
             }
-            attempt++;
+            if (isDistressed) {
+                attempt++;
+            }
         }
 
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(systemTableName).put(']');
@@ -377,7 +379,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 entry.writeLock();
             }
 
-            if (!entry.isDistressed()) {
+            if (!entry.isDistressed() && !entry.isClosed()) {
                 return entry;
             } else {
                 if (lock == SequencerLockType.READ) {
@@ -390,21 +392,19 @@ public class TableSequencerAPI implements QuietCloseable {
 
         return getTableSequencerEntryLocked(systemTableName, lock);
     }
-
     private boolean releaseEntries(long deadline) {
         if (seqRegistry.size() == 0) {
             // nothing to release
             return true;
         }
         boolean removed = false;
-        final Iterator<TableSequencerEntry> iterator = seqRegistry.values().iterator();
-        while (iterator.hasNext()) {
-            final TableSequencerEntry sequencer = iterator.next();
-            if (deadline >= sequencer.releaseTime) {
+        for (CharSequence tableSystemName : seqRegistry.keySet()) {
+            final TableSequencerEntry sequencer = seqRegistry.get(tableSystemName);
+            if (sequencer != null && deadline >= sequencer.releaseTime) {
                 sequencer.pool = null;
                 sequencer.close();
+                seqRegistry.remove(tableSystemName, sequencer);
                 removed = true;
-                iterator.remove();
             }
         }
         return removed;
@@ -451,8 +451,9 @@ public class TableSequencerAPI implements QuietCloseable {
 
         @Override
         public void close() {
+            TableSequencerAPI pool = this.pool;
             if (pool != null && !pool.closed) {
-                if (!isDistressed() && pool != null) {
+                if (!isDistressed()) {
                     if (pool.returnToPool(this)) {
                         return;
                     }
@@ -460,9 +461,7 @@ public class TableSequencerAPI implements QuietCloseable {
 
                 // Sequencer is distressed, close before removing from the pool.
                 super.close();
-                if (pool != null) {
-                    pool.seqRegistry.remove(getTableName(), this);
-                }
+                pool.seqRegistry.remove(getTableName(), this);
             } else {
                 super.close();
             }

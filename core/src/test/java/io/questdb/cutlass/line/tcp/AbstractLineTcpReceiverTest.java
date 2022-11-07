@@ -86,6 +86,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long maintenanceInterval = 25;
     protected double commitIntervalFraction = 0.5;
     protected long commitIntervalDefault = 2000;
+    protected int partitionByDefault = PartitionBy.DAY;
     protected boolean disconnectOnError = false;
     protected boolean symbolAsFieldSupported;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -159,11 +160,26 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         public NetworkFacade getNetworkFacade() {
             return nf;
         }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return partitionByDefault;
+        }
     };
 
     @After
     public void cleanup() {
         maxMeasurementSize = 256;
+        authKeyId = null;
+        msgBufferSize = 256 * 1024;
+        minIdleMsBeforeWriterRelease = 30000;
+        maintenanceInterval = 25;
+        commitIntervalFraction = 0.5;
+        commitIntervalDefault = 2000;
+        partitionByDefault = PartitionBy.DAY;
+        disconnectOnError = false;
+        symbolAsFieldSupported = false;
+        nf = NetworkFacadeImpl.INSTANCE;
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
@@ -248,7 +264,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equals(tableName1, tableName1)) {
+                    if (Chars.equalsNc(tableName, tableName1)) {
                         releaseLatch.countDown();
                     }
                 });

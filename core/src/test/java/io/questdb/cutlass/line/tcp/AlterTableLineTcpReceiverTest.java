@@ -71,13 +71,12 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug Add COLUMN label2 INT");
+                    "ALTER TABLE plug ADD COLUMN label2 INT");
             Assert.assertNull(exception);
 
             lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999000\n" +
                     "plug,label=Power,room=6B watts=\"55\" 1631817902842\n" +
                     "plug,label=Line,room=6C watts=\"666\" 1531817902842\n";
-
             send(server, lineData);
 
             String expected = "room\twatts\ttimestamp\tlabel2\tlabel\n" +
@@ -92,68 +91,69 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testAlterCommandDropLastPartition() throws Exception {
+        runInContext((server) -> {
+            long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
+
+            try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
+                tm.col("room", ColumnType.SYMBOL);
+                tm.col("watts", ColumnType.LONG);
+                tm.timestamp();
+
+                CairoTestUtils.create(tm);
+            }
+
+            try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
+                TableWriter.Row row = writer.newRow(day1 / 1000);
+                row.putSym(0, "6A");
+                row.putLong(1, 100L);
+                row.append();
+                writer.commit();
+            }
+
+            SqlException exception = sendWithAlterStatement(
+                    server,
+                    "plug,room=6A watts=1i " + day1 + "\n" +
+                            "plug,room=6B watts=37i " + day1 + "\n" +
+                            "plug,room=7G watts=21i " + day1 + "\n" +
+                            "plug,room=1C watts=11i " + day1 + "\n",
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"
+            );
+            Assert.assertNull(exception);
+            assertTable("room\twatts\ttimestamp\n");
+
+            send(server, "plug,room=6A watts=125i " + day1 + "\n");
+
+            assertTable("room\twatts\ttimestamp\n" +
+                    "6A\t125\t2023-02-27T00:00:00.000000Z\n");
+        }, true, 50L);
+    }
+
+    @Test
     public void testAlterCommandDropPartition() throws Exception {
         long day1 = 0;
         long day2 = IntervalUtils.parseFloorPartialTimestamp("1970-02-02") * 1000;
         long day3 = IntervalUtils.parseFloorPartialTimestamp("1970-03-03") * 1000;
         runInContext((server) -> {
-                    String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
-                    send(server, lineData);
-                    lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
-                            "plug,room=6C watts=\"333\" " + day3 + "\n";
+            String lineData = "plug,room=6A watts=\"1\" " + day1 + "\n";
+            send(server, lineData);
 
-                    SqlException exception = sendWithAlterStatement(
-                            server,
-                            lineData,
-                            WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                            "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'");
+            lineData = "plug,room=6B watts=\"22\" " + day2 + "\n" +
+                    "plug,room=6C watts=\"333\" " + day3 + "\n";
+            SqlException exception = sendWithAlterStatement(
+                    server,
+                    lineData,
+                    WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
+                    "ALTER TABLE plug DROP PARTITION LIST '1970-01-01'"
+            );
+            Assert.assertNull(exception);
 
-                    Assert.assertNull(exception);
-                    String expected = "room\twatts\ttimestamp\n" +
-                            "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
-                            "6C\t333\t1970-03-03T00:00:00.000000Z\n";
-                    assertTable(expected);
-                },
-                true, 250
-        );
-    }
-
-    @Test
-    public void testAlterCommandDropLastPartition() throws Exception {
-        runInContext((server) -> {
-                    long day1 = IntervalUtils.parseFloorPartialTimestamp("2023-02-27") * 1000; // <-- last partition
-
-                    try (TableModel tm = new TableModel(configuration, "plug", PartitionBy.DAY)) {
-                        tm.col("room", ColumnType.SYMBOL);
-                        tm.col("watts", ColumnType.LONG);
-                        tm.timestamp();
-
-                        CairoTestUtils.create(tm);
-                    }
-                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
-                        TableWriter.Row row = writer.newRow(day1 / 1000);
-                        row.putSym(0, "6A");
-                        row.putLong(1, 100L);
-                        row.append();
-                        writer.commit();
-                    }
-
-                    Assert.assertNull(sendWithAlterStatement(
-                            server,
-                            "plug,room=6A watts=1i " + day1 + "\n" +
-                                    "plug,room=6B watts=37i " + day1 + "\n" +
-                                    "plug,room=7G watts=21i " + day1 + "\n" +
-                                    "plug,room=1C watts=11i " + day1 + "\n",
-                            WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                            "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"));
-                    assertTable("room\twatts\ttimestamp\n");
-
-                    send(server, "plug,room=6A watts=125i " + day1 + "\n");
-                    assertTable("room\twatts\ttimestamp\n" +
-                            "6A\t125\t2023-02-27T00:00:00.000000Z\n");
-                },
-                true, 50L
-        );
+            String expected = "room\twatts\ttimestamp\n" +
+                    "6B\t22\t1970-02-02T00:00:00.000000Z\n" +
+                    "6C\t333\t1970-03-03T00:00:00.000000Z\n";
+            assertTable(expected);
+        }, true, 250);
     }
 
     @Test
@@ -327,10 +327,9 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     }
 
-                    String lineData = isSymbol ?
-                            String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000) :
-                            String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
-
+                    String lineData = isSymbol
+                            ? String.format("plug,column_%d=%d,iteration=%d%s %s %d\n", i, i, i % 5, symbols, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000)
+                            : String.format("plug,iteration=%d%s column_%d=\"%d\"%s %d\n", i % 5, symbols, i, i, fields, i * Timestamps.MINUTE_MICROS * 20 * 1000);
 
                     send(server, lineData);
                     columnsAdded.add(isSymbol ? i : -i);
@@ -558,15 +557,16 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private OperationFuture executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
         LOG.info().$("Started waiting for writer ASYNC event").$();
-        try (SqlCompiler compiler = new SqlCompiler(engine);
-             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                     .with(
-                             AllowAllCairoSecurityContext.INSTANCE,
-                             new BindVariableServiceImpl(configuration),
-                             null,
-                             -1,
-                             null
-                     )
+        try (
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(
+                                AllowAllCairoSecurityContext.INSTANCE,
+                                new BindVariableServiceImpl(configuration),
+                                null,
+                                -1,
+                                null
+                        )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
             AlterOperation alterOperation = cc.getAlterOperation();

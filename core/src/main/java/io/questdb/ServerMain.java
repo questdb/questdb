@@ -55,7 +55,7 @@ public class ServerMain implements Closeable {
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<Closeable> freeOnExistList = new ObjList<>();
+    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final WorkerPoolManager workerPoolManager;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
@@ -132,7 +132,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExistList.add(telemetryJob);
+                        freeOnExitList.add(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -217,10 +217,10 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
             // free instances in reverse order to which we allocated them
-            for (int i = freeOnExistList.size() - 1; i >= 0; i--) {
-                Misc.free(freeOnExistList.getQuick(i));
+            for (int i = freeOnExitList.size() - 1; i >= 0; i--) {
+                Misc.free(freeOnExitList.getQuick(i));
             }
-            freeOnExistList.clear();
+            freeOnExitList.clear();
         }
     }
 
@@ -293,7 +293,7 @@ public class ServerMain implements Closeable {
 
     private <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
-            freeOnExistList.add(closeable);
+            freeOnExitList.add(closeable);
         }
         return closeable;
     }

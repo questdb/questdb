@@ -24,10 +24,8 @@
 
 package io.questdb.griffin.wal.fuzz;
 
-import io.questdb.cairo.TestRecord;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.TestRecord;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.IntList;
@@ -35,14 +33,13 @@ import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
-    private final String newColName;
-    private final int newType;
     private final boolean indexFlag;
     private final int indexValueBlockCapacity;
+    private final String newColName;
+    private final int newType;
     private final boolean symbolTableStatic;
 
-    public FuzzAddColumnOperation(RecordMetadata tableModel, String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
-
+    public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
         this.newColName = newColName;
         this.newType = newType;
         this.indexFlag = indexFlag;
@@ -52,14 +49,10 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
-        try {
-            AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
-            builder.ofAddColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
-            AlterOperation alter = builder.build();
-            tableWriter.apply(alter, true);
-            return true;
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
+        AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
+        builder.ofAddColumn(newColName, 14, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
+        AlterOperation alter = builder.build();
+        tableWriter.apply(alter, true);
+        return true;
     }
 }

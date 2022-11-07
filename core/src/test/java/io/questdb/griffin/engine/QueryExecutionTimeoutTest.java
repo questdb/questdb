@@ -41,6 +41,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -550,8 +551,12 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
             });
 
             fail("Cairo timeout exception expected!");
+        } catch (SqlException se) {
+            resetTimeout();
+            TestUtils.assertContains(se.getFlyweightMessage(), "timeout, query aborted");
         } catch (CairoException ce) {
             resetTimeout();
+            TestUtils.assertContains(ce.getFlyweightMessage(), "timeout, query aborted");
             Assert.assertTrue("Exception should be interrupted! " + ce, ce.isInterruption());
         } catch (Throwable th) {
             throw th;

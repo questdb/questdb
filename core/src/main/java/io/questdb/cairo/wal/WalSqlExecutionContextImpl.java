@@ -74,6 +74,16 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
+    public TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
+                getCairoSecurityContext(),
+                systemTableName,
+                structureVersion
+        );
+    }
+
+    @Override
     public boolean isWalApplication() {
         return true;
     }

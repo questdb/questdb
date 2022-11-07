@@ -72,11 +72,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     @Override
     public void close() {
-        clear(Vm.TRUNCATE_TO_PAGE);
-    }
-
-    public void close(byte truncateMode) {
-        clear(truncateMode);
+        reset();
+        if (metaMem != null) {
+            metaMem.close(false);
+        }
+        Misc.free(roMetaMem);
     }
 
     public void copyFrom(TableDescriptor model, String systemTableName, int tableId, long structureVersion, boolean suspended) {
@@ -264,14 +264,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         systemTableName = null;
         tableId = -1;
         suspended = false;
-    }
-
-    protected void clear(byte truncateMode) {
-        reset();
-        if (metaMem != null) {
-            metaMem.close(true, truncateMode);
-        }
-        Misc.free(roMetaMem);
     }
 
     boolean isSuspended() {

@@ -51,8 +51,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
-import static org.hamcrest.Matchers.*;
-
 import java.io.*;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -62,19 +60,16 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
+
 public final class TestUtils {
 
     public static final RecordCursorPrinter printer = new RecordCursorPrinter();
-
+    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
     private static final StringSink sink = new StringSink();
 
-    private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
-
     private TestUtils() {
-    }
-
-    public static double getZeroToOneDouble(Rnd rnd) {
-        return rnd.nextPositiveLong() / (double) Long.MAX_VALUE;
     }
 
     public static boolean areEqual(BinarySequence a, BinarySequence b) {
@@ -807,10 +802,6 @@ public final class TestUtils {
         }
     }
 
-    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
-    }
-
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runner,
@@ -884,6 +875,10 @@ public final class TestUtils {
                 return 0;
             }
         };
+    }
+
+    public static double getZeroToOneDouble(Rnd rnd) {
+        return rnd.nextPositiveLong() / (double) Long.MAX_VALUE;
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
@@ -1127,6 +1122,10 @@ public final class TestUtils {
         }
     }
 
+    public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+        O3Utils.setupWorkerPool(workerPool, cairoEngine, null, null);
+    }
+
     public static long toMemory(CharSequence sequence) {
         long ptr = Unsafe.malloc(sequence.length(), MemoryTag.NATIVE_DEFAULT);
         Chars.asciiStrCpy(sequence, sequence.length(), ptr);
@@ -1137,6 +1136,32 @@ public final class TestUtils {
     public static void writeStringToFile(File file, String s) throws IOException {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
+        }
+    }
+
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
+        }
+
+        if (expected.getLong0() != actual.getLong0()
+                || expected.getLong1() != actual.getLong1()
+                || expected.getLong2() != actual.getLong2()
+                || expected.getLong3() != actual.getLong3()) {
+            Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
@@ -1162,37 +1187,11 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEquals(Long256 expected, Long256 actual) {
-        if (expected == actual) return;
-        if (actual == null) {
-            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
-        }
-
-        if (expected.getLong0() != actual.getLong0()
-                || expected.getLong1() != actual.getLong1()
-                || expected.getLong2() != actual.getLong2()
-                || expected.getLong3() != actual.getLong3()) {
-            Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
-    }
-
     private static String toHexString(Long256 expected) {
         return Long.toHexString(expected.getLong0()) + " " +
                 Long.toHexString(expected.getLong1()) + " " +
                 Long.toHexString(expected.getLong2()) + " " +
                 Long.toHexString(expected.getLong3());
-    }
-
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
-            int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
-            Assert.assertEquals("Column type " + i, columnType1, columnType2);
-        }
     }
 
     @FunctionalInterface

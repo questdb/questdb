@@ -30,8 +30,6 @@ public interface TransactionLogCursor extends Closeable {
     @Override
     void close();
 
-    boolean hasNext();
-
     int getSegmentId();
 
     long getSegmentTxn();
@@ -39,4 +37,6 @@ public interface TransactionLogCursor extends Closeable {
     long getTxn();
 
     int getWalId();
+
+    boolean hasNext();
 }

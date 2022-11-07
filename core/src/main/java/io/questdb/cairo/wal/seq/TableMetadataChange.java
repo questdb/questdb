@@ -25,11 +25,9 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.wal.TableWriterSPI;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 
 @FunctionalInterface
 public interface TableMetadataChange {
-    // todo: should not be SqlException
-    long apply(TableWriterSPI tableWriterSPI, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
+    long apply(MetadataChangeSPI tableMetadataWriterSPI, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 }

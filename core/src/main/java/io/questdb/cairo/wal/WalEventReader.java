@@ -38,9 +38,9 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 
 public class WalEventReader implements Closeable {
-    private final FilesFacade ff;
-    private final MemoryMR eventMem;
     private final WalEventCursor eventCursor;
+    private final MemoryMR eventMem;
+    private final FilesFacade ff;
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;

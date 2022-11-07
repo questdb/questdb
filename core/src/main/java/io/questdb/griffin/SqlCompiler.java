@@ -137,7 +137,7 @@ public class SqlCompiler implements Closeable {
                 functionFactoryCache != null
                         ? functionFactoryCache
                         : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
-                        FunctionFactory.class, FunctionFactory.class.getClassLoader()))
+                                FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
         this.vacuumColumnVersions = new VacuumColumnVersions(engine);
@@ -329,8 +329,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    public void filterPartitions(
+    private void filterPartitions(
             Function function,
+            int functionPosition,
             TableReader reader,
             AlterOperationBuilder changePartitionStatement
     ) {
@@ -342,7 +343,7 @@ public class SqlCompiler implements Closeable {
                 long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
                 partitionFunctionRec.setTimestamp(partitionTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.ofPartition(partitionTimestamp);
+                    changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
                 }
             }
 
@@ -350,7 +351,7 @@ public class SqlCompiler implements Closeable {
             long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
             partitionFunctionRec.setTimestamp(partitionTimestamp);
             if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.ofPartition(partitionTimestamp);
+                changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
             }
         }
     }
@@ -534,7 +535,7 @@ public class SqlCompiler implements Closeable {
                         tok = expectToken(lexer, "'='");
                         if (tok.length() == 1 && tok.charAt(0) == '=') {
                             CharSequence value = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName, tableMetadata.getTableId());
+                            return alterTableSetParam(paramName, value, paramNameNamePosition, tableName, tableNamePosition, tableMetadata.getTableId());
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                         }
@@ -575,7 +576,11 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableAddColumn(int tableNamePosition, String tableName, TableRecordMetadata tableMetadata) throws SqlException {
+    private CompiledQuery alterTableAddColumn(
+            int tableNamePosition,
+            String tableName,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
         // add columns to table
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
@@ -605,6 +610,7 @@ public class SqlCompiler implements Closeable {
             }
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+            int columnNamePosition = lexer.lastTokenPosition();
 
             if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
@@ -649,8 +655,13 @@ public class SqlCompiler implements Closeable {
             int symbolCapacity;
             final boolean indexed;
 
-            if (ColumnType.isSymbol(type) && tok != null &&
-                    !Chars.equals(tok, ',') && !Chars.equals(tok, ';')) {
+            if (
+                    ColumnType.isSymbol(type)
+                            && tok != null
+                            &&
+                            !Chars.equals(tok, ',')
+                            && !Chars.equals(tok, ';')
+            ) {
 
                 if (isCapacityKeyword(tok)) {
                     tok = expectToken(lexer, "symbol capacity");
@@ -680,7 +691,6 @@ public class SqlCompiler implements Closeable {
                 } else {
                     symbolCapacity = configuration.getDefaultSymbolCapacity();
                 }
-
 
                 if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
                     cache = true;
@@ -728,8 +738,9 @@ public class SqlCompiler implements Closeable {
                 indexed = false;
             }
 
-            addColumn.ofAddColumn(
+            addColumn.addColumnToList(
                     columnName,
+                    columnNamePosition,
                     type,
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
@@ -808,7 +819,7 @@ public class SqlCompiler implements Closeable {
         }
         return compiledQuery.ofAlter(
                 alterOperationBuilder
-                        .ofDropIndex(tableNamePosition, tableName, metadata.getTableId(), columnName)
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getTableId(), columnName, columnNamePosition)
                         .build()
         );
     }
@@ -867,18 +878,19 @@ public class SqlCompiler implements Closeable {
             if (SqlKeywords.isListKeyword(tok)) {
                 return alterTableDropDetachOrAttachPartitionByList(tableMetadata, tableName, reader, pos, action);
             } else if (SqlKeywords.isWhereKeyword(tok)) {
-                AlterOperationBuilder alterPartitionStatement;
+                AlterOperationBuilder alterOperationBuilder;
                 switch (action) {
                     case PartitionAction.DROP:
-                        alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
+                        alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
                         break;
                     case PartitionAction.DETACH:
-                        alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
+                        alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
                         break;
                     default:
                         throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
                 }
 
+                final int functionPosition = lexer.getPosition();
                 ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
                 String designatedTimestampColumnName = null;
                 int tsIndex = tableMetadata.getTimestampIndex();
@@ -892,9 +904,9 @@ public class SqlCompiler implements Closeable {
                     if (function != null && ColumnType.isBoolean(function.getType())) {
                         function.init(null, executionContext);
                         if (reader != null) {
-                            filterPartitions(function, reader, alterPartitionStatement);
+                            filterPartitions(function, functionPosition, reader, alterOperationBuilder);
                         }
-                        return compiledQuery.ofAlter(alterOperationBuilder.build());
+                        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                     }
@@ -916,19 +928,23 @@ public class SqlCompiler implements Closeable {
             int pos,
             int action
     ) throws SqlException {
-        AlterOperationBuilder partitions;
+        final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
             case PartitionAction.DROP:
-                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
+                alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableName, tableMetadata.getTableId());
                 break;
             case PartitionAction.DETACH:
-                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
+                alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableName, tableMetadata.getTableId());
+                break;
+            case PartitionAction.ATTACH:
+                // attach
+                alterOperationBuilder = this.alterOperationBuilder.ofAttachPartition(pos, tableName, tableMetadata.getTableId());
                 break;
             default:
-                // attach
-                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, tableMetadata.getTableId());
+                alterOperationBuilder = null;
+                assert false;
         }
-        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
+
         int semicolonPos = -1;
         do {
             CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
@@ -941,20 +957,21 @@ public class SqlCompiler implements Closeable {
             if (Chars.equals(tok, ',')) {
                 throw SqlException.$(lexer.lastTokenPosition(), "partition name missing");
             }
-            final CharSequence unquoted = GenericLexer.unquote(tok);
+            final CharSequence partitionName = GenericLexer.unquote(tok);
+            final int partitionNamePosition = lexer.lastTokenPosition();
 
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             if (reader != null) {
                 final long timestamp;
                 try {
-                    timestamp = PartitionBy.parsePartitionDirName(unquoted, reader.getPartitionedBy());
+                    timestamp = PartitionBy.parsePartitionDirName(partitionName, reader.getPartitionedBy());
                 } catch (CairoException e) {
                     throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage())
                             .put("[errno=").put(e.getErrno()).put(']');
                 }
 
-                partitions.ofPartition(timestamp);
+                alterOperationBuilder.addPartitionToList(timestamp, partitionNamePosition);
             }
 
             tok = SqlUtil.fetchNext(lexer);
@@ -968,7 +985,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(alterOperationBuilder.build());
+        return compiledQuery.ofAlter(this.alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableRecordMetadata metadata) throws SqlException {
@@ -1024,7 +1041,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
+    private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableNamePosition, int tableId) throws SqlException {
         if (isMaxUncommittedRowsKeyword(paramName)) {
             int maxUncommittedRows;
             try {
@@ -1035,13 +1052,13 @@ public class SqlCompiler implements Closeable {
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableNamePosition, tableName, tableId, maxUncommittedRows).build());
         } else if (isCommitLagKeyword(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableNamePosition, tableName, tableId, commitLag).build());
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -1126,11 +1143,7 @@ public class SqlCompiler implements Closeable {
                         TableRecordMetadata metadata = executionContext.getMetadata(
                                 queryModel.getTableName().token
                         )) {
-                    if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-                        optimiser.optimiseUpdate(queryModel, executionContext, metadata);
-                    } else {
-                        optimiser.validateUpdateColumns(queryModel, metadata);
-                    }
+                    optimiser.optimiseUpdate(queryModel, executionContext, metadata);
                     return model;
                 }
             default:
@@ -1700,17 +1713,18 @@ public class SqlCompiler implements Closeable {
     UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
         final String updateTableName = updateQueryModel.getUpdateTableName();
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
-            // Update QueryModel structure is
-            // QueryModel with SET column expressions
-            // |-- QueryModel of select-virtual or select-choose of data selected for update
-            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                    updateTableName,
-                    selectQueryModel,
-                    updateQueryModel,
-                    executionContext
-            );
 
+        // Update QueryModel structure is
+        // QueryModel with SET column expressions
+        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                updateTableName,
+                selectQueryModel,
+                updateQueryModel,
+                executionContext
+        );
+
+        if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
                     updateTableName,
                     selectQueryModel.getTableId(),
@@ -1719,6 +1733,8 @@ public class SqlCompiler implements Closeable {
                     recordCursorFactory
             );
         } else {
+            recordCursorFactory.close();
+
             if (selectQueryModel.containsJoin()) {
                 throw SqlException.position(0).put("UPDATE statements with join are not supported yet for WAL tables");
             }

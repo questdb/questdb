@@ -204,7 +204,7 @@ public class WriterPool extends AbstractPool {
         }
 
         // try to change owner
-        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| Unsafe.cas(e, ENTRY_OWNER, thread, thread)*/)) {
+        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| (e.owner == thread)*/)) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
             if (lockAndNotify(thread, e, tableName, lockReason)) {
                 return OWNERSHIP_REASON_NONE;

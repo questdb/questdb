@@ -29,7 +29,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
@@ -454,7 +453,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
 
-                    TableWriter.Row row = walWriter1.newRow(0);
+                    TableWriter.Row row = walWriter1.newRow();
                     row.putByte(0, (byte) 1);
                     row.append();
                     walWriter1.commit();
@@ -537,7 +536,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter, "c", ColumnType.SHORT);
                     fail("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[-1] could not add column [error=duplicate column name: c, errno=0]", e.getMessage());
+                    assertEquals("[-1] duplicate column name: c", e.getMessage());
                 }
 
                 row = walWriter.newRow(0);
@@ -1255,6 +1254,35 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long getPageSize() {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
+                        throw e;
+                    }
+                }
+                return Files.PAGE_SIZE;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                assertEquals("Test failure", e.getMessage());
+            }
+        });
+    }
+
+    @Test
     public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
@@ -1283,8 +1311,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 fail("Exception expected");
             } catch (Exception e) {
                 // this exception will be handled in ILP/PG/HTTP
-                MatcherAssert.assertThat(e.getMessage(),
-                        CoreMatchers.startsWith("[999] Cannot create sequencer directory:"));
+                assertTrue(e.getMessage().startsWith("[999] Cannot create sequencer directory:"));
             }
         });
     }
@@ -1387,9 +1414,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
                     fail("Exception expected");
-                } catch (Exception e) {
+                } catch (CairoException e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[0] could not apply table definition changes to the current transaction. could not add column [error=could not open read-write"));
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
                 }
             }
         });
@@ -1908,7 +1935,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     removeColumn(walWriter, "noColLikeThis");
                     fail("Should not be able to remove non existent column");
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: noColLikeThis");
+                    TestUtils.assertContains(e.getMessage(), "cannot remove column, column does not exists [table=testTableRemoveNonExistentCol, column=noColLikeThis]");
                 }
                 row = walWriter.newRow(0);
                 row.putByte(0, (byte) 10);
@@ -2119,17 +2146,17 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walName1 = walWriter1.getWalName();
                     walName2 = walWriter2.getWalName();
 
-                    TableWriter.Row row = walWriter1.newRow(0);
+                    TableWriter.Row row = walWriter1.newRow();
                     row.putByte(0, (byte) 1);
                     row.append();
                     walWriter1.commit();
 
-                    row = walWriter2.newRow(0);
+                    row = walWriter2.newRow();
                     row.putByte(0, (byte) 10);
                     row.append();
                     walWriter2.commit();
 
-                    row = walWriter2.newRow(0);
+                    row = walWriter2.newRow();
                     row.putByte(0, (byte) 100);
                     row.append();
 
@@ -2137,7 +2164,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     walWriter2.commit();
 
-                    row = walWriter1.newRow(0);
+                    row = walWriter1.newRow();
                     row.putByte(0, (byte) 110);
                     row.append();
                     walWriter1.commit();
@@ -2807,7 +2834,6 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
         });
     }
-
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
@@ -2984,17 +3010,18 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
+    static void removeColumn(TableWriterAPI writer, String columnName) {
         AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
         removeColumnOperation.ofDropColumn(columnName);
         writer.apply(removeColumnOperation.build(), true);
     }
 
-    static void renameColumn(TableWriterAPI writer) throws SqlException {
+    static void renameColumn(TableWriterAPI writer) {
         AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
         renameColumnC.ofRenameColumn("b", "c");
         writer.apply(renameColumnC.build(), true);
     }
+
 
     interface RowInserter {
         long getCount();

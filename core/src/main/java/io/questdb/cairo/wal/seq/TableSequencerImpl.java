@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -88,11 +89,13 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public void close() {
-        schemaLock.writeLock().lock();
-        try {
-            closeLocked();
-        } finally {
-            schemaLock.writeLock().unlock();
+        if (!closed) {
+            schemaLock.writeLock().lock();
+            try {
+                closeLocked();
+            } finally {
+                schemaLock.writeLock().unlock();
+            }
         }
     }
 
@@ -139,15 +142,15 @@ public class TableSequencerImpl implements TableSequencer {
         int compressedColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
+            sink.addColumn(
+                    metadata.getColumnName(i),
+                    columnType,
+                    metadata.isColumnIndexed(i),
+                    metadata.getIndexValueBlockCapacity(i),
+                    metadata.isSymbolTableStatic(i),
+                    i
+            );
             if (columnType > -1) {
-                sink.addColumn(
-                        metadata.getColumnName(i),
-                        columnType,
-                        metadata.isColumnIndexed(i),
-                        metadata.getIndexValueBlockCapacity(i),
-                        metadata.isSymbolTableStatic(i),
-                        i
-                );
                 if (i == timestampIndex) {
                     compressedTimestampIndex = compressedColumnCount;
                 }
@@ -158,6 +161,7 @@ public class TableSequencerImpl implements TableSequencer {
         sink.of(
                 systemTableName,
                 metadata.getTableId(),
+                timestampIndex,
                 compressedTimestampIndex,
                 metadata.isSuspended(),
                 metadata.getStructureVersion(),
@@ -195,6 +199,8 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
+        // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+        assert !closed;
         checkDropped();
         long txn;
         try {
@@ -229,6 +235,8 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public long nextTxn(long expectedSchemaVersion, int walId, int segmentId, long segmentTxn) {
+        // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+        assert !closed;
         checkDropped();
         long txn;
         try {
@@ -282,12 +290,8 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void applyToMetadata(TableMetadataChange change) {
-        try {
-            change.apply(sequencerMetadataUpdater, true);
-            metadata.syncToMetaFile();
-        } catch (SqlException e) {
-            throw CairoException.critical(0).put("error applying alter command to sequencer metadata [error=").put(e.getFlyweightMessage()).put(']');
-        }
+        change.apply(sequencerMetadataUpdater, true);
+        metadata.syncToMetaFile();
     }
 
     private void checkDropped() {
@@ -316,6 +320,7 @@ public class TableSequencerImpl implements TableSequencer {
             Misc.free(tableTransactionLog);
             Misc.free(walIdGenerator);
             Misc.free(path);
+            Unsafe.getUnsafe().fullFence();
         }
     }
 

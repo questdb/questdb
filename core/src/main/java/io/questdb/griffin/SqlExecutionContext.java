@@ -120,6 +120,16 @@ public interface SqlExecutionContext extends Closeable {
         );
     }
 
+    default TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
+                getCairoSecurityContext(),
+                engine.getSystemTableName(tableName),
+                structureVersion
+        );
+    }
+
+
     int getWorkerCount();
 
     void initNow();

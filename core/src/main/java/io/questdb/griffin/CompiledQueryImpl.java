@@ -58,14 +58,14 @@ public class CompiledQueryImpl implements CompiledQuery {
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
             @Override
-            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) throws SqlException {
+            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation);
             }
         };
 
         alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
             @Override
-            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) throws SqlException {
+            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
                 return writerAPI.apply(operation, true);
             }
         };

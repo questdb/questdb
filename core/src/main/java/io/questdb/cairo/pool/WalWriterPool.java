@@ -52,7 +52,13 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
 
-        public WalWriterTenant(AbstractMultiTenantPool<WalWriterTenant> pool, Entry<WalWriterTenant> entry, int index, String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI) {
+        public WalWriterTenant(
+                AbstractMultiTenantPool<WalWriterTenant> pool,
+                Entry<WalWriterTenant> entry,
+                int index,
+                String systemTableName, String tableName,
+                TableSequencerAPI tableSequencerAPI
+        ) {
             super(pool.getConfiguration(), systemTableName, tableName, tableSequencerAPI);
             this.pool = pool;
             this.entry = entry;

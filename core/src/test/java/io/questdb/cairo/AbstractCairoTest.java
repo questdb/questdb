@@ -605,6 +605,12 @@ public abstract class AbstractCairoTest {
         assertMemoryLeak(AbstractCairoTest.ff, code);
     }
 
+    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
+        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
+        addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
+        writer.apply(addColumnC.build(), true);
+    }
+
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
         final FilesFacade ffBefore = AbstractCairoTest.ff;
@@ -614,6 +620,7 @@ public abstract class AbstractCairoTest {
                 code.run();
                 engine.releaseInactive();
                 engine.releaseInactiveCompilers();
+                engine.releaseInactiveTableSequencers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
@@ -623,16 +630,22 @@ public abstract class AbstractCairoTest {
         });
     }
 
-    protected static void dumpMemoryUsage() {
-        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-            LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        while (walApplyJob.run(0)) {
+            // run until empty
         }
-    }
 
-    protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) throws SqlException {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
-        addColumnC.ofAddColumn(columnName, columnType, 0, false, false, 0);
-        writer.apply(addColumnC.build(), true);
+        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        checkWalTransactionsJob.run(0);
+
+        while (walApplyJob.run(0)) {
+            // run until empty
+        }
+
+        // run once again as there might be notifications to handle now
+        while (walApplyJob.run(0)) {
+            // run until empty
+        }
     }
 
     protected static TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
@@ -653,16 +666,9 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) {
-            // run until empty
-        }
-
-        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        checkWalTransactionsJob.run(0);
-
-        while (walApplyJob.run(0)) {
-            // run until empty
+    protected static void dumpMemoryUsage() {
+        for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+            LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
         }
     }
 
@@ -676,6 +682,10 @@ public abstract class AbstractCairoTest {
 
     protected static void runWalPurgeJob() {
         runWalPurgeJob(engine.getConfiguration().getFilesFacade());
+    }
+
+    protected boolean isWalTable(CharSequence tableName) {
+        return engine.isWalTable(tableName);
     }
 
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
@@ -697,6 +707,10 @@ public abstract class AbstractCairoTest {
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
         return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
+    }
+
+    protected enum WalMode {
+        WITH_WAL, NO_WAL
     }
 
     private static class ClockMock implements MicrosecondClock {

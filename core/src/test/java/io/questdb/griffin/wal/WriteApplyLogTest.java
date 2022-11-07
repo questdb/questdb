@@ -44,8 +44,12 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     @Test
-   public void testApplyOutOfOrder100k() throws Exception {
+    public void testApplyOutOfOrder100k() throws Exception {
         testApplyOutOfOrder(100_000);
+    }
+
+    private void applyWalData(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
+        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -198,9 +202,5 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 compareTables("select * from wal_clean order by ts", "x");
             }
         });
-    }
-
-    private void applyWalData(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalData(walPath, inOrder, rowLo, count1, timestampLo, timestampHi, null, 1);
     }
 }

@@ -222,9 +222,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return b.toString();
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int indexOf(Object o) {
         if (o == null) {

@@ -750,7 +750,7 @@ class SqlOptimiser {
         }
     }
 
-    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m) {
+    private void copyColumnTypesFromMetadata(QueryModel model, TableRecordMetadata m) {
         // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
@@ -1526,59 +1526,6 @@ class SqlOptimiser {
         }
     }
 
-    private void extractCorrelatedQueriesAsJoins(QueryModel model) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            traversalAlgo.traverse(qc.getAst(), new PostOrderTreeTraversalAlgo.Visitor() {
-                @Override
-                public void visit(ExpressionNode node) throws SqlException {
-                    QueryModel qm = node.queryModel;
-                    if (qm != null) {
-                        // validate correlated sub-query, we expect single column
-
-                        ObjList<QueryColumn> correlatedColumns = qm.getColumns();
-                        if (correlatedColumns.size() != 1) {
-                            throw SqlException.$(node.position, "only one column expected in correlated sub-query");
-                        }
-
-                        final QueryColumn refCol = correlatedColumns.getQuick(0);
-
-                        // The correlated sub-query is not initially aliased
-                        // as the sub-query. Single selected column is probably aliased.
-                        // The latter alias we can use when constructing new column reference
-                        final ExpressionNode qmAlias = makeJoinAlias();
-
-                        // rewrite column to alias the joined column
-                        // todo: this has to be GC-free
-                        node.token = qmAlias.token + "." + refCol.getName();
-                        // clear query model from the column
-                        node.queryModel = null;
-                        node.type = LITERAL;
-
-                        qm.setJoinType(QueryModel.JOIN_ONE);
-                        qm.setAlias(qmAlias);
-                        model.getNestedModel().addJoinModel(qm);
-                        ExpressionNode where = qm.getWhereClause();
-                        if (where != null) {
-                            model.setWhereClause(concatFilters(model.getWhereClause(), where));
-                            qm.setWhereClause(null);
-                        }
-                    }
-                }
-
-                @Override
-                public boolean descend(ExpressionNode node) {
-                    // do not descend functions, such as `touch(select ...)`
-                    // what is allowed for correlated sub-queries - arithmetic
-                    // (select a from tab) + 1 alias
-                    // is a valid syntax
-                    return node.type != FUNCTION;
-                }
-            });
-        }
-    }
-
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -2109,23 +2056,33 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (
-                TableReader r = executionContext.getReader(
-                        tableLookupSequence.of(tableName, lo, hi - lo),
-                        TableUtils.ANY_TABLE_ID,
-                        TableUtils.ANY_TABLE_VERSION
-                )
-        ) {
-            model.setTableVersion(r.getVersion());
-            model.setTableId(r.getMetadata().getTableId());
-            copyColumnsFromMetadata(model, r.getMetadata(), false);
-            if (model.isUpdate()) {
-                copyColumnTypesFromMetadata(model, r.getMetadata());
+        if (model.isUpdate()) {
+            try (TableRecordMetadata metadata = executionContext.getMetadata(tableName)) {
+                enumerateColumns(model, metadata);
+            } catch (CairoException e) {
+                throw SqlException.position(tableNamePosition).put(e);
             }
-        } catch (EntryLockedException e) {
-            throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e);
+        } else {
+            try (TableReader reader = executionContext.getReader(
+                    tableLookupSequence.of(tableName, lo, hi - lo),
+                    TableUtils.ANY_TABLE_ID,
+                    TableUtils.ANY_TABLE_VERSION
+                )) {
+                enumerateColumns(model, reader.getMetadata());
+            } catch (EntryLockedException e) {
+                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
+            } catch (CairoException e) {
+                throw SqlException.position(tableNamePosition).put(e);
+            }
+        }
+    }
+
+    private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
+        model.setTableVersion(metadata.getStructureVersion());
+        model.setTableId(metadata.getTableId());
+        copyColumnsFromMetadata(model, metadata, false);
+        if (model.isUpdate()) {
+            copyColumnTypesFromMetadata(model, metadata);
         }
     }
 

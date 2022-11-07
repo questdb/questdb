@@ -26,9 +26,9 @@ package io.questdb.griffin.wal.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
@@ -58,16 +58,15 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN
     };
-
-    private final double nullSet;
-    private final long timestamp;
-    private final double notSet;
-    private final RecordMetadata metadata;
     private final double cancelRows;
-    private final int strLen;
-    private final String[] symbols;
+    private final RecordMetadata metadata;
+    private final double notSet;
+    private final double nullSet;
     private final long s0;
     private final long s1;
+    private final int strLen;
+    private final String[] symbols;
+    private final long timestamp;
 
     public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
         this.cancelRows = cancelRows;

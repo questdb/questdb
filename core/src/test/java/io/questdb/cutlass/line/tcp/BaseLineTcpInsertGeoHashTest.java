@@ -26,11 +26,37 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
+abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     static final String tableName = "tracking";
     static final String targetColumnName = "geohash";
+
+    private final boolean walEnabled;
+
+    public BaseLineTcpInsertGeoHashTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
+    }
 
     @Test
     public abstract void testGeoHashes() throws Exception;
@@ -57,18 +83,29 @@ abstract class LineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
         assertGeoHash(columnBits, inboundLines, expected, (String[]) null);
     }
 
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
+
     protected void assertGeoHash(int columnBits,
                                  String inboundLines,
                                  String expected,
                                  String... expectedExtraStringColumns) throws Exception {
         runInContext(() -> {
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                CairoTestUtils.create(model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp());
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
+                CairoTestUtils.create(model);
+            }
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(tableName));
             }
             recvBuffer = inboundLines;
             handleContextIO();
             waitForIOCompletion();
             closeContext();
+            mayDrainWalQueue();
             assertTable(expected, tableName);
             if (expectedExtraStringColumns != null) {
                 try (TableReader reader = newTableReader(configuration, tableName)) {

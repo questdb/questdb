@@ -133,9 +133,9 @@ public class DropIndexTest extends AbstractGriffinTest {
             try {
                 compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
-            } catch (CairoException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
-                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(
                         PartitionBy.HOUR,
@@ -176,8 +176,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             assertFailure(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     null,
-                    12,
-                    "Column is not indexed [name=колонка][errno=-100]"
+                    36,
+                    "Column is not indexed [name=колонка]"
             );
         });
     }

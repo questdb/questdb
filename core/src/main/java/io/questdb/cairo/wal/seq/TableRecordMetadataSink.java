@@ -41,6 +41,7 @@ public interface TableRecordMetadataSink extends Mutable {
             String systemTableName,
             int tableId,
             int timestampIndex,
+            int compressedTimestampIndex,
             boolean suspended,
             long structureVersion,
             int columnCount

@@ -75,7 +75,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
-        structureVersion++;
+        structureVersion.incrementAndGet();
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
     }
 
@@ -338,7 +338,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
-        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, seqTxn, ++dataVersion, ++partitionTableVersion, structureVersion, columnVersion, ++truncateVersion);
+        resetTxn(
+                txMemBase,
+                writeBaseOffset,
+                getSymbolColumnCount(),
+                ++txn,
+                seqTxn,
+                ++dataVersion,
+                ++partitionTableVersion,
+                structureVersion.get(),
+                columnVersion,
+                ++truncateVersion
+        );
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, 0, CommitMode.NOSYNC);
     }
 
@@ -397,7 +408,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         putLong(TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         putLong(TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
-        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion);
+        putLong(TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
         putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
         putLong(TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
