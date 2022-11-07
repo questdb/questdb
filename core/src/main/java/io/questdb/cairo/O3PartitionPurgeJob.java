@@ -315,10 +315,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         if (isSoftLink) {
                             fileNameSink.clear();
                             Chars.utf8DecodeZ(fileName, fileNameSink);
-                            if (Files.notDots(fileNameSink)) {
-                                // as a precaution, if it is a link to self or up a level ignore it
-                                continue;
-                            }
                         }
                         parsePartitionDateVersion(fileNameSink, partitionList, tableName, partitionByFormat);
                     }
