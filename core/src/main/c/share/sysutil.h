@@ -29,4 +29,4 @@
     _result = _cmd; \
   } while(((int)_result == -1) && (errno == EINTR))
 
-#endif //UTIL_H
+#endif //SYSUTIL_H
