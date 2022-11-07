@@ -119,6 +119,9 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
+            // TODO: getCursor will open partitions where their path may be a soft link to the partition in
+            //  cold storage, which we want to keep read only. For now updates on such partitions do not fail,
+            //  i.e. they go through and modify the cold storage file system.
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 

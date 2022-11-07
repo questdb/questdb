@@ -80,6 +80,8 @@ public interface FilesFacade {
 
     boolean isRestrictedFileSystem();
 
+    boolean isSoftLink(LPSZ softLink);
+
     void iterateDir(LPSZ path, FindVisitor func);
 
     long length(long fd);
@@ -118,11 +120,15 @@ public interface FilesFacade {
 
     int rmdir(Path name);
 
+    int softLink(LPSZ src, LPSZ softLink);
+
     int sync();
 
     boolean touch(LPSZ path);
 
     boolean truncate(long fd, long size);
+
+    int unlink(LPSZ softLink);
 
     void walk(Path src, FindVisitor func);
 
