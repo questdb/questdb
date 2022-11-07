@@ -148,7 +148,7 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
             if (walEnabled) {
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(name);
+                    handleWriterUnlockEvent(engine.getTableNameBySystemName(name));
                 }
             } else {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {

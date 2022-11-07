@@ -152,15 +152,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }
     }
 
-    private void addNewTag(LineData line) {
-        if (shouldFuzz(newColumnFactor)) {
-            final int extraTagIndex = random.nextInt(tagNameBases.length);
-            final CharSequence tagNameNew = generateTagName(extraTagIndex, true);
-            final CharSequence tagValueNew = generateTagValue(extraTagIndex);
-            line.addTag(tagNameNew, tagValueNew);
-        }
-    }
-
     private int[] skipColumns(int[] originalColumnIndexes) {
         if (shouldFuzz(columnSkipFactor)) {
             // avoid list here and just copy slices of the original array into the new one
@@ -180,6 +171,15 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             return columnIndexes;
         }
         return originalColumnIndexes;
+    }
+
+    private void addNewTag(LineData line) {
+        if (shouldFuzz(newColumnFactor)) {
+            final int extraTagIndex = random.nextInt(tagNameBases.length);
+            final CharSequence tagNameNew = generateTagName(extraTagIndex, true);
+            final CharSequence tagValueNew = generateTagValue(extraTagIndex);
+            line.addTag(tagNameNew, tagValueNew);
+        }
     }
 
     private void assertTable(TableData table) {
@@ -397,24 +397,25 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
+            String tableNameBySystemName = engine.getTableNameBySystemName(name);
             if (walEnabled) {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(name);
+                    handleWriterGetEvent(tableNameBySystemName);
                 }
                 // There is no locking as such in WAL, so we treat writer return as an unlock event.
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterUnlockEvent(name);
-                    handleWriterReturnEvent(name);
+                    handleWriterUnlockEvent(tableNameBySystemName);
+                    handleWriterReturnEvent(tableNameBySystemName);
                 }
             } else {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                    handleWriterUnlockEvent(engine.getTableNameBySystemName(name));
+                    handleWriterUnlockEvent(tableNameBySystemName);
                 }
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                    handleWriterGetEvent(engine.getTableNameBySystemName(name));
+                    handleWriterGetEvent(tableNameBySystemName);
                 }
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                    handleWriterReturnEvent(engine.getTableNameBySystemName(name));
+                    handleWriterReturnEvent(tableNameBySystemName);
                 }
             }
         }, 250);

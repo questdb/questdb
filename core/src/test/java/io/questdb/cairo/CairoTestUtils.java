@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 
 public class CairoTestUtils {
 
@@ -44,6 +46,10 @@ public class CairoTestUtils {
                 1,
                 engine.getSystemTableName(model.getTableName())
         );
+    }
+
+    public static void create(CairoEngine engine, TableModel model) {
+        engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), Path.PATH.get(), false, model, false);
     }
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {

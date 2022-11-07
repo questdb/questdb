@@ -182,7 +182,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 tm.col("watts", ColumnType.LONG);
                 tm.timestamp();
                 tm.wal();
-                CairoTestUtils.create(tm);
+                CairoTestUtils.create(engine, tm);
             }
 
             try (TableWriterAPI writer = engine.getTableWriterAPI(AllowAllCairoSecurityContext.INSTANCE, "plug", "test")) {
@@ -667,7 +667,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name)) {
+            if (Chars.equalsNc(engine.getSystemTableName("plug"), name)) {
                 if (factoryType == PoolListener.SRC_WRITER) {
                     if (event == PoolListener.EV_GET) {
                         LOG.info().$("EV_GET ").$(name).$();
@@ -744,13 +744,11 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-            if (Chars.equalsNc("plug", name)) {
-                if (factoryType == PoolListener.SRC_WRITER) {
-                    if (event == PoolListener.EV_RETURN) {
-                        LOG.info().$("EV_RETURN ").$(name).$();
-                        releaseLatch.countDown();
-                    }
-                }
+            if (factoryType == PoolListener.SRC_WRITER
+                    && (event == PoolListener.EV_RETURN)
+                    && Chars.equalsNc(engine.getSystemTableName("plug"), name)) {
+                LOG.info().$("EV_RETURN ").$(name).$();
+                releaseLatch.countDown();
             }
         });
 

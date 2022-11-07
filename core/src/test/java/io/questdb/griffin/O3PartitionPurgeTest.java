@@ -325,7 +325,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
-                    if (Chars.endsWith(name, "1970-01-10" + Files.SEPARATOR)) {
+                    if (Chars.endsWith(name, "1970-01-10")) {
                         deleteAttempts.incrementAndGet();
                         return 5;
                     }
@@ -361,7 +361,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
-                    if (Chars.endsWith(name, "1970-01-10" + Files.SEPARATOR)) {
+                    if (Chars.endsWith(name, "1970-01-10")) {
                         if (deleteAttempts.incrementAndGet() < 3) {
                             return 5;
                         }

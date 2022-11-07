@@ -96,7 +96,10 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 model.col(targetColumnName, ColumnType.getGeoHashTypeWithBits(columnBits)).timestamp();
-                CairoTestUtils.create(model);
+                if (walEnabled) {
+                    model.wal();
+                }
+                CairoTestUtils.create(engine, model);
             }
             if (walEnabled) {
                 Assert.assertTrue(isWalTable(tableName));

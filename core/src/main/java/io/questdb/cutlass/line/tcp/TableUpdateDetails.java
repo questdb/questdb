@@ -580,7 +580,7 @@ public class TableUpdateDetails implements Closeable {
             }
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
-                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16);
+                latestKnownMetadata = engine.getMetadata(AllowAllCairoSecurityContext.INSTANCE, engine.getSystemTableName(tableNameUtf16));
             }
         }
     }

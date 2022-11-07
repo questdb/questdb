@@ -196,7 +196,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
                 m.timestamp("ts").wal();
-                CairoTestUtils.create(m);
+                CairoTestUtils.create(engine, m);
             }
 
             // Send non-partitioned table rows before the partitioned table ones.
@@ -838,9 +838,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            CairoTestUtils.create(m);
+            CairoTestUtils.create(engine, m);
         }
 
+        engine.releaseInactive();
         runInContext((receiver) -> {
             String lineData = "लаблअца поле=\"значение\" 1619509249714000000\n";
             sendLinger(receiver, lineData, "लаблअца");
@@ -891,7 +892,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CairoTestUtils.create(m);
+                CairoTestUtils.create(engine, m);
             }
 
             sendLinger(receiver, lineData, "table_a");
@@ -999,7 +1000,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 if (walEnabled) {
                     m.wal();
                 }
-                CairoTestUtils.create(m);
+                CairoTestUtils.create(engine, m);
             }
 
             send(receiver, lineData, "messages");
