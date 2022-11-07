@@ -44,28 +44,63 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class LogFactory implements Closeable {
 
+    public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
-    public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
-
+    //placeholder that can be used in log.conf to point to $root/log/ dir
+    public static final String LOG_DIR_VAR = "${log.dir}";
     //name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
-
-    //placeholder that can be used in log.conf to point to $root/log/ dir
-    public static final String LOG_DIR_VAR = "${log.dir}";
-    private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
+    static boolean envEnabled = true;
     private static LogFactory INSTANCE;
     private static boolean overwriteWithSyncLogging = false;
-    static boolean envEnabled = true;
+    private final MicrosecondClock clock;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
+    private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
+    private final StringSink sink = new StringSink();
+    private final WorkerPool workerPool;
+    private boolean configured = false;
+    private int queueDepth = DEFAULT_QUEUE_DEPTH;
+    private int recordLength = DEFAULT_MSG_SIZE;
+    public LogFactory() {
+        this(MicrosecondClockImpl.INSTANCE);
+    }
+    private LogFactory(MicrosecondClock clock) {
+        this.clock = clock;
+        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "logging";
+            }
 
-    public static void configureSync() {
-        overwriteWithSyncLogging = true;
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean isDaemonPool() {
+                return true;
+            }
+        }, Metrics.disabled().health());
+    }
+
+    public static synchronized void closeInstance() {
+        LogFactory logFactory = INSTANCE;
+        if (logFactory != null) {
+            logFactory.close(true);
+            INSTANCE = null;
+        }
     }
 
     public static void configureAsync() {
@@ -76,12 +111,8 @@ public class LogFactory implements Closeable {
         configureFromSystemProperties(logFactory, rootDir, true);
     }
 
-    public static Log getLog(Class<?> clazz) {
-        return getLog(clazz.getName());
-    }
-
-    public static Log getLog(CharSequence key) {
-        return getInstance().create(key);
+    public static void configureSync() {
+        overwriteWithSyncLogging = true;
     }
 
     public static synchronized LogFactory getInstance() {
@@ -94,56 +125,19 @@ public class LogFactory implements Closeable {
         return logFactory;
     }
 
+    public static Log getLog(Class<?> clazz) {
+        return getLog(clazz.getName());
+    }
+
+    public static Log getLog(CharSequence key) {
+        return getInstance().create(key);
+    }
+
     public static synchronized void haltInstance() {
         LogFactory logFactory = INSTANCE;
         if (logFactory != null) {
             logFactory.haltThread();
         }
-    }
-
-    public static synchronized void closeInstance() {
-        LogFactory logFactory = INSTANCE;
-        if (logFactory != null) {
-            logFactory.close(true);
-            INSTANCE = null;
-        }
-    }
-
-
-    private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
-    private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
-    private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
-    private final MicrosecondClock clock;
-    private final StringSink sink = new StringSink();
-    private final AtomicBoolean running = new AtomicBoolean();
-    private final AtomicBoolean closed = new AtomicBoolean();
-    private final WorkerPool workerPool;
-    private boolean configured = false;
-    private int queueDepth = DEFAULT_QUEUE_DEPTH;
-    private int recordLength = DEFAULT_MSG_SIZE;
-
-    public LogFactory() {
-        this(MicrosecondClockImpl.INSTANCE);
-    }
-
-    private LogFactory(MicrosecondClock clock) {
-        this.clock = clock;
-        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean isDaemonPool() {
-                return true;
-            }
-
-            @Override
-            public String getPoolName() {
-                return "logging";
-            }
-        }, Metrics.disabled().health());
     }
 
     public void add(final LogWriterConfig config) {
@@ -179,12 +173,36 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public int getQueueDepth() {
-        return queueDepth;
+    @Override
+    public void close() {
+        close(false);
     }
 
-    public int getRecordLength() {
-        return recordLength;
+    public void close(boolean flush) {
+        if (closed.compareAndSet(false, true)) {
+            haltThread();
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                LogWriter job = jobs.get(i);
+                try {
+                    if (job != null && flush) {
+                        try {
+                            // noinspection StatementWithEmptyBody
+                            while (job.run(0)) {
+                                // Keep running the job until it returns false to log all the buffered messages
+                            }
+                        } catch (Exception th) {
+                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                            // Switch to the next job.
+                        }
+                    }
+                } finally {
+                    Misc.freeIfCloseable(job);
+                }
+            }
+            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+                Misc.free(scopeConfigs.getQuick(i));
+            }
+        }
     }
 
     public Log create(Class<?> clazz) {
@@ -251,6 +269,14 @@ public class LogFactory implements Closeable {
         );
     }
 
+    public int getQueueDepth() {
+        return queueDepth;
+    }
+
+    public int getRecordLength() {
+        return recordLength;
+    }
+
     public void startThread() {
         assert !closed.get();
         if (running.compareAndSet(false, true)) {
@@ -261,213 +287,40 @@ public class LogFactory implements Closeable {
         }
     }
 
-    private void haltThread() {
-        if (running.compareAndSet(true, false)) {
-            workerPool.halt();
-        }
-    }
-
-    @Override
-    public void close() {
-        close(false);
-    }
-
-    public void close(boolean flush) {
-        if (closed.compareAndSet(false, true)) {
-            haltThread();
-            for (int i = 0, n = jobs.size(); i < n; i++) {
-                LogWriter job = jobs.get(i);
-                try {
-                    if (job != null && flush) {
-                        try {
-                            // noinspection StatementWithEmptyBody
-                            while (job.run(0)) {
-                                // Keep running the job until it returns false to log all the buffered messages
-                            }
-                        } catch (Exception th) {
-                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                            // Switch to the next job.
-                        }
-                    }
-                } finally {
-                    Misc.freeIfCloseable(job);
+    /**
+     * Converts fully qualified class name into an abbreviated form:
+     * com.questdb.mp.Sequence -> c.n.m.Sequence
+     *
+     * @param key     typically class name
+     * @param builder used for producing the resulting form
+     * @return abbreviated form of key
+     */
+    private static CharSequence compressScope(CharSequence key, StringSink builder) {
+        builder.clear();
+        char c = 0;
+        boolean pick = true;
+        int z = 0;
+        for (int i = 0, n = key.length(); i < n; i++) {
+            char a = key.charAt(i);
+            if (a == '.') {
+                if (!pick) {
+                    builder.put(c).put('.');
+                    pick = true;
                 }
-            }
-            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-                Misc.free(scopeConfigs.getQuick(i));
-            }
-        }
-    }
-
-    @TestOnly
-    ObjHashSet<LogWriter> getJobs() {
-        return jobs;
-    }
-
-    private void setQueueDepth(int queueDepth) {
-        this.queueDepth = queueDepth;
-    }
-
-    private void setRecordLength(int recordLength) {
-        this.recordLength = recordLength;
-    }
-
-    @TestOnly
-    static void configureFromSystemProperties(LogFactory logFactory) {
-        configureFromSystemProperties(logFactory, null, false);
-    }
-
-    static synchronized void configureFromSystemProperties(
-            @NotNull LogFactory logFactory,
-            @Nullable String rootDir,
-            boolean replacePrevInstance
-    ) {
-        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
-        if (conf == null) {
-            conf = DEFAULT_CONFIG;
-        }
-
-        boolean initialized = false;
-        // prevent creating blank log dir from unit tests
-        String logDir = ".";
-        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toString();
-            File logDirFile = new File(logDir);
-            if (!logDirFile.exists() && logDirFile.mkdir()) {
-                System.err.printf("Created log directory: %s%n", logDir);
-            }
-
-            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
-            File f = new File(logPath);
-            if (f.isFile() && f.canRead()) {
-                System.err.printf("Reading log configuration from %s%n", logPath);
-                try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
-                    properties.load(fis);
-                    logFactory.configureFromProperties(properties, logDir);
-                    initialized = true;
-                } catch (IOException e) {
-                    throw new LogError("Cannot read " + logPath, e);
-                }
+            } else if (pick) {
+                c = a;
+                z = i;
+                pick = false;
             }
         }
 
-        if (!initialized) {
-            //in this order of initialization specifying -Dout might end up using internal jar resources ...
-            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
-                if (is != null) {
-                    Properties properties = new Properties();
-                    properties.load(is);
-                    logFactory.configureFromProperties(properties, logDir);
-                    System.err.println("Log configuration loaded from default internal file.");
-                } else {
-                    File f = new File(conf);
-                    if (f.canRead()) {
-                        try (FileInputStream fis = new FileInputStream(f)) {
-                            Properties properties = new Properties();
-                            properties.load(fis);
-                            logFactory.configureFromProperties(properties, logDir);
-                            System.err.printf("Log configuration loaded from: %s%n", conf);
-                        }
-                    } else {
-                        logFactory.configureDefaultWriter();
-                        System.err.println("Log configuration loaded using factory defaults.");
-                    }
-                }
-            } catch (IOException e) {
-                if (!DEFAULT_CONFIG.equals(conf)) {
-                    throw new LogError("Cannot read " + conf, e);
-                } else {
-                    logFactory.configureDefaultWriter();
-                }
-            }
+        for (; z < key.length(); z++) {
+            builder.put(key.charAt(z));
         }
 
-        if (replacePrevInstance) {
-            LogFactory oldLogFactory = INSTANCE;
-            if (oldLogFactory != null) {
-                oldLogFactory.close();
-            }
-            INSTANCE = logFactory;
-        }
-        logFactory.startThread();
-    }
+        builder.put(' ');
 
-    private void configureDefaultWriter() {
-        int level = DEFAULT_LOG_LEVEL;
-        if (isForcedDebug()) {
-            level = level | LogLevel.DEBUG;
-        }
-        add(new LogWriterConfig(level, LogConsoleWriter::new));
-        bind();
-    }
-
-    private ScopeConfiguration find(CharSequence key) {
-        ObjList<CharSequence> keys = scopeConfigMap.keys();
-        CharSequence k = null;
-
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            CharSequence s = keys.getQuick(i);
-            if (Chars.startsWith(key, s)) {
-                k = s;
-                break;
-            }
-        }
-
-        if (k == null) {
-            return null;
-        }
-
-        return scopeConfigMap.get(k);
-    }
-
-    private void configureFromProperties(Properties properties, String logDir) {
-        String writers = getProperty(properties, "writers");
-
-        if (writers == null) {
-            configured = true;
-            return;
-        }
-
-        String s;
-
-        s = getProperty(properties, "queueDepth");
-        if (s != null && s.length() > 0) {
-            try {
-                setQueueDepth(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for queueDepth");
-            }
-        }
-
-        s = getProperty(properties, "recordLength");
-        if (s != null && s.length() > 0) {
-            try {
-                setRecordLength(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for recordLength");
-            }
-        }
-
-        for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
-            if (conf != null) {
-                add(conf);
-            }
-        }
-
-        bind();
-    }
-
-    private static String getProperty(final Properties properties, String key) {
-        if (envEnabled) {
-            final String envValue = System.getenv("QDB_LOG_" + key.replace('.', '_').toUpperCase());
-            if (envValue == null) {
-                return properties.getProperty(key);
-            }
-            return envValue;
-        }
-        return properties.getProperty(key);
+        return builder.toString();
     }
 
     @SuppressWarnings("rawtypes")
@@ -561,51 +414,232 @@ public class LogFactory implements Closeable {
         });
     }
 
+    private static String getProperty(final Properties properties, String key) {
+        if (envEnabled) {
+            final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
+            final String envValue = System.getenv(envKey);
+            if (envValue == null) {
+                return properties.getProperty(key);
+            }
+            System.err.println("    Using env: " + envKey + "=" + envValue);
+            return envValue;
+        }
+        return properties.getProperty(key);
+    }
+
     private static boolean isForcedDebug() {
         return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
     }
 
-    /**
-     * Converts fully qualified class name into an abbreviated form:
-     * com.questdb.mp.Sequence -> c.n.m.Sequence
-     *
-     * @param key     typically class name
-     * @param builder used for producing the resulting form
-     * @return abbreviated form of key
-     */
-    private static CharSequence compressScope(CharSequence key, StringSink builder) {
-        builder.clear();
-        char c = 0;
-        boolean pick = true;
-        int z = 0;
-        for (int i = 0, n = key.length(); i < n; i++) {
-            char a = key.charAt(i);
-            if (a == '.') {
-                if (!pick) {
-                    builder.put(c).put('.');
-                    pick = true;
-                }
-            } else if (pick) {
-                c = a;
-                z = i;
-                pick = false;
+    private void configureDefaultWriter() {
+        int level = DEFAULT_LOG_LEVEL;
+        if (isForcedDebug()) {
+            level = level | LogLevel.DEBUG;
+        }
+        add(new LogWriterConfig(level, LogConsoleWriter::new));
+        bind();
+    }
+
+    private void configureFromProperties(Properties properties, String logDir) {
+        String writers = getProperty(properties, "writers");
+
+        if (writers == null) {
+            configured = true;
+            return;
+        }
+
+        String s;
+
+        s = getProperty(properties, "queueDepth");
+        if (s != null && s.length() > 0) {
+            try {
+                setQueueDepth(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for queueDepth");
             }
         }
 
-        for (; z < key.length(); z++) {
-            builder.put(key.charAt(z));
+        s = getProperty(properties, "recordLength");
+        if (s != null && s.length() > 0) {
+            try {
+                setRecordLength(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for recordLength");
+            }
         }
 
-        builder.put(' ');
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
+            if (conf != null) {
+                add(conf);
+            }
+        }
 
-        return builder.toString();
+        bind();
+    }
+
+    private ScopeConfiguration find(CharSequence key) {
+        ObjList<CharSequence> keys = scopeConfigMap.keys();
+        CharSequence k = null;
+
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence s = keys.getQuick(i);
+            if (Chars.startsWith(key, s)) {
+                k = s;
+                break;
+            }
+        }
+
+        if (k == null) {
+            return null;
+        }
+
+        return scopeConfigMap.get(k);
+    }
+
+    private void haltThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.halt();
+        }
+    }
+
+    private void setQueueDepth(int queueDepth) {
+        this.queueDepth = queueDepth;
+    }
+
+    private void setRecordLength(int recordLength) {
+        this.recordLength = recordLength;
+    }
+
+    @TestOnly
+    static void configureFromSystemProperties(LogFactory logFactory) {
+        configureFromSystemProperties(logFactory, null, false);
+    }
+
+    static synchronized void configureFromSystemProperties(
+            @NotNull LogFactory logFactory,
+            @Nullable String rootDir,
+            boolean replacePrevInstance
+    ) {
+        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+
+        boolean initialized = false;
+        // prevent creating blank log dir from unit tests
+        String logDir = ".";
+        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            logDir = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdir()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            File f = new File(logPath);
+            if (f.isFile() && f.canRead()) {
+                System.err.printf("Reading log configuration from %s%n", logPath);
+                try (FileInputStream fis = new FileInputStream(logPath)) {
+                    Properties properties = new Properties();
+                    properties.load(fis);
+                    logFactory.configureFromProperties(properties, logDir);
+                    initialized = true;
+                } catch (IOException e) {
+                    throw new LogError("Cannot read " + logPath, e);
+                }
+            }
+        }
+
+        if (!initialized) {
+            //in this order of initialization specifying -Dout might end up using internal jar resources ...
+            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
+                if (is != null) {
+                    Properties properties = new Properties();
+                    properties.load(is);
+                    logFactory.configureFromProperties(properties, logDir);
+                    System.err.println("Log configuration loaded from default internal file.");
+                } else {
+                    File f = new File(conf);
+                    if (f.canRead()) {
+                        try (FileInputStream fis = new FileInputStream(f)) {
+                            Properties properties = new Properties();
+                            properties.load(fis);
+                            logFactory.configureFromProperties(properties, logDir);
+                            System.err.printf("Log configuration loaded from: %s%n", conf);
+                        }
+                    } else {
+                        logFactory.configureDefaultWriter();
+                        System.err.println("Log configuration loaded using factory defaults.");
+                    }
+                }
+            } catch (IOException e) {
+                if (!DEFAULT_CONFIG.equals(conf)) {
+                    throw new LogError("Cannot read " + conf, e);
+                } else {
+                    logFactory.configureDefaultWriter();
+                }
+            }
+        }
+
+        if (replacePrevInstance) {
+            LogFactory oldLogFactory = INSTANCE;
+            if (oldLogFactory != null) {
+                oldLogFactory.close();
+            }
+            INSTANCE = logFactory;
+        }
+        logFactory.startThread();
+    }
+
+    @TestOnly
+    ObjHashSet<LogWriter> getJobs() {
+        return jobs;
+    }
+
+    private static class Holder implements Closeable {
+        private final Sequence lSeq;
+        private final RingQueue<LogRecordSink> ring;
+        private FanOut fanOut;
+        private SCSequence wSeq;
+
+        public Holder(int queueDepth, final int recordLength) {
+            this.ring = new RingQueue<>(
+                    LogRecordSink::new,
+                    Numbers.ceilPow2(recordLength),
+                    queueDepth,
+                    MemoryTag.NATIVE_LOGGER
+            );
+            this.lSeq = new MPSequence(queueDepth);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(ring);
+        }
+    }
+
+    private static class LengthDescendingComparator implements Comparator<CharSequence>, Serializable {
+        @Override
+        public int compare(CharSequence o1, CharSequence o2) {
+            int l1, l2;
+            if ((l1 = o1.length()) < (l2 = o2.length())) {
+                return 1;
+            }
+
+            if (l1 > l2) {
+                return -11;
+            }
+
+            return 0;
+        }
     }
 
     private static class ScopeConfiguration implements Closeable {
         private final int[] channels;
-        private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
-        private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
         private final ObjList<Holder> holderList = new ObjList<>();
+        private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
+        private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
         private int ci = 0;
 
         public ScopeConfiguration(int levels) {
@@ -733,44 +767,6 @@ public class LogFactory implements Closeable {
 
         private Holder getHolder(int index) {
             return holderMap.get(channels[index]);
-        }
-    }
-
-    private static class LengthDescendingComparator implements Comparator<CharSequence>, Serializable {
-        @Override
-        public int compare(CharSequence o1, CharSequence o2) {
-            int l1, l2;
-            if ((l1 = o1.length()) < (l2 = o2.length())) {
-                return 1;
-            }
-
-            if (l1 > l2) {
-                return -11;
-            }
-
-            return 0;
-        }
-    }
-
-    private static class Holder implements Closeable {
-        private final RingQueue<LogRecordSink> ring;
-        private final Sequence lSeq;
-        private SCSequence wSeq;
-        private FanOut fanOut;
-
-        public Holder(int queueDepth, final int recordLength) {
-            this.ring = new RingQueue<>(
-                    LogRecordSink::new,
-                    Numbers.ceilPow2(recordLength),
-                    queueDepth,
-                    MemoryTag.NATIVE_LOGGER
-            );
-            this.lSeq = new MPSequence(queueDepth);
-        }
-
-        @Override
-        public void close() {
-            Misc.free(ring);
         }
     }
 
