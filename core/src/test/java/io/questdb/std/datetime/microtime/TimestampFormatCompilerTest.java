@@ -52,11 +52,6 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testRandomFormat() throws Exception {
-        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
-    }
-
-    @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
     }
@@ -95,21 +90,6 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testDayOfYear() throws Exception {
-        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
-    }
-
-    @Test
-    public void testWeekOfYear() throws Exception {
-        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
-    }
-
-    @Test
-    public void testWeekOfMonth() throws Exception {
-        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
-    }
-
-    @Test
     public void testDayMonthYear() throws Exception {
         assertThat("dd-MM-yyyy", "2010-03-10T00:00:00.000Z", "10-03-2010");
     }
@@ -117,6 +97,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testDayMonthYearNoDelim() throws Exception {
         assertThat("yyyyddMM", "2010-03-10T00:00:00.000Z", "20101003");
+    }
+
+    @Test
+    public void testDayOfYear() throws Exception {
+        assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
     }
 
     @Test
@@ -161,20 +146,6 @@ public class TimestampFormatCompilerTest {
         assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
         assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
         assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatWeekOfYear() throws Exception {
-        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
-        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
-        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatWeekOfMonth() throws Exception {
-        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
-        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
-        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
@@ -288,11 +259,64 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatISOWeek() throws NumericException {
+        assertFormat("05", "ww", "2022-01-31T02:02:02.000012Z");
+        assertMicros("yyyy-ww HH:mm:ss.SSS U", "2022-01-31T02:02:02.001002Z", "2022-05 02:02:02.001 002");
+    }
+
+    @Test
+    public void testFormatIsoWeekOfYear() throws Exception {
+        assertFormat("53", "ww", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "ww", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "ww", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatMicros() throws Exception {
         assertFormat("678-15", "S-U", "1978-03-19T21:20:45.678Z", 15);
         assertFormat("678.025", "S.UUU", "1978-03-19T21:20:45.678Z", 25);
         assertFormat("1978, .025", "yyyy, .UUU", "1978-03-19T21:20:45.678Z", 25);
         assertFormat("1978, .25 678", "yyyy, .U SSS", "1978-03-19T21:20:45.678Z", 25);
+    }
+
+    @Test
+    public void testFormatMicros3Micros() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000 2", "y-MM-dd HH:mm:ss.SSS U", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatMicros6Five() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.074812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.074812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Four() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.004812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.004812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Milli() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.123000", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z");
+    }
+
+    @Test
+    public void testFormatMicros6One() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000002", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatMicros6Six() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Three() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
+    }
+
+    @Test
+    public void testFormatMicros6Two() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000012", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000012Z");
     }
 
     @Test
@@ -353,6 +377,52 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatNano9Five() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.074812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.074812Z");
+    }
+
+    @Test
+    public void testFormatNano9Four() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.004812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.004812Z");
+    }
+
+    @Test
+    public void testFormatNano9One() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000002", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.000002Z");
+    }
+
+    @Test
+    public void testFormatNano9Six() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatNano9Three() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.000812Z");
+    }
+
+    @Test
+    public void testFormatNano9Two() throws NumericException {
+        assertFormat("2022-02-02 02:02:02.000012", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.000012Z");
+    }
+
+    @Test
+    public void testFormatNanoOneDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 0", "dd, yyy N", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.NSSS", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.1010");
+    }
+
+    @Test
+    public void testFormatNanoThreeDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 000", "dd, yyy NNN", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.SSSNNN", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.010123");
+    }
+
+    @Test
     public void testFormatSecond() throws Exception {
         assertFormat("05", "ss", "2017-03-31T14:00:05.000Z");
         assertFormat("59", "ss", "2017-03-31T12:00:59.000Z");
@@ -397,6 +467,13 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatWeekOfYear() throws Exception {
+        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatWeekday() throws Exception {
         assertFormat("09, Sunday", "dd, EE", "2017-04-09T00:00:00.000Z");
         assertFormat("10, Monday", "dd, EE", "2017-04-10T00:00:00.000Z");
@@ -428,21 +505,19 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatYearIsoFourDigits() throws Exception {
+        assertFormat("2020", "YYYY", "2021-01-02T00:00:00.000Z");
+
+        assertFormat("1970", "YYYY", "1970-01-01T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatYearOneDigit() throws Exception {
         assertFormat("09, 2017", "dd, y", "2017-04-09T00:00:00.000Z");
         assertFormat("2017", "y", "2017-04-09T00:00:00.000Z");
 
         assertFormat("09, 7", "dd, y", "0007-04-09T00:00:00.000Z");
         assertFormat("7", "y", "0007-04-09T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatYearTwoDigits() throws Exception {
-        assertFormat("09, 17", "dd, yy", "2017-04-09T00:00:00.000Z");
-        assertFormat("17", "yy", "2017-04-09T00:00:00.000Z");
-
-        assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
-        assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
     }
 
     @Test
@@ -455,27 +530,20 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatYearTwoDigits() throws Exception {
+        assertFormat("09, 17", "dd, yy", "2017-04-09T00:00:00.000Z");
+        assertFormat("17", "yy", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
+        assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatZeroYear() throws Exception {
         assertFormat("09, 1", "dd, y", "0000-04-09T00:00:00.000Z");
         assertFormat("09, 01", "dd, yy", "0000-04-09T00:00:00.000Z");
         assertFormat("09, 001", "dd, yyy", "0000-04-09T00:00:00.000Z");
         assertFormat("09, 0001", "dd, yyyy", "0000-04-09T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatNanoOneDigits() throws Exception {
-        // we do not store nanos
-        assertFormat("09, 017 0", "dd, yyy N", "2017-04-09T00:00:00.333123Z");
-        // in this format N - nanos should not be greedy
-        assertMicros("yyyy-MM-dd HH:mm:ss.NSSS", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.1010");
-    }
-
-    @Test
-    public void testFormatNanoThreeDigits() throws Exception {
-        // we do not store nanos
-        assertFormat("09, 017 000", "dd, yyy NNN", "2017-04-09T00:00:00.333123Z");
-        // in this format N - nanos should not be greedy
-        assertMicros("yyyy-MM-dd HH:mm:ss.SSSNNN", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.010123");
     }
 
     @Test
@@ -585,6 +653,22 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testHttpFormat() throws Exception {
         assertThat("E, dd MMM yyyy HH:mm:ss", "2017-04-05T14:55:10.000Z", "Mon, 05 Apr 2017 14:55:10");
+    }
+
+    @Test
+    public void testIgnoredNanos() throws Exception {
+        assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+        assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
+    }
+
+    @Test
+    public void testIsoWeekOfYear() throws Exception {
+        assertThat("ww, YYYY", "2010-02-08T00:00:00.000Z", "06, 2010");
+    }
+
+    @Test
+    public void testIsoYear() throws Exception {
+        assertThat("YYYY", "2010-01-01T00:00:00.000Z", "2010");
     }
 
     @Test
@@ -706,6 +790,71 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testParseMicros6Mid() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123000Z", "2022-02-02 02:02:02.123");
+    }
+
+    @Test
+    public void testParseMicros6Mid2() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.123700Z", "2022-02-02 02:02:02.1237");
+    }
+
+    @Test
+    public void testParseMicros6Small() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.100000Z", "2022-02-02 02:02:02.1");
+    }
+
+    @Test
+    public void testParseNanos9Eight() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.12345678");
+    }
+
+    @Test
+    public void testParseNanos9Five() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123450Z", "2022-02-02 02:02:02.12345");
+    }
+
+    @Test
+    public void testParseNanos9Four() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123400Z", "2022-02-02 02:02:02.1234");
+    }
+
+    @Test
+    public void testParseNanos9Nine() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.123456789");
+    }
+
+    @Test
+    public void testParseNanos9One() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.100000Z", "2022-02-02 02:02:02.1");
+    }
+
+    @Test
+    public void testParseNanos9Seven() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.1234567");
+    }
+
+    @Test
+    public void testParseNanos9Six() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.123456");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseNanos9Ten() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.1234567891");
+    }
+
+    @Test
+    public void testParseNanos9Three() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123000Z", "2022-02-02 02:02:02.123");
+    }
+
+    @Test
+    public void testParseNanos9Two() throws Exception {
+        assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.120000Z", "2022-02-02 02:02:02.12");
+    }
+
+    @Test
     public void testParseUtc() throws Exception {
         assertThat(TimestampFormatUtils.UTC_PATTERN, "2011-10-03T00:00:00.000Z", "2011-10-03T00:00:00.000Z");
     }
@@ -713,6 +862,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testQuote() throws Exception {
         assertThat("yyyy'y'ddMM", "2010-03-10T00:00:00.000Z", "2010y1003");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRandomFormat() throws Exception {
+        assertThat("Ketchup", "", "2021-11-19T14:00:00.000Z");
     }
 
     @Test
@@ -733,6 +887,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testSingleDigitYear() throws Exception {
         assertThat("yMM", "0001-03-01T00:00:00.000Z", "103");
+    }
+
+    @Test
+    public void testThreeDigitYear() throws Exception {
+        assertThat("u, dd-MM-yyy", "0999-04-03T00:00:00.000Z", "5, 03-04-999");
     }
 
     @Test
@@ -787,13 +946,13 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testWeekdayDigit() throws Exception {
-        assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
+    public void testWeekOfYear() throws Exception {
+        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
     }
 
     @Test
-    public void testThreeDigitYear() throws Exception {
-        assertThat("u, dd-MM-yyy", "0999-04-03T00:00:00.000Z", "5, 03-04-999");
+    public void testWeekdayDigit() throws Exception {
+        assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
     }
 
     @Test(expected = NumericException.class)
@@ -816,12 +975,6 @@ public class TimestampFormatCompilerTest {
     public void testWeekdayShort() throws Exception {
         assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
-    }
-
-    @Test
-    public void testIgnoredNanos() throws Exception {
-        assertThat("E, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
-        assertThat("EE, dd-MM-yyyy N", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014 234");
     }
 
     private static DateFormat get(CharSequence pattern) {

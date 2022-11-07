@@ -1274,7 +1274,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.append();
                 try {
                     walWriter.removeColumn("noColLikeThis");
-                    fail("Should not be able to remove non existent column");
+                    fail("Should not be able to remove nonexistent column");
                 } catch (InvalidColumnException e) {
                     assertNull(e.getMessage());
                 }

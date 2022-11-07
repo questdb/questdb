@@ -590,13 +590,6 @@ public final class Numbers {
         return (value & (value - 1)) == 0;
     }
 
-    public static double longToDouble(long value) {
-        if (value != Numbers.LONG_NaN) {
-            return value;
-        }
-        return Double.NaN;
-    }
-
     public static float longToFloat(long value) {
         if (value != Numbers.LONG_NaN) {
             return value;
@@ -610,6 +603,10 @@ public final class Numbers {
 
     public static int msb(long value) {
         return 63 - Long.numberOfLeadingZeros(value);
+    }
+
+    public static boolean notDigit(char c) {
+        return c < '0' || c > '9';
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
@@ -845,6 +842,51 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return parseLong0(sequence, p, lim);
+    }
+
+    public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 6 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 6) {
+            val *= 10;
+            i++;
+        }
+
+        return encodeLowHighInts(negative ? val : -val, len);
     }
 
     @NotNull
@@ -1326,8 +1368,6 @@ public final class Numbers {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
 
-    //////////////////////
-
     private static void appendInt10(CharSink sink, int i) {
         int c;
         sink.put((char) ('0' + i / 1000000000));
@@ -1490,10 +1530,6 @@ public final class Numbers {
         sink.put((char) ('0' + i / 100));
         sink.put((char) ('0' + (c = i % 100) / 10));
         sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static boolean notDigit(char c) {
-        return c < '0' || c > '9';
     }
 
     private static double roundHalfUp0PosScale(double value, int scale) {

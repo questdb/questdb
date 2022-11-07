@@ -57,6 +57,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "yy",
                 "yyy",
                 "yyyy",
+                // "YYYY", only used in PartitionBy as it relates to ISO Weeks
                 "M",
                 "MM",
                 "MMM",
@@ -68,7 +69,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "u",
                 "D",
                 "w",
-                "W",
+                // "ww", only used in PartitionBy as it relates to ISO Weeks
                 "a",
                 "H",
                 "HH",
@@ -92,7 +93,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "Z",
                 "x",
                 "xx",
-                "merge_copy_var_column",
+                "xxx",
                 // "U", these also don't make sense for millis
                 // "UUU"
         };

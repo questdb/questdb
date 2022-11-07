@@ -114,7 +114,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into src values (now(), 'foo')");
             assertQueryDisallowed("insert into src select now(), name from src");
         });
     }
@@ -147,7 +147,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowTruncate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("truncate table src");
         });
     }
@@ -207,7 +207,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("backup database");
         });
     }
@@ -217,7 +217,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("backup table src");
         });
     }
@@ -227,7 +227,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowsRepairTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("repair table src");
         });
     }

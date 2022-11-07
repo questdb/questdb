@@ -1003,7 +1003,7 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
-        // non existent type
+        // nonexistent type
         properties.setProperty("line.float.default.column.type", "FLAT");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
@@ -1062,7 +1062,7 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
-        // non existent type
+        // nonexistent type
         properties.setProperty("line.integer.default.column.type", "BITE");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
