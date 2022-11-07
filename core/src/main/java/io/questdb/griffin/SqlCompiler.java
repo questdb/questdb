@@ -1466,7 +1466,11 @@ public class SqlCompiler implements Closeable {
                 engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer, newTable);
             }
         } else {
-            throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
+            if (!createTableModel.isIgnoreIfExists()) {
+                throw SqlException.$(name.position, "cannot acquire table lock [lockedReason=").put(lockedReason).put(']');
+            } else {
+                compiledQuery.ofCreateTable();
+            }
         }
 
         if (createTableModel.getQueryModel() == null) {
@@ -1615,9 +1619,6 @@ public class SqlCompiler implements Closeable {
                 if (model.getTimestampColumnName() == null &&
                         ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
                     throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
-                }
-                if (model.getTimestampFormat() == null) {
-                    model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                 }
                 if (model.getDelimiter() < 0) {
                     model.setDelimiter((byte) ',');
@@ -2433,27 +2434,47 @@ public class SqlCompiler implements Closeable {
     private void validateTableModelAndCreateTypeCast(
             CreateTableModel model,
             RecordMetadata metadata,
-            @Transient IntIntHashMap typeCast) throws SqlException {
+            @Transient IntIntHashMap typeCast
+    ) throws SqlException {
         CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
         ObjList<CharSequence> castColumnNames = castModels.keys();
 
         for (int i = 0, n = castColumnNames.size(); i < n; i++) {
             CharSequence columnName = castColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
+            ColumnCastModel ccm = castModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
                 // Cast isn't going to go away when we re-parse SQL. We must make this
                 // permanent error
-                throw SqlException.invalidColumn(castModels.get(columnName).getColumnNamePos(), columnName);
+                throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
             }
-            ColumnCastModel ccm = castModels.get(columnName);
             int from = metadata.getColumnType(index);
             int to = ccm.getColumnType();
             if (isCompatibleCase(from, to)) {
+                int modelColumnIndex = model.getColumnIndex(columnName);
+                if (!ColumnType.isSymbol(to) && model.isIndexed(modelColumnIndex)) {
+                    throw SqlException.$(ccm.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
+                }
                 typeCast.put(index, to);
             } else {
                 throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
+            }
+        }
+
+        // validate that all indexes are specified only on columns with symbol type
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+            CharSequence columnName = model.getColumnName(i);
+            ColumnCastModel ccm = castModels.get(columnName);
+            if (ccm != null) {
+                // We already checked this column when validating casts.
+                continue;
+            }
+            int index = metadata.getColumnIndexQuiet(columnName);
+            assert index > -1 : "wtf? " + columnName;
+            if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
         }
 

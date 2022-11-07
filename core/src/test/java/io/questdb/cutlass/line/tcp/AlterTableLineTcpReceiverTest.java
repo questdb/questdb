@@ -143,7 +143,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     "plug,room=6B watts=37i " + day1 + "\n" +
                                     "plug,room=7G watts=21i " + day1 + "\n" +
                                     "plug,room=1C watts=11i " + day1 + "\n",
-                            WAIT_ALTER_TABLE_RELEASE,
+                            WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
                             "ALTER TABLE plug DROP PARTITION LIST '2023-02-27'"));
                     assertTable("room\twatts\ttimestamp\n");
 
@@ -436,7 +436,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
                     "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
             assertTable(expected);
-        });
+        }, false, 1000);
     }
 
     @Test
@@ -603,10 +603,11 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     LOG.error().$(e).$();
                 } finally {
                     // exit this method if alter executed
-                    releaseLatch.countDown();
                     LOG.info().$("Stopped waiting for writer ASYNC event").$();
                     // If subscribed to global writer event queue, unsubscribe here
                     alterOperationFuture.close();
+                    alterOperationFuture = null;
+                    releaseLatch.countDown();
                 }
             }).start();
         }
@@ -670,6 +671,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
             if (wait != WAIT_NO_WAIT) {
                 releaseLatch.await();
+                assert alterOperationFuture == null;
                 return sqlException;
             }
         } finally {

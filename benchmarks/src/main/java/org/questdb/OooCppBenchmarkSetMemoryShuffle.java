@@ -55,9 +55,9 @@ public class OooCppBenchmarkSetMemoryShuffle {
 
             int iterations = 100;
             for (int i = 1; i < 50; i += 1) {
-                double timeout1 = runReshufle64(iterations, i, index, src, dest);
-                double timeout2 = runReshufle32(iterations, i, index, src, dest);
-                double timeout3 = runReshufle16(iterations, i, index, src, dest);
+                double timeout1 = runReshuffle64(iterations, i, index, src, dest);
+                double timeout2 = runReshuffle32(iterations, i, index, src, dest);
+                double timeout3 = runReshuffle16(iterations, i, index, src, dest);
                 System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
             }
         } finally {
@@ -67,7 +67,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
         }
     }
 
-    private static double runReshufle64(int iterations, int mb, long index, long src, long dest) {
+    private static double runReshuffle64(int iterations, int mb, long index, long src, long dest) {
         long nt = System.nanoTime();
         long size = MB * mb / 8;
 
@@ -78,7 +78,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
-    private static double runReshufle32(int iterations, int mb, long index, long src, long dest) {
+    private static double runReshuffle32(int iterations, int mb, long index, long src, long dest) {
         long nt = System.nanoTime();
         long size = MB * mb / 4;
 
@@ -89,7 +89,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
-    private static double runReshufle16(int iterations, int mb, long index, long src, long dest) {
+    private static double runReshuffle16(int iterations, int mb, long index, long src, long dest) {
         long nt = System.nanoTime();
         long size = MB * mb / 2;
 

@@ -1186,7 +1186,7 @@ static inline Vec8uq operator >> (Vec8uq const a, uint32_t b) {
 static inline Vec8uq operator >> (Vec8uq const a, int32_t b) {
     return a >> (uint32_t)b;
 }
-// vector operator >>= : shift right artihmetic
+// vector operator >>= : shift right arithmetic
 static inline Vec8uq & operator >>= (Vec8uq & a, uint32_t b) {
     a = a >> b;
     return a;
@@ -1957,7 +1957,7 @@ static inline Vec16i operator / (Vec16i const a, Divisor_i const d) {
     __m512i t2  = _mm512_srli_epi64(t1,32);                // dword of even index results
     __m512i t7  = _mm512_mask_mov_epi32(t2, 0xAAAA, t4);   // blend two results
     __m512i t8  = _mm512_add_epi32(t7,a);                  // add
-    __m512i t9  = _mm512_sra_epi32(t8,d.gets1());          // shift right artihmetic
+    __m512i t9  = _mm512_sra_epi32(t8,d.gets1());          // shift right arithmetic
     __m512i t10 = _mm512_srai_epi32(a,31);                 // sign of a
     __m512i t11 = _mm512_sub_epi32(t10,sgn);               // sign of a - sign of d
     __m512i t12 = _mm512_sub_epi32(t9,t11);                // + 1 if a < 0, -1 if d < 0

@@ -34,6 +34,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
@@ -158,12 +159,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     public boolean lock(CharSequence name) {
         Entry e = getEntry(name);
         final long thread = Thread.currentThread().getId();
-        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
+        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || (e.lockOwner == thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
-                    } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
+                    } else if (Unsafe.arrayGetVolatile(e.allocations, i) == thread) {
                         // same thread, don't need to order reads
                         if (e.readers[i] != null) {
                             // this thread has busy reader, it should close first
@@ -177,9 +178,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
                 }
 
-                // prevent new entries from being created
-                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                    break;
+                // try to prevent new entries from being created
+                if (e.next == null) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                        break;
+                    } else if (e.nextStatus == NEXT_ALLOCATED) {
+                        // now we must wait until another thread that executes a get() call
+                        // assigns the newly created next entry
+                        while (e.next == null) {
+                            Os.pause();
+                        }
+                    }
                 }
 
                 e = e.next;
@@ -343,8 +352,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final Object[] readers = new Object[ENTRY_SIZE];
         final int index;
         volatile long lockOwner = -1L;
-        @SuppressWarnings("unused")
-        int nextStatus = 0;
+        volatile int nextStatus = NEXT_OPEN;
         volatile Entry next;
 
         public Entry(int index, long currentMicros) {
