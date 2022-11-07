@@ -337,7 +337,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
 
     SaveLastError();
 
-    printf("here %lu\n", GetLastError());
 
     return -1;
 }
