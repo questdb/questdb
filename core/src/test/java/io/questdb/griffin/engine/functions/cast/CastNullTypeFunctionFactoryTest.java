@@ -37,7 +37,7 @@ public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastNullToNonExisingTypeShouldFail() {
+    public void testCastNullToNonexistentTypeShouldFail() {
         try {
             assertQuery(null, "cast(null as NON_EXISTING_TYPE)", null, null);
             Assert.fail();

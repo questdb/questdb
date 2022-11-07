@@ -103,7 +103,7 @@ struct rosti_t {
 
 // An abstraction over a bitmask. It provides an easy way to iterate through the
 // indexes of the set bits of a bitmask.  When Shift=0 (platforms with SSE),
-// this is a true bitmask.  On non-SSE, platforms the arithematic used to
+// this is a true bitmask.  On non-SSE, platforms the arithmetic used to
 // emulate the SSE behavior works in bytes (Shift=3) and leaves each bytes as
 // either 0x00 or 0x80.
 //

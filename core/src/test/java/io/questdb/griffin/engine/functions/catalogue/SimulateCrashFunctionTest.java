@@ -29,7 +29,7 @@ import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class SimlateCrashFunctionTest extends AbstractGriffinTest {
+public class SimulateCrashFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {

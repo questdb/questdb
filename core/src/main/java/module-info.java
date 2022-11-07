@@ -554,7 +554,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory,
-//                  PostgeSQL catalogue functions
+//                  PostgreSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.PgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttrDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgAttributeFunctionFactory,
