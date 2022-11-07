@@ -316,13 +316,89 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionDeletedAsyncAfterDroppedBySql() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+
+                compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+                // OOO inserts partition 1970-01-09
+                compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
+                Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                    // OOO inserts partition 1970-01-09
+                    compiler.compile("insert into tbl select 4, '1970-01-09T09'", sqlExecutionContext);
+
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.2").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
+                        compile("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
+                        runPartitionPurgeJobs();
+
+                        // This should not fail
+                        rdr2.openPartition(0);
+                    }
+                    runPartitionPurgeJobs();
+                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                    // This should not fail
+                    rdr.openPartition(0);
+                }
+                runPartitionPurgeJobs();
+
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionsNotVacuumedBeforeCommit() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("create table tbl as (" +
+                    "select x, " +
+                    "timestamp_sequence('1970-01-01', 10 * 60 * 60 * 1000000L) ts " +
+                    "from long_sequence(1)" +
+                    ") timestamp(ts) partition by HOUR", sqlExecutionContext);
+
+            try (Path path = new Path()) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tbl", "test")) {
+                    long startTimestamp = Timestamps.HOUR_MICROS + 10;
+
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = writer.newRow(startTimestamp);
+                        row.putLong(0, i + 1);
+                        row.append();
+                        startTimestamp += Timestamps.HOUR_MICROS;
+                    }
+
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01.0").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    compiler.compile("vacuum table tbl", sqlExecutionContext);
+                    runPartitionPurgeJobs();
+
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    writer.commit();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPurgeFailed() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger deleteAttempts = new AtomicInteger();
             ff = new FilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
-                    if (Chars.endsWith(name, "1970-01-10" + Files.SEPARATOR)) {
+                    if (Chars.endsWith(name, "1970-01-10")) {
                         deleteAttempts.incrementAndGet();
                         return 5;
                     }
@@ -357,7 +433,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
             ff = new FilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
-                    if (Chars.endsWith(name, "1970-01-10" + Files.SEPARATOR)) {
+                    if (Chars.endsWith(name, "1970-01-10")) {
                         if (deleteAttempts.incrementAndGet() < 3) {
                             return 5;
                         }
@@ -395,41 +471,6 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testPartitionsNotVacuumedBeforeCommit() throws Exception {
-        assertMemoryLeak(() -> {
-
-            compiler.compile("create table tbl as (" +
-                    "select x, " +
-                    "timestamp_sequence('1970-01-01', 10 * 60 * 60 * 1000000L) ts " +
-                    "from long_sequence(1)" +
-                    ") timestamp(ts) partition by HOUR", sqlExecutionContext);
-
-            try (Path path = new Path()) {
-                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tbl", "test")) {
-                    long startTimestamp = Timestamps.HOUR_MICROS + 10;
-
-                    for (int i = 0; i < 10; i ++) {
-                        TableWriter.Row row = writer.newRow(startTimestamp);
-                        row.putLong(0, i + 1);
-                        row.append();
-                        startTimestamp += Timestamps.HOUR_MICROS;
-                    }
-
-                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01.0").concat("x.d").$();
-                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
-
-                    compiler.compile("vacuum table tbl", sqlExecutionContext);
-                    runPartitionPurgeJobs();
-
-                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
-
-                    writer.commit();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testReaderUsesPartition() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
@@ -458,47 +499,6 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
                     Assert.assertFalse(Chars.toString(path), Files.exists(path));
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testPartitionDeletedAsyncAfterDroppedBySql() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-
-                compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
-
-                // OOO inserts partition 1970-01-09
-                compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
-
-                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
-                Assert.assertTrue(Chars.toString(path), Files.exists(path));
-
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
-                    // OOO inserts partition 1970-01-09
-                    compiler.compile("insert into tbl select 4, '1970-01-09T09'", sqlExecutionContext);
-
-                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.2").concat("x.d").$();
-                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
-
-                    try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
-                        compile("alter table tbl drop partition list '1970-01-09'", sqlExecutionContext);
-                        runPartitionPurgeJobs();
-
-                        // This should not fail
-                        rdr2.openPartition(0);
-                    }
-                    runPartitionPurgeJobs();
-                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
-
-                    // This should not fail
-                    rdr.openPartition(0);
-                }
-                runPartitionPurgeJobs();
-
-                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
-                Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });
     }
