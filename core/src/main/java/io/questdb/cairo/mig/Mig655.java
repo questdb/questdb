@@ -25,9 +25,9 @@
 package io.questdb.cairo.mig;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -60,36 +60,43 @@ public class Mig655 {
         try (MemoryMARW txnFile = context.createRwMemoryOf(ff, path)) {
 
             boolean isA = (txnFile.getLong(TX_BASE_OFFSET_VERSION_64) & 1L) == 0L;
-            final int baseOffset = txnFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
-            final int symbolsSize = txnFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
             final long partitionSegmentSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
             final int partitionSegmentSize = txnFile.getInt(partitionSegmentSizeOffset);
+
             if (partitionSegmentSize > 0) {
 
-                final int newPartitionSegmentSize = partitionSegmentSize * 2;
-
-                MigrationActions.LOG.info().$("partition table [table=").$(context.getTablePath()).$(", size=").$(partitionSegmentSize).$(", partitions=").$(partitionSegmentSize / (4 * Long.BYTES)) // version 426 -> 4 longs
+                MigrationActions.LOG.info().$("partition table [table=").$(context.getTablePath())
+                        .$(", size=").$(partitionSegmentSize)
+                        .$(", partitions=").$(partitionSegmentSize / (4 * Long.BYTES)) // version 426 -> 4 longs
                         .I$();
 
                 // read/extend current partition table
-                final LongList partitionTable = new LongList();
+                MemoryARW txFileUpdate = context.getTempVirtualMem();
+                txFileUpdate.jumpTo(0);
+                final int symbolsSize = txnFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+                final int baseOffset = txnFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
                 final long readOffset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + symbolsSize + Integer.BYTES;
                 for (int i = 0, limit = partitionSegmentSize; i < limit; i += Long.BYTES) { // for each long
-                    partitionTable.add(txnFile.getLong(readOffset + i));
+                    txFileUpdate.putLong(txnFile.getLong(readOffset + i));
                     if ((i + Long.BYTES) % (4 * Long.BYTES) == 0) {
-                        partitionTable.add(0L); // mask
-                        partitionTable.add(0L); // available0
-                        partitionTable.add(0L); // available1
-                        partitionTable.add(0L); // available2
+                        txFileUpdate.putLong(0L); // mask
+                        txFileUpdate.putLong(0L); // available0
+                        txFileUpdate.putLong(0L); // available1
+                        txFileUpdate.putLong(0L); // available2
                     }
                 }
 
-                // overwrite partition table with parched version
+                // overwrite partition table with patched version
+                final int newPartitionSegmentSize = partitionSegmentSize * 2;
                 txnFile.putInt(partitionSegmentSizeOffset, newPartitionSegmentSize); // A/B header
                 txnFile.jumpTo(readOffset - Integer.BYTES);
                 txnFile.putInt(newPartitionSegmentSize);
-                for (int i = 0, limit = partitionTable.size(); i < limit; i++) {
-                    txnFile.putLong(partitionTable.getQuick(i));
+                long updateSize = txFileUpdate.getAppendOffset();
+                int pageId = 0;
+                while (updateSize > 0) {
+                    long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());
+                    txnFile.putBlockOfBytes(txFileUpdate.getPageAddress(pageId++), writeSize);
+                    updateSize -= writeSize;
                 }
             }
         }
