@@ -66,7 +66,7 @@ public class PathTest {
             }
         }) {
             path.of(tableName).$();
-            for (int i = 0; i < 50_000; i++) {
+            for (int i = 0; i < 3; i++) {
                 path.$();
                 Assert.assertEquals(1, extendCount.get());
             }
