@@ -71,9 +71,9 @@ public class MemoryLeakTest extends AbstractGriffinTest {
                     }
                 }
             } finally {
-                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
+                Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
                 engine.clear();
-                Assert.assertEquals(Unsafe.getMemUsed(),  getUsed());
+                Assert.assertEquals(Unsafe.getMemUsed(), getUsed());
             }
         });
     }
@@ -81,7 +81,7 @@ public class MemoryLeakTest extends AbstractGriffinTest {
     private long getUsed() {
         long used = 0;
         for (int i = 0; i < MemoryTag.SIZE; i++) {
-           used += Unsafe.getMemUsedByTag(i);
+            used += Unsafe.getMemUsedByTag(i);
         }
         return used;
     }

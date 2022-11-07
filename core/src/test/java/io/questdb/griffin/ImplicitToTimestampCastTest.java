@@ -26,23 +26,19 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImplicitStringLiteralToTimestampConversionWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = '2022-03-23'",
-                "CREATE TABLE balances as (" +
-                        "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
-    }
-
-    @Test
-    public void testImplicitSymbolLiteralToTimestampConversionWorks() throws Exception {
-        assertQuery("cust_id\tts\n" +
-                        "abc\t2022-03-23T00:00:00.000000Z\n",
-                "select * from balances where ts = cast('2022-03-23' as symbol)",
-                "CREATE TABLE balances as (" +
-                        "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                        ");", null, true, true, false);
+    public void testImplicitNonConstSymbolExpressionToTimestampConversionFails() throws Exception {
+        try {
+            assertQuery("cust_id\tts\n" +
+                            "abc\t2022-03-23T00:00:00.000000Z\n",
+                    "select * from balances where ts = rnd_symbol('2022-03-23')",
+                    "CREATE TABLE balances as (" +
+                            "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
+                            ");",
+                    null, true, true, false);
+            Assert.fail("Exception should be thrown");
+        } catch (SqlException e) {
+            Assert.assertEquals(e.getMessage(), "[32] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (TIMESTAMP,SYMBOL)");
+        }
     }
 
     @Test
@@ -50,6 +46,16 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
         assertQuery("cust_id\tts\n" +
                         "abc\t2022-03-23T00:00:00.000000Z\n",
                 "select * from balances where ts = '2022-03-23' || ' 00:00'",
+                "CREATE TABLE balances as (" +
+                        "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
+                        ");", null, true, true, false);
+    }
+
+    @Test
+    public void testImplicitStringLiteralToTimestampConversionWorks() throws Exception {
+        assertQuery("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n",
+                "select * from balances where ts = '2022-03-23'",
                 "CREATE TABLE balances as (" +
                         "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
                         ");", null, true, true, false);
@@ -66,19 +72,13 @@ public class ImplicitToTimestampCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImplicitNonConstSymbolExpressionToTimestampConversionFails() throws Exception {
-        try {
-            assertQuery("cust_id\tts\n" +
-                            "abc\t2022-03-23T00:00:00.000000Z\n",
-                    "select * from balances where ts = rnd_symbol('2022-03-23')",
-                    "CREATE TABLE balances as (" +
-                            "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
-                            ");",
-                    null, true, true, false);
-            Assert.fail("Exception should be thrown");
-        } catch (SqlException e) {
-            Assert.assertEquals(e.getMessage(), "[32] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (TIMESTAMP,SYMBOL)");
-        }
+    public void testImplicitSymbolLiteralToTimestampConversionWorks() throws Exception {
+        assertQuery("cust_id\tts\n" +
+                        "abc\t2022-03-23T00:00:00.000000Z\n",
+                "select * from balances where ts = cast('2022-03-23' as symbol)",
+                "CREATE TABLE balances as (" +
+                        "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as timestamp) as ts from long_sequence(1) " +
+                        ");", null, true, true, false);
     }
 
 }

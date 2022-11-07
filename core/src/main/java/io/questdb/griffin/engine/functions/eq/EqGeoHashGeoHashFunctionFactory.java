@@ -174,26 +174,6 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstCheckFuncShort extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final short hash;
-
-        public ConstCheckFuncShort(Function arg, short hash) {
-            this.arg = arg;
-            this.hash = hash;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoShort(rec));
-        }
-    }
-
     private static class ConstCheckFuncInt extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final int hash;
@@ -231,6 +211,26 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoLong(rec));
+        }
+    }
+
+    private static class ConstCheckFuncShort extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final short hash;
+
+        public ConstCheckFuncShort(Function arg, short hash) {
+            this.arg = arg;
+            this.hash = hash;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (hash == arg.getGeoShort(rec));
         }
     }
 

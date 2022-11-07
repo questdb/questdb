@@ -29,9 +29,9 @@ import io.questdb.griffin.SqlException;
 import java.io.Closeable;
 
 public interface OperationFuture extends Closeable {
+    int QUERY_COMPLETE = 2;
     int QUERY_NO_RESPONSE = 0;
     int QUERY_STARTED = 1;
-    int QUERY_COMPLETE = 2;
 
     /***
      * Blocking wait for query completion. Returns immediately if query has executed synchronously
@@ -51,6 +51,19 @@ public interface OperationFuture extends Closeable {
      */
     int await(long timeout) throws SqlException;
 
+    /***
+     * In case of async execution close must be called to remove sequence
+     */
+    @Override
+    void close();
+
+    /***
+     * Returns the number of rows affected by the command run asynchronously
+     * @return
+     *  - number of rows changed
+     */
+    long getAffectedRowsCount();
+
     long getInstanceId();
 
     /***
@@ -61,17 +74,4 @@ public interface OperationFuture extends Closeable {
      *  - QUERY_COMPLETE if writer completed response received
      */
     int getStatus();
-
-    /***
-     * Returns the number of rows affected by the command run asynchronously
-     * @return
-     *  - number of rows changed
-     */
-    long getAffectedRowsCount();
-
-    /***
-     * In case of async execution close must be called to remove sequence
-     */
-    @Override
-    void close();
 }

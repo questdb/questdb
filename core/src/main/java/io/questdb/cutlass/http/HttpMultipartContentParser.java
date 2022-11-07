@@ -38,29 +38,29 @@ import java.io.Closeable;
 
 public class HttpMultipartContentParser implements Closeable, Mutable {
 
-    private static final int START_PARSING = 1;
-    private static final int START_BOUNDARY = 2;
-    private static final int PARTIAL_START_BOUNDARY = 3;
-    private static final int HEADERS = 4;
-    private static final int PARTIAL_HEADERS = 5;
     private static final int BODY = 6;
     private static final int BODY_BROKEN = 8;
-    private static final int POTENTIAL_BOUNDARY = 9;
-    private static final int PRE_HEADERS = 10;
-    private static final int START_PRE_HEADERS = 11;
-    private static final int START_HEADERS = 12;
-    private static final int DONE = 13;
+    private static final int BOUNDARY_INCOMPLETE = 3;
     private static final int BOUNDARY_MATCH = 1;
     private static final int BOUNDARY_NO_MATCH = 2;
-    private static final int BOUNDARY_INCOMPLETE = 3;
+    private static final int DONE = 13;
+    private static final int HEADERS = 4;
+    private static final int PARTIAL_HEADERS = 5;
+    private static final int PARTIAL_START_BOUNDARY = 3;
+    private static final int POTENTIAL_BOUNDARY = 9;
+    private static final int PRE_HEADERS = 10;
+    private static final int START_BOUNDARY = 2;
+    private static final int START_HEADERS = 12;
+    private static final int START_PARSING = 1;
+    private static final int START_PRE_HEADERS = 11;
     private final HttpHeaderParser headerParser;
     private DirectByteCharSequence boundary;
     private byte boundaryByte;
     private int boundaryLen;
     private int boundaryPtr;
     private int consumedBoundaryLen;
-    private int state;
     private long resumePtr;
+    private int state;
 
     public HttpMultipartContentParser(HttpHeaderParser headerParser) {
         this.headerParser = headerParser;
@@ -221,6 +221,26 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         return false;
     }
 
+    private int matchBoundary(long lo, long hi) {
+        long start = lo;
+        int ptr = boundaryPtr;
+
+        while (lo < hi && ptr < boundaryLen) {
+            if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
+                return BOUNDARY_NO_MATCH;
+            }
+        }
+
+        this.boundaryPtr = ptr;
+
+        if (boundaryPtr < boundaryLen) {
+            return BOUNDARY_INCOMPLETE;
+        }
+
+        this.consumedBoundaryLen = (int) (lo - start);
+        return BOUNDARY_MATCH;
+    }
+
     private long onChunkWithRetryHandle(
             HttpMultipartContentListener listener,
             long lo,
@@ -255,25 +275,5 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         if (needsRetry != null) throw needsRetry;
 
         return resumePtr;
-    }
-
-    private int matchBoundary(long lo, long hi) {
-        long start = lo;
-        int ptr = boundaryPtr;
-
-        while (lo < hi && ptr < boundaryLen) {
-            if (Unsafe.getUnsafe().getByte(lo++) != boundary.byteAt(ptr++)) {
-                return BOUNDARY_NO_MATCH;
-            }
-        }
-
-        this.boundaryPtr = ptr;
-
-        if (boundaryPtr < boundaryLen) {
-            return BOUNDARY_INCOMPLETE;
-        }
-
-        this.consumedBoundaryLen = (int) (lo - start);
-        return BOUNDARY_MATCH;
     }
 }

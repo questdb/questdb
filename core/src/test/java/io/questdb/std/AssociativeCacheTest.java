@@ -50,40 +50,6 @@ public class AssociativeCacheTest {
     }
 
     @Test
-    public void testGaugeUpdates() {
-        Gauge gauge = new GaugeImpl("foobar");
-        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge);
-        Assert.assertEquals(0, gauge.getValue());
-        for (int i = 0; i < 10; i++) {
-            cache.put(Integer.toString(i), Integer.toString(i));
-            Assert.assertEquals(i + 1, gauge.getValue());
-        }
-
-        cache.poll("0");
-        Assert.assertEquals(9, gauge.getValue());
-        // Second poll() on the same key should be ignored.
-        cache.poll("0");
-        Assert.assertEquals(9, gauge.getValue());
-        // put() should insert value for key-value pair cleared by poll().
-        cache.put("0", "42");
-        Assert.assertEquals(10, gauge.getValue());
-
-        cache.clear();
-        Assert.assertEquals(0, gauge.getValue());
-    }
-
-    @Test
-    public void testMinSize() {
-        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
-        cache.put("X", "1");
-        cache.put("Y", "2");
-        cache.put("Z", "3");
-        Assert.assertNull(cache.peek("X"));
-        Assert.assertNull(cache.peek("Y"));
-        Assert.assertEquals("3", cache.peek("Z"));
-    }
-
-    @Test
     public void testFull() {
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
         CharSequenceHashSet all = new CharSequenceHashSet();
@@ -106,6 +72,29 @@ public class AssociativeCacheTest {
             }
         }
         Assert.assertEquals(512, reject.size());
+    }
+
+    @Test
+    public void testGaugeUpdates() {
+        Gauge gauge = new GaugeImpl("foobar");
+        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge);
+        Assert.assertEquals(0, gauge.getValue());
+        for (int i = 0; i < 10; i++) {
+            cache.put(Integer.toString(i), Integer.toString(i));
+            Assert.assertEquals(i + 1, gauge.getValue());
+        }
+
+        cache.poll("0");
+        Assert.assertEquals(9, gauge.getValue());
+        // Second poll() on the same key should be ignored.
+        cache.poll("0");
+        Assert.assertEquals(9, gauge.getValue());
+        // put() should insert value for key-value pair cleared by poll().
+        cache.put("0", "42");
+        Assert.assertEquals(10, gauge.getValue());
+
+        cache.clear();
+        Assert.assertEquals(0, gauge.getValue());
     }
 
     @Test
@@ -137,6 +126,17 @@ public class AssociativeCacheTest {
         } finally {
             Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testMinSize() {
+        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
+        cache.put("X", "1");
+        cache.put("Y", "2");
+        cache.put("Z", "3");
+        Assert.assertNull(cache.peek("X"));
+        Assert.assertNull(cache.peek("Y"));
+        Assert.assertEquals("3", cache.peek("Z"));
     }
 
     @Test

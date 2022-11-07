@@ -38,9 +38,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public class LineUdpParserSupportTest extends LineUdpInsertTest {
+    private static final String locationColumnName = "location";
     private static final String tableName = "table";
     private static final String targetColumnName = "column";
-    private static final String locationColumnName = "location";
 
     @Test
     public void testGetValueType() {

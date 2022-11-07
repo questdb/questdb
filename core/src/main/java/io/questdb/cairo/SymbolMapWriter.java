@@ -41,16 +41,16 @@ import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapWriter implements Closeable, MapWriter {
-    public static final int HEADER_SIZE = 64;
-    public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_CACHE_ENABLED = 4;
+    public static final int HEADER_CAPACITY = 0;
     public static final int HEADER_NULL_FLAG = 8;
+    public static final int HEADER_SIZE = 64;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
-    private final BitmapIndexWriter indexWriter;
-    private final MemoryMARW charMem;
-    private final MemoryMARW offsetMem;
     private final CharSequenceIntHashMap cache;
+    private final MemoryMARW charMem;
+    private final BitmapIndexWriter indexWriter;
     private final int maxHash;
+    private final MemoryMARW offsetMem;
     private final SymbolValueCountCollector valueCountCollector;
     private boolean nullValue = false;
     private int symbolIndexInTxWriter;
@@ -149,6 +149,25 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
+        boolean remapped = false;
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            if (dst.put(src.valueOf(srcId)) != srcId) {
+                remapped = true;
+            }
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+        return remapped;
+    }
+
+    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            map.putInt(dst.put(src.valueOf(srcId)));
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+    }
+
     @Override
     public void close() {
         Misc.free(indexWriter);
@@ -159,6 +178,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    @Override
+    public boolean getNullFlag() {
+        return offsetMem.getBool(HEADER_NULL_FLAG);
     }
 
     public int getSymbolCount() {
@@ -228,17 +252,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
-    static int offsetToKey(long offset) {
-        return (int) ((offset - HEADER_SIZE) / 8L);
-    }
-
-    static long keyToOffset(int key) {
-        return HEADER_SIZE + key * 8L;
-    }
-
     @Override
     public void updateCacheFlag(boolean flag) {
         offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
+    }
+
+    @Override
+    public void updateNullFlag(boolean flag) {
+        offsetMem.putBool(HEADER_NULL_FLAG, flag);
     }
 
     private void jumpCharMemToSymbolCount(int symbolCount) {
@@ -277,32 +298,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return symIndex;
     }
 
-    @Override
-    public void updateNullFlag(boolean flag) {
-        offsetMem.putBool(HEADER_NULL_FLAG, flag);
+    static long keyToOffset(int key) {
+        return HEADER_SIZE + key * 8L;
     }
 
-    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
-        boolean remapped = false;
-        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
-            if (dst.put(src.valueOf(srcId)) != srcId) {
-                remapped = true;
-            }
-        }
-        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
-        return remapped;
-    }
-
-    public static void mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
-        map.jumpTo(0);
-        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
-            map.putInt(dst.put(src.valueOf(srcId)));
-        }
-        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
-    }
-
-    @Override
-    public boolean getNullFlag() {
-        return offsetMem.getBool(HEADER_NULL_FLAG);
+    static int offsetToKey(long offset) {
+        return (int) ((offset - HEADER_SIZE) / 8L);
     }
 }

@@ -128,47 +128,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexBindVariableReplacedContext() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select" +
-                    " x l," +
-                    " timestamp_sequence(400000000000, 500000000) ts" +
-                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
-
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            indexBindVariableReplacedContext(false);
-
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            indexBindVariableReplacedContext(true);
-        });
-    }
-
-    @Test
-    public void testMultiplePartitionsOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table t1 as (select " +
-                    " x," +
-                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(1000)) timestamp(ts) partition by day", sqlExecutionContext);
-
-            compiler.compile("insert into t1 select " +
-                    " x," +
-                    " timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(1000)", sqlExecutionContext);
-
-            final String query = "select * from t1 where x < 3 order by ts desc";
-            final String expected = "x\tts\n" +
-                    "2\t1970-01-02T00:00:00.100000Z\n" +
-                    "1\t1970-01-02T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n";
-
-            assertSql(query, expected);
-            assertSqlRunWithJit(query);
-        });
-    }
-
-    @Test
     public void testBindVariablesFilterWithColTops() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.clear();
@@ -214,6 +173,74 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "D\t9\t1970-01-06T19:18:20.000000Z\n";
 
             assertSql(query, expected2);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testIndexBindVariableReplacedContext() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select" +
+                    " x l," +
+                    " timestamp_sequence(400000000000, 500000000) ts" +
+                    " from long_sequence(100)) timestamp(ts)", sqlExecutionContext);
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            indexBindVariableReplacedContext(false);
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            indexBindVariableReplacedContext(true);
+        });
+    }
+
+    @Test
+    public void testMixedSelectPreTouchEnabled() throws Exception {
+        assertMemoryLeak(() -> {
+            enableColumnPreTouch = true;
+
+            compiler.compile("create table t1 as (select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(10)) timestamp(ts) partition by day", sqlExecutionContext);
+
+            final String query = "select 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
+            final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
+                    "1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951\n" +
+                    "1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772\n" +
+                    "1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0\n" +
+                    "1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979\n" +
+                    "1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178\n" +
+                    "1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907\n" +
+                    "1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903\n" +
+                    "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
+                    "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
+
+            assertSql(query, expected);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testMultiplePartitionsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t1 as (select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(1000)) timestamp(ts) partition by day", sqlExecutionContext);
+
+            compiler.compile("insert into t1 select " +
+                    " x," +
+                    " timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) ts " +
+                    "from long_sequence(1000)", sqlExecutionContext);
+
+            final String query = "select * from t1 where x < 3 order by ts desc";
+            final String expected = "x\tts\n" +
+                    "2\t1970-01-02T00:00:00.100000Z\n" +
+                    "1\t1970-01-02T00:00:00.000000Z\n" +
+                    "2\t1970-01-01T00:00:00.100000Z\n" +
+                    "1\t1970-01-01T00:00:00.000000Z\n";
+
+            assertSql(query, expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -345,6 +372,11 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectAllBothPageFramesFilterWithColTopsPreTouchEnabled() throws Exception {
+        testSelectAllBothPageFramesFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
+    }
+
+    @Test
     public void testSelectAllBothPageFramesFilterWithColTopsScalar() throws Exception {
         testSelectAllBothPageFramesFilterWithColTops(SqlJitMode.JIT_MODE_FORCE_SCALAR, false);
     }
@@ -355,8 +387,8 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAllBothPageFramesFilterWithColTopsPreTouchEnabled() throws Exception {
-        testSelectAllBothPageFramesFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
+    public void testSelectAllFilterWithColTopsPreTouchEnabled() throws Exception {
+        testSelectAllFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
     }
 
     @Test
@@ -370,11 +402,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectAllFilterWithColTopsPreTouchEnabled() throws Exception {
-        testSelectAllFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
-    }
-
-    @Test
     public void testSelectAllTypesFromRecordPreTouchDisabled() throws Exception {
         testSelectAllTypesFromRecord(false);
     }
@@ -384,50 +411,9 @@ public class CompiledFilterTest extends AbstractGriffinTest {
         testSelectAllTypesFromRecord(true);
     }
 
-    private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
-        assertMemoryLeak(() -> {
-            enableColumnPreTouch = preTouch;
-
-            final String query = "select * from x where b = true and kk < 10";
-            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +
-                    "2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2\n" +
-                    "3\t844704299\ttrue\t\t0.3456897991538844\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                    "00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr\n" +
-                    "6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8197\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw\n" +
-                    "8\t526232578\ttrue\tE\t0.6379992093447574\t0.8515\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d\n";
-            final String ddl = "create table x as (select" +
-                    " cast(x as int) kk," +
-                    " rnd_int() a," +
-                    " rnd_boolean() b," +
-                    " rnd_str(1,1,2) c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_symbol(4,4,4,2) i," +
-                    " rnd_long() j," +
-                    " timestamp_sequence(400000000000, 500000000) k," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m," +
-                    " rnd_str(5,16,2) n," +
-                    " rnd_char() cc," +
-                    " rnd_long256() l2," +
-                    " rnd_geohash(1) hash1b," +
-                    " rnd_geohash(2) hash2b," +
-                    " rnd_geohash(3) hash3b," +
-                    " rnd_geohash(5) hash1c," +
-                    " rnd_geohash(10) hash2c," +
-                    " rnd_geohash(20) hash4c," +
-                    " rnd_geohash(40) hash8c" +
-                    " from long_sequence(100)) timestamp(k)";
-
-            assertQuery(expected,
-                    query,
-                    ddl,
-                    "k",
-                    true);
-            assertSqlRunWithJit(query);
-        });
+    @Test
+    public void testSelectSingleColumnFilterWithColTopsPreTouchEnabled() throws Exception {
+        testSelectSingleColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
     }
 
     @Test
@@ -438,11 +424,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     @Test
     public void testSelectSingleColumnFilterWithColTopsVectorized() throws Exception {
         testSelectSingleColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, false);
-    }
-
-    @Test
-    public void testSelectSingleColumnFilterWithColTopsPreTouchEnabled() throws Exception {
-        testSelectSingleColumnFilterWithColTops(SqlJitMode.JIT_MODE_ENABLED, true);
     }
 
     @Test
@@ -491,33 +472,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                         "1970-01-05T15:31:40.000000Z\tC\n" +
                         "1970-01-05T15:40:00.000000Z\tC\n", sink);
             }
-        });
-    }
-
-    @Test
-    public void testMixedSelectPreTouchEnabled() throws Exception {
-        assertMemoryLeak(() -> {
-            enableColumnPreTouch = true;
-
-            compiler.compile("create table t1 as (select " +
-                    " x," +
-                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(10)) timestamp(ts) partition by day", sqlExecutionContext);
-
-            final String query = "select 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
-            final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
-                    "1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951\n" +
-                    "1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772\n" +
-                    "1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979\n" +
-                    "1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178\n" +
-                    "1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907\n" +
-                    "1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903\n" +
-                    "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
-
-            assertSql(query, expected);
-            assertSqlRunWithJit(query);
         });
     }
 
@@ -659,6 +613,52 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                 "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
         testFilterWithColTops(query, expected, jitMode, preTouch);
+    }
+
+    private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
+        assertMemoryLeak(() -> {
+            enableColumnPreTouch = preTouch;
+
+            final String query = "select * from x where b = true and kk < 10";
+            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +
+                    "2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2\n" +
+                    "3\t844704299\ttrue\t\t0.3456897991538844\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                    "00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr\n" +
+                    "6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8197\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw\n" +
+                    "8\t526232578\ttrue\tE\t0.6379992093447574\t0.8515\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d\n";
+            final String ddl = "create table x as (select" +
+                    " cast(x as int) kk," +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " timestamp_sequence(400000000000, 500000000) k," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_char() cc," +
+                    " rnd_long256() l2," +
+                    " rnd_geohash(1) hash1b," +
+                    " rnd_geohash(2) hash2b," +
+                    " rnd_geohash(3) hash3b," +
+                    " rnd_geohash(5) hash1c," +
+                    " rnd_geohash(10) hash2c," +
+                    " rnd_geohash(20) hash4c," +
+                    " rnd_geohash(40) hash8c" +
+                    " from long_sequence(100)) timestamp(k)";
+
+            assertQuery(expected,
+                    query,
+                    ddl,
+                    "k",
+                    true);
+            assertSqlRunWithJit(query);
+        });
     }
 
     private void testSelectSingleColumnFilterWithColTops(int jitMode, boolean preTouch) throws Exception {

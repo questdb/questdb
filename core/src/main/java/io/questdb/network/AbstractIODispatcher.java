@@ -35,39 +35,39 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C>, EagerThreadSetup {
-    protected static final int M_TIMESTAMP = 0;
-    protected static final int M_FD = 1;
-    protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_IDLE = 1;
+    protected static final int DISCONNECT_SRC_QUEUE = 0;
     protected static final int DISCONNECT_SRC_SHUTDOWN = 2;
+    protected static final int M_FD = 1;
+    protected static final int M_TIMESTAMP = 0;
     private final static String[] DISCONNECT_SOURCES;
     protected final Log LOG;
-    protected final RingQueue<IOEvent<C>> interestQueue;
-    protected final MPSequence interestPubSeq;
-    protected final SCSequence interestSubSeq;
-    protected final RingQueue<IOEvent<C>> ioEventQueue;
-    protected final SPSequence ioEventPubSeq;
-    protected final MCSequence ioEventSubSeq;
-    protected final MillisecondClock clock;
     protected final int activeConnectionLimit;
-    protected final IOContextFactory<C> ioContextFactory;
-    protected final NetworkFacade nf;
-    protected final int initialBias;
-    protected final RingQueue<IOEvent<C>> disconnectQueue;
+    protected final MillisecondClock clock;
     protected final MPSequence disconnectPubSeq;
+    protected final RingQueue<IOEvent<C>> disconnectQueue;
     protected final SCSequence disconnectSubSeq;
     protected final long idleConnectionTimeout;
+    protected final int initialBias;
+    protected final MPSequence interestPubSeq;
+    protected final RingQueue<IOEvent<C>> interestQueue;
+    protected final SCSequence interestSubSeq;
+    protected final IOContextFactory<C> ioContextFactory;
+    protected final SPSequence ioEventPubSeq;
+    protected final RingQueue<IOEvent<C>> ioEventQueue;
+    protected final MCSequence ioEventSubSeq;
+    protected final NetworkFacade nf;
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
-    private final int sndBufSize;
-    private final int rcvBufSize;
-    private final long queuedConnectionTimeoutMs;
     private final boolean peerNoLinger;
-    protected long serverFd;
+    private final long queuedConnectionTimeoutMs;
+    private final int rcvBufSize;
+    private final int sndBufSize;
     protected boolean closed = false;
-    private volatile boolean listening;
+    protected long serverFd;
     private long closeListenFdEpochMs;
+    private volatile boolean listening;
     private int port;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
 
@@ -149,6 +149,11 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
+    public boolean isListening() {
+        return listening;
+    }
+
+    @Override
     public boolean processIOQueue(IORequestProcessor<C> processor) {
         long cursor = ioEventSubSeq.next();
         while (cursor == -2) {
@@ -169,11 +174,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     @Override
-    public boolean isListening() {
-        return listening;
-    }
-
-    @Override
     public void registerChannel(C context, int operation) {
         long cursor = interestPubSeq.nextBully();
         IOEvent<C> evt = interestQueue.get(cursor);
@@ -188,6 +188,49 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         if (ioContextFactory instanceof EagerThreadSetup) {
             ((EagerThreadSetup) ioContextFactory).setup();
         }
+    }
+
+    private void addPending(long fd, long timestamp) {
+        // append to pending
+        // all rows below watermark will be registered with kqueue
+        int r = pending.addRow();
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        pending.set(r, M_TIMESTAMP, timestamp);
+        pending.set(r, M_FD, fd);
+        pending.set(r, ioContextFactory.newInstance(fd, this));
+        pendingAdded(r);
+    }
+
+    private void createListenFd() throws NetworkError {
+        this.serverFd = nf.socketTcp(false);
+        final int backlog = configuration.getListenBacklog();
+        if (this.port == 0) {
+            // Note that `configuration.getBindPort()` might also be 0.
+            // In such case, we will bind to an ephemeral port.
+            this.port = configuration.getBindPort();
+        }
+        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
+            if (this.port == 0) {
+                // We resolve port 0 only once. In case we close and re-open the
+                // listening socket, we will reuse the previously resolved
+                // ephemeral port.
+                this.port = nf.resolvePort(this.serverFd);
+            }
+            nf.listen(this.serverFd, backlog);
+        } else {
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
+                    configuration.getDispatcherLogName(),
+                    configuration.getBindIPv4Address(),
+                    this.port);
+        }
+        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+                .$(" [fd=").$(serverFd)
+                .$(" backlog=").$(backlog)
+                .I$();
+    }
+
+    private void disconnectContext(IOEvent<C> event) {
+        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
     }
 
     protected void accept(long timestamp) {
@@ -243,49 +286,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 LOG.info().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
             }
         }
-    }
-
-    private void addPending(long fd, long timestamp) {
-        // append to pending
-        // all rows below watermark will be registered with kqueue
-        int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, ioContextFactory.newInstance(fd, this));
-        pendingAdded(r);
-    }
-
-    private void createListenFd() throws NetworkError {
-        this.serverFd = nf.socketTcp(false);
-        final int backlog = configuration.getListenBacklog();
-        if (this.port == 0) {
-            // Note that `configuration.getBindPort()` might also be 0.
-            // In such case, we will bind to an ephemeral port.
-            this.port = configuration.getBindPort();
-        }
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), this.port)) {
-            if (this.port == 0) {
-                // We resolve port 0 only once. In case we close and re-open the
-                // listening socket, we will reuse the previously resolved
-                // ephemeral port.
-                this.port = nf.resolvePort(this.serverFd);
-            }
-            nf.listen(this.serverFd, backlog);
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket(
-                    configuration.getDispatcherLogName(),
-                    configuration.getBindIPv4Address(),
-                    this.port);
-        }
-        LOG.advisory().$("listening on ").$ip(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                .$(" [fd=").$(serverFd)
-                .$(" backlog=").$(backlog)
-                .I$();
-    }
-
-    private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context, DISCONNECT_SRC_QUEUE);
     }
 
     protected void doDisconnect(C context, int src) {

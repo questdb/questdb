@@ -30,16 +30,6 @@ import org.junit.Test;
 public class CommitLagRetentionTest extends AbstractGriffinTest {
 
     @Test
-    public void testRenameColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable();
-            assertCommitLagValues();
-            compile("alter table my_table rename column x to y", sqlExecutionContext);
-            assertCommitLagValues();
-        });
-    }
-
-    @Test
     public void testAddColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -50,11 +40,12 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropColumn() throws Exception {
+    public void testAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            compile("alter table my_table drop column x", sqlExecutionContext);
+            executeInsert("insert into my_table values(0, 1000, 'a')");
+            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -70,12 +61,11 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddIndex() throws Exception {
+    public void testDropColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
             assertCommitLagValues();
-            executeInsert("insert into my_table values(0, 1000, 'a')");
-            compile("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            compile("alter table my_table drop column x", sqlExecutionContext);
             assertCommitLagValues();
         });
     }
@@ -93,6 +83,15 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testRenameColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertCommitLagValues();
+            compile("alter table my_table rename column x to y", sqlExecutionContext);
+            assertCommitLagValues();
+        });
+    }
 
     private void assertCommitLagValues() throws SqlException {
         TestUtils.assertSql(

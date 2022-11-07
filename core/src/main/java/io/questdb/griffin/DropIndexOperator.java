@@ -38,8 +38,8 @@ import static io.questdb.cairo.TableUtils.dFile;
 
 public class DropIndexOperator extends PurgingOperator {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
-    private final LongList rollbackColumnVersions = new LongList();
     private final Path other;
+    private final LongList rollbackColumnVersions = new LongList();
 
     public DropIndexOperator(
             CairoConfiguration configuration,

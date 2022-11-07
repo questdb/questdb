@@ -35,10 +35,10 @@ import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
 
-    private final DirectLongList rows;
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final long pageFrameQueueCapacity;
+    private final DirectLongList rows;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
 
@@ -52,34 +52,6 @@ public class PageFrameReduceTask implements Closeable {
     public void close() {
         Misc.free(rows);
         Misc.free(columns);
-    }
-
-    void collected() {
-        collected(false);
-    }
-
-    void collected(boolean forceCollect) {
-        final long frameCount = frameSequence.getFrameCount();
-        // We have to reset capacity only on max all queue items
-        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
-        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
-        // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
-            resetCapacities();
-        }
-
-        // we assume that frame indexes are published in ascending order
-        // and when we see the last index, we would free up the remaining resources
-        if (frameIndex + 1 == frameCount) {
-            frameSequence.reset();
-        }
-
-        frameSequence = null;
-    }
-
-    public void resetCapacities() {
-        rows.resetCapacity();
-        columns.resetCapacity();
     }
 
     public DirectLongList getColumns() {
@@ -115,5 +87,33 @@ public class PageFrameReduceTask implements Closeable {
         this.frameSequence = frameSequence;
         this.frameIndex = frameIndex;
         rows.clear();
+    }
+
+    public void resetCapacities() {
+        rows.resetCapacity();
+        columns.resetCapacity();
+    }
+
+    void collected() {
+        collected(false);
+    }
+
+    void collected(boolean forceCollect) {
+        final long frameCount = frameSequence.getFrameCount();
+        // We have to reset capacity only on max all queue items
+        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
+        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
+        // we let these sizes stick until produce starts to wind down.
+        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
+            resetCapacities();
+        }
+
+        // we assume that frame indexes are published in ascending order
+        // and when we see the last index, we would free up the remaining resources
+        if (frameIndex + 1 == frameCount) {
+            frameSequence.reset();
+        }
+
+        frameSequence = null;
     }
 }

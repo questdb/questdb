@@ -250,10 +250,6 @@ abstract class AbstractDoubleHandPickedTest {
         }
     }
 
-    abstract double parse(CharSequence str, boolean rejectOverflow) throws NumericException;
-
-    protected abstract double parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
-
     private void testIllegalInput(String s) {
         try {
             parse(s, false);
@@ -306,4 +302,8 @@ abstract class AbstractDoubleHandPickedTest {
         } catch (NumericException ignored) {
         }
     }
+
+    abstract double parse(CharSequence str, boolean rejectOverflow) throws NumericException;
+
+    protected abstract double parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
 }

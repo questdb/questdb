@@ -32,7 +32,7 @@ import io.questdb.std.Sinkable;
 import java.io.Closeable;
 
 public interface RuntimeIntrinsicIntervalModel extends Closeable, Sinkable {
-    LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException;
-
     boolean allIntervalsHitOnePartition(int partitionBy);
+
+    LongList calculateIntervals(SqlExecutionContext sqlContext) throws SqlException;
 }

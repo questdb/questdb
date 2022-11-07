@@ -9,6 +9,22 @@ import org.junit.Test;
 public class ObjListTest {
 
     @Test
+    public void testContains() {
+        Assert.assertTrue(list("a", "b", "c").contains("a"));
+        Assert.assertTrue(list("a", "b", "c").contains("b"));
+        Assert.assertTrue(list("a", "b", "c").contains("c"));
+        Assert.assertTrue(list("a", "b", "c", null).contains(null));
+        Assert.assertTrue(list("a", "b", "c", "").contains(""));
+
+        Assert.assertFalse(list().contains("a"));
+        Assert.assertFalse(list().contains(null));
+        Assert.assertFalse(list().contains(""));
+        Assert.assertFalse(list("a", "b", "c").contains("d"));
+        Assert.assertFalse(list("a", "b", "c").contains(""));
+        Assert.assertFalse(list("a", "b", "c").contains(null));
+    }
+
+    @Test
     public void testEquals() {
         Assert.assertEquals(list("a"), list("a"));
         Assert.assertEquals(list("a", null, "b"), list("a", null, "b"));
@@ -28,21 +44,5 @@ public class ObjListTest {
             result.add(value);
         }
         return result;
-    }
-
-    @Test
-    public void testContains() {
-        Assert.assertTrue(list("a", "b", "c").contains("a"));
-        Assert.assertTrue(list("a", "b", "c").contains("b"));
-        Assert.assertTrue(list("a", "b", "c").contains("c"));
-        Assert.assertTrue(list("a", "b", "c", null).contains(null));
-        Assert.assertTrue(list("a", "b", "c", "").contains(""));
-
-        Assert.assertFalse(list().contains("a"));
-        Assert.assertFalse(list().contains(null));
-        Assert.assertFalse(list().contains(""));
-        Assert.assertFalse(list("a", "b", "c").contains("d"));
-        Assert.assertFalse(list("a", "b", "c").contains(""));
-        Assert.assertFalse(list("a", "b", "c").contains(null));
     }
 }

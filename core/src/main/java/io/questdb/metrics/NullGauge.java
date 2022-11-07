@@ -33,7 +33,7 @@ public class NullGauge implements Gauge {
     }
 
     @Override
-    public void inc() {
+    public void add(long value) {
     }
 
     @Override
@@ -41,12 +41,12 @@ public class NullGauge implements Gauge {
     }
 
     @Override
-    public void add(long value) {
+    public long getValue() {
+        return 0;
     }
 
     @Override
-    public long getValue() {
-        return 0;
+    public void inc() {
     }
 
     @Override

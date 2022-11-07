@@ -35,42 +35,17 @@ import static org.junit.Assert.assertEquals;
 public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testSimple() throws Exception {
-        // this could be moved to a single query as it's in the TimestampCeilFloorFunctionFactoryTest
-        // the test would likely run faster. the price would be decreased clarity in the case of a failure
-        assertTimestamp("SELECT DATE_TRUNC('microseconds',  TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T02:09:30.111111Z");
-        assertTimestamp("SELECT DATE_TRUNC('microseconds',  TIMESTAMP '2017-03-17T02:09:30.000000Z') as truncated","2017-03-17T02:09:30.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('milliseconds',  TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T02:09:30.111000Z");
-        assertTimestamp("SELECT DATE_TRUNC('second',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T02:09:30.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('minute',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T02:09:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('hour',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T02:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('day',           TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-17T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-13T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2017-03-13T02:09:30.111111Z') as truncated","2017-03-13T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2020-01-01T02:09:30.111111Z') as truncated","2019-12-30T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('month',         TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-03-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-04-17T02:09:30.111111Z') as truncated","2017-04-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-07-17T02:09:30.111111Z') as truncated","2017-07-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-10-17T02:09:30.111111Z') as truncated","2017-10-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-12-31T02:09:30.111111Z') as truncated","2017-10-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('year',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2017-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('decade',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2010-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('decade',        TIMESTAMP '2000-03-17T02:09:30.111111Z') as truncated","2000-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('century',       TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2001-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('century',       TIMESTAMP '2000-03-17T02:09:30.111111Z') as truncated","1901-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('millennium',    TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated","2001-01-01T00:00:00.000000Z");
-        assertTimestamp("SELECT DATE_TRUNC('millennium',    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated","1001-01-01T00:00:00.000000Z");
-    }
-
-    @Test
-    public void testNullUpstream() throws Exception {
-        assertTimestamp("SELECT DATE_TRUNC('month', null) as truncated", "");
-    }
-
-    @Test
-    public void testWithFunctionUpstream() throws Exception {
-        assertTimestamp("SELECT DATE_TRUNC('millennium', concat('2001','-01-01T00:00:00.000000Z')) as truncated","2001-01-01T00:00:00.000000Z");
+    public void testInvalidKind() {
+        try {
+            compiler.compile(
+                    "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
+                    sqlExecutionContext
+            );
+            Assert.fail();
+        } catch (SqlException e) {
+            assertEquals(18, e.getPosition());
+            TestUtils.assertContains("invalid kind 'invalid'", e.getFlyweightMessage());
+        }
     }
 
     @Test
@@ -88,17 +63,42 @@ public class DateTruncFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidKind() {
-        try {
-            compiler.compile(
-                    "select DATE_TRUNC('invalid', TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated",
-                    sqlExecutionContext
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            assertEquals(18, e.getPosition());
-            TestUtils.assertContains("invalid kind 'invalid'", e.getFlyweightMessage());
-        }
+    public void testNullUpstream() throws Exception {
+        assertTimestamp("SELECT DATE_TRUNC('month', null) as truncated", "");
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        // this could be moved to a single query as it's in the TimestampCeilFloorFunctionFactoryTest
+        // the test would likely run faster. the price would be decreased clarity in the case of a failure
+        assertTimestamp("SELECT DATE_TRUNC('microseconds',  TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T02:09:30.111111Z");
+        assertTimestamp("SELECT DATE_TRUNC('microseconds',  TIMESTAMP '2017-03-17T02:09:30.000000Z') as truncated", "2017-03-17T02:09:30.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('milliseconds',  TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T02:09:30.111000Z");
+        assertTimestamp("SELECT DATE_TRUNC('second',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T02:09:30.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('minute',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T02:09:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('hour',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T02:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('day',           TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-17T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-13T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2017-03-13T02:09:30.111111Z') as truncated", "2017-03-13T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('week',          TIMESTAMP '2020-01-01T02:09:30.111111Z') as truncated", "2019-12-30T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('month',         TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-03-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-04-17T02:09:30.111111Z') as truncated", "2017-04-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-07-17T02:09:30.111111Z') as truncated", "2017-07-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-10-17T02:09:30.111111Z') as truncated", "2017-10-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('quarter',       TIMESTAMP '2017-12-31T02:09:30.111111Z') as truncated", "2017-10-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('year',          TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2017-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('decade',        TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2010-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('decade',        TIMESTAMP '2000-03-17T02:09:30.111111Z') as truncated", "2000-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('century',       TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2001-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('century',       TIMESTAMP '2000-03-17T02:09:30.111111Z') as truncated", "1901-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('millennium',    TIMESTAMP '2017-03-17T02:09:30.111111Z') as truncated", "2001-01-01T00:00:00.000000Z");
+        assertTimestamp("SELECT DATE_TRUNC('millennium',    TIMESTAMP '2000-12-17T02:09:30.111111Z') as truncated", "1001-01-01T00:00:00.000000Z");
+    }
+
+    @Test
+    public void testWithFunctionUpstream() throws Exception {
+        assertTimestamp("SELECT DATE_TRUNC('millennium', concat('2001','-01-01T00:00:00.000000Z')) as truncated", "2001-01-01T00:00:00.000000Z");
     }
 
     private void assertTimestamp(String sql, String expected) throws Exception {

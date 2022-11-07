@@ -46,11 +46,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class AsyncOffloadTest extends AbstractGriffinTest {
 
-    private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
+    private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
-
-    private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
+    private static final String expectedNegativeLimit = "v\n" +
+            "4039070554630775695\n" +
+            "3424747151763089683\n" +
+            "4290477379978201771\n" +
+            "3794031607724753525\n" +
+            "3745605868208843008\n" +
+            "3464609208866088600\n" +
+            "3513816850827798261\n" +
+            "3542505137180114151\n" +
+            "4169687421984608700\n" +
+            "3433721896286859656\n";
     private static final String expectedNoLimit = "v\n" +
             "3393210801760647293\n" +
             "3394168647660478011\n" +
@@ -77,8 +86,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             "4169687421984608700\n" +
             "4238042693748641409\n" +
             "4290477379978201771\n";
-
-    private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
     private static final String expectedPositiveLimit = "v\n" +
             "3394168647660478011\n" +
             "4086802474270249591\n" +
@@ -90,19 +97,9 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             "4014104627539596639\n" +
             "3393210801760647293\n" +
             "4099611147050818391\n";
-
     private static final String queryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
-    private static final String expectedNegativeLimit = "v\n" +
-            "4039070554630775695\n" +
-            "3424747151763089683\n" +
-            "4290477379978201771\n" +
-            "3794031607724753525\n" +
-            "3745605868208843008\n" +
-            "3464609208866088600\n" +
-            "3513816850827798261\n" +
-            "3542505137180114151\n" +
-            "4169687421984608700\n" +
-            "3433721896286859656\n";
+    private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
+    private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
 
     @BeforeClass
     public static void setUpStatic() {
@@ -134,6 +131,84 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     public void testAsyncOffloadTimeoutWithoutJit() throws Exception {
         jitMode = SqlJitMode.JIT_MODE_DISABLED;
         testAsyncOffloadTimeout();
+    }
+
+    @Test
+    public void testEqStrFunctionFactory() throws Exception {
+        final int threadCount = 4;
+        final int workerCount = 4;
+
+        WorkerPool pool = new WorkerPool((() -> workerCount));
+
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    compiler.compile("CREATE TABLE 'test1' " +
+                                    "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
+                                    "timestamp (timestamp) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+
+                    final int numOfRows = 2000;
+                    for (int i = 0; i < numOfRows; i++) {
+                        final int seconds = i % 60;
+                        final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
+                                        "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
+                                        + (seconds < 10 ? "0" + seconds : "" + seconds) + "Z')",
+                                sqlExecutionContext
+                        );
+                        try (final OperationFuture fut = cq.execute(null)) {
+                            fut.await();
+                        }
+                    }
+
+                    final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
+
+                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
+                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        compilers[i] = new SqlCompiler(engine);
+                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
+                    }
+
+                    final AtomicInteger errors = new AtomicInteger();
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                    for (int i = 0; i < threadCount; i++) {
+                        final int finalI = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+
+                            final RecordCursorFactory factory = factories[finalI];
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+                                cursor.toTop();
+                                final Record record = cursor.getRecord();
+                                int rowCount = 0;
+                                while (cursor.hasNext()) {
+                                    rowCount++;
+                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSym(0));
+                                }
+                                Assert.assertEquals(numOfRows, rowCount);
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+
+                    haltLatch.await();
+
+                    Misc.free(compilers);
+                    Misc.free(factories);
+
+                    Assert.assertEquals(0, errors.get());
+                },
+                configuration,
+                LOG
+        );
     }
 
     @Test
@@ -219,6 +294,36 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
     }
 
+    private static boolean assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            SqlExecutionContext sqlExecutionContext,
+            StringSink sink,
+            RecordCursorPrinter printer,
+            LongList rows
+    ) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
+            if (
+                    assertCursor(
+                            expected,
+                            true,
+                            true,
+                            false,
+                            true,
+                            cursor,
+                            factory.getMetadata(),
+                            sink,
+                            printer,
+                            rows,
+                            factory.fragmentedSymbolTables()
+                    )
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private static void assertQuery(
             CharSequence expected,
@@ -249,37 +354,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 printer,
                 rows
         );
-    }
-
-    private static boolean assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext,
-            StringSink sink,
-            RecordCursorPrinter printer,
-            LongList rows
-    ) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
-            if (
-                    assertCursor(
-                            expected,
-                            true,
-                            true,
-                            false,
-                            true,
-                            cursor,
-                            factory.getMetadata(),
-                            sink,
-                            printer,
-                            rows,
-                            factory.fragmentedSymbolTables()
-                    )
-            ) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void testAsyncOffloadTimeout() throws SqlException {
@@ -376,84 +450,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             try {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, sqlExecutionContext);
-                            } catch (Throwable e) {
-                                e.printStackTrace();
-                                errors.incrementAndGet();
-                            } finally {
-                                haltLatch.countDown();
-                            }
-                        }).start();
-                    }
-
-                    haltLatch.await();
-
-                    Misc.free(compilers);
-                    Misc.free(factories);
-
-                    Assert.assertEquals(0, errors.get());
-                },
-                configuration,
-                LOG
-        );
-    }
-
-    @Test
-    public void testEqStrFunctionFactory() throws Exception {
-        final int threadCount = 4;
-        final int workerCount = 4;
-
-        WorkerPool pool = new WorkerPool((() -> workerCount));
-
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("CREATE TABLE 'test1' " +
-                                    "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
-                                    "timestamp (timestamp) PARTITION BY HOUR",
-                            sqlExecutionContext
-                    );
-
-                    final int numOfRows = 2000;
-                    for (int i = 0; i < numOfRows; i++) {
-                        final int seconds = i % 60;
-                        final CompiledQuery cq = compiler.compile("INSERT INTO test1 (column1, timestamp) " +
-                                        "VALUES ('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '2022-08-28T06:25:"
-                                        + (seconds < 10 ? "0" + seconds : "" + seconds) + "Z')",
-                                sqlExecutionContext
-                        );
-                        try (final OperationFuture fut = cq.execute(null)) {
-                            fut.await();
-                        }
-                    }
-
-                    final String query = "SELECT column1 FROM test1 WHERE to_lowercase(column1) = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'";
-
-                    final SqlCompiler[] compilers = new SqlCompiler[threadCount];
-                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
-                    for (int i = 0; i < threadCount; i++) {
-                        // Each factory should use a dedicated compiler instance, so that they don't
-                        // share the same reduce task local pool in the SqlCodeGenerator.
-                        compilers[i] = new SqlCompiler(engine);
-                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
-                    }
-
-                    final AtomicInteger errors = new AtomicInteger();
-                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
-                    for (int i = 0; i < threadCount; i++) {
-                        final int finalI = i;
-                        new Thread(() -> {
-                            TestUtils.await(barrier);
-
-                            final RecordCursorFactory factory = factories[finalI];
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
-                                cursor.toTop();
-                                final Record record = cursor.getRecord();
-                                int rowCount = 0;
-                                while (cursor.hasNext()) {
-                                    rowCount++;
-                                    TestUtils.assertEquals("0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", record.getSym(0));
-                                }
-                                Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();

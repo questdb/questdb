@@ -49,10 +49,6 @@ public class LineTcpEventBuffer {
         this.bufSize = bufLo + bufSize;
     }
 
-    public long getAddress() {
-        return bufLo;
-    }
-
     public long addBoolean(long address, byte value) {
         checkCapacity(address, Byte.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_BOOLEAN);
@@ -229,6 +225,10 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
+    public long getAddress() {
+        return bufLo;
+    }
+
     public byte readByte(long address) {
         return Unsafe.getUnsafe().getByte(address);
     }
@@ -263,7 +263,7 @@ public class LineTcpEventBuffer {
     }
 
     public CharSequence readUtf16Chars(long address, int length) {
-        tempSink.asCharSequence(address,  address + length * 2L);
+        tempSink.asCharSequence(address, address + length * 2L);
         return tempSink;
     }
 

@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     protected final FullTableDataFrame frame = new FullTableDataFrame();
-    protected TableReader reader;
     protected int partitionHi;
     protected int partitionIndex;
+    protected TableReader reader;
 
     @Override
     public void close() {
@@ -46,13 +46,20 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
+    public TableReader getTableReader() {
+        return reader;
+    }
+
+    @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndex);
     }
 
-    @Override
-    public TableReader getTableReader() {
-        return reader;
+    public DataFrameCursor of(TableReader reader) {
+        this.reader = reader;
+        this.partitionHi = reader.getPartitionCount();
+        toTop();
+        return this;
     }
 
     @Override
@@ -68,17 +75,10 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         return reader.size();
     }
 
-    public DataFrameCursor of(TableReader reader) {
-        this.reader = reader;
-        this.partitionHi = reader.getPartitionCount();
-        toTop();
-        return this;
-    }
-
     protected class FullTableDataFrame implements DataFrame {
-        protected long rowLo = 0;
-        protected long rowHi;
         protected int partitionIndex;
+        protected long rowHi;
+        protected long rowLo = 0;
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {

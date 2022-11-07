@@ -79,6 +79,16 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final long value = arg.getDate(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+
+            sink.putISODateMillis(value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final long value = arg.getDate(rec);
             if (value == Numbers.LONG_NaN) {
@@ -87,16 +97,6 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.putISODateMillis(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-
-            sink.putISODateMillis(value);
         }
     }
 }

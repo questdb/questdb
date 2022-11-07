@@ -289,6 +289,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclas
                     NULL
         );
 
+
         if (handle == INVALID_HANDLE_VALUE) {
             SaveLastError();
             return FALSE;
@@ -320,20 +321,26 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     wchar_t bufSrc[lenSrc];
     MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
 
+
     size_t lenSoftLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
     if (lenSoftLink < 1) {
         return -1;
     }
+
+
     wchar_t bufSoftLink[lenSoftLink];
     MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
 
     if (CreateSymbolicLinkW(bufSoftLink, bufSrc, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
         return 0;
     }
+
     SaveLastError();
+
+    printf("here %lu\n", GetLastError());
+
     return -1;
 }
-
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
     // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile

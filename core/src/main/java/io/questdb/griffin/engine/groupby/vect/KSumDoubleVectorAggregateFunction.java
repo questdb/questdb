@@ -39,16 +39,15 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
     // We're using two double values per worker, hence +1 element in the padding.
     private static final int SUM_PADDING = (Misc.CACHE_LINE_SIZE / Double.BYTES) + 1;
-    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
-
     private final int columnIndex;
-    private final double[] sum;
     private final long[] count;
-    private final int workerCount;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final double[] sum;
+    private final int workerCount;
     private int valueOffset;
 
     public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -92,54 +91,14 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public int getColumnIndex() {
-        return columnIndex;
-    }
-
-    @Override
-    public int getValueOffset() {
-        return valueOffset;
-    }
-
-    @Override
-    public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
-    }
-
-    @Override
-    public boolean merge(long pRostiA, long pRostiB) {
-        return Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE); // sum
-        types.add(ColumnType.DOUBLE); // c
-        types.add(ColumnType.LONG); // count
-    }
-
-    @Override
-    public boolean wrapUp(long pRosti) {
-        double sum = 0;
-        long count = 0;
-        double c = 0;
-        for (int i = 0; i < workerCount; i++) {
-            double y = this.sum[i * SUM_PADDING] - c;
-            double t = sum + y;
-            c = t - sum - y;
-            sum = t;
-            count += this.count[i * COUNT_PADDING];
-        }
-        return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
-    }
-
-    @Override
     public void clear() {
         Arrays.fill(sum, 0);
         Arrays.fill(count, 0);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -158,12 +117,52 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }
 
     @Override
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntKSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE); // sum
+        types.add(ColumnType.DOUBLE); // c
+        types.add(ColumnType.LONG); // count
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put("KSumDoubleVector(").put(columnIndex).put(')');
+    }
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+        double sum = 0;
+        long count = 0;
+        double c = 0;
+        for (int i = 0; i < workerCount; i++) {
+            double y = this.sum[i * SUM_PADDING] - c;
+            double t = sum + y;
+            c = t - sum - y;
+            sum = t;
+            count += this.count[i * COUNT_PADDING];
+        }
+        return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
 }

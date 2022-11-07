@@ -33,6 +33,28 @@ import org.junit.Test;
 public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void testMakeGeoHash13bits() throws SqlException {
+        assertQuery(
+                "make_geohash\n0111101011101\n",
+                "select make_geohash(-0.1275, 51.50722, 13)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMakeGeoHash40bits() throws SqlException {
+        assertQuery(
+                "make_geohash\ngcpvj0e5\n",
+                "select make_geohash(-0.1275, 51.50722, 40)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testMakeGeoHashZero() throws SqlException {
         assertQuery(
                 "make_geohash\ns0000\n",
@@ -55,54 +77,32 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     }
 
     @Test
-    public void testMakeGeoHash40bits() throws SqlException {
-        assertQuery(
-                "make_geohash\ngcpvj0e5\n",
-                "select make_geohash(-0.1275, 51.50722, 40)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testMakeGeoHash13bits() throws SqlException {
-        assertQuery(
-                "make_geohash\n0111101011101\n",
-                "select make_geohash(-0.1275, 51.50722, 13)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testOutOfRangeLon1() {
+    public void testOutOfRangeBits0() {
         try {
             assertQuery(
                     "make_geohash\n\n",
-                    "select make_geohash(-195.0, 51.50722, 40)",
+                    "select make_geohash(-0.1275, -91.50722, 61)",
                     null,
                     true,
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
         }
     }
 
     @Test
-    public void testOutOfRangeLon2() {
+    public void testOutOfRangeBits1() {
         try {
             assertQuery(
                     "make_geohash\n\n",
-                    "select make_geohash(195.0, 51.50722, 40)",
+                    "select make_geohash(-0.1275, -91.50722, 0)",
                     null,
                     true,
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
         }
     }
 
@@ -137,32 +137,32 @@ public class GeoHashFromCoordinatesFunctionFactoryTest extends AbstractFunctionF
     }
 
     @Test
-    public void testOutOfRangeBits0() {
+    public void testOutOfRangeLon1() {
         try {
             assertQuery(
                     "make_geohash\n\n",
-                    "select make_geohash(-0.1275, -91.50722, 61)",
+                    "select make_geohash(-195.0, 51.50722, 40)",
                     null,
                     true,
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
         }
     }
 
     @Test
-    public void testOutOfRangeBits1() {
+    public void testOutOfRangeLon2() {
         try {
             assertQuery(
                     "make_geohash\n\n",
-                    "select make_geohash(-0.1275, -91.50722, 0)",
+                    "select make_geohash(195.0, 51.50722, 40)",
                     null,
                     true,
                     true
             );
         } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "precision must be in [1..60] range");
+            TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
         }
     }
 

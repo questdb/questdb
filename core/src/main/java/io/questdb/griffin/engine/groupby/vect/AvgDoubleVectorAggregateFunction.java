@@ -38,14 +38,14 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
-    private final DoubleAdder sum = new DoubleAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final DoubleAdder sum = new DoubleAdder();
     private final int workerCount;
-    private int valueOffset;
     private long counts;
+    private int valueOffset;
 
     public AvgDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -84,39 +84,6 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public int getColumnIndex() {
-        return columnIndex;
-    }
-
-    @Override
-    public int getValueOffset() {
-        return valueOffset;
-    }
-
-    @Override
-    public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
-    }
-
-    @Override
-    public boolean merge(long pRostiA, long pRostiB) {
-        return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes types) {
-        this.valueOffset = types.getColumnCount();
-        types.add(ColumnType.DOUBLE);
-        types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntAvgDoubleWrapUp(pRosti, valueOffset, this.sum.sum(), this.count.sum());
-    }
-
-    @Override
     public void clear() {
         sum.reset();
         count.reset();
@@ -132,12 +99,28 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public double getDouble(Record rec) {
         final long count = this.count.sum();
         if (count > 0) {
             return sum.sum() / count;
         }
         return Double.NaN;
+    }
+
+    @Override
+    public int getValueOffset() {
+        return valueOffset;
+    }
+
+    @Override
+    public void initRosti(long pRosti) {
+        Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
     }
 
     @Override
@@ -148,7 +131,24 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public boolean merge(long pRostiA, long pRostiB) {
+        return Rosti.keyedIntSumDoubleMerge(pRostiA, pRostiB, valueOffset);
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes types) {
+        this.valueOffset = types.getColumnCount();
+        types.add(ColumnType.DOUBLE);
+        types.add(ColumnType.LONG);
+    }
+
+    @Override
     public void toSink(CharSink sink) {
         sink.put("AvgDoubleVector(").put(columnIndex).put(')');
+    }
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntAvgDoubleWrapUp(pRosti, valueOffset, this.sum.sum(), this.count.sum());
     }
 }

@@ -58,20 +58,20 @@ import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
-    private final WriterPool writerPool;
-    private final ReaderPool readerPool;
+    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CairoConfiguration configuration;
-    private final Metrics metrics;
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final MessageBus messageBus;
-    private final RingQueue<TelemetryTask> telemetryQueue;
-    private final MPSequence telemetryPubSeq;
-    private final SCSequence telemetrySubSeq;
-    private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final Metrics metrics;
+    private final ReaderPool readerPool;
     private final IDGenerator tableIdGenerator;
     private final TableRegistry tableRegistry;
-
+    private final MPSequence telemetryPubSeq;
+    private final RingQueue<TelemetryTask> telemetryQueue;
+    private final SCSequence telemetrySubSeq;
     private final TextImportExecutionContext textImportExecutionContext;
+    private final WriterPool writerPool;
+
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -213,10 +213,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.getBusyCount();
     }
 
-    public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
-        return readerPool.entries();
-    }
-
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
@@ -242,19 +238,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return metrics;
     }
 
-    public IDGenerator getTableIdGenerator() {
-        return tableIdGenerator;
-    }
-
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
-    }
-
-    @TestOnly
-    public void setPoolListener(PoolListener poolListener) {
-        this.writerPool.setPoolListener(poolListener);
-        this.readerPool.setPoolListener(poolListener);
     }
 
     public TableReader getReader(
@@ -279,17 +265,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw ex;
         }
         return reader;
-    }
-
-    // For testing only
-    public WalReader getWalReader(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            CharSequence walName,
-            int segmentId,
-            long walRowCount
-    ) {
-        return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
     }
 
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
@@ -318,6 +293,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
+        return readerPool.entries();
+    }
+
     public int getStatus(
             CairoSecurityContext securityContext,
             Path path,
@@ -336,6 +315,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getStatus(securityContext, path, tableName, 0, tableName.length());
     }
 
+    public IDGenerator getTableIdGenerator() {
+        return tableIdGenerator;
+    }
+
     public Sequence getTelemetryPubSequence() {
         return telemetryPubSeq;
     }
@@ -346,6 +329,28 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public SCSequence getTelemetrySubSequence() {
         return telemetrySubSeq;
+    }
+
+    public TextImportExecutionContext getTextImportExecutionContext() {
+        return textImportExecutionContext;
+    }
+
+    // For testing only
+    public WalReader getWalReader(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+        return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
+    }
+
+    @Override
+    public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
+        securityContext.checkWritePermission();
+        final Sequencer sequencer = tableRegistry.getSequencer(tableName);
+        return sequencer.createWal();
     }
 
     @Override
@@ -367,13 +372,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         checkTableName(tableName);
         return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
-    }
-
-    @Override
-    public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
-        securityContext.checkWritePermission();
-        final Sequencer sequencer = tableRegistry.getSequencer(tableName);
-        return sequencer.createWal();
     }
 
     public CharSequence lock(
@@ -480,6 +478,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    @TestOnly
+    public void setPoolListener(PoolListener poolListener) {
+        this.writerPool.setPoolListener(poolListener);
+        this.readerPool.setPoolListener(poolListener);
+    }
+
     public void unlock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -501,10 +505,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         securityContext.checkWritePermission();
         checkTableName(tableName);
         writerPool.unlock(tableName);
-    }
-
-    public TextImportExecutionContext getTextImportExecutionContext() {
-        return textImportExecutionContext;
     }
 
     private void checkTableName(CharSequence tableName) {
@@ -541,8 +541,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     private class EngineMaintenanceJob extends SynchronizedJob {
 
-        private final MicrosecondClock clock;
         private final long checkInterval;
+        private final MicrosecondClock clock;
         private long last = 0;
 
         public EngineMaintenanceJob(CairoConfiguration configuration) {

@@ -55,150 +55,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBooleanToFloatConstant() throws Exception {
-        assertQuery(
-                "cast\n0.0000\n",
-                "select cast(false as float)",
-                null,
-                true,
-                true,
-                true
-        );
-
-        assertQuery(
-                "cast\n0.0000\n",
-                "select cast((150 < 100) as float)",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testBooleanToDoubleConstant() throws Exception {
-        assertQuery(
-                "cast\n0.0\n",
-                "select cast(false as double)",
-                null,
-                true,
-                true,
-                true
-        );
-
-        assertQuery(
-                "cast\n0.0\n",
-                "select cast((150 < 0) as double)",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testBooleanToIntConstant() throws Exception {
-        assertQuery(
-                "cast\n0\n",
-                "select cast(false as int)",
-                null,
-                true,
-                true,
-                true
-        );
-
-        assertQuery(
-                "cast\n0\n",
-                "select cast((150 < 0) as int)",
-                null,
-                true,
-                true,
-                true
-        );
-
-        assertQuery(
-                "cast\n1\n",
-                "select cast((150 < 250) as int)",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testNullToBinary() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a binary)",
-                null,
-                "insert into tab select cast(null as binary) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testInfinity() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
-                null,
-                "insert into tab select cast('Infinity' as double) = cast('Infinity' as double)," +
-                        "cast('Infinity' as float) = cast('Infinity' as double)," +
-                        "cast('Infinity' as float) = cast('Infinity' as float)," +
-                        "cast('-Infinity' as double) = cast('-Infinity' as double)," +
-                        "cast('-Infinity' as double) = cast('-Infinity' as float)," +
-                        "cast('-Infinity' as float) = cast('-Infinity' as float)," +
-                        "cast('Infinity' as double) != cast('-Infinity' as double)," +
-                        "cast('Infinity' as float) > 1 " +
-                        "from long_sequence(8)",
-                "a\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testInfinityNonConstant() throws Exception {
-        assertQuery(
-                "column\n",
-                "select a = b from tab ",
-                "create table tab (a double, b float)",
-                null,
-                "insert into tab values (cast('Infinity' as double), cast('Infinity' as float))",
-                "column\n" +
-                        "true\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testBooleanToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -299,6 +155,27 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToDoubleConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast(false as double)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0\n",
+                "select cast((150 < 0) as double)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBooleanToFloat() throws Exception {
         assertQuery(
                 "a\n",
@@ -324,6 +201,27 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBooleanToFloatConstant() throws Exception {
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast(false as float)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0.0000\n",
+                "select cast((150 < 100) as float)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBooleanToInt() throws Exception {
         assertQuery(
                 "a\n",
@@ -342,6 +240,36 @@ public class CastTest extends AbstractGriffinTest {
                         "1\n" +
                         "1\n" +
                         "1\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testBooleanToIntConstant() throws Exception {
+        assertQuery(
+                "cast\n0\n",
+                "select cast(false as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n0\n",
+                "select cast((150 < 0) as int)",
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "cast\n1\n",
+                "select cast((150 < 250) as int)",
+                null,
                 true,
                 true,
                 true
@@ -2137,6 +2065,26 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleToBoolean() throws Exception {
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.123 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDoubleToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -2161,25 +2109,6 @@ public class CastTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testDoubleToBoolean() throws Exception {
-        assertQuery(
-                "cast\nfalse\n",
-                "select cast(0.0 as boolean)",
-                null,
-                true,
-                true,
-                true
-        );
-        assertQuery(
-                "cast\ntrue\n",
-                "select cast(0.123 as boolean)",
-                null,
-                true,
-                true,
-                true
-        );
-    }
     @Test
     public void testDoubleToChar() throws Exception {
         assertQuery(
@@ -2605,6 +2534,26 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFloatToBoolean() throws Exception {
+        assertQuery(
+                "cast\ntrue\n",
+                "select cast(0.0002 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+        assertQuery(
+                "cast\nfalse\n",
+                "select cast(0.0000 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testFloatToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -2623,26 +2572,6 @@ public class CastTest extends AbstractGriffinTest {
                         "8\n" +
                         "20\n" +
                         "93\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatToBoolean() throws Exception {
-        assertQuery(
-                "cast\ntrue\n",
-                "select cast(0.0002 as boolean)",
-                null,
-                true,
-                true,
-                true
-        );
-        assertQuery(
-                "cast\nfalse\n",
-                "select cast(0.0000 as boolean)",
-                null,
                 true,
                 true,
                 true
@@ -3078,6 +3007,65 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInfinity() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a boolean)",
+                null,
+                "insert into tab select cast('Infinity' as double) = cast('Infinity' as double)," +
+                        "cast('Infinity' as float) = cast('Infinity' as double)," +
+                        "cast('Infinity' as float) = cast('Infinity' as float)," +
+                        "cast('-Infinity' as double) = cast('-Infinity' as double)," +
+                        "cast('-Infinity' as double) = cast('-Infinity' as float)," +
+                        "cast('-Infinity' as float) = cast('-Infinity' as float)," +
+                        "cast('Infinity' as double) != cast('-Infinity' as double)," +
+                        "cast('Infinity' as float) > 1 " +
+                        "from long_sequence(8)",
+                "a\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testInfinityNonConstant() throws Exception {
+        assertQuery(
+                "column\n",
+                "select a = b from tab ",
+                "create table tab (a double, b float)",
+                null,
+                "insert into tab values (cast('Infinity' as double), cast('Infinity' as float))",
+                "column\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testIntConstToBoolean() throws Exception {
+        assertQuery(
+                "cast\tcast1\tcast2\tcast3\ntrue\tfalse\ttrue\ttrue\n",
+                "select cast(-1 as boolean), cast(0 as boolean), cast(1 as boolean), cast(2 as boolean)",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testIntToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -3096,18 +3084,6 @@ public class CastTest extends AbstractGriffinTest {
                         "true\n" +
                         "true\n" +
                         "true\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testIntConstToBoolean() throws Exception {
-        assertQuery(
-                "cast\tcast1\tcast2\tcast3\ntrue\tfalse\ttrue\ttrue\n",
-                "select cast(-1 as boolean), cast(0 as boolean), cast(1 as boolean), cast(2 as boolean)",
-                null,
                 true,
                 true,
                 true
@@ -4204,6 +4180,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNullToBinary() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a binary)",
+                null,
+                "insert into tab select cast(null as binary) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testShortToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -4720,6 +4721,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrConstZeroToChar() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a char)",
+                null,
+                "insert into tab select cast('' as char) from long_sequence(10)",
+                "a\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToBoolean() throws Exception {
         assertQuery(
                 "boolean\n" +
@@ -4788,31 +4814,6 @@ public class CastTest extends AbstractGriffinTest {
                         "\n" +
                         "K\n" +
                         "A\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testStrConstZeroToChar() throws Exception {
-        assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a char)",
-                null,
-                "insert into tab select cast('' as char) from long_sequence(10)",
-                "a\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n",
                 true,
                 true,
                 true
@@ -5079,6 +5080,39 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrToSymbolSort() throws Exception {
+        assertQuery(
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "a\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "b\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n" +
+                        "c\n",
+                "select cast(a as symbol) x from tt order by x",
+                "create table tt as (select rnd_str('a','b','c', null) a from long_sequence(20))",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testStrToTimestamp() throws Exception {
         assertQuery(
                 "a\n",
@@ -5099,6 +5133,94 @@ public class CastTest extends AbstractGriffinTest {
                         "2019-03-11T10:20:33.123897Z\n",
                 true,
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testStringRegClass() throws Exception {
+        assertQuery(
+                "b\ta\n" +
+                        "2615\tpg_namespace\n" +
+                        "2615\tpg_namespace\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n",
+                "select cast(a as string)::regclass b, a from tab",
+                "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSymbolNocacheToLong256Sort() throws Exception {
+        assertQuery(
+                "x\n",
+                "select cast(a as long256) x from tt order by x",
+                "create table tt (a symbol nocache)",
+                null,
+                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880') a from long_sequence(20)",
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x123455\n" +
+                        "0x123455\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n" +
+                        "0x8802ff90\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testSymbolNocacheToStrSort() throws Exception {
+        assertQuery(
+                "x\n",
+                "select cast(a as string) x from tt order by x",
+                "create table tt (a symbol nocache)",
+                null,
+                "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)",
+                "x\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "1\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "200\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n" +
+                        "221\n",
+                true,
+                false,
                 true
         );
     }
@@ -5322,41 +5444,6 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSymbolNocacheToLong256Sort() throws Exception {
-        assertQuery(
-                "x\n",
-                "select cast(a as long256) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926', '0x880') a from long_sequence(20)",
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x123455\n" +
-                        "0x123455\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n" +
-                        "0x8802ff90\n",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testSymbolToShort() throws Exception {
         assertQuery(
                 "a\n",
@@ -5457,74 +5544,6 @@ public class CastTest extends AbstractGriffinTest {
                         "221\n",
                 "select cast(a as string) x from tt order by x",
                 "create table tt as (select rnd_symbol('1','200','221', null) a from long_sequence(20))",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testSymbolNocacheToStrSort() throws Exception {
-        assertQuery(
-                "x\n",
-                "select cast(a as string) x from tt order by x",
-                "create table tt (a symbol nocache)",
-                null,
-                "insert into tt select rnd_symbol('1','200','221', null) from long_sequence(20)",
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "1\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "200\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n" +
-                        "221\n",
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testStrToSymbolSort() throws Exception {
-        assertQuery(
-                "x\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "a\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "b\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n" +
-                        "c\n",
-                "select cast(a as symbol) x from tt order by x",
-                "create table tt as (select rnd_str('a','b','c', null) a from long_sequence(20))",
                 null,
                 true,
                 false,
@@ -6041,24 +6060,6 @@ public class CastTest extends AbstractGriffinTest {
                         "15\t1970-01-01T00:00:00.000015Z\n",
                 "select cast(a as symbol) b, a from tab",
                 "create table tab as (select rnd_timestamp(10, 20, 2) a from long_sequence(20))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testStringRegClass() throws Exception {
-        assertQuery(
-                "b\ta\n" +
-                        "2615\tpg_namespace\n" +
-                        "2615\tpg_namespace\n" +
-                        "1259\tpg_class\n" +
-                        "1259\tpg_class\n" +
-                        "1259\tpg_class\n",
-                "select cast(a as string)::regclass b, a from tab",
-                "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
                 null,
                 true,
                 true,

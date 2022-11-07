@@ -38,17 +38,17 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 class SymbolCache implements Closeable, SymbolLookup {
+    private final MicrosecondClock clock;
+    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
             256,
             0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
-    private TxReader txReader;
-    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final MicrosecondClock clock;
     private final long waitUsBeforeReload;
     private long lastSymbolReaderReloadTimestamp;
     private int symbolIndexInTxFile;
+    private TxReader txReader;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -89,12 +89,28 @@ class SymbolCache implements Closeable, SymbolLookup {
         return symbolKey;
     }
 
-    int getCacheValueCount() {
-        return symbolValueToKeyMap.size();
+    private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
+        // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
+        boolean offsetReloadOk = initialStateOk;
+        while (true) {
+            if (offsetReloadOk) {
+                int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
+                Unsafe.getUnsafe().loadFence();
+
+                if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+                    return count;
+                }
+            }
+            offsetReloadOk = txReader.unsafeLoadBaseOffset();
+        }
     }
 
     int getCacheCapacity() {
         return symbolValueToKeyMap.capacity();
+    }
+
+    int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
     }
 
     void of(CairoConfiguration configuration,
@@ -111,21 +127,5 @@ class SymbolCache implements Closeable, SymbolLookup {
         path.trimTo(plen);
         symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
         symbolValueToKeyMap.clear();
-    }
-
-    private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
-        // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
-        boolean offsetReloadOk = initialStateOk;
-        while (true) {
-            if (offsetReloadOk) {
-                int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
-                Unsafe.getUnsafe().loadFence();
-
-                if (txReader.unsafeReadVersion() == txReader.getVersion()) {
-                    return count;
-                }
-            }
-            offsetReloadOk = txReader.unsafeLoadBaseOffset();
-        }
     }
 }

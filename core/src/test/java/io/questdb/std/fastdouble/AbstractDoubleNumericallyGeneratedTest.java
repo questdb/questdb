@@ -49,8 +49,6 @@ abstract class AbstractDoubleNumericallyGeneratedTest {
                 .forEach(this::testLegalInput);
     }
 
-    protected abstract double parse(String str) throws NumericException;
-
     private void testLegalInput(String str, double expected) {
         double actual;
         try {
@@ -65,4 +63,6 @@ abstract class AbstractDoubleNumericallyGeneratedTest {
     private void testLegalInput(double expected) {
         testLegalInput(expected + "", expected);
     }
+
+    protected abstract double parse(String str) throws NumericException;
 }

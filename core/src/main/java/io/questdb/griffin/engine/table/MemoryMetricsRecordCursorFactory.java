@@ -47,15 +47,15 @@ public final class MemoryMetricsRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         collectMetrics(values);
         cursor.of(KEYS, values);
         return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     private static void collectMetrics(long[] collector) {

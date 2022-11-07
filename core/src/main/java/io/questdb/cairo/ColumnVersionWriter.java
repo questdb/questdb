@@ -34,9 +34,9 @@ import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final MemoryCMARW mem;
-    private long version;
-    private long size;
     private boolean hasChanges;
+    private long size;
+    private long version;
 
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
@@ -58,11 +58,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     @Override
     public void close() {
         mem.close(false);
-    }
-
-    @Override
-    public long getVersion() {
-        return version;
     }
 
     public void commit() {
@@ -108,6 +103,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public long getOffsetB() {
         return mem.getLong(OFFSET_OFFSET_B_64);
+    }
+
+    @Override
+    public long getVersion() {
+        return version;
     }
 
     public boolean hasChanges() {

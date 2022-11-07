@@ -40,13 +40,12 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.*;
 
 final class Mig607 {
-    private static final String TXN_FILE_NAME = "_txn";
-    private static final String META_FILE_NAME = "_meta";
     private static final String DEFAULT_PARTITION_NAME = "default";
-
-    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
-    private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     private static final Log LOG = LogFactory.getLog(Mig607.class);
+    private static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    private static final String META_FILE_NAME = "_meta";
+    private static final String TXN_FILE_NAME = "_txn";
+    private static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
 
     public static void migrate(
             FilesFacade ff,
@@ -163,6 +162,35 @@ final class Mig607 {
 
     public static void txnPartition(CharSink path, long txn) {
         path.put('.').put(txn);
+    }
+
+    private static void charFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".c").$();
+    }
+
+    private static void dFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        path.$();
+    }
+
+    private static void iFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_I).$();
+    }
+
+    private static void offsetFileName(Path path, CharSequence columnName) {
+        path.concat(columnName).put(".o").$();
+    }
+
+    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
+        long fd = TableUtils.openFileRWOrFail(ff, path, opts);
+        if (!ff.truncate(fd, size)) {
+            // This should never happens on migration but better to be on safe side anyway
+            throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
+        }
+        if (!ff.close(fd)) {
+            // This should never happens on migration but better to be on safe side anyway
+            throw CairoException.critical(ff.errno()).put("Cannot close [file=").put(path).put(']');
+        }
     }
 
     static void migrate(MigrationContext migrationContext) {
@@ -292,36 +320,7 @@ final class Mig607 {
         trimFile(ff, path, txFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
     }
 
-    private static void dFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_D);
-        path.$();
-    }
-
     static LPSZ topFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".top").$();
-    }
-
-    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
-        long fd = TableUtils.openFileRWOrFail(ff, path, opts);
-        if (!ff.truncate(fd, size)) {
-            // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
-        }
-        if (!ff.close(fd)) {
-            // This should never happens on migration but better to be on safe side anyway
-            throw CairoException.critical(ff.errno()).put("Cannot close [file=").put(path).put(']');
-        }
-    }
-
-    private static void offsetFileName(Path path, CharSequence columnName) {
-        path.concat(columnName).put(".o").$();
-    }
-
-    private static void charFileName(Path path, CharSequence columnName) {
-        path.concat(columnName).put(".c").$();
-    }
-
-    private static void iFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 }

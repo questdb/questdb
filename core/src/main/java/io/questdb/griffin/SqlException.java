@@ -128,16 +128,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return "[" + position + "] " + message;
     }
 
+    public int getPosition() {
+        return position;
+    }
+
     @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
-    }
-
-    public int getPosition() {
-        return position;
     }
 
     public SqlException put(CharSequence cs) {

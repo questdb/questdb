@@ -36,8 +36,8 @@ import org.jetbrains.annotations.Nullable;
 
 public class OperationDispatcher<T extends AbstractOperation> {
 
-    private final CairoEngine engine;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
     private final CharSequence lockReason;
 

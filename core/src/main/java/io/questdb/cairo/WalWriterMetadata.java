@@ -31,7 +31,8 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 
 class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
     private final FilesFacade ff;
@@ -41,6 +42,25 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         this.ff = ff;
         columnMetadata = new ObjList<>();
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(metaMem);
+    }
+
+    private void reset() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
+        timestampIndex = -1;
+    }
+
+    void addColumn(int columnIndex, CharSequence columnName, int columnType) {
+        final String name = columnName.toString();
+        columnNameIndexMap.put(name, columnNameIndexMap.size());
+        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
+        columnCount++;
     }
 
     void of(TableDescriptor descriptor) {
@@ -55,30 +75,6 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         }
     }
 
-    private void reset() {
-        columnMetadata.clear();
-        columnNameIndexMap.clear();
-        columnCount = 0;
-        timestampIndex = -1;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(metaMem);
-    }
-
-    void addColumn(int columnIndex, CharSequence columnName, int columnType) {
-        final String name = columnName.toString();
-        columnNameIndexMap.put(name, columnNameIndexMap.size());
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
-        columnCount++;
-    }
-
-    void removeColumn(int columnIndex) {
-        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
-        deletedMeta.markDeleted();
-    }
-
     void openMetaFile(Path path, int pathLen, int liveColumnCount) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
@@ -89,5 +85,10 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
             metaMem.putInt(type);
             metaMem.putStr(getColumnName(i));
         }
+    }
+
+    void removeColumn(int columnIndex) {
+        final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
+        deletedMeta.markDeleted();
     }
 }
