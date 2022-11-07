@@ -447,7 +447,7 @@ public class IntrinsicModelTest {
 
     @Test
     public void testParseShortYearErr() {
-        assertIntervalError("201");
+        assertIntervalError("201-1");
     }
 
     private static void assertShortInterval(String expected, String interval) throws SqlException {
