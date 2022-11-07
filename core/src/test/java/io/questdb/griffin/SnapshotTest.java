@@ -33,6 +33,9 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.ReentrantLock;
+
 public class SnapshotTest extends AbstractGriffinTest {
 
     private static final TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
@@ -64,12 +67,350 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
+        testRecoverSnapshot(null, null, false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
+        testRecoverSnapshot("id1", null, false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
+        testRecoverSnapshot(null, "id1", false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDifferentInstanceIds() throws Exception {
+        testRecoverSnapshot("id1", "id2", true);
+    }
+
+    @Test
+    public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
+        snapshotRecoveryEnabled = false;
+        testRecoverSnapshot("id1", "id2", false);
+    }
+
+    @Test
+    public void testRecoverSnapshotForEqualInstanceIds() throws Exception {
+        testRecoverSnapshot("id1", "id1", false);
+    }
+
+    @Test
+    public void testRecoverSnapshotLargePartitionCount() throws Exception {
+        final int partitionCount = 2000;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String tableName = "t";
+            compile("create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            compile("insert into " + tableName +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql("select count() from " + tableName, "count\n" +
+                    partitionCount + "\n");
+        });
+    }
+
+    @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
+    @Test
+    public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String tableName = "t";
+            compile("create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            final String expectedAllColumns = "a\tb\tc\n" +
+                    "JW\tC\t1\n" +
+                    "WH\tB\t2\n" +
+                    "PE\tB\t3\n";
+            assertSql("select * from " + tableName, expectedAllColumns);
+
+            compile("alter table " + tableName + " drop column b", sqlExecutionContext);
+            assertSql("select * from " + tableName, "a\tc\n" +
+                    "JW\t1\n" +
+                    "WH\t2\n" +
+                    "PE\t3\n");
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // Dropped column should be there.
+            assertSql("select * from " + tableName, expectedAllColumns);
+        });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ReentrantLock lock = new ReentrantLock();
+            CountDownLatch latch1 = new CountDownLatch(1);
+            CountDownLatch latch2 = new CountDownLatch(1);
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10000;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+
+            Thread t = new Thread(() -> {
+                lock.lock(); //emulate WalPurgeJob running with lock
+                latch2.countDown();
+                try {
+                    latch1.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    lock.unlock();
+                }
+            });
+
+            try {
+                t.start();
+                latch2.await();
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                latch1.countDown();
+                t.join();
+                Assert.assertFalse(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot command cancelled due to timeout"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+                circuitBreakerConfiguration = null;
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+
+            path.trimTo(rootLen).slash$();
+            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+        });
+    }
+
+    @Test
+    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            // Verify that SNAPSHOT COMPLETE doesn't return errors.
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 'a'; i < 'f'; i++) {
                 compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
             }
 
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile(null);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile("foobar");
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(false, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " as " +
+                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                "alter table " + tableName + " drop column c",
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName +
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    @Test
+    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
+        assertMemoryLeak(() -> {
+            path.trimTo(rootLen);
+            FilesFacade ff = configuration.getFilesFacade();
+            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
+            Assert.assertEquals(0, rc);
+
+            // Create a test file.
+            path.trimTo(rootLen).concat("test.txt").$();
+            Assert.assertTrue(Files.touch(path));
+
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // The test file should be deleted by SNAPSHOT PREPARE.
+            Assert.assertFalse(ff.exists(path));
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareEmptyFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+
+        // Assert snapshot folder exists
+        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).slash$())
+        );
+        // But snapshot/db folder does not
+        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "t";
+            compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            // Corrupt the table by removing _txn file.
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
+
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("Cannot append. File does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            testFilesFacade.errorOnSync = true;
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
+            }
+
+            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
+            testFilesFacade.errorOnSync = false;
             compiler.compile("snapshot prepare", sqlExecutionContext);
             compiler.compile("snapshot complete", sqlExecutionContext);
         });
@@ -84,23 +425,194 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(false, false);
+    public void testSnapshotPrepareReleaseRunLockOnError() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            testFilesFacade.errorOnSync = true;
+            ReentrantLock lock = new ReentrantLock();
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertFalse(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
+            }
+
+            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
+            testFilesFacade.errorOnSync = false;
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Assert.assertTrue(lock.isLocked());
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+        });
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, false);
+    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            ReentrantLock lock = new ReentrantLock();
+            try {
+                snapshotAgent.setWalPurgeJobRunLock(lock);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(lock.isLocked()); // locked by first "snapshot prepare"
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+            }
+        });
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
+    public void testSnapshotUnknownSubOptionFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot commit", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
+            }
+        });
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
+    public void testSuspendResumeWalPurgeJob() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            MicrosecondClockMock clock = new MicrosecondClockMock();
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
+            FilesFacade ff = configuration.getFilesFacade();
+            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Thread controlThread1 = new Thread(() -> {
+                clock.timestamp = interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread1.start();
+            controlThread1.join();
+
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertWalExistence(true, tableName, 1);
+
+            engine.releaseInactive();
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Thread controlThread2 = new Thread(() -> {
+                clock.timestamp = 2 * interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread2.start();
+            controlThread2.join();
+
+            job.close();
+            snapshotAgent.setWalPurgeJobRunLock(null);
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String nonPartitionedTable = "npt";
+            compile("create table " + nonPartitionedTable + " as " +
+                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
+                    sqlExecutionContext);
+            final String partitionedTable = "pt";
+            compile("create table " + partitionedTable + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            compile("insert into " + nonPartitionedTable +
+                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
+            compile("insert into " + partitionedTable +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
+            int expectedCount = expectRecovery ? 20 : 40;
+            assertSql("select count() from " + nonPartitionedTable, "count\n" +
+                    expectedCount + "\n");
+            assertSql("select count() from " + partitionedTable, "count\n" +
+                    expectedCount + "\n");
+
+            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
+            path.trimTo(rootLen).slash$();
+            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
+        });
+    }
+
+    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            try (Path path = new Path()) {
+                compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+
+                    CharSequence expectedId = configuration.getSnapshotInstanceId();
+                    CharSequence actualId = mem.getStr(0);
+                    Assert.assertTrue(Chars.equals(actualId, expectedId));
+                }
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
     }
 
     private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
@@ -201,80 +713,6 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol, b double, c long)",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareEmptyFolder() throws Exception {
-        final String tableName = "test";
-        path.of(configuration.getRoot()).concat("empty_folder").slash$();
-        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
-
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
-        );
-
-        // Assert snapshot folder exists
-        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).slash$())
-        );
-        // But snapshot/db folder does not
-        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                "alter table " + tableName + " drop column c",
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " as " +
-                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
-                null,
-                tableName
-        );
-    }
-
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
@@ -308,364 +746,6 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot complete", sqlExecutionContext);
             }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile(null);
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile("foobar");
-    }
-
-    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            try (Path path = new Path()) {
-                compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                FilesFacade ff = configuration.getFilesFacade();
-                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-
-                    CharSequence expectedId = configuration.getSnapshotInstanceId();
-                    CharSequence actualId = mem.getStr(0);
-                    Assert.assertTrue(Chars.equals(actualId, expectedId));
-                }
-
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
-        assertMemoryLeak(() -> {
-            path.trimTo(rootLen);
-            FilesFacade ff = configuration.getFilesFacade();
-            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
-            Assert.assertEquals(0, rc);
-
-            // Create a test file.
-            path.trimTo(rootLen).concat("test.txt").$();
-            Assert.assertTrue(Files.touch(path));
-
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            // The test file should be deleted by SNAPSHOT PREPARE.
-            Assert.assertFalse(ff.exists(path));
-
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-
-            path.trimTo(rootLen).slash$();
-            Assert.assertFalse(configuration.getFilesFacade().exists(path));
-        });
-    }
-
-    @Test
-    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            // Verify that SNAPSHOT COMPLETE doesn't return errors.
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
-            } finally {
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotUnknownSubOptionFails() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot commit", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-
-            testFilesFacade.errorOnSync = true;
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
-            }
-
-            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
-            testFilesFacade.errorOnSync = false;
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "t";
-            compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
-
-            // Corrupt the table by removing _txn file.
-            FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
-
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Cannot append. File does not exist"));
-            }
-        });
-    }
-
-    @Test
-    public void testRecoverSnapshotForDifferentInstanceIds() throws Exception {
-        testRecoverSnapshot("id1", "id2", true);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        snapshotRecoveryEnabled = false;
-        testRecoverSnapshot("id1", "id2", false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForEqualInstanceIds() throws Exception {
-        testRecoverSnapshot("id1", "id1", false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshot(null, null, false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
-        testRecoverSnapshot(null, "id1", false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
-        testRecoverSnapshot("id1", null, false);
-    }
-
-    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            final String nonPartitionedTable = "npt";
-            compile("create table " + nonPartitionedTable + " as " +
-                    "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
-                    sqlExecutionContext);
-            final String partitionedTable = "pt";
-            compile("create table " + partitionedTable + " as " +
-                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
-                    sqlExecutionContext);
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            compile("insert into " + nonPartitionedTable +
-                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
-            compile("insert into " + partitionedTable +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.clear();
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            snapshotInstanceId = restartedId;
-
-            DatabaseSnapshotAgent.recoverSnapshot(engine);
-
-            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
-            int expectedCount = expectRecovery ? 20 : 40;
-            assertSql("select count() from " + nonPartitionedTable, "count\n" +
-                    expectedCount + "\n");
-            assertSql("select count() from " + partitionedTable, "count\n" +
-                    expectedCount + "\n");
-
-            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
-            path.trimTo(rootLen).slash$();
-            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
-        });
-    }
-
-    @Test
-    public void testRecoverSnapshotLargePartitionCount() throws Exception {
-        final int partitionCount = 2000;
-        final String snapshotId = "id1";
-        final String restartedId = "id2";
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            final String tableName = "t";
-            compile("create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day",
-                    sqlExecutionContext);
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            compile("insert into " + tableName +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)", sqlExecutionContext);
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.clear();
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            snapshotInstanceId = restartedId;
-
-            DatabaseSnapshotAgent.recoverSnapshot(engine);
-
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql("select count() from " + tableName, "count\n" +
-                    partitionCount + "\n");
-        });
-    }
-
-    @Ignore("Enable when table readers start preventing from column file deletion. This could be done along with column versioning.")
-    @Test
-    public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            final String tableName = "t";
-            compile("create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))",
-                    sqlExecutionContext);
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            final String expectedAllColumns = "a\tb\tc\n" +
-                    "JW\tC\t1\n" +
-                    "WH\tB\t2\n" +
-                    "PE\tB\t3\n";
-            assertSql("select * from " + tableName, expectedAllColumns);
-
-            compile("alter table " + tableName + " drop column b", sqlExecutionContext);
-            assertSql("select * from " + tableName, "a\tc\n" +
-                    "JW\t1\n" +
-                    "WH\t2\n" +
-                    "PE\t3\n");
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.clear();
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            snapshotInstanceId = restartedId;
-
-            DatabaseSnapshotAgent.recoverSnapshot(engine);
-
-            // Dropped column should be there.
-            assertSql("select * from " + tableName, expectedAllColumns);
-        });
-    }
-
-    @Test
-    public void testSuspendResumeWalPurgeJob() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(5)" +
-                    ") timestamp(ts) partition by DAY WAL");
-
-            assertWalExistence(true, tableName, 1);
-            assertSegmentExistence(true, tableName, 1, 0);
-
-            drainWalQueue();
-
-            assertWalExistence(true, tableName, 1);
-
-            assertSql(tableName, "x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n");
-
-            MicrosecondClockMock clock = new MicrosecondClockMock();
-            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
-            FilesFacade ff = configuration.getFilesFacade();
-            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
-            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            Thread controlThread1 = new Thread(() -> {
-                clock.timestamp = interval;
-                while (job.run(0)) {
-                    // run until empty
-                }
-                Path.clearThreadLocals();
-            });
-
-            controlThread1.start();
-            controlThread1.join();
-
-            assertSegmentExistence(true, tableName, 1, 0);
-            assertWalExistence(true, tableName, 1);
-
-            engine.releaseInactive();
-
-            compiler.compile("snapshot complete", sqlExecutionContext);
-            Thread controlThread2 = new Thread(() -> {
-                clock.timestamp = 2*interval;
-                while (job.run(0)) {
-                    // run until empty
-                }
-                Path.clearThreadLocals();
-            });
-
-            controlThread2.start();
-            controlThread2.join();
-
-            job.close();
-            snapshotAgent.setWalPurgeJobRunLock(null);
-
-            assertSegmentExistence(false, tableName, 1, 0);
-            assertWalExistence(false, tableName, 1);
         });
     }
 

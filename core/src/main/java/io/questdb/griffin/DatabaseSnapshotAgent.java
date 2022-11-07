@@ -38,56 +38,26 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class DatabaseSnapshotAgent implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
-
-    private final CairoEngine engine;
     private final CairoConfiguration configuration;
+    private final CairoEngine engine;
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock(); // protects below fields
-    private ReentrantLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
+    private ReentrantLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
-    }
-
-    public void setWalPurgeJobRunLock(@Nullable ReentrantLock walPurgeJobRunLock) {
-        this.walPurgeJobRunLock = walPurgeJobRunLock;
-    }
-
-    @Override
-    public void close() {
-        lock.lock();
-        try {
-            Misc.free(path);
-            unsafeReleaseReaders();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @TestOnly
-    public void clear() {
-        lock.lock();
-        try {
-            unsafeReleaseReaders();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private void unsafeReleaseReaders() {
-        Misc.freeObjList(snapshotReaders);
-        snapshotReaders.clear();
     }
 
     public static void recoverSnapshot(CairoEngine engine) {
@@ -218,6 +188,27 @@ public class DatabaseSnapshotAgent implements Closeable {
         }
     }
 
+    @TestOnly
+    public void clear() {
+        lock.lock();
+        try {
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            Misc.free(path);
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public void completeSnapshot() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another snapshot command in progress");
@@ -255,7 +246,6 @@ public class DatabaseSnapshotAgent implements Closeable {
             if (snapshotReaders.size() > 0) {
                 throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
-
             path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
             int snapshotLen = path.length();
             // Delete all contents of the snapshot/db dir.
@@ -281,11 +271,19 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         // Suspend the WalPurgeJob
                         if (walPurgeJobRunLock != null) {
-                            walPurgeJobRunLock.lock(); // wait for the WalPurgeJob to release the lock
+                            final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                            try {
+                                if (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                                    LOG.error().$("snapshot failed to acquire lock").$();
+                                    throw SqlException.position(0).put("Snapshot command cancelled due to timeout");
+                                }
+                            } catch (InterruptedException e) {
+                                LOG.error().$("snapshot error [e=").$(e).I$();
+                                throw SqlException.position(0).put("Snapshot command was interrupted");
+                            }
                         }
 
                         // Copy metadata files for all tables.
-
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             if (
@@ -336,10 +334,6 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
-                        // Resume the WalPurgeJob
-                        if (walPurgeJobRunLock != null && walPurgeJobRunLock.isHeldByCurrentThread()) {
-                            walPurgeJobRunLock.unlock();
-                        }
                         unsafeReleaseReaders();
                         LOG.error()
                                 .$("snapshot error [e=").$(e)
@@ -348,8 +342,23 @@ public class DatabaseSnapshotAgent implements Closeable {
                     }
                 }
             }
+        } catch (Throwable e) {
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null && walPurgeJobRunLock.isHeldByCurrentThread()) {
+                walPurgeJobRunLock.unlock();
+            }
+            throw e;
         } finally {
             lock.unlock();
         }
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable ReentrantLock walPurgeJobRunLock) {
+        this.walPurgeJobRunLock = walPurgeJobRunLock;
+    }
+
+    private void unsafeReleaseReaders() {
+        Misc.freeObjList(snapshotReaders);
+        snapshotReaders.clear();
     }
 }
