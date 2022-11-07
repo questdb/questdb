@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -98,6 +99,98 @@ public class DropIndexTest extends AbstractGriffinTest {
         AbstractGriffinTest.tearDownStatic();
         compiler2.close();
         path = Misc.free(path);
+    }
+
+    @Test
+    public void dropIndexColumnTop() throws SqlException, NumericException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+            model.col("a", ColumnType.INT);
+            model.timestamp("ts");
+            createPopulateTable(model, 5, "2022-02-24", 2);
+        }
+        compile("alter table " + tableName + " add column sym symbol index");
+        compile("insert into " + tableName +
+                " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n" +
+                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
+                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
+                "5\t2022-02-24T02:36:40.000000Z\tC\n");
+
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        compile("alter table " + tableName + " alter column sym drop index");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n" +
+                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
+                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
+                "5\t2022-02-24T02:36:40.000000Z\tC\n");
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym = 'A'", "a\tts\tsym\n" +
+                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
+                "2\t2022-02-24T01:46:40.000000Z\tA\n");
+    }
+
+    @Test
+    public void dropIndexColumnTopLastPartition() throws SqlException, NumericException {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
+            model.col("a", ColumnType.INT);
+            model.timestamp("ts");
+            createPopulateTable(model, 5, "2022-02-24", 2);
+        }
+        compile("alter table " + tableName + " add column sym symbol index");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        compile("alter table " + tableName + " alter column sym drop index");
+
+        assertSql(tableName, "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym is null", "a\tts\tsym\n" +
+                "1\t2022-02-24T00:23:59.800000Z\t\n" +
+                "2\t2022-02-24T00:47:59.600000Z\t\n" +
+                "3\t2022-02-24T01:11:59.400000Z\t\n" +
+                "4\t2022-02-24T01:35:59.200000Z\t\n" +
+                "5\t2022-02-24T01:59:59.000000Z\t\n");
+
+        assertSql("select * from " + tableName + " where sym = 'A'", "a\tts\tsym\n");
     }
 
     @Test
