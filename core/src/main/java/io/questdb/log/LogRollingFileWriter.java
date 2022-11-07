@@ -282,7 +282,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeOldLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        if (!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1))
+        if (Files.notDots(filePointer) && type == Files.DT_FILE
             && clock.getTicks() - ff.getLastModified(path.$())*Timestamps.MILLI_MICROS > nLifeDuration) {
             if(!ff.remove(path)) {
                 throw new LogError("cannot remove: " + path.$());
@@ -293,7 +293,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeExcessiveLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        if (!Files.isDir(filePointer, type) && !Files.isDots(""+path.charAt(path.length()-1)) && (currentLogSizeSum += Files.length(path)) > nSizeLimit){
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && (currentLogSizeSum += Files.length(path)) > nSizeLimit){
             if(!ff.remove(path)){
                 throw new LogError("cannot remove: "+ path.$());
             }
