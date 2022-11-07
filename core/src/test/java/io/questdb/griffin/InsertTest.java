@@ -1080,6 +1080,20 @@ public class InsertTest extends AbstractGriffinTest {
         }
     }
 
+    private void assertQueryCheckWal(String expected) throws SqlException {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+
+        assertQuery(
+                expected,
+                "dest",
+                "ts",
+                true,
+                true
+        );
+    }
+
     private void testBindVariableInsert(
             int partitionBy,
             TimestampFunction timestampFunction,
@@ -1218,20 +1232,6 @@ public class InsertTest extends AbstractGriffinTest {
                 }
             }
         });
-    }
-
-    private void assertQueryCheckWal(String expected) throws SqlException {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-
-        assertQuery(
-                expected,
-                "dest",
-                "ts",
-                true,
-                true
-        );
     }
 
     private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {

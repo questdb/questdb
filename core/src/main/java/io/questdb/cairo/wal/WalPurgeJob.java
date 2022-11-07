@@ -366,16 +366,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    @Override
-    protected boolean runSerially() {
-        final long t = clock.getTicks();
-        if (last + checkInterval < t) {
-            last = t;
-            broadSweep();
-        }
-        return false;
-    }
-
     private boolean segmentIsReapable(int segmentId, int walsLatestSegmentId) {
         return segmentId < walsLatestSegmentId;
     }
@@ -422,6 +412,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private boolean walIsInUse(CharSequence tableName, int walId) {
         return !couldObtainLock(setWalLockPath(tableName, walId));
+    }
+
+    @Override
+    protected boolean runSerially() {
+        final long t = clock.getTicks();
+        if (last + checkInterval < t) {
+            last = t;
+            broadSweep();
+        }
+        return false;
     }
 
     /**

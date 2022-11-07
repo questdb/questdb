@@ -36,10 +36,6 @@ public interface TableWriterAPI extends Closeable {
 
     long apply(UpdateOperation operation) throws SqlException;
 
-    String getSystemTableName();
-
-    void truncate();
-
     @Override
     void close();
 
@@ -51,6 +47,8 @@ public interface TableWriterAPI extends Closeable {
 
     long getStructureVersion();
 
+    String getSystemTableName();
+
     CharSequence getTableName();
 
     TableWriter.Row newRow();
@@ -58,4 +56,6 @@ public interface TableWriterAPI extends Closeable {
     TableWriter.Row newRow(long timestamp);
 
     void rollback();
+
+    void truncate();
 }

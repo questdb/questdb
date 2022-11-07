@@ -41,23 +41,17 @@ import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 class WalWriterEvents implements Closeable {
-    private final FilesFacade ff;
     private final MemoryMARW eventMem = Vm.getMARWInstance();
+    private final FilesFacade ff;
     private final StringSink sink = new StringSink();
-    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
     private IntList initialSymbolCounts;
-    private long txn = 0;
     private long startOffset = 0;
     private BoolList symbolNullValues;
+    private long txn = 0;
+    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
-    }
-
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, IntList initialSymbolCounts) {
-        this.txnSymbolMaps = txnSymbolMaps;
-        this.initialSymbolCounts = initialSymbolCounts;
-        this.symbolNullValues = symbolNullValues;
     }
 
     @Override
@@ -65,109 +59,10 @@ class WalWriterEvents implements Closeable {
         eventMem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
-    void rollback() {
-        eventMem.jumpTo(startOffset);
+    private void init() {
+        eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
-    }
-
-    void openEventFile(Path path, int pathLen) {
-        if (eventMem.getFd() > -1) {
-            close();
-        }
-        openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
-        init();
-    }
-
-    private void writeSymbolMapDiffs() {
-        final int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
-            if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
-                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
-                    eventMem.putInt(i);
-                    eventMem.putInt(initialCount);
-
-                    final int size = symbolMap.size();
-                    eventMem.putInt(size);
-                    eventMem.putInt(symbolNullValues.get(i) ? 1 : 0);
-
-                    for (int j = 0; j < size; j++) {
-                        final CharSequence symbol = symbolMap.keys().getQuick(j);
-                        final int value = symbolMap.get(symbol);
-
-                        eventMem.putInt(value);
-                        eventMem.putStr(symbol);
-                    }
-                    eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
-                }
-            }
-        }
-        eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
-    }
-
-    long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.DATA);
-        eventMem.putLong(startRowID);
-        eventMem.putLong(endRowID);
-        eventMem.putLong(minTimestamp);
-        eventMem.putLong(maxTimestamp);
-        eventMem.putBool(outOfOrder);
-        writeSymbolMapDiffs();
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        return txn++;
-    }
-
-    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
-        assert sql != null && sql.length() > 0;
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.SQL);
-        eventMem.putInt(cmdType); //byte would be enough probably
-        eventMem.putStr(sql);
-        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
-        writeIndexedVariables(bindVariableService);
-        writeNamedVariables(bindVariableService);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        return txn++;
-    }
-
-    long truncate() {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.TRUNCATE);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-        return txn++;
-    }
-
-    private void writeIndexedVariables(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
-        eventMem.putInt(count);
-
-        for (int i = 0; i < count; i++) {
-            writeFunction(bindVariableService.getFunction(i));
-        }
-    }
-
-    private void writeNamedVariables(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
-        eventMem.putInt(count);
-
-        if (count > 0) {
-            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
-            for (int i = 0; i < count; i++) {
-                final CharSequence name = namedVariables.get(i);
-                eventMem.putStr(name);
-                sink.clear();
-                sink.put(':').put(name);
-                writeFunction(bindVariableService.getFunction(sink));
-            }
-        }
+        txn = 0;
     }
 
     private void writeFunction(Function function) {
@@ -228,6 +123,108 @@ class WalWriterEvents implements Closeable {
         }
     }
 
+    private void writeIndexedVariables(BindVariableService bindVariableService) {
+        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
+        eventMem.putInt(count);
+
+        for (int i = 0; i < count; i++) {
+            writeFunction(bindVariableService.getFunction(i));
+        }
+    }
+
+    private void writeNamedVariables(BindVariableService bindVariableService) {
+        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
+        eventMem.putInt(count);
+
+        if (count > 0) {
+            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            for (int i = 0; i < count; i++) {
+                final CharSequence name = namedVariables.get(i);
+                eventMem.putStr(name);
+                sink.clear();
+                sink.put(':').put(name);
+                writeFunction(bindVariableService.getFunction(sink));
+            }
+        }
+    }
+
+    private void writeSymbolMapDiffs() {
+        final int columns = txnSymbolMaps.size();
+        for (int i = 0; i < columns; i++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+            if (symbolMap != null) {
+                final int initialCount = initialSymbolCounts.get(i);
+                if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
+                    eventMem.putInt(i);
+                    eventMem.putInt(initialCount);
+
+                    final int size = symbolMap.size();
+                    eventMem.putInt(size);
+                    eventMem.putInt(symbolNullValues.get(i) ? 1 : 0);
+
+                    for (int j = 0; j < size; j++) {
+                        final CharSequence symbol = symbolMap.keys().getQuick(j);
+                        final int value = symbolMap.get(symbol);
+
+                        eventMem.putInt(value);
+                        eventMem.putStr(symbol);
+                    }
+                    eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
+                }
+            }
+        }
+        eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
+    }
+
+    long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.DATA);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        writeSymbolMapDiffs();
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        return txn++;
+    }
+
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, IntList initialSymbolCounts) {
+        this.txnSymbolMaps = txnSymbolMaps;
+        this.initialSymbolCounts = initialSymbolCounts;
+        this.symbolNullValues = symbolNullValues;
+    }
+
+    void openEventFile(Path path, int pathLen) {
+        if (eventMem.getFd() > -1) {
+            close();
+        }
+        openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        init();
+    }
+
+    void rollback() {
+        eventMem.jumpTo(startOffset);
+        eventMem.putInt(-1);
+    }
+
+    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
+        assert sql != null && sql.length() > 0;
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.SQL);
+        eventMem.putInt(cmdType); //byte would be enough probably
+        eventMem.putStr(sql);
+        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+        writeIndexedVariables(bindVariableService);
+        writeNamedVariables(bindVariableService);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        return txn++;
+    }
+
     void startTxn() {
         final int numOfColumns = txnSymbolMaps.size();
         for (int i = 0; i < numOfColumns; i++) {
@@ -243,9 +240,12 @@ class WalWriterEvents implements Closeable {
         }
     }
 
-    private void init() {
-        eventMem.putInt(WAL_FORMAT_VERSION);
+    long truncate() {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.TRUNCATE);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
-        txn = 0;
+        return txn++;
     }
 }

@@ -720,33 +720,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         });
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void createTableAndCopy(String tableName, String tableCopyName) {
-        // tableName is WAL enabled
-        try (TableModel model = createTableModel(tableName).wal()) {
-            engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    false,
-                    model,
-                    false
-            );
-        }
-
-        // tableCopyName is not WAL enabled
-        try (TableModel model = createTableModel(tableCopyName).noWal()) {
-            engine.createTable(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    false,
-                    model,
-                    false
-            );
-        }
-    }
-
     private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
         int col = 0;
         row.putInt(col++, i);
@@ -819,6 +792,33 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
+    private void createTableAndCopy(String tableName, String tableCopyName) {
+        // tableName is WAL enabled
+        try (TableModel model = createTableModel(tableName).wal()) {
+            engine.createTable(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    false,
+                    model,
+                    false
+            );
+        }
+
+        // tableCopyName is not WAL enabled
+        try (TableModel model = createTableModel(tableCopyName).noWal()) {
+            engine.createTable(
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    model.getMem(),
+                    model.getPath(),
+                    false,
+                    model,
+                    false
+            );
+        }
+    }
+
     private TableModel createTableModel(String tableName) {
         //noinspection resource
         return new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -842,6 +842,17 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("bin", ColumnType.BINARY)
                 .timestamp("ts");
+    }
+
+    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
+        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1);
+    }
+
+    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
+        executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
+        if (tableId > 0) {
+            drainWalQueue();
+        }
     }
 
     protected static void drainWalQueue(boolean cleanup) throws IOException {
@@ -871,16 +882,5 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             // run until empty
         }
         ((Closeable) job).close();
-    }
-
-    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows) throws SqlException {
-        updateMaxUncommittedRows(tableName, maxUncommittedRows, -1);
-    }
-
-    private void updateMaxUncommittedRows(CharSequence tableName, int maxUncommittedRows, int tableId) throws SqlException {
-        executeOperation("ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = " + maxUncommittedRows, CompiledQuery.ALTER);
-        if (tableId > 0) {
-            drainWalQueue();
-        }
     }
 }

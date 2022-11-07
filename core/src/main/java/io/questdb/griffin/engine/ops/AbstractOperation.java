@@ -33,16 +33,86 @@ import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
     private static final long NO_CORRELATION_ID = -1L;
-
-    private int cmdType;
-    private String cmdName;
-    private int tableId;
-    private long tableVersion;
-    private long correlationId;
+    @Nullable SqlExecutionContext sqlExecutionContext;
+    @Nullable String sqlStatement;
     String tableName;
     int tableNamePosition;
-    @Nullable String sqlStatement;
-    @Nullable SqlExecutionContext sqlExecutionContext;
+    private String cmdName;
+    private int cmdType;
+    private long correlationId;
+    private int tableId;
+    private long tableVersion;
+
+    public void clearCommandCorrelationId() {
+        setCommandCorrelationId(NO_CORRELATION_ID);
+    }
+
+    @Override
+    public void close() {
+        // intentionally left empty
+    }
+
+    @Override
+    public String getCommandName() {
+        return cmdName;
+    }
+
+    @Override
+    public int getCommandType() {
+        return cmdType;
+    }
+
+    @Override
+    public long getCorrelationId() {
+        return correlationId;
+    }
+
+    public @Nullable SqlExecutionContext getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
+    public @Nullable String getSqlStatement() {
+        return sqlStatement;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public int getTableNamePosition() {
+        return tableNamePosition;
+    }
+
+    @Override
+    public long getTableVersion() {
+        return tableVersion;
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+        task.of(cmdType, tableId, tableName);
+        task.setInstance(correlationId);
+    }
+
+    @Override
+    public void setCommandCorrelationId(long correlationId) {
+        this.correlationId = correlationId;
+    }
+
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
+    }
+
+    public void withSqlStatement(String sqlStatement) {
+        this.sqlStatement = sqlStatement;
+    }
 
     void init(
             int cmdType,
@@ -59,76 +129,5 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
-    }
-
-    @Override
-    public int getTableId() {
-        return tableId;
-    }
-
-    @Override
-    public long getTableVersion() {
-        return tableVersion;
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public int getCommandType() {
-        return cmdType;
-    }
-
-    @Override
-    public String getCommandName() {
-        return cmdName;
-    }
-
-    @Override
-    public int getTableNamePosition() {
-        return tableNamePosition;
-    }
-
-    @Override
-    public long getCorrelationId() {
-        return correlationId;
-    }
-
-    @Override
-    public void setCommandCorrelationId(long correlationId) {
-        this.correlationId = correlationId;
-    }
-
-    public void clearCommandCorrelationId() {
-        setCommandCorrelationId(NO_CORRELATION_ID);
-    }
-
-    @Override
-    public void serialize(TableWriterTask task) {
-        task.of(cmdType, tableId, tableName);
-        task.setInstance(correlationId);
-    }
-
-    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
-        this.sqlExecutionContext = sqlExecutionContext;
-    }
-
-    public @Nullable SqlExecutionContext getSqlExecutionContext() {
-        return sqlExecutionContext;
-    }
-
-    public @Nullable String getSqlStatement() {
-        return sqlStatement;
-    }
-
-    public void withSqlStatement(String sqlStatement) {
-        this.sqlStatement = sqlStatement;
-    }
-
-    @Override
-    public void close() {
-        // intentionally left empty
     }
 }

@@ -1070,103 +1070,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
-        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
-    }
-
-    @Test
-    public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
-        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
-        assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public long openRW(LPSZ name, long opts) {
-                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
-                        return -1;
-                    }
-                    return Files.openRW(name, opts);
-                }
-            };
-
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
-            }
-        });
-    }
-
-    @Test
-    public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public int errno() {
-                return 999;
-            }
-
-            @Override
-            public int mkdirs(Path path, int mode) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
-                        return 1;
-                    }
-                }
-                return Files.mkdirs(path, mode);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            try {
-                createTable(tableName);
-                fail("Exception expected");
-            } catch (Exception e) {
-                // this exception will be handled in ILP/PG/HTTP
-                MatcherAssert.assertThat(e.getMessage(),
-                        CoreMatchers.startsWith("[999] Cannot create sequencer directory:"));
-            }
-        });
-    }
-
-    @Test
-    public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
-                    return -1;
-                }
-                return Files.openRW(name, opts);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
-            createTable(tableName);
-
-            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    addColumn(walWriter1, "c", ColumnType.INT);
-                    addColumn(walWriter2, "d", ColumnType.INT);
-                    fail("Exception expected");
-                } catch (Exception e) {
-                    // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().startsWith("[0] could not apply table definition changes to the current transaction. could not add column [error=could not open read-write"));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testConcurrentInsert() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTable";
@@ -1315,6 +1218,180 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
             assertEquals(0, txnSet.size());
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampIncludesSegmentRowNumber_NotOOO() throws Exception {
+        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1000, 1200}, false);
+    }
+
+    @Test
+    public void testDesignatedTimestampIncludesSegmentRowNumber_OOO() throws Exception {
+        testDesignatedTimestampIncludesSegmentRowNumber(new int[]{1500, 1200}, true);
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
+                        return -1;
+                    }
+                    return Files.openRW(name, opts);
+                }
+            };
+
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+        });
+    }
+
+    @Test
+    public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 999;
+            }
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                try {
+                    throw new RuntimeException("Test failure");
+                } catch (Exception e) {
+                    final StackTraceElement[] stackTrace = e.getStackTrace();
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                        return 1;
+                    }
+                }
+                return Files.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try {
+                createTable(tableName);
+                fail("Exception expected");
+            } catch (Exception e) {
+                // this exception will be handled in ILP/PG/HTTP
+                MatcherAssert.assertThat(e.getMessage(),
+                        CoreMatchers.startsWith("[999] Cannot create sequencer directory:"));
+            }
+        });
+    }
+
+    @Test
+    public void testLargeSegmentRollover() throws Exception {
+        currentMicros = -1;  // Don't mock MicrosecondClock.
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            // Schema with 8 columns, 8 bytes each = 64 bytes per row
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .timestamp("ts")
+                    .col("a", ColumnType.LONG)
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                final RowInserter ins = new RowInserter() {
+                    private long count;
+                    private long ts = 1000000000L;
+
+                    @Override
+                    public long getCount() {
+                        return count;
+                    }
+
+                    @Override
+                    public void insertRow() {
+                        TableWriter.Row row = walWriter.newRow(ts);
+                        row.putLong(1, count);
+                        row.append();
+                        ts += 1000;
+                        ++count;
+                    }
+                };
+
+                ins.insertRow();
+                walWriter.commit();
+                Assert.assertEquals(ins.getCount(), 1);
+
+                // Just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertWalExistence(false, tableName, 2);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                while (ins.getCount() < configuration.getWalSegmentRolloverRowCount()) {
+                    ins.insertRow();
+                    if (ins.getCount() % 1000 == 0) {  // Committing occasionally to avoid too many log messages.
+                        walWriter.commit();
+                    }
+                }
+                walWriter.commit();
+
+                // Still just one segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                ins.insertRow();
+                walWriter.commit();
+
+                // Rolled over to second segment.
+                assertWalExistence(true, tableName, 1);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(true, tableName, 1, 1);
+                assertSegmentExistence(false, tableName, 1, 2);
+
+                assertSegmentLockEngagement(false, tableName, 1, 0);
+
+                drainWalQueue();
+                runWalPurgeJob();
+
+                assertSegmentExistence(false, tableName, 1, 0);
+            }
+        });
+    }
+
+    @Test
+    public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
+                    return -1;
+                }
+                return Files.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            createTable(tableName);
+
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    addColumn(walWriter1, "c", ColumnType.INT);
+                    addColumn(walWriter2, "d", ColumnType.INT);
+                    fail("Exception expected");
+                } catch (Exception e) {
+                    // this exception will be handled in ILP/PG/HTTP
+                    assertTrue(e.getMessage().startsWith("[0] could not apply table definition changes to the current transaction. could not add column [error=could not open read-write"));
+                }
+            }
         });
     }
 
@@ -2731,147 +2808,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testLargeSegmentRollover() throws Exception {
-        currentMicros = -1;  // Don't mock MicrosecondClock.
-
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            // Schema with 8 columns, 8 bytes each = 64 bytes per row
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .timestamp("ts")
-                    .col("a", ColumnType.LONG)
-                    .wal()
-            ) {
-                createTable(model);
-            }
-
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                final RowInserter ins = new RowInserter() {
-                    private long count;
-                    private long ts = 1000000000L;
-
-                    @Override
-                    public void insertRow() {
-                        TableWriter.Row row = walWriter.newRow(ts);
-                        row.putLong(1, count);
-                        row.append();
-                        ts += 1000;
-                        ++count;
-                    }
-
-                    @Override
-                    public long getCount() {
-                        return count;
-                    }
-                };
-
-                ins.insertRow();
-                walWriter.commit();
-                Assert.assertEquals(ins.getCount(), 1);
-
-                // Just one segment.
-                assertWalExistence(true, tableName, 1);
-                assertWalExistence(false, tableName, 2);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(false, tableName, 1, 1);
-
-                while (ins.getCount() < configuration.getWalSegmentRolloverRowCount()) {
-                    ins.insertRow();
-                    if (ins.getCount() % 1000 == 0) {  // Committing occasionally to avoid too many log messages.
-                        walWriter.commit();
-                    }
-                }
-                walWriter.commit();
-
-                // Still just one segment.
-                assertWalExistence(true, tableName, 1);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(false, tableName, 1, 1);
-
-                ins.insertRow();
-                walWriter.commit();
-
-                // Rolled over to second segment.
-                assertWalExistence(true, tableName, 1);
-                assertSegmentExistence(true, tableName, 1, 0);
-                assertSegmentExistence(true, tableName, 1, 1);
-                assertSegmentExistence(false, tableName, 1, 2);
-
-                assertSegmentLockEngagement(false, tableName, 1, 0);
-
-                drainWalQueue();
-                runWalPurgeJob();
-
-                assertSegmentExistence(false, tableName, 1, 0);
-            }
-        });
-    }
-
-    interface RowInserter {
-        void insertRow();
-
-        long getCount();
-    }
-
-    static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
-        removeColumnOperation.ofDropColumn(columnName);
-        writer.apply(removeColumnOperation.build(), true);
-    }
-
-    static void renameColumn(TableWriterAPI writer) throws SqlException {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
-        renameColumnC.ofRenameColumn("b", "c");
-        writer.apply(renameColumnC.build(), true);
-    }
-
-    static void prepareBinPayload(long pointer, int limit) {
-        for (int offset = 0; offset < limit; offset++) {
-            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
-        }
-    }
-
-    static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
-        assertNotNull(expected);
-        assertNotNull(actual);
-        assertEquals(expected.length(), actual.length());
-        for (int i = 0; i < expected.length(); i++) {
-            byte expectedByte = expected.byteAt(i);
-            byte actualByte = actual.byteAt(i);
-            assertEquals("Binary sequences not equals at offset " + i
-                            + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
-                    expectedByte, actualByte);
-        }
-    }
-
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
                 : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
-    }
-
-    static void createTable(String tableName) {
-        try (TableModel model = defaultModel(tableName)) {
-            createTable(model);
-        }
-    }
-
-    static void createTable() {
-        try (TableModel model = defaultModel("testTable", true)) {
-            createTable(model);
-        }
-    }
-
-    static void createTable(TableModel model) {
-        engine.createTable(
-                AllowAllCairoSecurityContext.INSTANCE,
-                model.getMem(),
-                model.getPath(),
-                false,
-                model,
-                false
-        );
     }
 
     private static TableModel defaultModel(String tableName) {
@@ -3000,5 +2940,65 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
+        assertNotNull(expected);
+        assertNotNull(actual);
+        assertEquals(expected.length(), actual.length());
+        for (int i = 0; i < expected.length(); i++) {
+            byte expectedByte = expected.byteAt(i);
+            byte actualByte = actual.byteAt(i);
+            assertEquals("Binary sequences not equals at offset " + i
+                            + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte + ".",
+                    expectedByte, actualByte);
+        }
+    }
+
+    static void createTable(String tableName) {
+        try (TableModel model = defaultModel(tableName)) {
+            createTable(model);
+        }
+    }
+
+    static void createTable() {
+        try (TableModel model = defaultModel("testTable", true)) {
+            createTable(model);
+        }
+    }
+
+    static void createTable(TableModel model) {
+        engine.createTable(
+                AllowAllCairoSecurityContext.INSTANCE,
+                model.getMem(),
+                model.getPath(),
+                false,
+                model,
+                false
+        );
+    }
+
+    static void prepareBinPayload(long pointer, int limit) {
+        for (int offset = 0; offset < limit; offset++) {
+            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
+        }
+    }
+
+    static void removeColumn(TableWriterAPI writer, String columnName) throws SqlException {
+        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, Chars.toString(writer.getTableName()), 0);
+        removeColumnOperation.ofDropColumn(columnName);
+        writer.apply(removeColumnOperation.build(), true);
+    }
+
+    static void renameColumn(TableWriterAPI writer) throws SqlException {
+        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, Chars.toString(writer.getTableName()), 0);
+        renameColumnC.ofRenameColumn("b", "c");
+        writer.apply(renameColumnC.build(), true);
+    }
+
+    interface RowInserter {
+        long getCount();
+
+        void insertRow();
     }
 }

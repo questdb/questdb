@@ -39,17 +39,55 @@ public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
     private final DataInfo dataInfo = new DataInfo();
-    private final SqlInfo sqlInfo = new SqlInfo();
-
     private final MemoryMR eventMem;
+    private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
+    private long nextOffset = Integer.BYTES;
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
-    private long nextOffset = Integer.BYTES;
 
     public WalEventCursor(MemoryMR eventMem) {
         this.eventMem = eventMem;
+    }
+
+    public DataInfo getDataInfo() {
+        if (type != DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
+        }
+        return dataInfo;
+    }
+
+    public SqlInfo getSqlInfo() {
+        if (type != SQL) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not SQL, type=").put(type);
+        }
+        return sqlInfo;
+    }
+
+    public long getTxn() {
+        return txn;
+    }
+
+    public byte getType() {
+        return type;
+    }
+
+    public boolean hasNext() {
+        offset = nextOffset;
+        int length = readInt();
+        if (length < 1) {
+            // EOF
+            return false;
+        }
+        nextOffset = length + nextOffset;
+
+        txn = readLong();
+        if (txn == END_OF_EVENTS) {
+            return false;
+        }
+        readRecord();
+        return true;
     }
 
     public void reset() {
@@ -57,6 +95,130 @@ public class WalEventCursor {
         nextOffset = Integer.BYTES; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
+    }
+
+    private void checkMemSize(long requiredBytes) {
+        if (memSize < offset + requiredBytes) {
+            throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+                    .put(", required=").put(offset + requiredBytes);
+        }
+    }
+
+    private BinarySequence readBin() {
+        checkMemSize(Long.BYTES);
+        final long binLength = eventMem.getBinLen(offset);
+
+        checkMemSize(binLength);
+        final BinarySequence value = eventMem.getBin(offset);
+        offset += binLength + Long.BYTES;
+        return value;
+    }
+
+    private boolean readBool() {
+        checkMemSize(Byte.BYTES);
+        final boolean value = eventMem.getBool(offset);
+        offset += Byte.BYTES;
+        return value;
+    }
+
+    private byte readByte() {
+        checkMemSize(Byte.BYTES);
+        final byte value = eventMem.getByte(offset);
+        offset += Byte.BYTES;
+        return value;
+    }
+
+    private char readChar() {
+        checkMemSize(Character.BYTES);
+        final char value = eventMem.getChar(offset);
+        offset += Character.BYTES;
+        return value;
+    }
+
+    private double readDouble() {
+        checkMemSize(Double.BYTES);
+        final double value = eventMem.getDouble(offset);
+        offset += Double.BYTES;
+        return value;
+    }
+
+    private float readFloat() {
+        checkMemSize(Float.BYTES);
+        final float value = eventMem.getFloat(offset);
+        offset += Float.BYTES;
+        return value;
+    }
+
+    private int readInt() {
+        checkMemSize(Integer.BYTES);
+        final int value = eventMem.getInt(offset);
+        offset += Integer.BYTES;
+        return value;
+    }
+
+    private long readLong() {
+        checkMemSize(Long.BYTES);
+        final long value = eventMem.getLong(offset);
+        offset += Long.BYTES;
+        return value;
+    }
+
+    private void readRecord() {
+        type = readByte();
+        switch (type) {
+            case DATA:
+                dataInfo.read();
+                break;
+            case SQL:
+                sqlInfo.read();
+                break;
+            case TRUNCATE:
+                break;
+            default:
+                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
+        }
+    }
+
+    private short readShort() {
+        checkMemSize(Short.BYTES);
+        final short value = eventMem.getShort(offset);
+        offset += Short.BYTES;
+        return value;
+    }
+
+    private CharSequence readStr() {
+        checkMemSize(Integer.BYTES);
+        final int strLength = eventMem.getStrLen(offset);
+        final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
+
+        checkMemSize(storageLength);
+        final CharSequence value = strLength >= 0 ? eventMem.getStr(offset) : null;
+        offset += storageLength;
+        return value;
+    }
+
+    SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiffImpl symbolMapDiff) {
+        final int columnIndex = readInt();
+        if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
+            return null;
+        }
+        final int cleanTableSymbolCount = readInt();
+        final int size = readInt();
+        final boolean hasNullValue = readInt() != 0;
+
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, hasNullValue, size);
+        return symbolMapDiff;
+    }
+
+    SymbolMapDiffImpl.Entry readNextSymbolMapDiffEntry(SymbolMapDiffImpl.Entry entry) {
+        final int key = readInt();
+        if (key == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
+            entry.clear();
+            return null;
+        }
+        final CharSequence symbol = readStr();
+        entry.of(key, symbol);
+        return entry;
     }
 
     boolean setPosition(long segmentTxn) {
@@ -86,91 +248,28 @@ public class WalEventCursor {
         return true;
     }
 
-    public boolean hasNext() {
-        offset = nextOffset;
-        int length = readInt();
-        if (length < 1) {
-            // EOF
-            return false;
-        }
-        nextOffset = length + nextOffset;
-
-        txn = readLong();
-        if (txn == END_OF_EVENTS) {
-            return false;
-        }
-        readRecord();
-        return true;
-    }
-
-    private void readRecord() {
-        type = readByte();
-        switch (type) {
-            case DATA:
-                dataInfo.read();
-                break;
-            case SQL:
-                sqlInfo.read();
-                break;
-            case TRUNCATE:
-                break;
-            default:
-                throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
-        }
-    }
-
-    public DataInfo getDataInfo() {
-        if (type != DATA) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
-        }
-        return dataInfo;
-    }
-
-    public SqlInfo getSqlInfo() {
-        if (type != SQL) {
-            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not SQL, type=").put(type);
-        }
-        return sqlInfo;
-    }
-
-    public long getTxn() {
-        return txn;
-    }
-
-    public byte getType() {
-        return type;
-    }
-
     public class DataInfo implements SymbolMapDiffCursor {
         private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
-        private long startRowID;
         private long endRowID;
-        private long minTimestamp;
         private long maxTimestamp;
+        private long minTimestamp;
         private boolean outOfOrder;
-
-        private void read() {
-            startRowID = readLong();
-            endRowID = readLong();
-            minTimestamp = readLong();
-            maxTimestamp = readLong();
-            outOfOrder = readBool();
-        }
-
-        public long getStartRowID() {
-            return startRowID;
-        }
+        private long startRowID;
 
         public long getEndRowID() {
             return endRowID;
+        }
+
+        public long getMaxTimestamp() {
+            return maxTimestamp;
         }
 
         public long getMinTimestamp() {
             return minTimestamp;
         }
 
-        public long getMaxTimestamp() {
-            return maxTimestamp;
+        public long getStartRowID() {
+            return startRowID;
         }
 
         public boolean isOutOfOrder() {
@@ -180,17 +279,19 @@ public class WalEventCursor {
         public SymbolMapDiff nextSymbolMapDiff() {
             return readNextSymbolMapDiff(symbolMapDiff);
         }
+
+        private void read() {
+            startRowID = readLong();
+            endRowID = readLong();
+            minTimestamp = readLong();
+            maxTimestamp = readLong();
+            outOfOrder = readBool();
+        }
     }
 
     public class SqlInfo {
-        private int cmdType;
         private final StringSink sql = new StringSink();
-
-        private void read() {
-            cmdType = readInt();
-            sql.clear();
-            sql.put(readStr());
-        }
+        private int cmdType;
 
         public int getCmdType() {
             return cmdType;
@@ -321,113 +422,11 @@ public class WalEventCursor {
                 }
             }
         }
-    }
 
-    private double readDouble() {
-        checkMemSize(Double.BYTES);
-        final double value = eventMem.getDouble(offset);
-        offset += Double.BYTES;
-        return value;
-    }
-
-    private float readFloat() {
-        checkMemSize(Float.BYTES);
-        final float value = eventMem.getFloat(offset);
-        offset += Float.BYTES;
-        return value;
-    }
-
-    private long readLong() {
-        checkMemSize(Long.BYTES);
-        final long value = eventMem.getLong(offset);
-        offset += Long.BYTES;
-        return value;
-    }
-
-    private int readInt() {
-        checkMemSize(Integer.BYTES);
-        final int value = eventMem.getInt(offset);
-        offset += Integer.BYTES;
-        return value;
-    }
-
-    private short readShort() {
-        checkMemSize(Short.BYTES);
-        final short value = eventMem.getShort(offset);
-        offset += Short.BYTES;
-        return value;
-    }
-
-    private char readChar() {
-        checkMemSize(Character.BYTES);
-        final char value = eventMem.getChar(offset);
-        offset += Character.BYTES;
-        return value;
-    }
-
-    private byte readByte() {
-        checkMemSize(Byte.BYTES);
-        final byte value = eventMem.getByte(offset);
-        offset += Byte.BYTES;
-        return value;
-    }
-
-    private boolean readBool() {
-        checkMemSize(Byte.BYTES);
-        final boolean value = eventMem.getBool(offset);
-        offset += Byte.BYTES;
-        return value;
-    }
-
-    private CharSequence readStr() {
-        checkMemSize(Integer.BYTES);
-        final int strLength = eventMem.getStrLen(offset);
-        final long storageLength = strLength > 0 ? Vm.getStorageLength(strLength) : Integer.BYTES;
-
-        checkMemSize(storageLength);
-        final CharSequence value = strLength >= 0 ? eventMem.getStr(offset) : null;
-        offset += storageLength;
-        return value;
-    }
-
-    private BinarySequence readBin() {
-        checkMemSize(Long.BYTES);
-        final long binLength = eventMem.getBinLen(offset);
-
-        checkMemSize(binLength);
-        final BinarySequence value = eventMem.getBin(offset);
-        offset += binLength + Long.BYTES;
-        return value;
-    }
-
-    SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiffImpl symbolMapDiff) {
-        final int columnIndex = readInt();
-        if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
-            return null;
-        }
-        final int cleanTableSymbolCount = readInt();
-        final int size = readInt();
-        final boolean hasNullValue = readInt() != 0;
-
-        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, hasNullValue, size);
-        return symbolMapDiff;
-    }
-
-    SymbolMapDiffImpl.Entry readNextSymbolMapDiffEntry(SymbolMapDiffImpl.Entry entry) {
-        final int key = readInt();
-        if (key == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
-            entry.clear();
-            return null;
-        }
-        final CharSequence symbol = readStr();
-        entry.of(key, symbol);
-        return entry;
-    }
-
-    private void checkMemSize(long requiredBytes) {
-        if (memSize < offset + requiredBytes) {
-            throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
-                    .put(", required=").put(offset + requiredBytes);
+        private void read() {
+            cmdType = readInt();
+            sql.clear();
+            sql.put(readStr());
         }
     }
 }

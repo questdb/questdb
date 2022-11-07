@@ -91,14 +91,14 @@ import static org.junit.Assert.*;
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
     public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
     public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
+    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
+    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_ALL =
             CONN_AWARE_SIMPLE_BINARY
                     | CONN_AWARE_SIMPLE_TEXT
@@ -113,9 +113,8 @@ public class PGJobContextTest extends BasePGTest {
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
     public static final boolean SKIP_FAILING_WAL_TESTS = false;
-
-    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
@@ -3140,28 +3139,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
-    public void testInsertSimpleText() throws Exception {
-        testInsert0(true, false);
-    }
-
-    @Test
-    public void testInsertStringWithEscapedQuote() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
-            try (Statement s = connection.createStatement()) {
-                s.execute("create table t ( s string)");
-                s.executeUpdate("insert into t values ('o''brien ''''')");
-
-                sink.clear();
-                try (ResultSet resultSet = s.executeQuery("select * from t")) {
-                    assertResultSet("s[VARCHAR]\no'brien ''\n", sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertPreparedRenameInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -3205,6 +3182,33 @@ nodejs code:
                 }
             }
         });
+    }
+
+    @Test
+    @Ignore
+    public void testInsertSimpleText() throws Exception {
+        testInsert0(true, false);
+    }
+
+    @Test
+    public void testInsertStringWithEscapedQuote() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
+            try (Statement s = connection.createStatement()) {
+                s.execute("create table t ( s string)");
+                s.executeUpdate("insert into t values ('o''brien ''''')");
+
+                sink.clear();
+                try (ResultSet resultSet = s.executeQuery("select * from t")) {
+                    assertResultSet("s[VARCHAR]\no'brien ''\n", sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertTableDoesNotExistPrepared() throws Exception {
+        testInsertTableDoesNotExist(false, "table does not exist [table=x]");
     }
 
     @Test
@@ -3854,18 +3858,18 @@ nodejs code:
                 TestUtils.runWithTextImportRequestJob(
                         engine,
                         () -> assertEventually(() -> {
-                            try (
-                                    final PreparedStatement select = connection.prepareStatement("select * from x");
-                                    final ResultSet rs = select.executeQuery()
-                            ) {
-                                sink.clear();
-                                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                                        + "CDE,bb,b,sentence 1\n"
-                                        + "sentence 2,12\n", sink, rs);
-                            } catch (IOException | SQLException e) {
-                                throw new AssertionError(e);
-                            }
+                                    try (
+                                            final PreparedStatement select = connection.prepareStatement("select * from x");
+                                            final ResultSet rs = select.executeQuery()
+                                    ) {
+                                        sink.clear();
+                                        assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                                + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                                + "CDE,bb,b,sentence 1\n"
+                                                + "sentence 2,12\n", sink, rs);
+                                    } catch (IOException | SQLException e) {
+                                        throw new AssertionError(e);
+                                    }
                                 }
                         ));
             }
@@ -4975,10 +4979,6 @@ nodejs code:
                 Assert.assertTrue("Exception is not thrown", caught);
             }
         });
-    }
-
-    private boolean isEnabledForWalRun() {
-        return true;
     }
 
     @Test
@@ -6826,60 +6826,6 @@ create table tab as (
     }
 
     @Test
-    public void testInsertTableDoesNotExistPrepared() throws Exception {
-        testInsertTableDoesNotExist(false, "table does not exist [table=x]");
-    }
-
-    @Test
-    public void testUpdatePreparedRenameUpdate() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, true)) {
-
-                    connection.setAutoCommit(false);
-                    connection.prepareStatement("CREATE TABLE ts as" +
-                            " (select x, timestamp_sequence('2022-02-24T04', 1000000) ts from long_sequence(2) )" +
-                            " TIMESTAMP(ts) PARTITION BY MONTH").execute();
-
-                    try (PreparedStatement update = connection.prepareStatement("UPDATE ts set x = x + 10 WHERE x = ?")) {
-                        update.setInt(1, 1);
-                        update.execute();
-                        connection.commit();
-
-                        connection.prepareStatement("rename table ts to ts2").execute();
-                        try {
-                            update.execute();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
-                        }
-                        connection.commit();
-                    }
-
-                    mayDrainWalQueue();
-
-                    sink.clear();
-                    try (
-                            PreparedStatement ps = connection.prepareStatement("ts2");
-                            ResultSet rs = ps.executeQuery()
-                    ) {
-                        assertResultSet(
-                                "x[BIGINT],ts[TIMESTAMP]\n" +
-                                        "11,2022-02-24 04:00:00.0\n" +
-                                        "2,2022-02-24 04:00:01.0\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testTimestampSentEqualsReceived() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -7093,10 +7039,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7133,10 +7075,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
@@ -7175,6 +7113,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -7209,6 +7151,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -7453,6 +7399,55 @@ create table tab as (
                     try (ResultSet resultSet = connection.prepareStatement("x order by a").executeQuery()) {
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdatePreparedRenameUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE ts as" +
+                            " (select x, timestamp_sequence('2022-02-24T04', 1000000) ts from long_sequence(2) )" +
+                            " TIMESTAMP(ts) PARTITION BY MONTH").execute();
+
+                    try (PreparedStatement update = connection.prepareStatement("UPDATE ts set x = x + 10 WHERE x = ?")) {
+                        update.setInt(1, 1);
+                        update.execute();
+                        connection.commit();
+
+                        connection.prepareStatement("rename table ts to ts2").execute();
+                        try {
+                            update.execute();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
+                        }
+                        connection.commit();
+                    }
+
+                    mayDrainWalQueue();
+
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("ts2");
+                            ResultSet rs = ps.executeQuery()
+                    ) {
+                        assertResultSet(
+                                "x[BIGINT],ts[TIMESTAMP]\n" +
+                                        "11,2022-02-24 04:00:00.0\n" +
+                                        "2,2022-02-24 04:00:01.0\n",
+                                sink,
+                                rs
+                        );
                     }
                 }
             }
@@ -7721,6 +7716,10 @@ create table tab as (
                 }
             }
         });
+    }
+
+    private boolean isEnabledForWalRun() {
+        return true;
     }
 
     private void mayDrainWalQueue() {
@@ -8968,18 +8967,18 @@ create table tab as (
     }
 
     @FunctionalInterface
-    interface OnTickAction {
-        void run(TableWriter writer);
-    }
-
-    @FunctionalInterface
     interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary) throws Exception;
     }
 
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
+    }
+
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
-        private final AtomicBoolean delaying = new AtomicBoolean(false);
         private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
+        private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
         public int send(long fd, long buffer, int bufferLen) {

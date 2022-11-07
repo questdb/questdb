@@ -46,9 +46,9 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
     private long structureVersion = -1;
-    private int tableId;
     private boolean suspended;
     private String systemTableName;
+    private int tableId;
 
     public WalWriterMetadata(FilesFacade ff) {
         this(ff, false);
@@ -76,11 +76,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         addColumn0(columnName, columnType);
     }
 
-    @Override
-    public String getSystemTableName() {
-        return systemTableName;
-    }
-
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
         structureVersion++;
@@ -101,8 +96,18 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
+    public String getSystemTableName() {
+        return systemTableName;
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        return true;
     }
 
     @Override
@@ -112,11 +117,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         this.timestampIndex = timestampIndex;
         this.suspended = suspended;
         this.structureVersion = structureVersion;
-    }
-
-    @Override
-    public boolean isWalEnabled() {
-        return true;
     }
 
     public void removeColumn(CharSequence columnName) {
@@ -173,14 +173,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnCount++;
     }
 
-    protected void clear(byte truncateMode) {
-        reset();
-        if (metaMem != null) {
-            metaMem.close(true, truncateMode);
-        }
-        Misc.free(roMetaMem);
-    }
-
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
@@ -189,6 +181,14 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         systemTableName = null;
         tableId = -1;
         suspended = false;
+    }
+
+    protected void clear(byte truncateMode) {
+        reset();
+        if (metaMem != null) {
+            metaMem.close(true, truncateMode);
+        }
+        Misc.free(roMetaMem);
     }
 
     void syncToMetaFile() {

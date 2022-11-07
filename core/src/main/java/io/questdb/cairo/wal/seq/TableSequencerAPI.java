@@ -43,12 +43,12 @@ import java.util.function.Function;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
-    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final CairoEngine engine;
     private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
+    private final CairoEngine engine;
     private final long inactiveTtlUs;
     private final int recreateDistressedSequencerAttempts;
+    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private final TableNameRegistry tableNameRegistry;
     private volatile boolean closed;
 
@@ -67,16 +67,6 @@ public class TableSequencerAPI implements QuietCloseable {
         closed = true;
         releaseAll();
         Misc.free(tableNameRegistry);
-    }
-
-    public void getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
-            try {
-                tableSequencer.getTableMetadata(sink);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-        }
     }
 
     public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
@@ -132,6 +122,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    @NotNull
+    public String getDefaultTableName(CharSequence tableName) {
+        return tableNameRegistry.getDefaultSystemTableName(tableName);
+    }
+
     public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final String systemTableName, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
             TableMetadataChangeLog metadataChangeLog;
@@ -142,11 +137,6 @@ public class TableSequencerAPI implements QuietCloseable {
             }
             return metadataChangeLog;
         }
-    }
-
-    @NotNull
-    public String getDefaultTableName(CharSequence tableName) {
-        return tableNameRegistry.getDefaultSystemTableName(tableName);
     }
 
     public int getNextWalId(final String systemTableName) {
@@ -161,10 +151,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public String getWalSystemTableName(CharSequence tableName) {
-        return tableNameRegistry.getWalTableSystemName(tableName);
-    }
-
     public String getSystemTableNameOrDefault(final CharSequence tableName) {
         final String systemName = tableNameRegistry.getSystemName(tableName);
         if (systemName != null) {
@@ -174,8 +160,22 @@ public class TableSequencerAPI implements QuietCloseable {
         return getDefaultTableName(tableName);
     }
 
+    public void getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
+            try {
+                tableSequencer.getTableMetadata(sink);
+            } finally {
+                tableSequencer.unlockRead();
+            }
+        }
+    }
+
     public String getTableNameBySystemName(CharSequence systemTableName) {
         return tableNameRegistry.getTableNameBySystemName(systemTableName);
+    }
+
+    public String getWalSystemTableName(CharSequence tableName) {
+        return tableNameRegistry.getWalTableSystemName(tableName);
     }
 
     public boolean isSuspended(final String systemTableName) {
@@ -190,12 +190,12 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean isWalTableDropped(String systemTableName) {
-        return tableNameRegistry.isWalTableDropped(systemTableName);
-    }
-
     public boolean isWalSystemName(String systemTableName) {
         return tableNameRegistry.isWalSystemName(systemTableName);
+    }
+
+    public boolean isWalTableDropped(String systemTableName) {
+        return tableNameRegistry.isWalTableDropped(systemTableName);
     }
 
     public long lastTxn(final String tableName) {
@@ -255,6 +255,10 @@ public class TableSequencerAPI implements QuietCloseable {
         return releaseAll(Long.MAX_VALUE);
     }
 
+    public boolean releaseInactive() {
+        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
+    }
+
     public void reloadMetadataConditionally(
             final String systemTableName,
             long expectedStructureVersion,
@@ -269,10 +273,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockRead();
             }
         }
-    }
-
-    public boolean releaseInactive() {
-        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
     }
 
     public void removeTableSystemName(CharSequence systemTableName) {
@@ -391,18 +391,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return getTableSequencerEntryLocked(systemTableName, lock);
     }
 
-    private boolean returnToPool(final TableSequencerEntry entry) {
-        if (closed) {
-            return false;
-        }
-        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
-        return true;
-    }
-
-    protected boolean releaseAll(long deadline) {
-        return releaseEntries(deadline);
-    }
-
     private boolean releaseEntries(long deadline) {
         if (seqRegistry.size() == 0) {
             // nothing to release
@@ -422,11 +410,23 @@ public class TableSequencerAPI implements QuietCloseable {
         return removed;
     }
 
+    private boolean returnToPool(final TableSequencerEntry entry) {
+        if (closed) {
+            return false;
+        }
+        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
+        return true;
+    }
+
     private void throwIfClosed() {
         if (closed) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
+    }
+
+    protected boolean releaseAll(long deadline) {
+        return releaseEntries(deadline);
     }
 
     enum SequencerLockType {

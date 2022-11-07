@@ -126,29 +126,6 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPageFrameCursorNoColTops() throws Exception {
-        // pageFrameMaxSize < rowCount
-        testFwdPageFrameCursor(64, 8, -1);
-        testFwdPageFrameCursor(65, 8, -1);
-        // pageFrameMaxSize == rowCount
-        testFwdPageFrameCursor(64, 64, -1);
-        // pageFrameMaxSize > rowCount
-        testFwdPageFrameCursor(63, 64, -1);
-    }
-
-    @Test
-    public void testPageFrameCursorWithColTops() throws Exception {
-        // pageFrameMaxSize < rowCount
-        testFwdPageFrameCursor(64, 8, 3);
-        testFwdPageFrameCursor(64, 8, 8);
-        testFwdPageFrameCursor(65, 8, 11);
-        // pageFrameMaxSize == rowCount
-        testFwdPageFrameCursor(64, 64, 32);
-        // pageFrameMaxSize > rowCount
-        testFwdPageFrameCursor(63, 64, 61);
-    }
-
-    @Test
     public void testPageFrameBwdCursorNoColTops() throws Exception {
         // pageFrameMaxSize < rowCount
         testBwdPageFrameCursor(64, 8, -1);
@@ -169,6 +146,29 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
         testBwdPageFrameCursor(64, 64, 32);
         // pageFrameMaxSize > rowCount
         testBwdPageFrameCursor(63, 64, 61);
+    }
+
+    @Test
+    public void testPageFrameCursorNoColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testFwdPageFrameCursor(64, 8, -1);
+        testFwdPageFrameCursor(65, 8, -1);
+        // pageFrameMaxSize == rowCount
+        testFwdPageFrameCursor(64, 64, -1);
+        // pageFrameMaxSize > rowCount
+        testFwdPageFrameCursor(63, 64, -1);
+    }
+
+    @Test
+    public void testPageFrameCursorWithColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testFwdPageFrameCursor(64, 8, 3);
+        testFwdPageFrameCursor(64, 8, 8);
+        testFwdPageFrameCursor(65, 8, 11);
+        // pageFrameMaxSize == rowCount
+        testFwdPageFrameCursor(64, 64, 32);
+        // pageFrameMaxSize > rowCount
+        testFwdPageFrameCursor(63, 64, 61);
     }
 
     private void populateColumnTypes(RecordMetadata metadata, IntList columnIndexes, IntList columnSizes) {

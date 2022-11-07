@@ -49,8 +49,8 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {
         private final int index;
-        private AbstractMultiTenantPool<WalWriterTenant> pool;
         private Entry<WalWriterTenant> entry;
+        private AbstractMultiTenantPool<WalWriterTenant> pool;
 
         public WalWriterTenant(AbstractMultiTenantPool<WalWriterTenant> pool, Entry<WalWriterTenant> entry, int index, String systemTableName, String tableName, TableSequencerAPI tableSequencerAPI) {
             super(pool.getConfiguration(), systemTableName, tableName, tableSequencerAPI);
@@ -72,6 +72,17 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             }
         }
 
+        @SuppressWarnings("unchecked")
+        @Override
+        public Entry<WalWriterTenant> getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;
@@ -85,17 +96,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 close();
                 throw ex;
             }
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public Entry<WalWriterTenant> getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
         }
     }
 }

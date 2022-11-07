@@ -71,22 +71,22 @@ import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
-    private int initialRowCount;
-    private int fuzzRowCount;
-    private boolean isO3;
     private double cancelRowsProb;
-    private double notSetProb;
-    private double nullSetProb;
-    private double rollbackProb;
+    private double colRenameProb;
     private double collAddProb;
     private double collRemoveProb;
-    private double colRenameProb;
     private double dataAddProb;
-    private int transactionCount;
-    private int strLen;
-    private int symbolStrLenMax;
-    private int symbolCountMax;
+    private int fuzzRowCount;
+    private int initialRowCount;
+    private boolean isO3;
+    private double notSetProb;
+    private double nullSetProb;
     private int partitionCount;
+    private double rollbackProb;
+    private int strLen;
+    private int symbolCountMax;
+    private int symbolStrLenMax;
+    private int transactionCount;
 
     @BeforeClass
     public static void setUpStatic() {

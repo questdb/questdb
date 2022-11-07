@@ -28,9 +28,9 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 
 public class GenericTableRecordMetadata extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
-    private int tableId;
     private long structureVersion;
     private String systemTableName;
+    private int tableId;
 
     @Override
     public void addColumn(
@@ -55,11 +55,6 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public String getSystemTableName() {
-        return systemTableName;
-    }
-
-    @Override
     public void close() {
     }
 
@@ -69,8 +64,19 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
+    public String getSystemTableName() {
+        return systemTableName;
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        // this class is only used for WAL-enabled tables
+        return true;
     }
 
     @Override
@@ -81,11 +87,5 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
         // todo: suspended
         this.structureVersion = structureVersion;
         // todo: maxUncommittedRows where from ?
-    }
-
-    @Override
-    public boolean isWalEnabled() {
-        // this class is only used for WAL-enabled tables
-        return true;
     }
 }

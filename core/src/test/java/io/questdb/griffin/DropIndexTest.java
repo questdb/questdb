@@ -53,9 +53,15 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class DropIndexTest extends AbstractGriffinTest {
 
-    private static final String tableName = "sensors";
     private static final String columnName = "sensor_id";
+    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
+            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
+            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
+            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
+            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
+            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
     private static final int indexBlockValueSize = 32;
+    private static final String tableName = "sensors";
     private static final String CREATE_TABLE_STMT = "CREATE TABLE " + tableName + " AS (" +
             "    SELECT" +
             "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
@@ -66,19 +72,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
             ", INDEX(temperature CAPACITY 4) " +
             "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
-
-
-    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
-            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
-            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
-            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
-            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
-            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
-
-
-    protected static SqlExecutionContext sqlExecutionContext2;
     protected static SqlCompiler compiler2;
-
+    protected static SqlExecutionContext sqlExecutionContext2;
     private static Path path;
     private static int tablePathLen;
 
@@ -419,14 +414,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         );
     }
 
-    private static String dropIndexStatement() {
-        sink.clear();
-        return sink.put("ALTER TABLE ").put(tableName)
-                .put(" ALTER COLUMN ").put(columnName)
-                .put(" DROP INDEX")
-                .toString();
-    }
-
     private static void checkMetadataAndTxn(
             int partitionedBy,
             long expectedReaderVersion,
@@ -492,6 +479,28 @@ public class DropIndexTest extends AbstractGriffinTest {
         }
     }
 
+    private static String dropIndexStatement() {
+        sink.clear();
+        return sink.put("ALTER TABLE ").put(tableName)
+                .put(" ALTER COLUMN ").put(columnName)
+                .put(" DROP INDEX")
+                .toString();
+    }
+
+    private static boolean isDataFile(
+            java.nio.file.Path tablePath,
+            java.nio.file.Path filePath,
+            String columnName,
+            long txn
+    ) {
+        final String fn = filePath.getFileName().toString();
+        boolean isDFile = !filePath.getParent().equals(tablePath);
+        if (!isDFile) {
+            return false;
+        }
+        return fn.endsWith(columnName + (txn < 1 ? ".d" : ".d." + txn));
+    }
+
     private static boolean isIndexFile(
             java.nio.file.Path tablePath,
             java.nio.file.Path filePath,
@@ -510,20 +519,6 @@ public class DropIndexTest extends AbstractGriffinTest {
             V = V + "." + txn;
         }
         return fn.endsWith(K) || fn.endsWith(V);
-    }
-
-    private static boolean isDataFile(
-            java.nio.file.Path tablePath,
-            java.nio.file.Path filePath,
-            String columnName,
-            long txn
-    ) {
-        final String fn = filePath.getFileName().toString();
-        boolean isDFile = !filePath.getParent().equals(tablePath);
-        if (!isDFile) {
-            return false;
-        }
-        return fn.endsWith(columnName + (txn < 1 ? ".d" : ".d." + txn));
     }
 
     private long countDFiles(long txn) throws IOException {

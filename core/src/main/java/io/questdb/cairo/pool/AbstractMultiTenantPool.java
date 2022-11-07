@@ -40,16 +40,16 @@ import java.util.Map;
 
 public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends AbstractPool implements ResourcePool<T> {
     public static final int ENTRY_SIZE = 32;
-    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
-    private static final long UNLOCKED = -1L;
-    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final int NEXT_OPEN = 0;
+    private static final Log LOG = LogFactory.getLog(AbstractMultiTenantPool.class);
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
+    private static final int NEXT_OPEN = 0;
+    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
+    private static final long UNLOCKED = -1L;
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
-    private final int maxSegments;
     private final int maxEntries;
+    private final int maxSegments;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveReaderTTL());
@@ -60,8 +60,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
     public Map<CharSequence, Entry<T>> entries() {
         return entries;
     }
-
-    protected abstract T newTenant(String tableName, Entry<T> entry, int index);
 
     @Override
     public T get(CharSequence tableName) {
@@ -217,12 +215,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         }
     }
 
-    @Override
-    protected void closePool() {
-        super.closePool();
-        LOG.info().$("closed").$();
-    }
-
     private void closeTenant(long thread, Entry<T> entry, int index, short ev, int reason) {
         T tenant = entry.getTenant(index);
         if (tenant != null) {
@@ -236,6 +228,37 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
             entry.assignTenant(index, null);
         }
     }
+
+    private Entry<T> getEntry(CharSequence name) {
+        checkClosed();
+
+        Entry<T> e = entries.get(name);
+        if (e == null) {
+            e = new Entry<T>(0, clock.getTicks());
+            Entry<T> other = entries.putIfAbsent(name, e);
+            if (other != null) {
+                e = other;
+            }
+        }
+        return e;
+    }
+
+    private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
+        PoolListener listener = getPoolListener();
+        if (listener != null) {
+            listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
+        }
+    }
+
+    @Override
+    protected void closePool() {
+        super.closePool();
+        LOG.info().$("closed").$();
+    }
+
+    protected abstract byte getListenerSrc();
+
+    protected abstract T newTenant(String tableName, Entry<T> entry, int index);
 
     @Override
     protected boolean releaseAll(long deadline) {
@@ -279,29 +302,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         }
     }
 
-    private Entry<T> getEntry(CharSequence name) {
-        checkClosed();
-
-        Entry<T> e = entries.get(name);
-        if (e == null) {
-            e = new Entry<T>(0, clock.getTicks());
-            Entry<T> other = entries.putIfAbsent(name, e);
-            if (other != null) {
-                e = other;
-            }
-        }
-        return e;
-    }
-
-    protected abstract byte getListenerSrc();
-
-    private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
-        PoolListener listener = getPoolListener();
-        if (listener != null) {
-            listener.onEvent(getListenerSrc(), thread, name, event, (short) segment, (short) position);
-        }
-    }
-
     protected boolean returnToPool(T tenant) {
         final Entry<T> e = tenant.getEntry();
         if (e == null) {
@@ -332,19 +332,27 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
     public static final class Entry<T> {
         private final long[] allocations = new long[ENTRY_SIZE];
+        private final int index;
         private final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
         @SuppressWarnings("unchecked")
         private final T[] tenants = (T[]) new Object[ENTRY_SIZE];
-        private final int index;
-        private volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         int nextStatus = 0;
+        private volatile long lockOwner = -1L;
         private volatile Entry<T> next;
 
         public Entry(int index, long currentMicros) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseOrAcquireTimes, currentMicros);
+        }
+
+        public void assignTenant(int pos, T tenant) {
+            tenants[pos] = tenant;
+        }
+
+        public Entry<T> getNext() {
+            return next;
         }
 
         public long getOwnerVolatile(int pos) {
@@ -357,14 +365,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
 
         public T getTenant(int pos) {
             return tenants[pos];
-        }
-
-        public void assignTenant(int pos, T tenant) {
-            tenants[pos] = tenant;
-        }
-
-        public Entry<T> getNext() {
-            return next;
         }
     }
 }
