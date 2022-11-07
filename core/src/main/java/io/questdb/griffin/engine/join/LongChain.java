@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.MemoryTag;
@@ -32,7 +32,7 @@ import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 
-public class LongChain implements Closeable, Mutable, Reallocatable {
+public class LongChain implements Closeable, Mutable, Reopenable {
 
     private final MemoryARW valueChain;
     private final TreeCursor cursor;
@@ -58,7 +58,7 @@ public class LongChain implements Closeable, Mutable, Reallocatable {
     }
 
     @Override
-    public void reallocate() {
+    public void reopen() {
         //nothing to do here
     }
 

@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -41,14 +40,18 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.number.OrderingComparison;
 import org.junit.*;
 import org.junit.rules.TestName;
 
 import java.net.URISyntaxException;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3Test extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3Test.class);
@@ -509,6 +512,11 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
+    public void testManyPartitionsParallel() throws Exception {
+        executeWithPool(4, O3Test::testManyPartitionsParallel);
+    }
+
+    @Test
     public void testO3EdgeBugContended() throws Exception {
         executeWithPool(0, O3Test::testO3EdgeBug);
     }
@@ -774,11 +782,6 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testPartitionedOOONullStrSetters() throws Exception {
-        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
-    }
-
-    @Test
     public void testPartitionedOOONullSettersContended() throws Exception {
         executeWithPool(0, O3Test::testPartitionedOOONullSetters0);
     }
@@ -786,6 +789,11 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testPartitionedOOONullSettersParallel() throws Exception {
         executeWithPool(4, O3Test::testPartitionedOOONullSetters0);
+    }
+
+    @Test
+    public void testPartitionedOOONullStrSetters() throws Exception {
+        executeVanilla(O3Test::testPartitionedOOONullStrSetters0);
     }
 
     @Test
@@ -883,6 +891,57 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
         executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
+    }
+
+    @Test
+    public void testVarColumnCopyLargePrefix() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    String strColVal =
+                            "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, directIoFlag=true]";
+                    int len = getStorageLength(strColVal);
+                    int records = Integer.MAX_VALUE / len + 5;
+
+                    // String
+                    String tableName = name.getMethodName();
+                    compiler.compile("create table " + tableName + " as ( " +
+                            "select " +
+                            "'" + strColVal + "' as str, " +
+                            " timestamp_sequence('2022-02-24', 1000) ts" +
+                            " from long_sequence(" + records + ")" +
+                            ") timestamp (ts) partition by DAY", sqlExecutionContext);
+
+                    long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
+                    CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
+                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+
+                    // Check that there was an attempt to write a file bigger than 2GB
+                    long max = 0;
+                    for (Long wLen : writeLen) {
+                        if (wLen > max) {
+                            max = wLen;
+                        }
+                    }
+                    MatcherAssert.assertThat(max, OrderingComparison.greaterThan(2L << 30));
+
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "select * from " + tableName + " limit -5,5", sink, "str\tts\n" +
+                            strColVal + "\t2022-02-24T00:51:34.357000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.358000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.359000Z\n" +
+                            "abcd\t2022-02-24T00:51:34.359000Z\n" +
+                            strColVal + "\t2022-02-24T00:51:34.360000Z\n");
+                }, new FilesFacadeImpl() {
+                    @Override
+                    public long write(long fd, long address, long len, long offset) {
+                        writeLen.add(len);
+                        return super.write(fd, address, len, offset);
+                    }
+                });
     }
 
     @Test
@@ -1252,7 +1311,7 @@ public class O3Test extends AbstractO3Test {
             final AtomicInteger errorCount = new AtomicInteger();
 
             // we have two pairs of tables (x,y) and (x1,y1)
-            WorkerPool pool1 = new WorkerPool((WorkerPoolAwareConfiguration) () -> 1);
+            WorkerPool pool1 = new WorkerPool(() -> 1);
 
             pool1.assign(new Job() {
                 private boolean toRun = true;
@@ -1274,7 +1333,6 @@ public class O3Test extends AbstractO3Test {
                     return false;
                 }
             });
-            pool1.assignCleaner(Path.CLEANER);
 
             final WorkerPool pool2 = new TestWorkerPool(1);
 
@@ -1298,8 +1356,6 @@ public class O3Test extends AbstractO3Test {
                     return false;
                 }
             });
-
-            pool2.assignCleaner(Path.CLEANER);
 
             pool1.start();
             pool2.start();
@@ -1731,6 +1787,35 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "select max(ts) from y"
         );
+    }
+
+    private static void testManyPartitionsParallel(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " timestamp_sequence(0, 10* 1000000L) ts " +
+                        " from long_sequence(500)" +
+                        ") timestamp(ts) partition by HOUR",
+                sqlExecutionContext
+        );
+
+        for (int i = 0; i < 20; i++) {
+            compiler.compile(
+                    "insert into x select" +
+                            " cast(x as int) i," +
+                            " cast(abs(rnd_int(0, 400, 0) * 60 * 60 * 1000000L) as timestamp) ts" +
+                            " from long_sequence(200)",
+                    sqlExecutionContext
+            );
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select sum(i) from x", sink, "sum\n" +
+                "527250\n");
     }
 
     private static void testAppendOrderStability(
@@ -7459,7 +7544,7 @@ public class O3Test extends AbstractO3Test {
             long pageSize = configuration.getMiscAppendPageSize();
             Assert.assertNotEquals("Batch size must be unaligned with page size", 0, batchOnDiskSize % pageSize);
 
-            long start = IntervalUtils.parseFloorPartialDate("2021-10-09T10:00:00");
+            long start = IntervalUtils.parseFloorPartialTimestamp("2021-10-09T10:00:00");
             String[] varCol = new String[]{"aldfjkasdlfkj", "2021-10-10T12:00:00", "12345678901234578"};
 
             // Add 2 batches

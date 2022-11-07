@@ -26,10 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -143,9 +140,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
+        circuitBreaker.resetTimer();
 
         if (fut == null) {
             metrics.jsonQuery().markStart();
@@ -167,7 +164,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 return;
             }
 
-            final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
+            final RecordCursorFactory factory = QueryCache.getThreadLocalInstance().poll(state.getQuery());
             if (factory != null) {
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
@@ -184,8 +181,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 // new query
                 compileQuery(state);
             }
-        } catch (SqlException e) {
-            sqlError(context.getChunkedResponseSocket(), e, state, configuration.getKeepAliveHeader());
+        } catch (SqlException | ImplicitCastException e) {
+            sqlError(context.getChunkedResponseSocket(), state, e, configuration.getKeepAliveHeader());
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] Resource busy, will retry").$();
@@ -367,15 +364,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void sqlError(
             HttpChunkedResponseSocket socket,
-            SqlException sqlException,
             JsonQueryProcessorState state,
+            FlyweightMessageContainer container,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.logSqlError(sqlException);
+        state.logSqlError(container);
         sendException(
                 socket,
-                sqlException.getPosition(),
-                sqlException.getFlyweightMessage(),
+                container.getPosition(),
+                container.getFlyweightMessage(),
                 state.getQuery(),
                 keepAliveHeader
         );
@@ -586,7 +583,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } else {
             state.critical().$("internal error [q=`").utf8(state.getQuery()).$("`, ex=").$(e).$(']').$();
             // This is a critical error, so we treat it as an unhandled one.
-            metrics.healthCheck().incrementUnhandledErrors();
+            metrics.health().incrementUnhandledErrors();
         }
         sendException(socket, 0, message, state.getQuery(), configuration.getKeepAliveHeader());
     }

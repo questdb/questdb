@@ -10,6 +10,6 @@ import io.questdb.std.NumericException;
 public class FastFloatParserFromCharSequenceNumericallyGeneratedTest extends AbstractFloatNumericallyGeneratedTest {
     @Override
     protected float parse(String str) throws NumericException {
-        return FastFloatParser.parseFloat(str);
+        return FastFloatParser.parseFloat(str, false);
     }
 }

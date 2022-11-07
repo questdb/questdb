@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -129,25 +130,71 @@ public final class Chars {
     }
 
     public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+        return indexOf(sequence, sequenceLo, sequenceHi, term, 1);
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term, int occurrence) {
         int m = term.length();
         if (m == 0) {
             return -1;
         }
 
-        for (int i = sequenceLo; i < sequenceHi; i++) {
-            if (sequence.charAt(i) == term.charAt(0)) {
-                if (sequenceHi - i < m) {
-                    return -1;
-                }
-                boolean found = true;
-                for (int k = 1; k < m && k + i < sequenceHi; k++) {
-                    if (sequence.charAt(i + k) != term.charAt(k)) {
-                        found = false;
-                        break;
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int foundIndex = -1;
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = sequenceLo; i < sequenceHi; i++) {
+                if (foundIndex == -1) {
+                    if (sequenceHi - i < m) {
+                        return -1;
+                    }
+                    if (sequence.charAt(i) == term.charAt(0)) {
+                        foundIndex = i;
+                    }
+                } else {    // first character matched, try to match the rest of the term
+                    if (sequence.charAt(i) != term.charAt(i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
                     }
                 }
-                if (found) {
-                    return i;
+
+                if (foundIndex != -1 && i - foundIndex == m - 1) {
+                    count++;
+                    if (count == occurrence) {
+                        return foundIndex;
+                    } else {
+                        foundIndex = -1;
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+                if (foundIndex == -1) {
+                    if (i - sequenceLo + 1 < m) {
+                        return -1;
+                    }
+                    if (sequence.charAt(i) == term.charAt(m - 1)) {
+                        foundIndex = i;
+                    }
+                } else {    // last character matched, try to match the rest of the term
+                    if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
+                    }
+                }
+
+                if (foundIndex != -1 && foundIndex - i == m - 1) {
+                    count--;
+                    if (count == occurrence) {
+                        return foundIndex + 1 - m;
+                    } else {
+                        foundIndex = -1;
+                    }
                 }
             }
         }
@@ -358,6 +405,23 @@ public final class Chars {
         return h;
     }
 
+    public static int hashCode(String value) {
+        return value.hashCode();
+    }
+
+    public static int hashCode(DirectByteCharSequence value) {
+        int len = value.length();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = 0; p < len; p++) {
+            h = 31 * h + value.charAt(p);
+        }
+        return h;
+    }
+
     public static int indexOf(CharSequence s, char c) {
         return indexOf(s, 0, c);
     }
@@ -367,12 +431,35 @@ public final class Chars {
     }
 
     public static int indexOf(CharSequence s, final int lo, int hi, char c) {
-        int i = lo;
-        for (; i < hi; i++) {
-            if (s.charAt(i) == c) {
-                return i;
+        return indexOf(s, lo, hi, c, 1);
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, char ch, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = sequenceLo; i < sequenceHi; i++) {
+                if (sequence.charAt(i) == ch) {
+                    count++;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+                if (sequence.charAt(i) == ch) {
+                    count--;
+                    if (count == occurrence) {
+                        return i;
+                    }
+                }
             }
         }
+
         return -1;
     }
 
@@ -506,8 +593,8 @@ public final class Chars {
         return lp != lhi || rp != rhi;
     }
 
-    public static boolean nonEmpty(final CharSequence value) {
-        return value != null && value.length() > 0;
+    public static boolean empty(final CharSequence value) {
+        return value == null || value.length() < 1;
     }
 
     public static CharSequence repeat(String s, int times) {

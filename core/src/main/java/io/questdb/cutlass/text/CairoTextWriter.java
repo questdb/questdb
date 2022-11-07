@@ -62,9 +62,9 @@ public class CairoTextWriter implements Closeable, Mutable {
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private ObjList<TypeAdapter> types;
-    private final TextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
     private TimestampAdapter timestampAdapter;
-    private final TextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
     private int warnings;
     private final IntList remapIndex = new IntList();
 
@@ -128,7 +128,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         return tableName;
     }
 
-    public TextLexer.Listener getTextListener() {
+    public CsvTextLexer.Listener getTextListener() {
         return timestampAdapter != null ? partitionedListener : nonPartitionedListener;
     }
 

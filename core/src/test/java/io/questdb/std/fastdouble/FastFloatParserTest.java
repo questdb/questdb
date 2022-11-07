@@ -18,37 +18,13 @@ import static org.junit.Assert.fail;
  */
 public class FastFloatParserTest extends AbstractFastXParserTest {
     @Test
-    public void testParseDoubleBitsByteArrayIntInt() {
-        createAllTestDataForFloat()
-                .forEach(t -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength())));
-    }
-
-    @Test
-    public void testParseDoubleBitsCharArrayIntInt() {
-        createAllTestDataForFloat()
-                .forEach(t -> testBits(t, u -> FastFloatParser.parseFloatBits(u.input().toCharArray(), u.charOffset(), u.charLength())));
-    }
-
-    @Test
-    public void testParseDoubleBitsCharSequenceIntInt() {
-        createAllTestDataForFloat()
-                .forEach(t -> testBits(t, u -> {
-                    try {
-                        return FastFloatParser.parseFloatBits(u.input(), u.charOffset(), u.charLength());
-                    } catch (NumericException e) {
-                        throw new NumberFormatException();
-                    }
-                }));
-    }
-
-    @Test
     public void testParseDoubleByteArray() {
         createAllTestDataForFloat().stream()
                 .filter(t -> t.charLength() == t.input().length()
                         && t.charOffset() == 0)
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8));
+                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -60,7 +36,7 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
         createAllTestDataForFloat()
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength());
+                        return FastFloatParser.parseFloat(u.input().getBytes(StandardCharsets.UTF_8), u.byteOffset(), u.byteLength(), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -74,7 +50,7 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
                         && t.charOffset() == 0)
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input().toCharArray());
+                        return FastFloatParser.parseFloat(u.input().toCharArray(), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -86,7 +62,7 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
         createAllTestDataForFloat()
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input().toCharArray(), u.charOffset(), u.charLength());
+                        return FastFloatParser.parseFloat(u.input().toCharArray(), u.charOffset(), u.charLength(), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -100,7 +76,7 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
                         && t.charOffset() == 0)
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input());
+                        return FastFloatParser.parseFloat(u.input(), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -112,7 +88,7 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
         createAllTestDataForFloat()
                 .forEach(t -> test(t, u -> {
                     try {
-                        return FastFloatParser.parseFloat(u.input(), u.charOffset(), u.charLength());
+                        return FastFloatParser.parseFloat(u.input(), u.charOffset(), u.charLength(), false);
                     } catch (NumericException e) {
                         throw new NumberFormatException();
                     }
@@ -120,23 +96,6 @@ public class FastFloatParserTest extends AbstractFastXParserTest {
     }
 
     private void test(TestData d, ToFloatFunction<TestData> f) {
-        if (!d.valid()) {
-            try {
-                f.applyAsFloat(d);
-                fail();
-            } catch (Exception e) {
-                //success
-            }
-        } else {
-            try {
-                assertEquals(d.title(), d.expectedFloatValue(), f.applyAsFloat(d), 0.001);
-            } catch (NumericException e) {
-                throw new NumberFormatException();
-            }
-        }
-    }
-
-    private void testBits(TestData d, ToFloatFunction<TestData> f) {
         if (!d.valid()) {
             try {
                 f.applyAsFloat(d);

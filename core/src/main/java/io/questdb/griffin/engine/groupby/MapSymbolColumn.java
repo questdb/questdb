@@ -64,7 +64,13 @@ public class MapSymbolColumn extends SymbolFunction {
 
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
-        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+        if (symbolTable instanceof StaticSymbolTable) {
+            return (StaticSymbolTable) symbolTable;
+        }
+        if (symbolTable instanceof SymbolFunction) {
+            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
+        }
+        return null;
     }
 
     @Override
@@ -83,7 +89,7 @@ public class MapSymbolColumn extends SymbolFunction {
         if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
-                symbolTable = Misc.free(symbolTable);
+                symbolTable = Misc.freeIfCloseable(symbolTable);
             }
             symbolTable = symbolTableSource.newSymbolTable(cursorColumnIndex);
             ownSymbolTable = true;
@@ -93,6 +99,8 @@ public class MapSymbolColumn extends SymbolFunction {
         }
         assert this.symbolTable != this;
         assert this.symbolTable != null;
+        // static symbol table must be non-null
+        assert !symbolTableStatic || getStaticSymbolTable() != null;
     }
 
     @Override
@@ -108,7 +116,7 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public void close() {
         if (ownSymbolTable) {
-            symbolTable = Misc.free(symbolTable);
+            symbolTable = Misc.freeIfCloseable(symbolTable);
         }
     }
 }

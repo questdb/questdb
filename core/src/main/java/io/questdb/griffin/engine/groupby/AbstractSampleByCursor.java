@@ -79,6 +79,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         timezoneNameFunc.init(base, executionContext);
         offsetFunc.init(base, executionContext);
         this.rules = null;
+
         final CharSequence tz = timezoneNameFunc.getStr(null);
         if (tz != null) {
             try {

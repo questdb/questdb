@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.Reallocatable;
+import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -115,7 +115,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.deflateBeforeSend = deflateBeforeSend;
         if (z_streamp == 0 && deflateBeforeSend) {
             z_streamp = Zip.deflateInit();
-            compressOutBuffer.reallocate();
+            compressOutBuffer.reopen();
         }
     }
 
@@ -239,7 +239,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     void of(long fd) {
         this.fd = fd;
         if (fd > -1) {
-            this.buffer.reallocate();
+            this.buffer.reopen();
         }
     }
 
@@ -581,7 +581,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reallocatable {
+    private class ChunkBuffer extends AbstractCharSink implements Closeable, Reopenable {
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private final long bufSize;
@@ -603,7 +603,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public void reallocate() {
+        public void reopen() {
             if (bufStart == 0) {
                 bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;

@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.ConversionException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
@@ -226,11 +225,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
-        try {
-            Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
-        } catch (NumericException e) {
-            throw ConversionException.instance("invalid long256 [hex=").put(hexString).put(']');
-        }
+        Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
     }
 
     default void putLong256Null() {

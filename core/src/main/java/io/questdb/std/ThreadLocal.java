@@ -36,7 +36,7 @@ public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeabl
 
     @Override
     public void close() throws IOException {
-        Misc.free(super.get());
+        Misc.freeIfCloseable(super.get());
         remove();
     }
 

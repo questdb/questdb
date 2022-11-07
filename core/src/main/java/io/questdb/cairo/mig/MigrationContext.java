@@ -67,7 +67,7 @@ class MigrationContext {
     public MemoryMARW createRwMemoryOf(FilesFacade ff, Path path) {
         // re-use same rwMemory
         // assumption that it is re-usable after the close() and then of()  methods called.
-        rwMemory.smallFile(ff, path, MemoryTag.NATIVE_DEFAULT);
+        rwMemory.smallFile(ff, path, MemoryTag.NATIVE_MIG_MMAP);
         return rwMemory;
     }
 

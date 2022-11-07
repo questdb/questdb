@@ -37,6 +37,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.Matchers;
 import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -109,6 +111,11 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public void statefulThrowExceptionIfTrippedNoThrottle() {
+                statefulThrowExceptionIfTripped();
+            }
+
+            @Override
             public boolean checkIfTripped() {
                 return false;
             }
@@ -136,6 +143,16 @@ public class SecurityTest extends AbstractGriffinTest {
             public long getFd() {
                 return -1;
             }
+
+            @Override
+            public void unsetTimer() {
+
+            }
+
+            @Override
+            public boolean isTimerSet() {
+                return false;
+            }
         };
 
         readOnlyExecutionContext = new SqlExecutionContextImpl(memoryRestrictedEngine, 1)
@@ -155,6 +172,14 @@ public class SecurityTest extends AbstractGriffinTest {
         AbstractGriffinTest.tearDownStatic();
         Misc.free(memoryRestrictedCompiler);
         Misc.free(memoryRestrictedEngine);
+    }
+
+    @After
+    public void tearDown() {
+        //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
+        memoryRestrictedEngine.getTableIdGenerator().close();
+        memoryRestrictedEngine.clear();
+        super.tearDown();
     }
 
     @Test
@@ -632,7 +657,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                MatcherAssert.assertThat(ex.toString(), Matchers.containsString("limit of 2 resizes exceeded"));
             }
         });
     }

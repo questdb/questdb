@@ -35,21 +35,23 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class Files {
 
-    public static final Charset UTF_8;
-    public static final long PAGE_SIZE;
-    public static final int DT_FILE = 8;
     public static final int DT_DIR = 4;
-    public static final int MAP_RO = 1;
-    public static final int MAP_RW = 2;
-    public static final char SEPARATOR;
-    public static final int POSIX_FADV_SEQUENTIAL;
-    public static final int POSIX_FADV_RANDOM;
-    public static final int FILES_RENAME_OK = 0;
+    public static final int DT_FILE = 8;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
+    public static final int FILES_RENAME_OK = 0;
+    public static final int MAP_RO = 1;
+    public static final int MAP_RW = 2;
+    public static final long PAGE_SIZE;
+    public static final int POSIX_FADV_RANDOM;
+    public static final int POSIX_FADV_SEQUENTIAL;
+    public static final int POSIX_MADV_RANDOM;
+    public static final int POSIX_MADV_SEQUENTIAL;
+    public static final char SEPARATOR;
+    public static final Charset UTF_8;
+    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
-    public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
 
     private Files() {
         // Prevent construction.
@@ -146,6 +148,8 @@ public final class Files {
 
     public native static int findType(long findPtr);
 
+    public native static boolean findTypeIsSoftLink(long lpszName);
+
     public static long floorPageSize(long size) {
         return size - size % PAGE_SIZE;
     }
@@ -206,6 +210,12 @@ public final class Files {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
     }
 
+    public native static boolean isSoftLink(long lpszPath);
+
+    public static boolean isSoftLink(LPSZ path) {
+        return isSoftLink(path.address());
+    }
+
     public static long length(LPSZ lpsz) {
         return length0(lpsz.address());
     }
@@ -213,6 +223,14 @@ public final class Files {
     public native static long length(long fd);
 
     public static native int lock(long fd);
+
+    public static void madvise(long address, long len, int advise) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            madvise0(address, len, advise);
+        }
+    }
+
+    public static native void madvise0(long address, long len, int advise);
 
     public static int mkdir(Path path, int mode) {
         return mkdir(path.address(), mode);
@@ -245,11 +263,7 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        return mmap(fd, len, offset, flags, 0, memoryTag);
-    }
-
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag) {
-        long address = mmap0(fd, len, offset, flags, baseAddress);
+        long address = mmap0(fd, len, offset, flags, 0);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
@@ -272,6 +286,8 @@ public final class Files {
             Unsafe.recordMemAlloc(-len, memoryTag);
         }
     }
+
+    public static native long noop();
 
     public static boolean notDots(CharSequence value) {
         final int len = value.length();
@@ -371,6 +387,12 @@ public final class Files {
         return setLastModified(lpsz.address(), millis);
     }
 
+    public static native int softLink(long lpszSrc, long lpszSoftLink);
+
+    public static int softLink(LPSZ src, LPSZ softLink) {
+        return softLink(src.address(), softLink.address());
+    }
+
     public static native int sync();
 
     public static boolean touch(LPSZ lpsz) {
@@ -384,17 +406,60 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
+    public native static int unlink(long lpszSoftLink);
+
+    public static int unlink(LPSZ softLink) {
+        return unlink(softLink.address());
+    }
+
     public native static long write(long fd, long address, long len, long offset);
+
+    private native static int close0(long fd);
+
+    private static native boolean exists0(long lpsz);
+
+    //caller must call findClose to free allocated struct
+    private native static long findFirst(long lpszName);
+
+    private static native int getFileSystemStatus(long lpszName);
+
+    private native static long getLastModified(long lpszName);
+
+    private native static long getPageSize();
 
     private native static int getPosixFadvRandom();
 
     private native static int getPosixFadvSequential();
 
-    private static native int getFileSystemStatus(long lpszName);
+    private native static int getPosixMadvRandom();
 
-    private native static int close0(long fd);
+    private native static int getPosixMadvSequential();
 
-    private static native boolean exists0(long lpsz);
+    private native static long length0(long lpszName);
+
+    private native static int mkdir(long lpszPath, int mode);
+
+    private static native long mmap0(long fd, long len, long offset, int flags, long baseAddress);
+
+    private static native long mremap0(long fd, long address, long previousSize, long newSize, long offset, int flags);
+
+    private static native int munmap0(long address, long len);
+
+    private native static long openAppend(long lpszName);
+
+    private native static long openRO(long lpszName);
+
+    private native static long openRW(long lpszName);
+
+    private native static long openRWOpts(long lpszName, long opts);
+
+    private native static boolean remove(long lpsz);
+
+    private static native int rename(long lpszOld, long lpszNew);
+
+    private native static boolean rmdir(long lpsz);
+
+    private native static boolean setLastModified(long lpszName, long millis);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
@@ -407,39 +472,6 @@ public final class Files {
         return Unsafe.getUnsafe().getByte(lpsz + len) == 0;
     }
 
-    private static native int munmap0(long address, long len);
-
-    private static native long mremap0(long fd, long address, long previousSize, long newSize, long offset, int flags);
-
-    private static native long mmap0(long fd, long len, long offset, int flags, long baseAddress);
-
-    private native static long getPageSize();
-
-    private native static boolean remove(long lpsz);
-
-    private native static boolean rmdir(long lpsz);
-
-    private native static long getLastModified(long lpszName);
-
-    private native static long length0(long lpszName);
-
-    private native static int mkdir(long lpszPath, int mode);
-
-    private native static long openRO(long lpszName);
-
-    private native static long openRW(long lpszName);
-
-    private native static long openRWOpts(long lpszName, long opts);
-
-    private native static long openAppend(long lpszName);
-
-    //caller must call findClose to free allocated struct 
-    private native static long findFirst(long lpszName);
-
-    private native static boolean setLastModified(long lpszName, long millis);
-
-    private static native int rename(long lpszOld, long lpszNew);
-
     static {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
@@ -448,9 +480,13 @@ public final class Files {
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
+            POSIX_MADV_RANDOM = getPosixMadvRandom();
+            POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
         } else {
-            POSIX_FADV_SEQUENTIAL = 0;
-            POSIX_FADV_RANDOM = 0;
+            POSIX_FADV_SEQUENTIAL = -1;
+            POSIX_FADV_RANDOM = -1;
+            POSIX_MADV_SEQUENTIAL = -1;
+            POSIX_MADV_RANDOM = -1;
         }
     }
 }

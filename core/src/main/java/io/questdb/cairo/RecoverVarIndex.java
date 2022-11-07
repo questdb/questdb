@@ -71,7 +71,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                 ff,
                 path.$(),
                 maxOffset,
-                MemoryTag.NATIVE_DEFAULT
+                MemoryTag.MMAP_DEFAULT
         )) {
 
             path.trimTo(colNameLen).put(".i");
@@ -85,7 +85,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
                     path.$(),
                     8 * 1024 * 1024,
                     0,
-                    MemoryTag.NATIVE_DEFAULT,
+                    MemoryTag.MMAP_DEFAULT,
                     0
             )) {
                 long expectedRowCount = partitionSize - columnTop;

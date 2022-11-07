@@ -219,8 +219,11 @@ public class TableUpdateDetails implements Closeable {
         }
         if (writer != null) {
             final long commitInterval = writer.getCommitInterval();
+            long start = millisecondClock.getTicks();
             commit(wallClockMillis - lastMeasurementMillis < commitInterval);
-            nextCommitTime += commitInterval;
+            // Do not commit row by row if the commit takes longer than commitInterval.
+            // Exclude time to commit from the commit interval.
+            nextCommitTime += commitInterval + millisecondClock.getTicks() - start;
         }
         return nextCommitTime;
     }
@@ -289,10 +292,10 @@ public class TableUpdateDetails implements Closeable {
         private final Path path = new Path();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
-        private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
+        private final DirectByteCharSequenceIntHashMap columnIndexByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         // maps column names to their types
         // will be populated for dynamically added columns only
-        private final CharSequenceIntHashMap columnTypeByNameUtf8 = new CharSequenceIntHashMap();
+        private final DirectByteCharSequenceIntHashMap columnTypeByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)

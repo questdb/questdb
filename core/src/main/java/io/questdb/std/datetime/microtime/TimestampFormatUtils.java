@@ -83,13 +83,17 @@ public class TimestampFormatUtils {
         Numbers.append(sink, val);
     }
 
-    public static void append000(CharSink sink, int val) {
+    public static void append00000(CharSink sink, int val) {
         int v = Math.abs(val);
         if (v < 10) {
-            sink.put('0').put('0').put('0');
+            sink.put('0').put('0').put('0').put('0').put('0');
         } else if (v < 100) {
-            sink.put('0').put('0');
+            sink.put('0').put('0').put('0').put('0');
         } else if (v < 1000) {
+            sink.put('0').put('0').put('0');
+        } else if (v < 10000) {
+            sink.put('0').put('0');
+        } else if (v < 100000) {
             sink.put('0');
         }
         Numbers.append(sink, val);
@@ -233,6 +237,7 @@ public class TimestampFormatUtils {
             int era,
             int year,
             int month,
+            int week,
             int day,
             int hour,
             int minute,
@@ -284,14 +289,29 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime = Timestamps.yearMicros(year, leap)
-                + Timestamps.monthOfYearMicros(month, leap)
-                + (day - 1) * Timestamps.DAY_MICROS
-                + hour * Timestamps.HOUR_MICROS
-                + minute * Timestamps.MINUTE_MICROS
-                + second * Timestamps.SECOND_MICROS
-                + (long) millis * Timestamps.MILLI_MICROS
-                + micros;
+        long datetime;
+        if (week == 0) {
+            datetime = Timestamps.yearMicros(year, leap)
+                    + Timestamps.monthOfYearMicros(month, leap)
+                    + (day - 1) * Timestamps.DAY_MICROS
+                    + hour * Timestamps.HOUR_MICROS
+                    + minute * Timestamps.MINUTE_MICROS
+                    + second * Timestamps.SECOND_MICROS
+                    + (long) millis * Timestamps.MILLI_MICROS
+                    + micros;
+        } else {
+            long yearMicros = Timestamps.yearMicros(year, leap);
+            // 4 Jan of year Y
+            // correction formula is taken from https://en.wikipedia.org/wiki/ISO_week_date
+            final long correction = Timestamps.getDayOfWeek(yearMicros + Timestamps.monthOfYearMicros(1, leap) + 4 * Timestamps.DAY_MICROS) + 3;
+            datetime = yearMicros
+                    + (week * 7L + day - correction) * Timestamps.DAY_MICROS
+                    + hour * Timestamps.HOUR_MICROS
+                    + minute * Timestamps.MINUTE_MICROS
+                    + second * Timestamps.SECOND_MICROS
+                    + (long) millis * Timestamps.MILLI_MICROS
+                    + micros;
+        }
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year, leap);
@@ -428,5 +448,8 @@ public class TimestampFormatUtils {
         SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
+    }
+
+    public static void init() {
     }
 }

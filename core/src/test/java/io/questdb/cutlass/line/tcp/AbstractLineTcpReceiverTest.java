@@ -212,8 +212,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(() -> {
             final Path path = new Path(4096);
-            try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
-                sharedWorkerPool.assignCleaner(Path.CLEANER);
+
+            try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
@@ -359,5 +359,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
         }
+    }
+
+    public static LineTcpReceiver createLineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return new LineTcpReceiver(configuration, cairoEngine, workerPool, workerPool);
     }
 }

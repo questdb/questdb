@@ -49,13 +49,14 @@ final class FastDoubleMem {
      * See {@link io.questdb.std.fastdouble} for the grammar of
      * {@code FloatingPointLiteral}.
      *
-     * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
-     * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    static double parseFloatingPointLiteral(long str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(long str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0) {
             throw NumericException.INSTANCE;
@@ -93,11 +94,11 @@ final class FastDoubleMem {
         if (hasLeadingZero) {
             ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
             if (ch == 'x' || ch == 'X') {
-                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative);
+                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
         }
 
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     private static boolean isDigit(byte c) {
@@ -140,6 +141,7 @@ final class FastDoubleMem {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal.
      */
@@ -149,7 +151,8 @@ final class FastDoubleMem {
             int startIndex,
             int endIndex,
             boolean isNegative,
-            boolean hasLeadingZero
+            boolean hasLeadingZero,
+            boolean rejectOverflow
     ) throws NumericException {
         // Parse significand
         // -----------------
@@ -265,7 +268,8 @@ final class FastDoubleMem {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                exponentOfTruncatedSignificand
+                exponentOfTruncatedSignificand,
+                rejectOverflow
         );
     }
 
@@ -284,11 +288,12 @@ final class FastDoubleMem {
      * <dd><i>[HexDigits]</i> {@code .} <i>HexDigits</i>
      * </dl>
      *
-     * @param str        the input string
-     * @param index      index to the first character of RestOfHexFloatingPointLiteral
-     * @param startIndex the start index of the string
-     * @param endIndex   the end index of the string
-     * @param isNegative if the resulting number is negative
+     * @param str            the input string
+     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+     * @param startIndex     the start index of the string
+     * @param endIndex       the end index of the string
+     * @param isNegative     if the resulting number is negative
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal.
      */
@@ -297,7 +302,8 @@ final class FastDoubleMem {
             int index,
             int startIndex,
             int endIndex,
-            boolean isNegative
+            boolean isNegative,
+            boolean rejectOverflow
     ) throws NumericException {
 
         // Parse HexSignificand
@@ -407,8 +413,17 @@ final class FastDoubleMem {
             isSignificandTruncated = false;
         }
 
-        return valueOfHexLiteral(str, startIndex, endIndex, isNegative, significand, exponent, isSignificandTruncated,
-                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber);
+        return valueOfHexLiteral(
+                str,
+                startIndex,
+                endIndex,
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
+        );
     }
 
     /**
@@ -495,8 +510,9 @@ final class FastDoubleMem {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         double d = FastDoubleMath.tryDecFloatToDoubleTruncated(
                 isNegative,
                 significand,
@@ -504,17 +520,26 @@ final class FastDoubleMem {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return dealWithNaN(d, str, startIndex, endIndex);
+        return dealWithNaN(d, str, startIndex, endIndex, rejectOverflow);
     }
 
-    private static double dealWithNaN(double value, long str, int startIndex, int endIndex) {
+    private static double dealWithNaN(double value, long str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
         if (Double.isNaN(value)) {
             int len = endIndex - startIndex;
             byte[] b = new byte[len];
             for (int i = 0; i < len; i++) {
                 b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
             }
-            return Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
+            double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
+            if (rejectOverflow && (
+                    v == Double.POSITIVE_INFINITY
+                            || v == Double.NEGATIVE_INFINITY
+                            || v == 0.0
+            )
+            ) {
+                throw NumericException.INSTANCE;
+            }
+            return v;
         }
         return value;
     }
@@ -527,8 +552,9 @@ final class FastDoubleMem {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         double d = FastDoubleMath.tryHexFloatToDoubleTruncated(
                 isNegative,
                 significand,
@@ -536,6 +562,6 @@ final class FastDoubleMem {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return dealWithNaN(d, str, startIndex, endIndex);
+        return dealWithNaN(d, str, startIndex, endIndex, rejectOverflow);
     }
 }

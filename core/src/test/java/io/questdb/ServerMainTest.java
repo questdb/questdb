@@ -24,179 +24,100 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.log.*;
-import io.questdb.std.*;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
-import org.hamcrest.MatcherAssert;
-import org.junit.*;
-import org.junit.rules.TemporaryFolder;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.net.URL;
-import java.nio.file.Paths;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import java.sql.Connection;
+import java.sql.DriverManager;
 
-import static org.hamcrest.CoreMatchers.is;
+public class ServerMainTest extends AbstractBootstrapTest {
 
+    // log is needed to greedily allocate logger infra and
+    // exclude it from leak detector
+    @SuppressWarnings("unused")
+    private static final Log LOG = LogFactory.getLog(ServerMainTest.class);
 
-public class ServerMainTest {
-
-    @Rule
-    public final TemporaryFolder temp = new TemporaryFolder();
-
-    boolean publicZipStubCreated = false;
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
+        try {
+            createDummyConfiguration();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     @Before
-    public void setUp() throws IOException {
-        //fake public.zip if it's missing to avoid forcing use of build-web-console profile just to run tests 
-        URL resource = ServerMain.class.getResource("/io/questdb/site/public.zip");
-        if (resource == null) {
-            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
-            File publicZip = new File(siteDir, "public.zip");
-
-            try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(publicZip))) {
-                ZipEntry entry = new ZipEntry("test.txt");
-                zip.putNextEntry(entry);
-                zip.write("test".getBytes());
-                zip.closeEntry();
-            }
-
-            publicZipStubCreated = true;
+    public void setUp() {
+        try (Path path = new Path().of(root).concat("db")) {
+            int plen = path.length();
+            Files.remove(path.concat("sys.column_versions_purge_log.lock").$());
+            Files.remove(path.trimTo(plen).concat("telemetry_config.lock").$());
         }
     }
 
-    @After
-    public void tearDown() {
-        if (publicZipStubCreated) {
-            File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
-            File publicZip = new File(siteDir, "public.zip");
+    @Test
+    public void testServerMainNoReStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                serverMain.start();
+                serverMain.start(); // <== no effect
+                serverMain.close();
+                try {
+                    serverMain.getCairoEngine();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                try {
+                    serverMain.getWorkerPoolManager();
+                } catch (IllegalStateException ex) {
+                    TestUtils.assertContains("close was called", ex.getMessage());
+                }
+                serverMain.start(); // <== no effect
+                serverMain.close(); // <== no effect
+                serverMain.start(); // <== no effect
+            }
+        });
+    }
 
-            if (publicZip.exists()) {
-                publicZip.delete();
+    @Test
+    public void testServerMainNoStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain ignore = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Os.pause();
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainPgWire() throws Exception {
+        try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+            serverMain.start();
+            try (Connection ignored = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                Os.pause();
             }
         }
     }
 
     @Test
-    public void testExtractSiteExtractsDefaultConfDirIfItsMissing() throws IOException {
-        Log log = LogFactory.getLog("server-main");
-
-        File conf = Paths.get(temp.getRoot().getPath(), "conf").toFile();
-        File logConf = Paths.get(conf.getPath(), LogFactory.DEFAULT_CONFIG_NAME).toFile();
-        File serverConf = Paths.get(conf.getPath(), "server.conf").toFile();
-        File mimeTypes = Paths.get(conf.getPath(), "mime.types").toFile();
-        //File dateFormats = Paths.get(conf.getPath(), "date.formats").toFile();
-
-        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
-
-        assertExists(logConf);
-        assertExists(serverConf);
-        assertExists(mimeTypes);
-        //assertExists(dateFormats); date.formats is referenced in method but doesn't exist in SCM/jar
-    }
-
-    @Test
-    public void testExtractSiteExtractsDefaultLogConfFileIfItsMissing() throws IOException {
-        Log log = LogFactory.getLog("server-main");
-        File logConf = Paths.get(temp.getRoot().getPath(), "conf", LogFactory.DEFAULT_CONFIG_NAME).toFile();
-
-        MatcherAssert.assertThat(logConf.exists(), is(false));
-
-        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
-
-        MatcherAssert.assertThat(logConf.exists(), is(true));
-    }
-
-    @Test
-    public void testReportCrashFiles() throws IOException {
-        final File x = temp.newFile();
-        final String logFileName = x.getAbsolutePath();
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
-        try (LogFactory factory = new LogFactory()) {
-            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> {
-                LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation(x.getAbsolutePath());
-                return w;
-            }));
-
-            factory.bind();
-            factory.startThread();
-            try {
-                Log logger = factory.create("x");
-
-                // create crash files
-                try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
-                    int plen = path.length();
-                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
-                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
-                    Files.mkdirs(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
-                }
-
-                ServerMain.reportCrashFiles(configuration, logger);
-
-                // wait until sequence is consumed and written to file
-                while (logger.getCriticalSequence().getBarrier().current() < 1) {
-                    Os.pause();
-                }
-            } finally {
-                factory.haltThread();
+    public void testServerMainStart() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain("-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION)) {
+                Assert.assertNotNull(serverMain.getConfiguration());
+                Assert.assertNotNull(serverMain.getCairoEngine());
+                Assert.assertNotNull(serverMain.getWorkerPoolManager());
+                Assert.assertFalse(serverMain.hasStarted());
+                Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start();
             }
-        }
-
-        // make sure we check disk contents after factory is closed
-        try (Path path = new Path().of(logFileName).$()) {
-            int bufSize = 4096;
-            long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
-            // we should read sub-4k bytes from the file
-            long fd = Files.openRO(path);
-            Assert.assertTrue(fd > -1);
-            try {
-                while (true) {
-                    int len = (int) Files.read(fd, buf, bufSize, 0);
-                    if (len > 0) {
-                        NativeLPSZ str = new NativeLPSZ().of(buf);
-                        int index1 = Chars.indexOf(str, 0, len, configuration.getArchivedCrashFilePrefix() + "0.log");
-                        Assert.assertTrue(index1 > -1);
-                        // make sure max files (1) limit is not exceeded
-                        int index2 = Chars.indexOf(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
-                        Assert.assertEquals(-1, index2);
-
-                        // at this point we could have renamed file with either index '1' or '2'. This is random and
-                        // depends on the order OS directory listing returns names.
-                        String fileIndexThatRemains = "2.log";
-                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
-                        if (index2 == -1) {
-                            // we could have renamed 2 and left 1 behind
-                            fileIndexThatRemains = "1.log";
-                            index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix() + fileIndexThatRemains);
-                        }
-
-                        Assert.assertTrue(index2 > -1 && index2 > index1);
-
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + fileIndexThatRemains).$()));
-
-                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix() + "3");
-                        Assert.assertEquals(-1, index3);
-                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix() + "3").$()));
-                        break;
-                    } else {
-                        Os.pause();
-                    }
-                }
-            } finally {
-                Files.close(fd);
-                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-    }
-
-    private static void assertExists(File f) {
-        MatcherAssert.assertThat(f.getPath(), f.exists(), is(true));
+        });
     }
 }

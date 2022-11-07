@@ -42,7 +42,7 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateOperator extends PurgingOperator implements QuietClosable {
+public class UpdateOperator extends PurgingOperator implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
 
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
@@ -119,6 +119,9 @@ public class UpdateOperator extends PurgingOperator implements QuietClosable {
             op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
+            // TODO: getCursor will open partitions where their path may be a soft link to the partition in
+            //  cold storage, which we want to keep read only. For now updates on such partitions do not fail,
+            //  i.e. they go through and modify the cold storage file system.
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 

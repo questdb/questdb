@@ -23,7 +23,7 @@ public class FastDoubleParserFromCharArrayLexicallyGeneratedTest extends Abstrac
         double actual = 0;
         boolean actualFailed = false;
         try {
-            actual = FastDoubleParser.parseDouble(str.toCharArray());
+            actual = FastDoubleParser.parseDouble(str.toCharArray(), false);
         } catch (NumericException t) {
             actualFailed = true;
         }

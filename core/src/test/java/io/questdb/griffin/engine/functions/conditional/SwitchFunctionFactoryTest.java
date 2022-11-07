@@ -152,7 +152,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLongStringKeyError() throws Exception {
+    public void testDuplicateBranchStringToLongCast() throws Exception {
         assertFailure("select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -173,7 +173,7 @@ public class SwitchFunctionFactoryTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")",
                 136,
-                "type mismatch [expected=LONG, actual=STRING]"
+                "duplicate branch"
         );
     }
 

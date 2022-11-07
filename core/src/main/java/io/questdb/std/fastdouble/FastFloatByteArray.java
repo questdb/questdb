@@ -37,10 +37,11 @@ final class FastFloatByteArray {
      * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
      * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
      * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
-    static float parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
+    static float parseFloatingPointLiteral(byte[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;
@@ -78,11 +79,11 @@ final class FastFloatByteArray {
         if (hasLeadingZero) {
             ch = ++index < endIndex ? str[index] : 0;
             if (ch == 'x' || ch == 'X') {
-                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative);
+                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
         }
 
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     private static boolean isDigit(byte c) {
@@ -125,6 +126,7 @@ final class FastFloatByteArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -134,7 +136,8 @@ final class FastFloatByteArray {
             int startIndex,
             int endIndex,
             boolean isNegative,
-            boolean hasLeadingZero
+            boolean hasLeadingZero,
+            boolean rejectOverflow
     ) throws NumericException {
         // Parse significand
         // -----------------
@@ -247,7 +250,8 @@ final class FastFloatByteArray {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                exponentOfTruncatedSignificand
+                exponentOfTruncatedSignificand,
+                rejectOverflow
         );
     }
 
@@ -263,8 +267,9 @@ final class FastFloatByteArray {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         float f = FastFloatMath.decFloatLiteralToFloat(
                 isNegative,
                 significand,
@@ -272,7 +277,25 @@ final class FastFloatByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Float.isNaN(f) ? Float.parseFloat(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)) : f;
+
+        if (Float.isNaN(f)) {
+            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return f;
+    }
+
+    private static float fallbackToJavaParser(byte[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        float f;
+        f = Float.parseFloat(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1));
+        if (rejectOverflow && (
+                f == Float.POSITIVE_INFINITY
+                || f == Float.NEGATIVE_INFINITY
+                || f == 0.0f
+                )
+        ) {
+            throw NumericException.INSTANCE;
+        }
+        return f;
     }
 
     static float nan() {
@@ -308,6 +331,7 @@ final class FastFloatByteArray {
      * @param startIndex the start index of the string
      * @param endIndex   the end index of the string
      * @param isNegative if the resulting number is negative
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the bit pattern of the parsed value, if the input is legal;
      * otherwise, {@code -1L}.
      */
@@ -316,7 +340,8 @@ final class FastFloatByteArray {
             int index,
             int startIndex,
             int endIndex,
-            boolean isNegative
+            boolean isNegative,
+            boolean rejectOverflow
     ) throws NumericException {
 
         // Parse HexSignificand
@@ -434,7 +459,8 @@ final class FastFloatByteArray {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
         );
     }
 
@@ -517,8 +543,9 @@ final class FastFloatByteArray {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         float f = FastFloatMath.hexFloatLiteralToFloat(
                 isNegative,
                 significand,
@@ -526,6 +553,9 @@ final class FastFloatByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Float.isNaN(f) ? Float.parseFloat(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)) : f;
+        if (Float.isNaN(f)) {
+            f = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return f;
     }
 }

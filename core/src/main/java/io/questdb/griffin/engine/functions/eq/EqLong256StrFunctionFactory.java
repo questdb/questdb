@@ -58,11 +58,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
         if (ColumnType.isNull(arg.getType())) {
             return new Func(arg);
         }
-        try {
-            return DECODER.get().newInstance(args.getQuick(0), arg.getStr(null));
-        } catch (NumericException e) {
-            throw SqlException.position(argPositions.getQuick(1)).put("invalid hex value for long256");
-        }
+        return DECODER.get().newInstance(args.getQuick(0), arg.getStr(null));
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {
@@ -115,7 +111,7 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             long3 = l3;
         }
 
-        private Func newInstance(Function arg, CharSequence hexLong256) throws NumericException {
+        private Func newInstance(Function arg, CharSequence hexLong256)  {
             decode(hexLong256, 2, hexLong256.length(), decoder);
             return new Func(arg, long0, long1, long2, long3);
         }

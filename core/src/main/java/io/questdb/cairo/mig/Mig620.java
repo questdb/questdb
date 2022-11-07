@@ -96,7 +96,7 @@ public class Mig620 {
                 path.trimTo(pathLen).concat(COLUMN_VERSION_FILE_NAME_MIG).$(),
                 Files.PAGE_SIZE,
                 COLUMN_VERSION_FILE_HEADER_SIZE_MIG,
-                MemoryTag.NATIVE_DEFAULT,
+                MemoryTag.NATIVE_MIG_MMAP,
                 CairoConfiguration.O_NONE
         )) {
             cvMemory.extend(COLUMN_VERSION_FILE_HEADER_SIZE_MIG);
@@ -298,7 +298,7 @@ public class Mig620 {
             throw CairoException.critical(0).put("File length ").put(fileLen).put(" is too small at ").put(path);
         }
 
-        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+        return Vm.getCMARWInstance(ff, path, Files.PAGE_SIZE, fileLen, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE);
     }
 
     private static void dFile(Path path, CharSequence columnName) {

@@ -24,7 +24,8 @@
 
 package io.questdb.std;
 
-import io.questdb.std.fastdouble.*;
+import io.questdb.std.fastdouble.FastDoubleParser;
+import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
@@ -85,7 +86,9 @@ public final class Numbers {
             return;
         }
 
-        if (f < 0) {
+        // it is very awkward to distinguish between 0.0 and -0.0
+        // -0.0 < 0 is false
+        if (f < 0 || 1 / f == Float.NEGATIVE_INFINITY) {
             sink.put('-');
             f = -f;
         }
@@ -110,10 +113,6 @@ public final class Numbers {
             sink.put((char) ('0' + scaled / factor % 10));
             factor /= 10;
         }
-    }
-
-    public static boolean isPow2(int value) {
-        return (value & (value - 1)) == 0;
     }
 
     public static void append(CharSink sink, final int value) {
@@ -541,6 +540,14 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
+    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
+            Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
+            return true;
+        }
+        return false;
+    }
+
     public static int hexToDecimal(int c) throws NumericException {
         int r = hexNumbers[c];
         if (r == -1) {
@@ -570,8 +577,23 @@ public final class Numbers {
         return Numbers.LONG_NaN;
     }
 
+    public static long interleaveBits(long x, long y) {
+        return spreadBits(x) | (spreadBits(y) << 1);
+    }
+
     public static boolean isFinite(double d) {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
+    }
+
+    public static boolean isPow2(int value) {
+        return (value & (value - 1)) == 0;
+    }
+
+    public static float longToFloat(long value) {
+        if (value != Numbers.LONG_NaN) {
+            return value;
+        }
+        return Float.NaN;
     }
 
     public static int msb(int value) {
@@ -582,16 +604,20 @@ public final class Numbers {
         return 63 - Long.numberOfLeadingZeros(value);
     }
 
+    public static boolean notDigit(char c) {
+        return c < '0' || c > '9';
+    }
+
     public static double parseDouble(CharSequence sequence) throws NumericException {
-        return FastDoubleParser.parseDouble(sequence);
+        return FastDoubleParser.parseDouble(sequence, true);
     }
 
     public static double parseDouble(long str, int len) throws NumericException {
-        return FastDoubleParser.parseDouble(str, len);
+        return FastDoubleParser.parseDouble(str, len, true);
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
-        return FastFloatParser.parseFloat(sequence);
+        return FastFloatParser.parseFloat(sequence, true);
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
@@ -817,28 +843,49 @@ public final class Numbers {
         return parseLong0(sequence, p, lim);
     }
 
-    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
-            try {
-                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
-                return true;
-            } catch (NumericException ignored) {
-            }
+    public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
         }
-        return false;
-    }
 
-    public static long spreadBits(long v) {
-        v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
-        v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
-        v = (v | (v << 4)) & 0X0F0F0F0F0F0F0F0FL;
-        v = (v | (v << 2)) & 0x3333333333333333L;
-        v = (v | (v << 1)) & 0x5555555555555555L;
-        return v;
-    }
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
 
-    public static long interleaveBits(long x, long y) {
-        return spreadBits(x) | (spreadBits(y) << 1);
+        if (i >= lim || notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 6 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 6) {
+            val *= 10;
+            i++;
+        }
+
+        return encodeLowHighInts(negative ? val : -val, len);
     }
 
     @NotNull
@@ -1058,6 +1105,15 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
+    public static long spreadBits(long v) {
+        v = (v | (v << 16)) & 0X0000FFFF0000FFFFL;
+        v = (v | (v << 8)) & 0X00FF00FF00FF00FFL;
+        v = (v | (v << 4)) & 0X0F0F0F0F0F0F0F0FL;
+        v = (v | (v << 2)) & 0x3333333333333333L;
+        v = (v | (v << 1)) & 0x5555555555555555L;
+        return v;
+    }
+
     private static void appendLongHex4(CharSink sink, long value) {
         appendLongHexPad(sink, hexDigits[(int) ((value) & 0xf)]);
     }
@@ -1223,8 +1279,6 @@ public final class Numbers {
         return scale > 0 ? roundHalfUp0PosScale(value, scale) : roundHalfUp0NegScale(value, -scale);
     }
 
-    //////////////////////
-
     private static void appendInt10(CharSink sink, int i) {
         int c;
         sink.put((char) ('0' + i / 1000000000));
@@ -1387,10 +1441,6 @@ public final class Numbers {
         sink.put((char) ('0' + i / 100));
         sink.put((char) ('0' + (c = i % 100) / 10));
         sink.put((char) ('0' + (c % 10)));
-    }
-
-    private static boolean notDigit(char c) {
-        return c < '0' || c > '9';
     }
 
     private static double roundHalfUp0PosScale(double value, int scale) {

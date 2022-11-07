@@ -133,11 +133,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeRetryLimitDays() {
-        return conf.getColumnPurgeRetryLimitDays();
-    }
-
-    @Override
     public int getColumnPurgeTaskPoolCapacity() {
         return conf.getColumnPurgeTaskPoolCapacity();
     }
@@ -373,11 +368,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return conf.getO3PartitionUpdateQueueCapacity();
-    }
-
-    @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return conf.getO3PurgeDiscoveryQueueCapacity();
     }
@@ -443,8 +433,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return conf.getReplaceFunctionMaxBufferLength();
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
     }
 
     @Override

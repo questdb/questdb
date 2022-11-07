@@ -159,17 +159,18 @@ public class VacuumColumnVersions implements Closeable {
         Sequence pubSeq = messageBus.getColumnPurgePubSeq();
         while (true) {
             long cursor = pubSeq.next();
-            if (cursor > -1L) {
+            if (cursor > -1) {
                 ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
                 task.copyFrom(purgeTask);
                 pubSeq.done(cursor);
                 return;
-            } else if (cursor == -1L) {
+            } else if (cursor == -1) {
                 // Queue overflow
                 throw CairoException.nonCritical().put("failed to schedule column version purge, queue is full. " +
                                 "Please retry and consider increasing ").put(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath())
                         .put(" configuration parameter");
             }
+            Os.pause();
         }
     }
 

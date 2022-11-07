@@ -75,9 +75,7 @@ public class TxReader implements Closeable, Mutable {
     @Override
     public void clear() {
         clearData();
-        if (roTxMemBase != null) {
-            roTxMemBase.close();
-        }
+        Misc.free(roTxMemBase);
     }
 
     @Override

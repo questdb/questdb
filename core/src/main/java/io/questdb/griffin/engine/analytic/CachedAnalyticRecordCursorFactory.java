@@ -26,10 +26,8 @@ package io.questdb.griffin.engine.analytic;
 
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -43,9 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
     private final CachedAnalyticRecordCursor cursor;
-    private final RecordChain recordChain;
     private final RecordCursorFactory base;
-    private final ObjList<LongTreeChain> orderedSources;
     private final int orderedGroupCount;
     private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
     @Nullable private final ObjList<AnalyticFunction> unorderedFunctions;
@@ -68,18 +64,16 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         this.orderedGroupCount = comparators.size();
         assert orderedGroupCount == orderedFunctions.size();
-        this.orderedSources = new ObjList<>(orderedGroupCount);
         this.orderedFunctions = orderedFunctions;
         this.comparators = comparators;
-        this.cursor = new CachedAnalyticRecordCursor(columnIndexes);
-        this.recordChain = new RecordChain(
+        RecordChain recordChain = new RecordChain(
                 chainMetadata,
                 recordSink,
                 configuration.getSqlAnalyticStorePageSize(),
                 configuration.getSqlAnalyticStoreMaxPages()
         );
-        recordChain.setSymbolTableResolver(cursor);
 
+        ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
         // red&black trees, one for each comparator where comparator is not null
         for (int i = 0; i < orderedGroupCount; i++) {
             orderedSources.add(
@@ -91,6 +85,8 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                     )
             );
         }
+
+        this.cursor = new CachedAnalyticRecordCursor(columnIndexes, recordChain, orderedSources);
 
         this.allFunctions = new ObjList<>();
         for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
@@ -110,20 +106,14 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
         Misc.free(base);
         Misc.free(cursor);
-        Misc.free(recordChain);
-        Misc.freeObjList(orderedSources);
         Misc.freeObjList(allFunctions);
         closed = true;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        recordChain.clear();
-        clearTrees();
-        resetFunctions();
-
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        cursor.of(baseCursor);
+        cursor.of(baseCursor, executionContext);
         return cursor;
     }
 
@@ -143,26 +133,51 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    private void clearTrees() {
-        for (int i = 0; i < orderedGroupCount; i++) {
-            orderedSources.getQuick(i).clear();
-        }
-    }
+    class CachedAnalyticRecordCursor implements RecordCursor {
 
-    public class CachedAnalyticRecordCursor implements RecordCursor {
+        private final ObjList<LongTreeChain> orderedSources;
+        private final RecordChain recordChain;
         private RecordCursor base;
         private final IntList columnIndexes; // Used for symbol table lookups.
+        private boolean isOpen;
 
-        public CachedAnalyticRecordCursor(IntList columnIndexes) {
+        public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
             this.columnIndexes = columnIndexes;
+            this.recordChain = recordChain;
+            this.recordChain.setSymbolTableResolver(this);
+            this.isOpen = true;
+            this.orderedSources = orderedSources;
         }
 
-        private void of(RecordCursor base) {
+        private void of(RecordCursor base, SqlExecutionContext context) {
             this.base = base;
-            buildRecordChain();
+            if (!isOpen) {
+                recordChain.reopen();
+                recordChain.setSymbolTableResolver(this);
+                reopenTrees();
+                reopen(allFunctions);
+                isOpen = true;
+            }
+            buildRecordChain(context);
         }
 
-        private void buildRecordChain() {
+        private void reopenTrees() {
+            for (int i = 0; i < orderedGroupCount; i++) {
+                orderedSources.getQuick(i).reopen();
+            }
+        }
+
+        private void reopen(ObjList<?> list) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.getQuick(i) instanceof Reopenable) {
+                    ((Reopenable) list.getQuick(i)).reopen();
+                }
+            }
+        }
+
+        private void buildRecordChain(SqlExecutionContext context) {
+            SqlExecutionCircuitBreaker circuitBreaker = context.getCircuitBreaker();
+
             // step #1: store source cursor in record list
             // - add record list' row ids to all trees, which will put these row ids in necessary order
             // for this we will be using out comparator, which helps tree compare long values
@@ -176,11 +191,13 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                     offset = recordChain.put(record, offset);
                     recordChain.recordAt(chainRecord, offset);
                     for (int i = 0; i < orderedGroupCount; i++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         orderedSources.getQuick(i).put(chainRecord, recordChain, chainRightRecord, comparators.getQuick(i));
                     }
                 }
             } else {
                 while (base.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     offset = recordChain.put(record, offset);
                 }
             }
@@ -193,6 +210,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                     final LongTreeChain.TreeCursor cursor = tree.getCursor();
                     final int functionCount = functions.size();
                     while (cursor.hasNext()) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         offset = cursor.next();
                         recordChain.recordAt(chainRecord, offset);
                         for (int j = 0; j < functionCount; j++) {
@@ -208,6 +226,7 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
                     final AnalyticFunction f = unorderedFunctions.getQuick(j);
                     recordChain.toTop();
                     while (recordChain.hasNext()) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
                     }
                 }
@@ -218,7 +237,15 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public void close() {
-            base.close();
+            if (isOpen) {
+                Misc.free(base);
+                Misc.free(recordChain);
+                for (int i = 0, n = orderedSources.size(); i < n; i++) {
+                    Misc.free(orderedSources.getQuick(i));
+                }
+                resetFunctions(); // calls close on map within RowNumber
+                isOpen = false;
+            }
         }
 
         @Override

@@ -73,14 +73,14 @@ public class LogBenchmark {
     }
 
     static {
-        LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
+        LogFactory factory = LogFactory.getInstance();
+        factory.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
             LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
             w.setLocation("log-bench1.log");
             return w;
         }));
-        LogFactory.INSTANCE.bind();
-        LogFactory.INSTANCE.startThread();
-
-        LOG = LogFactory.getLog(LogBenchmark.class);
+        factory.bind();
+        factory.startThread();
+        LOG = factory.create(LogBenchmark.class);
     }
 }

@@ -106,8 +106,8 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public void wrapUp(long pRosti) {
-        Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
     }
 
     @Override

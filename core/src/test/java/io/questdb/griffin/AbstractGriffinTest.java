@@ -42,13 +42,14 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,10 +62,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static BindVariableService bindVariableService;
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
+    protected static SqlExecutionCircuitBreaker circuitBreaker;
 
     protected final SCSequence eventSubSequence = new SCSequence();
-
-    private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -256,6 +256,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         } catch (SqlException e) {
             e.printStackTrace();
         }
+        assertFactoryMemoryUsage();
     }
 
     public static boolean doubleEquals(double a, double b, double epsilon) {
@@ -281,7 +282,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        circuitBreaker);
         bindVariableService.clear();
     }
 
@@ -289,6 +290,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
         compiler.close();
+        circuitBreaker = null;
     }
 
     @Override
@@ -323,6 +325,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             if (ddl != null) {
                 compile(ddl, sqlExecutionContext);
             }
+            snapshotMemoryUsage();
             CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
             RecordCursorFactory factory = cc.getRecordCursorFactory();
             try {
@@ -444,6 +447,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         } catch (SqlException e) {
             e.printStackTrace();
         }
+        assertFactoryMemoryUsage();
     }
 
     protected static void assertCursor(
@@ -476,27 +480,32 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeCanBeVariable, // this means size() can either be -1 in some cases or known in others
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        boolean cursorAsserted;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertEquals("supports random access", supportsRandomAccess, factory.recordCursorSupportsRandomAccess());
-            if (
-                    assertCursor(
-                            expected,
-                            supportsRandomAccess,
-                            checkSameStr,
-                            sizeExpected,
-                            sizeCanBeVariable,
-                            cursor,
-                            factory.getMetadata(),
-                            factory.fragmentedSymbolTables()
-                    )
-            ) {
-                return;
-            }
+            cursorAsserted = assertCursor(
+                    expected,
+                    supportsRandomAccess,
+                    checkSameStr,
+                    sizeExpected,
+                    sizeCanBeVariable,
+                    cursor,
+                    factory.getMetadata(),
+                    factory.fragmentedSymbolTables()
+            );
+        }
+
+        assertFactoryMemoryUsage();
+
+        if (cursorAsserted) {
+            return;
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
         }
+
+        assertFactoryMemoryUsage();
     }
 
     private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor, boolean checkSameStr) {
@@ -680,7 +689,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                Misc.freeObjList(clonedSymbolTables);
+                Misc.freeObjListIfCloseable(clonedSymbolTables);
             }
         }
     }
@@ -734,6 +743,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 c++;
             }
         }
+        assertFactoryMemoryUsage();
     }
 
     protected static void printSqlResult(
@@ -784,6 +794,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeCanBeVariable,
             CharSequence expectedPlan
     ) throws SqlException {
+        snapshotMemoryUsage();
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();
         if (expectedPlan != null) {
@@ -1163,7 +1174,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 try {
                     compile(query, sqlExecutionContext);
                     Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
-                } catch (SqlException e) {
+                } catch (SqlException | ImplicitCastException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                 }
@@ -1316,6 +1327,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1339,6 +1351,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize,
             boolean sizeCanBeVariable) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1364,6 +1377,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                        String expectedTimestamp,
                                        boolean supportsRandomAccess,
                                        boolean expectSize) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1377,6 +1391,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQueryPlain(String expected, String query) throws SqlException {
+        snapshotMemoryUsage();
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1474,65 +1489,5 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         TestUtils.assertEquals(expectedPlan, getPlan(query).getText());
-    }
-
-
-    @TestOnly
-    public static void printMemoryUsage() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            System.err.print(MemoryTag.nameOf(i));
-            System.err.print(":");
-            System.err.println(Unsafe.getMemUsedByTag(i));
-        }
-    }
-
-    @TestOnly
-    public static void snapshotMemoryUsage() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
-        }
-    }
-
-    @TestOnly
-    public static void diffMemoryUsage() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            SNAPSHOT[i] = Unsafe.getMemUsedByTag(i) - SNAPSHOT[i];
-        }
-    }
-
-    @TestOnly
-    public static void printMemoryUsageDiff() {
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (SNAPSHOT[i] != 0L) {
-                System.err.print(MemoryTag.nameOf(i));
-                System.err.print(":");
-                System.err.println(SNAPSHOT[i]);
-            }
-        }
-    }
-
-    @TestOnly
-    public static long getMemUsedExceptMmap() {
-        long tags = 0;
-
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if (Chars.startsWith(MemoryTag.nameOf(i), "MMAP")) {
-                tags = tags | 1L << i;
-            }
-        }
-
-        return getMemUsedExcept(tags);
-    }
-
-    @TestOnly
-    public static long getMemUsedExcept(long tagsToIgnore) {
-        long memUsed = 0;
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            if ((tagsToIgnore & 1L << i) == 0) {
-                memUsed += Unsafe.getMemUsedByTag(i);
-            }
-        }
-
-        return memUsed;
     }
 }

@@ -70,14 +70,14 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
             this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
         }
 
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
 
         @Override

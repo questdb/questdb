@@ -99,11 +99,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong len,
          jlong offset) {
     DWORD count;
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
     if (set_file_pos((HANDLE) fd, offset) && WriteFile((HANDLE) fd, (LPCVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
@@ -112,13 +116,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong address,
          jlong len,
          jlong offset) {
+
+    if (len < 0 || offset < 0) {
+        // To align with other platforms
+        return -1;
+    }
+
     DWORD count;
     if (set_file_pos((HANDLE) fd, offset) &&
         ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL)) {
         return count;
     }
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
@@ -261,6 +271,82 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
+
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, buf, len);
+
+        HANDLE handle = CreateFileW(
+                    buf,
+                    GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_READONLY | FILE_FLAG_OPEN_REPARSE_POINT,
+                    NULL
+        );
+
+        if (handle == INVALID_HANDLE_VALUE) {
+            SaveLastError();
+            return FALSE;
+        }
+
+        FILE_BASIC_INFO info;
+        jboolean result = GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO));
+        if (!result) {
+            SaveLastError();
+        } else {
+            result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+        }
+
+        int tmpErr = errno;
+        CloseHandle(handle);
+        errno = tmpErr;
+        return result;
+    }
+    return FALSE;
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszSoftLink) {
+
+    size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);
+    if (lenSrc < 1) {
+        return -1;
+    }
+    wchar_t bufSrc[lenSrc];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
+    size_t lenSoftLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (lenSoftLink < 1) {
+        return -1;
+    }
+    wchar_t bufSoftLink[lenSoftLink];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
+
+    if (CreateSymbolicLinkW(bufSoftLink, bufSrc, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
+    // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
+    // If the path points to a symbolic link, the symbolic link is deleted, not the target.
+    return Java_io_questdb_std_Files_remove(e, cl, lpszSoftLink) ? 0 : -1;
+}
+
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_noop
+(JNIEnv *e, jclass cl) {
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlong lpszName, jint mode) {
 
     size_t len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszName, -1, NULL, 0);
@@ -310,7 +396,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {
@@ -385,7 +471,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
     }
 
     SaveLastError();
-    return 0;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length
@@ -617,6 +703,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
     if (LockFile((HANDLE) fd, 0, 0, 1, 0)) {
@@ -624,7 +715,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
     }
 
     SaveLastError();
-    return 1;
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW

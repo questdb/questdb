@@ -61,7 +61,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public void close() {
-        Misc.freeObjList(symbolTableCache);
+        Misc.freeObjListIfCloseable(symbolTableCache);
     }
 
     @Override
@@ -302,7 +302,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
         this.pageAddressCache = pageAddressCache;
         frameIndex = 0;
         rowIndex = 0;
-        Misc.freeObjList(symbolTableCache);
+        Misc.freeObjListIfCloseable(symbolTableCache);
         symbolTableCache.clear();
     }
 

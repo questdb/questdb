@@ -144,7 +144,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         }
 
         this.rollDeadline = rollDeadlineFunction.getDeadline();
-        this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         this.lim = buf + nBufferSize;
         openFile();
     }
@@ -155,7 +155,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             if (_wptr > buf) {
                 flush();
             }
-            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(buf, nBufferSize, MemoryTag.NATIVE_LOGGER);
             buf = 0;
         }
         if (this.fd != -1) {

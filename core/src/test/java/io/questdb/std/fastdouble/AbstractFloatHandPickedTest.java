@@ -30,6 +30,29 @@ abstract class AbstractFloatHandPickedTest {
         testLegalInput("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)", "1e-11");
     }
 
+    @Test
+    public void testDecFloatLiteralNumericOverflow() {
+        testOverflowInput("4.9E-325");
+        testOverflowInput("-4.9E-325");
+        testOverflowInput("1000000000000000000e-401");
+        testOverflowInput("1.8E309");
+        testOverflowInput("-1.8E309");
+        testLegalInput("0.00000000f", "0.00000000f");
+        testLegalInput("-0.00000000f", "-0.00000000f");
+        testLegalInput("Infinity", "Infinity");
+        testLegalInput("-Infinity", "-Infinity");
+    }
+
+    @Test
+    public void testHexFloatLiteralNumericOverflow() {
+        testOverflowInput("0x1.fffffeP+250f");
+        testOverflowInput("-0x1.fffffeP+250f");
+        testOverflowInput("0x0.0000000000001p-1200");
+        testLegalInput("0.00000000d", "0x00000000p0");
+        testLegalInput("-0.00000000d", "-0x00000000p0");
+    }
+
+
     /**
      * Tests input classes that execute different code branches in
      * method {@link FastDoubleMath#tryHexFloatToDouble(boolean, long, int)}.
@@ -67,12 +90,12 @@ abstract class AbstractFloatHandPickedTest {
 
     @Test
     public void testIllegalInputsWithPrefixAndSuffix() {
-        testIllegalInputWithPrefixAndSuffix("before-after", 6, 1);
-        testIllegalInputWithPrefixAndSuffix("before7.78$after", 6, 5);
-        testIllegalInputWithPrefixAndSuffix("before7.78e$after", 6, 6);
-        testIllegalInputWithPrefixAndSuffix("before0x123$4after", 6, 7);
-        testIllegalInputWithPrefixAndSuffix("before0x123.4$after", 6, 8);
-        testIllegalInputWithPrefixAndSuffix("before0$123.4after", 6, 7);
+        testIllegalInputWithPrefixAndSuffix("before-after", 1);
+        testIllegalInputWithPrefixAndSuffix("before7.78$after", 5);
+        testIllegalInputWithPrefixAndSuffix("before7.78e$after", 6);
+        testIllegalInputWithPrefixAndSuffix("before0x123$4after", 7);
+        testIllegalInputWithPrefixAndSuffix("before0x123.4$after", 8);
+        testIllegalInputWithPrefixAndSuffix("before0$123.4after", 7);
     }
 
     @Test
@@ -148,12 +171,12 @@ abstract class AbstractFloatHandPickedTest {
 
     @Test
     public void testLegalInputsWithPrefixAndSuffix() throws NumericException {
-        testLegalInputWithPrefixAndSuffix("before-1after", 6, 2, -1.0f);
-        testLegalInputWithPrefixAndSuffix("before7.789after", 6, 5, 7.789f);
-        testLegalInputWithPrefixAndSuffix("before7.78e2after", 6, 6, 7.78e2f);
-        testLegalInputWithPrefixAndSuffix("before0x1234p0after", 6, 8, 0x1234p0f);
-        testLegalInputWithPrefixAndSuffix("before0x123.45p0after", 6, 10, 0x123.45p0f);
-        testLegalInputWithPrefixAndSuffix("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)", "before1e-23after", 6, 5, 1e-23f);
+        testLegalInputWithPrefixAndSuffix("before-1after", 2, -1.0f);
+        testLegalInputWithPrefixAndSuffix("before7.789after", 5, 7.789f);
+        testLegalInputWithPrefixAndSuffix("before7.78e2after", 6, 7.78e2f);
+        testLegalInputWithPrefixAndSuffix("before0x1234p0after", 8, 0x1234p0f);
+        testLegalInputWithPrefixAndSuffix("before0x123.45p0after", 10, 0x123.45p0f);
+        testLegalInputWithPrefixAndSuffix("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)", "before1e-23after", 5, 1e-23f);
     }
 
     @Test
@@ -162,21 +185,21 @@ abstract class AbstractFloatHandPickedTest {
                 .forEach(d -> testLegalInput(d, Float.parseFloat(d)));
     }
 
-    abstract float parse(CharSequence str) throws NumericException;
+    abstract float parse(CharSequence str, boolean rejectOverflow) throws NumericException;
 
-    protected abstract float parse(String str, int offset, int length) throws NumericException;
+    protected abstract float parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
 
     private void testIllegalInput(String s) {
         try {
-            parse(s);
+            parse(s, false);
             fail();
         } catch (NumericException e) {
             // success
         }
     }
 
-    private void testIllegalInputWithPrefixAndSuffix(String str, int offset, int length) {
-        assertThrows(NumericException.class, () -> parse(str, offset, length));
+    private void testIllegalInputWithPrefixAndSuffix(String str, int length) {
+        assertThrows(NumericException.class, () -> parse(str, 6, length, false));
     }
 
     private void testLegalDecInput(float expected) {
@@ -206,7 +229,7 @@ abstract class AbstractFloatHandPickedTest {
     private void testLegalInput(String testName, String str, float expected) {
         float actual;
         try {
-            actual = parse(str);
+            actual = parse(str, false);
         } catch (NumericException e) {
             throw new NumberFormatException();
         }
@@ -214,12 +237,20 @@ abstract class AbstractFloatHandPickedTest {
         Assert.assertEquals("intBits of " + expected, Float.floatToIntBits(expected), Float.floatToIntBits(actual));
     }
 
-    private void testLegalInputWithPrefixAndSuffix(String str, int offset, int length, float expected) throws NumericException {
-        testLegalInputWithPrefixAndSuffix(str, str, offset, length, expected);
+    private void testLegalInputWithPrefixAndSuffix(String str, int length, float expected) throws NumericException {
+        testLegalInputWithPrefixAndSuffix(str, str, length, expected);
     }
 
-    private void testLegalInputWithPrefixAndSuffix(String testName, String str, int offset, int length, float expected) throws NumericException {
-        float actual = parse(str, offset, length);
+    private void testLegalInputWithPrefixAndSuffix(String testName, String str, int length, float expected) throws NumericException {
+        float actual = parse(str, 6, length, false);
         Assert.assertEquals(testName, expected, actual, 0.001);
+    }
+
+    private void testOverflowInput(String value) {
+        try {
+            parse(value, true);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
     }
 }

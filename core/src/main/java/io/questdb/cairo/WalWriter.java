@@ -473,7 +473,7 @@ public class WalWriter implements Closeable {
     }
 
     private void freeSymbolMapWriters() {
-        Misc.freeObjList(symbolMapReaders);
+        Misc.freeObjListIfCloseable(symbolMapReaders);
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -511,7 +511,8 @@ public class WalWriter implements Closeable {
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
-                    configuration.getWriterFileOpenOpts()
+                    configuration.getWriterFileOpenOpts(),
+                    Files.POSIX_MADV_RANDOM
             );
 
             final MemoryMA mem2 = getSecondaryColumn(columnIndex);
@@ -521,7 +522,8 @@ public class WalWriter implements Closeable {
                         configuration.getDataAppendPageSize(),
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
                 );
                 mem2.putLong(0L);
             }
@@ -639,7 +641,7 @@ public class WalWriter implements Closeable {
     }
 
     private void removeSymbolMapWriter(int index) {
-        Misc.free(symbolMapReaders.getAndSetQuick(index, null));
+        Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         initialSymbolCounts.setQuick(index, -1);
     }
 

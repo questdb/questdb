@@ -28,10 +28,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -65,6 +62,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public long getPageSize() {
         return getExtendSegmentSize();
+    }
+
+    @Override
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     /**
@@ -121,11 +124,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void clear() {
         if (pageAddress != 0) {
             long baseLength = lim - pageAddress;
@@ -165,6 +163,13 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long nPages = size > 0 ? ((size - 1) >>> sizeMsb) + 1 : 1;
         size = nPages << sizeMsb;
         final long oldSize = size();
+
+        // sometimes the resize request ends up being the same
+        // as existing memory size
+        if (size == oldSize) {
+            return;
+        }
+
         if (nPages > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }

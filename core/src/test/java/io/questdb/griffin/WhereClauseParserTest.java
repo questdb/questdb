@@ -150,6 +150,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noDesignatedTimestampNorIdxReader.close();
         compiler.close();
         sqlExecutionContext.close();
+        TestUtils.removeTestPath(root);
+    }
+
+    @Override
+    public void tearDown() {
+        super.tearDown(false);
     }
 
     @Test
@@ -431,7 +437,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        currentMicros = IntervalUtils.parseFloorPartialDate("2014-01-03T12:30:00.000000Z");
+        currentMicros = IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z");
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
@@ -1944,6 +1950,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid >= bid");
+        Assert.assertEquals(IntrinsicModel.TRUE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid > bid");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid <= bid");
+        Assert.assertEquals(IntrinsicModel.TRUE, m.intrinsicValue);
+    }
+
+    @Test
+    public void testLessNoOpFilter() throws Exception {
+        IntrinsicModel m = modelOf("bid < bid");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+    }
+
     private void andShuffleExpressionsTest(String[] expressions, String expected) throws SqlException {
         shuffleExpressionsTest(expressions, " AND ", expected, 0);
     }
@@ -1956,8 +1986,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
         if (k == expressions.length - 1) {
             sink.clear();
-            for (int j = 0; j < expressions.length; j++) {
-                sink.put(expressions[j]).put(separator);
+            for (String s : expressions) {
+                sink.put(s).put(separator);
             }
             sink.clear(sink.length() - separator.length());
             String expression = sink.toString();

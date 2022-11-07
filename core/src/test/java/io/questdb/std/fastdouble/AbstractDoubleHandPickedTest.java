@@ -6,6 +6,7 @@
 package io.questdb.std.fastdouble;
 
 import io.questdb.std.NumericException;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -42,6 +43,19 @@ abstract class AbstractDoubleHandPickedTest {
     }
 
     @Test
+    public void testDecFloatLiteralNumericOverflow() throws NumericException {
+        testOverflowInput("4.9E-325");
+        testOverflowInput("-4.9E-325");
+        testOverflowInput("1000000000000000000e-401");
+        testOverflowInput("1.8E309");
+        testOverflowInput("-1.8E309");
+        testLegalInput("0.00000000d", "0.00000000d");
+        testLegalInput("-0.00000000d", "-0.00000000d");
+        testLegalInput("Infinity", "Infinity");
+        testLegalInput("-Infinity", "-Infinity");
+    }
+
+    @Test
     public void testErrorCases() throws IOException, URISyntaxException {
         Path p = Paths.get(AbstractDoubleHandPickedTest.class.getResource("/fastdouble/FastDoubleParser_testcases.txt").toURI());
         Files.lines(p)
@@ -72,6 +86,16 @@ abstract class AbstractDoubleHandPickedTest {
     }
 
     @Test
+    public void testHexFloatLiteralNumericOverflow() throws NumericException {
+        System.out.println(Double.toHexString(Double.POSITIVE_INFINITY));
+        testOverflowInput("0x0.0000000000001p-1023");
+        testOverflowInput("-0x0.0000000000001p-1023");
+        testOverflowInput("0x0.0000000000001p-1200");
+        testLegalInput("0.00000000d", "0x00000000p0");
+        testLegalInput("-0.00000000d", "-0x00000000p0");
+    }
+
+    @Test
     public void testIllegalInputs() {
         testIllegalInput("0." + (char) 0x3231 + (char) 0x0000 + "345678");
         testIllegalInput("");
@@ -99,12 +123,12 @@ abstract class AbstractDoubleHandPickedTest {
 
     @Test
     public void testIllegalInputsWithPrefixAndSuffix() {
-        testIllegalInputWithPrefixAndSuffix("before-after", 6, 1);
-        testIllegalInputWithPrefixAndSuffix("before7.78$after", 6, 5);
-        testIllegalInputWithPrefixAndSuffix("before7.78e$after", 6, 6);
-        testIllegalInputWithPrefixAndSuffix("before0x123$4after", 6, 7);
-        testIllegalInputWithPrefixAndSuffix("before0x123.4$after", 6, 8);
-        testIllegalInputWithPrefixAndSuffix("before0$123.4after", 6, 7);
+        testIllegalInputWithPrefixAndSuffix("before-after", 1);
+        testIllegalInputWithPrefixAndSuffix("before7.78$after", 5);
+        testIllegalInputWithPrefixAndSuffix("before7.78e$after", 6);
+        testIllegalInputWithPrefixAndSuffix("before0x123$4after", 7);
+        testIllegalInputWithPrefixAndSuffix("before0x123.4$after", 8);
+        testIllegalInputWithPrefixAndSuffix("before0$123.4after", 7);
     }
 
     @SuppressWarnings("UnpredictableBigDecimalConstructorCall")
@@ -208,14 +232,14 @@ abstract class AbstractDoubleHandPickedTest {
 
     @Test
     public void testLegalInputsWithPrefixAndSuffix() throws NumericException {
-        testLegalInputWithPrefixAndSuffix("before-1after", 6, 2, -1.0);
-        testLegalInputWithPrefixAndSuffix("before7.789after", 6, 5, 7.789);
-        testLegalInputWithPrefixAndSuffix("before7.78e2after", 6, 6, 7.78e2);
-        testLegalInputWithPrefixAndSuffix("before0x1234p0after", 6, 8, 0x1234p0);
-        testLegalInputWithPrefixAndSuffix("before0x123.45p0after", 6, 10, 0x123.45p0);
+        testLegalInputWithPrefixAndSuffix("before-1after", 2, -1.0);
+        testLegalInputWithPrefixAndSuffix("before7.789after", 5, 7.789);
+        testLegalInputWithPrefixAndSuffix("before7.78e2after", 6, 7.78e2);
+        testLegalInputWithPrefixAndSuffix("before0x1234p0after", 8, 0x1234p0);
+        testLegalInputWithPrefixAndSuffix("before0x123.45p0after", 10, 0x123.45p0);
         testLegalInputWithPrefixAndSuffix("Outside Clinger fast path (min_clinger_significand + 1, min_clinger_exponent - 1)",
-                "before1e-23after", 6, 5, 1e-23);
-        testLegalInputWithPrefixAndSuffix("before9007199254740992.e-256after", 6, 22, 9007199254740992.e-256);
+                "before1e-23after", 5, 1e-23);
+        testLegalInputWithPrefixAndSuffix("before9007199254740992.e-256after", 22, 9007199254740992.e-256);
     }
 
     @Test
@@ -226,21 +250,21 @@ abstract class AbstractDoubleHandPickedTest {
         }
     }
 
-    abstract double parse(CharSequence str) throws NumericException;
+    abstract double parse(CharSequence str, boolean rejectOverflow) throws NumericException;
 
-    protected abstract double parse(String str, int offset, int length) throws NumericException;
+    protected abstract double parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException;
 
     private void testIllegalInput(String s) {
         try {
-            parse(s);
+            parse(s, false);
             fail();
         } catch (NumericException e) {
             // success
         }
     }
 
-    private void testIllegalInputWithPrefixAndSuffix(String str, int offset, int length) {
-        assertThrows(NumericException.class, () -> parse(str, offset, length));
+    private void testIllegalInputWithPrefixAndSuffix(String str, int length) {
+        assertThrows(NumericException.class, () -> parse(str, 6, length, false));
     }
 
     private void testLegalDecInput(double expected) throws NumericException {
@@ -248,16 +272,8 @@ abstract class AbstractDoubleHandPickedTest {
         testLegalInput(s, s, expected);
     }
 
-    private void testLegalDecInput(String testName, double expected) throws NumericException {
-        testLegalInput(testName, expected + "", expected);
-    }
-
     private void testLegalHexInput(double expected) throws NumericException {
         testLegalInput(Double.toHexString(expected), Double.toHexString(expected), expected);
-    }
-
-    private void testLegalHexInput(String testName, double expected) throws NumericException {
-        testLegalInput(testName, Double.toHexString(expected), expected);
     }
 
     private void testLegalInput(String testName, String str) throws NumericException {
@@ -269,17 +285,25 @@ abstract class AbstractDoubleHandPickedTest {
     }
 
     private void testLegalInput(String testName, String str, double expected) throws NumericException {
-        double actual = parse(str);
+        double actual = parse(str, false);
         assertEquals(testName, expected, actual, 0.001);
         assertEquals("longBits of " + expected, Double.doubleToLongBits(expected), Double.doubleToLongBits(actual));
     }
 
-    private void testLegalInputWithPrefixAndSuffix(String str, int offset, int length, double expected) throws NumericException {
-        testLegalInputWithPrefixAndSuffix(str, str, offset, length, expected);
+    private void testLegalInputWithPrefixAndSuffix(String str, int length, double expected) throws NumericException {
+        testLegalInputWithPrefixAndSuffix(str, str, length, expected);
     }
 
-    private void testLegalInputWithPrefixAndSuffix(String testName, String str, int offset, int length, double expected) throws NumericException {
-        double actual = parse(str, offset, length);
+    private void testLegalInputWithPrefixAndSuffix(String testName, String str, int length, double expected) throws NumericException {
+        double actual = parse(str, 6, length, false);
         assertEquals(testName, expected, actual, 0.001);
+    }
+
+    private void testOverflowInput(String str) {
+        try {
+            parse(str, true);
+            Assert.fail();
+        } catch (NumericException ignored) {
+        }
     }
 }

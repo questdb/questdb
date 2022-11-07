@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.Metrics;
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -39,7 +38,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -50,25 +50,23 @@ public class PGWireServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
 
     private final IODispatcher<PGConnectionContext> dispatcher;
-    private final PGConnectionContextFactory contextFactory;
-    private final WorkerPool workerPool;
     private final Metrics metrics;
+    private final WorkerPool workerPool;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            boolean workerPoolLocal,
             FunctionFactoryCache functionFactoryCache,
             DatabaseSnapshotAgent snapshotAgent,
             PGConnectionContextFactory contextFactory
     ) {
-        this.contextFactory = contextFactory;
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 contextFactory
         );
         this.metrics = engine.getMetrics();
+        this.workerPool = workerPool;
 
         workerPool.assign(dispatcher);
 
@@ -95,7 +93,7 @@ public class PGWireServer implements Closeable {
                     } catch (Throwable e) { //must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
-                        metrics.healthCheck().incrementUnhandledErrors();
+                        metrics.health().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
                 };
@@ -115,87 +113,22 @@ public class PGWireServer implements Closeable {
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            workerPool.assign(i, () -> {
+            workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            workerPool.freeOnExit((QuietCloseable) () -> {
                 Misc.free(jobContext);
-                contextFactory.close();
                 engine.getMessageBus().getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
                 queryCacheEventSubSeq.clear();
             });
         }
-
-        if (workerPoolLocal) {
-            this.workerPool = workerPool;
-        } else {
-            this.workerPool = null;
-        }
     }
 
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics,
-            PGConnectionContextFactory contextFactory
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, functionFactoryCache1, snapshotAgent1, metrics1) -> new PGWireServer(
-                        conf, engine, workerPool, local, functionFactoryCache1, snapshotAgent1, contextFactory
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
-    }
-
-    @Nullable
-    public static PGWireServer create(
-            PGWireConfiguration configuration,
-            WorkerPool sharedWorkerPool,
-            Log log,
-            CairoEngine cairoEngine,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        return WorkerPoolAwareConfiguration.create(
-                configuration,
-                sharedWorkerPool,
-                log,
-                cairoEngine,
-                (conf, engine, workerPool, local, sharedWorkerCount, cache, agent, m) -> new PGWireServer(
-                        conf,
-                        engine,
-                        workerPool,
-                        local,
-                        cache,
-                        agent,
-                        new PGConnectionContextFactory(
-                                engine,
-                                conf,
-                                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), sharedWorkerCount)
-                        )
-                ),
-                functionFactoryCache,
-                snapshotAgent,
-                metrics
-        );
+    @TestOnly
+    public WorkerPool getWorkerPool() {
+        return workerPool;
     }
 
     @Override
     public void close() {
-        // worker pool will only be set if it is "local"
-        if (workerPool != null) {
-            workerPool.halt();
-        }
-        Misc.free(contextFactory);
         Misc.free(dispatcher);
     }
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -111,6 +112,14 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
         if (!isNull) {
             sink.clear();
             sink.put(value);
+        }
+    }
+
+    public void setTimestamp(long value) {
+        isNull = value == Numbers.LONG_NaN;
+        if (!isNull) {
+            sink.clear();
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
         }
     }
 

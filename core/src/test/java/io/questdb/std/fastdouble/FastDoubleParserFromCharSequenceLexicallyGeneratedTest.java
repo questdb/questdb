@@ -29,7 +29,7 @@ public class FastDoubleParserFromCharSequenceLexicallyGeneratedTest extends Abst
         double actual = 0;
         boolean actualFailed = false;
         try {
-            actual = FastDoubleParser.parseDouble(str);
+            actual = FastDoubleParser.parseDouble(str, false);
         } catch (NumericException t) {
             actualFailed = true;
         }

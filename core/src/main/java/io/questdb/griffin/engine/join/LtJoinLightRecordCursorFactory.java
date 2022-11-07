@@ -94,6 +94,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -206,7 +207,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!this.isOpen) {
                 this.isOpen = true;
-                this.joinKeyMap.reallocate();
+                this.joinKeyMap.reopen();
             }
             this.slaveTimestamp = Long.MIN_VALUE;
             this.lastSlaveRowID = Long.MIN_VALUE;
@@ -220,9 +221,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         @Override
         public void close() {
             if (isOpen) {
-                isOpen = false;
                 joinKeyMap.close();
                 super.close();
+                isOpen = false;
             }
         }
     }

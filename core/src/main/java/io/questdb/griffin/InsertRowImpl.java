@@ -25,29 +25,29 @@
 package io.questdb.griffin;
 
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class InsertRowImpl {
     private final VirtualRecord virtualRecord;
-    private final SqlCompiler.RecordToRowCopier copier;
+    private final RecordToRowCopier copier;
     private final Function timestampFunction;
     private final RowFactory rowFactory;
+    private final int tupleIndex;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
-            SqlCompiler.RecordToRowCopier copier,
-            Function timestampFunction
+            RecordToRowCopier copier,
+            Function timestampFunction,
+            int tupleIndex
     ) {
         this.virtualRecord = virtualRecord;
         this.copier = copier;
         this.timestampFunction = timestampFunction;
+        this.tupleIndex = tupleIndex;
         if (timestampFunction != null) {
             if (!ColumnType.isString(timestampFunction.getType())) {
                 rowFactory = this::getRowWithTimestamp;
@@ -60,18 +60,17 @@ public class InsertRowImpl {
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        long timestamp = timestampFunction.getTimestamp(null);
-        return tableWriter.newRow(timestamp);
+        return tableWriter.newRow(timestampFunction.getTimestamp(null));
     }
 
-    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
-        CharSequence tsStr = timestampFunction.getStr(null);
-        try {
-            long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
-            return tableWriter.newRow(timestamp);
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().put("Invalid timestamp: ").put(tsStr);
-        }
+    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) throws SqlException {
+        return tableWriter.newRow(
+                SqlUtil.parseFloorPartialTimestamp(
+                        timestampFunction.getStr(null),
+                        tupleIndex,
+                        ColumnType.TIMESTAMP
+                )
+        );
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
@@ -86,7 +85,7 @@ public class InsertRowImpl {
         }
     }
 
-    public void append(TableWriter writer) {
+    public void append(TableWriter writer) throws SqlException {
         final TableWriter.Row row = rowFactory.getRow(writer);
         copier.copy(virtualRecord, row);
         row.append();
@@ -94,6 +93,6 @@ public class InsertRowImpl {
 
     @FunctionalInterface
     private interface RowFactory {
-        TableWriter.Row getRow(TableWriter tableWriter);
+        TableWriter.Row getRow(TableWriter tableWriter) throws SqlException;
     }
 }

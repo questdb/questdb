@@ -32,10 +32,11 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, AnalyticSPI, Reopenable {
 
     private final long[] columnOffsets;
     private final MemoryARW mem;
@@ -47,9 +48,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
-    public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
+    public RecordChain(
+            @Transient @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            long pageSize,
+            int maxPages
+    ) {
         this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
         this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
@@ -105,6 +112,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
     }
 
+    @Override
+    public Record getRecordAt(long recordOffset) {
+        if (recordC == null) {
+            recordC = new RecordChainRecord();
+        }
+        recordC.of(rowToDataOffset(recordOffset));
+        return recordC;
+    }
+
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
         return rowToDataOffset(recordOffset) + varOffset + columnOffsets[columnIndex];
     }
@@ -128,6 +144,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     @Override
     public Record getRecordB() {
         return recordB;
+    }
+
+    @Override
+    public void reopen() {
+        //nothing to do here        
     }
 
     @Override

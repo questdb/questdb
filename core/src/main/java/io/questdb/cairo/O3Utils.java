@@ -31,7 +31,6 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -58,8 +57,8 @@ public class O3Utils {
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
-        workerPool.freeOnHalt(purgeDiscoveryJob);
-        workerPool.freeOnHalt(columnPurgeJob);
+        workerPool.freeOnExit(purgeDiscoveryJob);
+        workerPool.freeOnExit(columnPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
@@ -72,8 +71,8 @@ public class O3Utils {
                     new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
                     sqlExecutionCircuitBreakerConfiguration
             );
-            workerPool.assign(i, (Job) pageFrameReduceJob);
-            workerPool.freeOnHalt(pageFrameReduceJob);
+            workerPool.assign(i, pageFrameReduceJob);
+            workerPool.freeOnExit(pageFrameReduceJob);
         }
     }
 

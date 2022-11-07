@@ -26,7 +26,7 @@ public class FastDoubleParserFromByteArrayLexicallyGeneratedTest extends Abstrac
         double actual = 0;
         boolean actualFailed = false;
         try {
-            actual = FastDoubleParser.parseDouble(str.getBytes(StandardCharsets.ISO_8859_1));
+            actual = FastDoubleParser.parseDouble(str.getBytes(StandardCharsets.ISO_8859_1), false);
         } catch (NumericException t) {
             actualFailed = true;
         }

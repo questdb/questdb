@@ -28,6 +28,8 @@ import io.questdb.griffin.OperatorExpression;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
+import java.util.Objects;
+
 public class ExpressionNode implements Mutable, Sinkable {
 
     public final static ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
@@ -203,6 +205,29 @@ public class ExpressionNode implements Mutable, Sinkable {
                 }
                 break;
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ExpressionNode that = (ExpressionNode) o;
+        return precedence == that.precedence
+                && position == that.position
+                && type == that.type
+                && paramCount == that.paramCount
+                && intrinsicValue == that.intrinsicValue
+                && innerPredicate == that.innerPredicate
+                && Objects.equals(args, that.args)
+                && Objects.equals(token, that.token)
+                && Objects.equals(queryModel, that.queryModel)
+                && Objects.equals(lhs, that.lhs)
+                && Objects.equals(rhs, that.rhs);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
     }
 
     private static boolean compareArgs(

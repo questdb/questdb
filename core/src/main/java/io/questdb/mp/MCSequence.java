@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
+
 /**
  * M - multi thread
  * C - consumer
@@ -50,9 +52,10 @@ public class MCSequence extends AbstractMSequence {
             if (cursor > -1) {
                 consumer.consume(queue.get(cursor));
                 done(cursor);
+            } else if (cursor == -2) {
+                Os.pause();
             }
         } while (cursor != -1);
-
     }
 
     @Override

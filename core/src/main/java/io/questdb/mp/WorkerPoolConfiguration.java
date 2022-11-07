@@ -54,4 +54,8 @@ public interface WorkerPoolConfiguration {
     default long getSleepTimeout() {
         return 100;
     }
+
+    default boolean isEnabled() {
+        return true;
+    }
 }

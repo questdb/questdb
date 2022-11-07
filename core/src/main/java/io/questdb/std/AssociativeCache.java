@@ -70,7 +70,7 @@ public class AssociativeCache<V> implements Closeable, Mutable {
             if (keys[i] != null) {
                 keys[i] = null;
                 if (values[i] != null) {
-                    values[i] = Misc.free(values[i]);
+                    values[i] = Misc.freeIfCloseable(values[i]);
                     freed++;
                 }
             }
@@ -117,7 +117,7 @@ public class AssociativeCache<V> implements Closeable, Mutable {
                     cachedGauge.inc();
                 } else {
                     // We're replacing the value with another one, no need to change the gauge.
-                    Misc.free(values[lo]);
+                    Misc.freeIfCloseable(values[lo]);
                 }
                 values[lo] = value;
             }
@@ -134,7 +134,7 @@ public class AssociativeCache<V> implements Closeable, Mutable {
                 cachedGauge.inc();
             } else {
                 // We're replacing the value with another one, no need to change the gauge.
-                values[idx] = Misc.free(values[idx]);
+                values[idx] = Misc.freeIfCloseable(values[idx]);
             }
         } else {
             // The block has empty entries, so we're inserting.

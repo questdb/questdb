@@ -112,6 +112,36 @@ public class LowerCaseCharSequenceObjHashMapTest {
                 Assert.assertTrue(referenceMap.containsKey(v.toString()));
             }
         }
+    }
 
+    @Test
+    public void testEqualsAndHashCode() {
+        final int items = 1000;
+
+        final LowerCaseCharSequenceObjHashMap<Integer> mapA = new LowerCaseCharSequenceObjHashMap<>();
+        final LowerCaseCharSequenceObjHashMap<Integer> mapB = new LowerCaseCharSequenceObjHashMap<>();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        for (int i = 0; i < items; i++) {
+            mapA.put(Integer.toString(i), i);
+        }
+
+        Assert.assertNotEquals(mapA, mapB);
+
+        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the maps.
+        for (int i = items - 1; i > -1; i--) {
+            mapB.put(Integer.toString(i), i);
+        }
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
+
+        mapA.clear();
+        mapB.clear();
+
+        Assert.assertEquals(mapA, mapB);
+        Assert.assertEquals(mapA.hashCode(), mapB.hashCode());
     }
 }

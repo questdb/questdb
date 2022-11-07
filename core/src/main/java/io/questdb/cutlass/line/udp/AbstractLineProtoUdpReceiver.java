@@ -98,7 +98,10 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     @Override
     public void close() {
         if (fd > -1) {
-            halt();
+            if (running.compareAndSet(true, false)) {
+                started.await();
+                halted.await();
+            }
             if (nf.close(fd) != 0) {
                 LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
             } else {
@@ -111,13 +114,6 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             Misc.free(lexer);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
-        }
-    }
-
-    protected void halt() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            halted.await();
         }
     }
 
@@ -163,7 +159,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$(configuration.getPort())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         } else {
             LOG.info()
                     .$("receiving multicast from ")
@@ -174,7 +170,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     .$ip(configuration.getBindIPv4Address())
                     .$(" [fd=").$(fd)
                     .$(", commitRate=").$(commitRate)
-                    .$(']').$();
+                    .I$();
         }
     }
 }

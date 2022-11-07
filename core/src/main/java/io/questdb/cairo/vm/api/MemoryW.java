@@ -36,8 +36,6 @@ public interface MemoryW extends Closeable {
     @Override
     void close();
 
-    void putBlockOfBytes(long offset, long from, long len);
-
     void putBool(long offset, boolean value);
 
     void putByte(long offset, byte value);

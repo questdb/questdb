@@ -54,7 +54,7 @@ public class LineUdpLexer implements Mutable, Closeable {
     private boolean unquoted = true;
 
     public LineUdpLexer(int bufferSize) {
-        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_ILP_RSS);
         bufferHi = buffer + bufferSize;
         charSequenceCache = address -> {
             floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
@@ -81,7 +81,7 @@ public class LineUdpLexer implements Mutable, Closeable {
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferHi - buffer, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(buffer, bufferHi - buffer, MemoryTag.NATIVE_ILP_RSS);
     }
 
     /**
@@ -400,7 +400,7 @@ public class LineUdpLexer implements Mutable, Closeable {
                 // can't realistically reach this in test :(
                 throw LineProtoException.INSTANCE;
             }
-            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_DEFAULT);
+            long buf = Unsafe.realloc(buffer, bufferHi - buffer, capacity, MemoryTag.NATIVE_ILP_RSS);
             long offset = dstTop - buffer;
             bufferHi = buf + capacity;
             buffer = buf;

@@ -43,9 +43,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long minMappedMemorySize = -1;
     private long extendSegmentMsb;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private int madviseOpts = -1;
 
     public MemoryCMARWImpl(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts);
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
     public MemoryCMARWImpl() {
@@ -66,8 +67,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void putBlockOfBytes(long offset, long from, long len) {
-        throw new UnsupportedOperationException();
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     @Override
@@ -208,9 +210,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         this.minMappedMemorySize = extendSegmentSize;
+        this.madviseOpts = madviseOpts;
         openFile(ff, name, opts);
         map(ff, name, size, memoryTag);
     }
@@ -266,7 +269,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     previousSize,
                     newSize,
                     Files.MAP_RW,
-                    memoryTag);
+                    memoryTag
+            );
+            ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {
             appendAddress = pageAddress + previousSize;
             close(false);
@@ -301,6 +306,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         try {
             this.pageAddress = TableUtils.mapRW(ff, fd, size, memoryTag);
             this.lim = pageAddress + size;
+            ff.madvise(pageAddress, size, madviseOpts);
         } catch (Throwable e) {
             close(false);
             throw e;

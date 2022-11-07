@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -31,7 +32,6 @@ import org.junit.rules.TemporaryFolder;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
-import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -114,7 +114,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            TestUtils.insert(compiler, sqlExecutionContext, "insert into src values (now(), 'foo')");
             assertQueryDisallowed("insert into src select now(), name from src");
         });
     }
@@ -147,7 +147,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowTruncate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("truncate table src");
         });
     }
@@ -207,7 +207,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("backup database");
         });
     }
@@ -217,7 +217,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             configureForBackups();
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("backup table src");
         });
     }
@@ -227,7 +227,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowsRepairTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            executeInsert("insert into src values (now(), 'foo')");
             assertQueryDisallowed("repair table src");
         });
     }
@@ -255,14 +255,19 @@ public class PGSecurityTest extends BasePGTest {
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
         assertMemoryLeak(() -> {
-            try (
+            try(
                     final PGWireServer server = createPGServer(1);
-                    // Postgres JDBC clients ignores unknown properties and does not send them to a server
-                    // so have to use a property which actually exists
-                    final Connection connection = getConnectionWithCustomProperty(
-                        server.getPort(), PGProperty.OPTIONS.getName(), "user");
-            ) {
-                // no need to assert anything, if we manage to create a connection then it's already a success!
+                    final WorkerPool workerPool = server.getWorkerPool()
+                    ) {
+                workerPool.start(LOG);
+                try (
+                        // Postgres JDBC clients ignores unknown properties and does not send them to a server
+                        // so have to use a property which actually exists
+                        final Connection connection = getConnectionWithCustomProperty(
+                                server.getPort(), PGProperty.OPTIONS.getName(), "user");
+                ) {
+                    // no need to assert anything, if we manage to create a connection then it's already a success!
+                }
             }
         });
     }
@@ -294,10 +299,15 @@ public class PGSecurityTest extends BasePGTest {
     private void executeWithPg(String query) throws Exception {
         try (
                 final PGWireServer server = createPGServer(READ_ONLY_CONF);
-                final Connection connection = getConnection(server.getPort(), false, true);
-                final Statement statement = connection.createStatement()
+                final WorkerPool workerPool = server.getWorkerPool()
         ) {
-            statement.execute(query);
+            workerPool.start(LOG);
+            try (
+                    final Connection connection = getConnection(server.getPort(), false, true);
+                    final Statement statement = connection.createStatement()
+            ) {
+                statement.execute(query);
+            }
         }
     }
 }

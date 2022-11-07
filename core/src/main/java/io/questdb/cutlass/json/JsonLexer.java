@@ -75,7 +75,7 @@ public class JsonLexer implements Mutable, Closeable {
 
     public JsonLexer(int cacheSize, int cacheSizeLimit) {
         this.cacheCapacity = cacheSize;
-        this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_DEFAULT);
+        this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         this.cacheSizeLimit = cacheSizeLimit;
     }
 
@@ -104,7 +104,7 @@ public class JsonLexer implements Mutable, Closeable {
     @Override
     public void close() {
         if (cacheCapacity > 0 && cache != 0) {
-            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 
@@ -310,10 +310,10 @@ public class JsonLexer implements Mutable, Closeable {
         if (n > cacheSizeLimit) {
             throw JsonException.$(position, "String is too long");
         }
-        long ptr = Unsafe.malloc(n, MemoryTag.NATIVE_DEFAULT);
+        long ptr = Unsafe.malloc(n, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         if (cacheCapacity > 0) {
             Vect.memcpy(ptr, cache, cacheSize);
-            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(cache, cacheCapacity, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
         cacheCapacity = n;
         cache = ptr;

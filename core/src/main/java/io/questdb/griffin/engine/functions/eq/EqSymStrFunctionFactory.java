@@ -147,7 +147,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             StaticSymbolTable staticSymbolTable = arg.getStaticSymbolTable();
             assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
             valueIndex = staticSymbolTable.keyOf(constant);
-            exists = valueIndex != SymbolTable.VALUE_NOT_FOUND;
+            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
         }
     }
 

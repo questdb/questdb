@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.mp.MPSequence;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
@@ -57,32 +58,37 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(2);
-                    Connection connection = getConnection(server.getPort(), false, true);
-                    Statement statement = connection.createStatement()
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
             ) {
-                statement.executeUpdate("CREATE TABLE test\n" +
-                        "AS(\n" +
-                        "    SELECT\n" +
-                        "        x id,\n" +
-                        "        timestamp_sequence(0L, 100000L) ts\n" +
-                        "    FROM long_sequence(1000) x)\n" +
-                        "TIMESTAMP(ts)\n" +
-                        "PARTITION BY DAY");
+                workerPool.start(LOG);
+                try (
+                        Connection connection = getConnection(server.getPort(), false, true);
+                        Statement statement = connection.createStatement()
+                ) {
+                    statement.executeUpdate("CREATE TABLE test\n" +
+                            "AS(\n" +
+                            "    SELECT\n" +
+                            "        x id,\n" +
+                            "        timestamp_sequence(0L, 100000L) ts\n" +
+                            "    FROM long_sequence(1000) x)\n" +
+                            "TIMESTAMP(ts)\n" +
+                            "PARTITION BY DAY");
 
-                Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue());
+                    Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue());
 
-                String sql = "SELECT *\n" +
-                        "FROM test t1 JOIN test t2 \n" +
-                        "ON t1.id = t2.id\n" +
-                        "LIMIT 1";
-                statement.execute(sql);
+                    String sql = "SELECT *\n" +
+                            "FROM test t1 JOIN test t2 \n" +
+                            "ON t1.id = t2.id\n" +
+                            "LIMIT 1";
+                    statement.execute(sql);
 
-                assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedSelectsGauge().getValue()));
+                    assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedSelectsGauge().getValue()));
 
-                statement.execute("SELECT flush_query_cache()");
+                    statement.execute("SELECT flush_query_cache()");
 
-                assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
+                    assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
+                }
             }
         });
     }
@@ -90,35 +96,38 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
     public void testFlushUpdateCache() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    PGWireServer server = createPGServer(2);
-                    Connection connection = getConnection(server.getPort(), false, true);
-                    Statement statement = connection.createStatement()
-            ) {
-                statement.executeUpdate("CREATE TABLE test\n" +
-                        "AS(\n" +
-                        "    SELECT\n" +
-                        "        x id,\n" +
-                        "        timestamp_sequence(0L, 100000L) ts\n" +
-                        "    FROM long_sequence(1000) x)\n" +
-                        "TIMESTAMP(ts)\n" +
-                        "PARTITION BY DAY");
+            try (final PGWireServer server = createPGServer(2);
+                 final WorkerPool workerPool = server.getWorkerPool()) {
+                workerPool.start(LOG);
+                try (
+                        Connection connection = getConnection(server.getPort(), false, true);
+                        Statement statement = connection.createStatement()
+                ) {
+                    statement.executeUpdate("CREATE TABLE test\n" +
+                            "AS(\n" +
+                            "    SELECT\n" +
+                            "        x id,\n" +
+                            "        timestamp_sequence(0L, 100000L) ts\n" +
+                            "    FROM long_sequence(1000) x)\n" +
+                            "TIMESTAMP(ts)\n" +
+                            "PARTITION BY DAY");
 
-                Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue());
+                    Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue());
 
-                String sql = "UPDATE test t1 set id = ? \n" +
-                        "FROM test t2 \n" +
-                        "WHERE t1.id = t2.id";
-                try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
-                    updateSt.setLong(1, 1L);
-                    updateSt.execute();
+                    String sql = "UPDATE test t1 set id = ? \n" +
+                            "FROM test t2 \n" +
+                            "WHERE t1.id = t2.id";
+                    try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
+                        updateSt.setLong(1, 1L);
+                        updateSt.execute();
+                    }
+
+                    assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedUpdatesGauge().getValue()));
+
+                    statement.execute("SELECT flush_query_cache()");
+
+                    assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
                 }
-
-                assertEventually(() -> Assert.assertEquals(1, metrics.pgWire().cachedUpdatesGauge().getValue()));
-
-                statement.execute("SELECT flush_query_cache()");
-
-                assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedUpdatesGauge().getValue()));
             }
         });
     }

@@ -177,7 +177,7 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 

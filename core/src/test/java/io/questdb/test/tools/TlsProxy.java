@@ -103,13 +103,20 @@ public final class TlsProxy {
                 closeQuietly(frontendSocket);
                 continue;
             }
-            Link link = new Link(frontendSocket, backendSocket);
-            links.add(link);
-            link.start();
+            synchronized (this) {
+                if (shutdownRequested) {
+                    closeQuietly(frontendSocket);
+                    closeQuietly(backendSocket);
+                    return;
+                }
+                Link link = new Link(frontendSocket, backendSocket);
+                links.add(link);
+                link.start();
+            }
         }
     }
 
-    public void stop() {
+    public synchronized void stop() {
         shutdownRequested = true;
         try {
             serverSocket.close();
@@ -145,9 +152,11 @@ public final class TlsProxy {
         private void start() {
             Thread frontToBackThread = new Thread(frontendToBackend);
             frontToBackThread.setName("front-to-back");
+            frontendToBackend.setOwningThread(frontToBackThread);
             frontToBackThread.start();
             Thread backToFrontThread = new Thread(backendToFrontend);
             backToFrontThread.setName("back-to-front");
+            backendToFrontend.setOwningThread(backToFrontThread);
             backToFrontThread.start();
         }
 
@@ -172,6 +181,10 @@ public final class TlsProxy {
             this.name = name;
         }
 
+        public void setOwningThread(Thread owningThread) {
+            this.owningThread = owningThread;
+        }
+
         private void shutdown() {
             shutdownRequested = true;
             owningThread.interrupt();
@@ -184,7 +197,6 @@ public final class TlsProxy {
 
         @Override
         public void run() {
-            owningThread = Thread.currentThread();
             byte[] buffer = new byte[1024];
             long totalRead = 0;
             long totalWritten = 0;

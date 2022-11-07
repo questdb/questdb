@@ -79,6 +79,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    findTypeIsSoftLink
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    getStdOutFd
  * Signature: ()J
  */
@@ -242,6 +250,30 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    isSoftLink
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    softLink
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    unlink
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    mkdir
  * Signature: (JI)I
  */
@@ -293,6 +325,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
  * Method:    rename
  * Signature: (JJ)I
  */
+
+// On Linux, read() (and similar system calls) will transfer at most 0x7ffff000 (2,147,479,552) bytes,
+// returning the number of bytes actually transferred or -1 depending on the platforms
+#define MAX_RW_COUNT 0x7ffff000
 
 #define FILES_RENAME_ERR_OK 0
 #define FILES_RENAME_ERR_EXDEV 1

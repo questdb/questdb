@@ -24,15 +24,19 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.*;
+import io.questdb.mp.TestWorkerPool;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -48,15 +52,53 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public class BasePGTest extends AbstractGriffinTest {
 
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            PGWireServer.PGConnectionContextFactory contextFactory
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(configuration, cairoEngine, workerPool, functionFactoryCache, snapshotAgent, contextFactory);
+    }
+
     protected PGWireServer createPGServer(PGWireConfiguration configuration) {
-        return PGWireServer.create(
+        return createPGWireServer(
                 configuration,
-                null,
-                LOG,
                 engine,
+                new TestWorkerPool(configuration.getWorkerCount(), metrics),
                 compiler.getFunctionFactoryCache(),
+                snapshotAgent
+        );
+    }
+
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        return new PGWireServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
                 snapshotAgent,
-                metrics
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
+                )
         );
     }
 
@@ -70,6 +112,18 @@ public class BasePGTest extends AbstractGriffinTest {
             @Override
             public long getTimeout() {
                 return maxQueryTime;
+            }
+
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return (maxQueryTime == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK) ? 0 : super.getCircuitBreakerThrottle();//fail on first check
+            }
+
+            //should be consistent with clock used in AbstractCairoTest, otherwise timeout tests become unreliable because 
+            //Os.currentTimeMillis() could be a couple ms in the future compare to System.currentTimeMillis(), at least on Windows 10
+            @Override
+            public MillisecondClock getClock() {
+                return () -> testMicrosClock.getTicks() / 1000L;
             }
         };
 
@@ -192,10 +246,20 @@ public class BasePGTest extends AbstractGriffinTest {
                     public int getBindPort() {
                         return 0;  // Bind to ANY port.
                     }
+                };
+            }
+        };
+    }
 
+    @NotNull
+    protected DefaultPGWireConfiguration getStdPgWireConfig() {
+        return new DefaultPGWireConfiguration() {
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return new DefaultIODispatcherConfiguration() {
                     @Override
-                    public boolean getPeerNoLinger() {
-                        return false;
+                    public int getBindPort() {
+                        return 0;  // Bind to ANY port.
                     }
                 };
             }

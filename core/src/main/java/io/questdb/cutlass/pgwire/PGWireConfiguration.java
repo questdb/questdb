@@ -24,14 +24,14 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
 
-public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
+public interface PGWireConfiguration extends WorkerPoolConfiguration {
     int getBinParamCountCapacity();
 
     int getCharacterStoreCapacity();

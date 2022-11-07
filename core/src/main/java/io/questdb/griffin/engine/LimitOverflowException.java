@@ -36,11 +36,4 @@ public class LimitOverflowException extends CairoException {
         ex.message.clear();
         return ex;
     }
-
-    public static LimitOverflowException instance(long limit) {
-        LimitOverflowException ex = instance();
-        ex.put("limit of ").put(limit).put(" exceeded").setCacheable(true);
-        return ex;
-    }
-
 }

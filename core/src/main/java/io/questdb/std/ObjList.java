@@ -46,6 +46,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
 
+    @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
         setPos(other.length);
@@ -81,6 +82,18 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             Arrays.fill(buffer, null);
         }
         pos = 0;
+    }
+
+    public boolean contains(T value) {
+        for (int i = 0, n = pos; i < n; i++) {
+            T o = getQuick(i);
+            if ((value == null && o == null) ||
+                    (value != null && value.equals(o))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     @SuppressWarnings("unchecked")

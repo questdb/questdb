@@ -63,7 +63,7 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
         this.castRecord.setAb(false);
         if (!isOpen) {
             isOpen = true;
-            map.reallocate();
+            map.reopen();
         }
         hashCursorB();
         castRecord.setAb(true);

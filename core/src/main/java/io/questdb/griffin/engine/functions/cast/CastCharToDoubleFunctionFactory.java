@@ -65,7 +65,8 @@ public class CastCharToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return arg.getChar(rec);
+            final byte v = (byte) (arg.getChar(rec) - '0');
+            return v > -1 && v < 10 ? v : Double.NaN;
         }
     }
 }

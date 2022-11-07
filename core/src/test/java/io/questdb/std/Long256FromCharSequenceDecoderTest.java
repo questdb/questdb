@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -35,13 +37,18 @@ public class Long256FromCharSequenceDecoderTest {
     private long l2;
     private long l3;
 
-    @Test(expected = NumericException.class)
-    public void testBadEncoding() throws NumericException {
-        assertDecoded("5g9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
+    @Test
+    public void testBadEncoding() {
+        try {
+            assertDecoded("5g9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `5g9796963abad00001e5f6bbdb38` [STRING -> LONG256]");
+        }
     }
 
     @Test
-    public void testMixed() throws NumericException {
+    public void testMixed() {
         assertDecoded("5a9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
         assertDecoded("05a9796963abad00001e5f6bbdb38", 0, 0, -3458762426621895880L, 99607112989370L, 0, 0);
         assertDecoded("0x05a9796963abad00001e5f6bbdb38i", 2, 1, -3458762426621895880L, 99607112989370L, 0, 0);
@@ -116,9 +123,17 @@ public class Long256FromCharSequenceDecoderTest {
         assertDecoded("1000000000000000000000000000000000000000000000000000000000000000", 0, 0, 0, 0, 0, 0x1000000000000000L);
     }
 
-    @Test(expected = NumericException.class)
-    public void testTooLong() throws NumericException {
-        assertDecoded("10000000000000000000000000000000000000000000000000000000000000000", 0, 0, 0, 0, 0, 0x1000000000000000L);
+    @Test
+    public void testTooLong() {
+        try {
+            assertDecoded("10000000000000000000000000000000000000000000000000000000000000000", 0, 0, 0, 0, 0, 0x1000000000000000L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "inconvertible value: `10000000000000000000000000000000000000000000000000000000000000000` [STRING -> LONG256]"
+                    );
+        }
     }
 
     @Before
@@ -134,7 +149,7 @@ public class Long256FromCharSequenceDecoderTest {
         };
     }
 
-    private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) throws NumericException {
+    private void assertDecoded(String hexString, int prefixSize, int suffixSize, long l0, long l1, long l2, long l3) {
         Long256FromCharSequenceDecoder.decode(hexString, prefixSize, hexString.length() - suffixSize, decoder);
         Assert.assertEquals(l0, this.l0);
         Assert.assertEquals(l1, this.l1);

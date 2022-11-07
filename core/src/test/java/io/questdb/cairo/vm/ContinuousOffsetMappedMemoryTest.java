@@ -52,13 +52,11 @@ public class ContinuousOffsetMappedMemoryTest {
         try (Path path = new Path().of(root)) {
             path.concat(testName.getMethodName());
 
-            TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 3 * Files.PAGE_SIZE / 8L;
-                createFile(ff, path, appendCount, false);
+            long appendCount = 3 * Files.PAGE_SIZE / 8L;
+            createFile(ff, path, appendCount, false);
 
-                try (
-                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
-                ) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
                     memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE);
                     Assert.assertEquals(memoryROffset.size(), Files.PAGE_SIZE);
@@ -73,10 +71,10 @@ public class ContinuousOffsetMappedMemoryTest {
         try (Path path = new Path().of(root)) {
             path.concat(testName.getMethodName());
 
-            TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
-                createFile(ff, path, appendCount, false);
+            long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
+            createFile(ff, path, appendCount, false);
 
+            TestUtils.assertMemoryLeak(() -> {
                 try (
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
@@ -151,10 +149,10 @@ public class ContinuousOffsetMappedMemoryTest {
         try (Path path = new Path().of(root)) {
             path.concat(testName.getMethodName());
 
-            TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
-                createFile(ff, path, appendCount, true);
+            long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
+            createFile(ff, path, appendCount, true);
 
+            TestUtils.assertMemoryLeak(() -> {
                 try (
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
@@ -186,13 +184,11 @@ public class ContinuousOffsetMappedMemoryTest {
         try (Path path = new Path().of(root)) {
             path.concat(testName.getMethodName());
 
-            TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 3 * Files.PAGE_SIZE / 8L;
-                createFile(ff, path, appendCount, false);
+            long appendCount = 3 * Files.PAGE_SIZE / 8L;
+            createFile(ff, path, appendCount, false);
 
-                try (
-                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
-                ) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (MemoryCMORImpl memoryROffset = new MemoryCMORImpl()) {
                     memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE / 2);
                     Assert.assertEquals(Files.PAGE_SIZE, memoryROffset.size());
@@ -211,10 +207,10 @@ public class ContinuousOffsetMappedMemoryTest {
         try (Path path = new Path().of(root)) {
             path.concat(testName.getMethodName());
 
-            TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 3 * Files.PAGE_SIZE / 8L;
-                createFile(ff, path, appendCount, true);
+            long appendCount = 3 * Files.PAGE_SIZE / 8L;
+            createFile(ff, path, appendCount, true);
 
+            TestUtils.assertMemoryLeak(() -> {
                 try (
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()

@@ -157,6 +157,40 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n" +
+                        "1970-01-03T06:00:00.000000Z\t6\n" +
+                        "1970-01-03T12:00:00.000000Z\t6\n" +
+                        "1970-01-03T18:00:00.000000Z\t2\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false);
+    }
+
+    @Test
+    public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
@@ -784,6 +818,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (
                     RecordCursorFactory factory = compiler.compile(
                             "select k, s, first(lat) lat, last(lon) lon " +
@@ -814,6 +849,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 // invalid timezone
                 sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
@@ -825,6 +861,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(108, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
@@ -835,6 +872,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(123, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -846,6 +884,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, null);
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -856,6 +895,51 @@ public class SampleByTest extends AbstractGriffinTest {
                             factory.getMetadata(),
                             true
                     );
+                }
+                assertFactoryMemoryUsage();
+            }
+        });
+    }
+
+    @Test
+    public void testIndexSampleByAlignToCalendarBindVariablesWrongTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table x as " +
+                            "(" +
+                            "select" +
+                            "   rnd_double(1)*180 lat," +
+                            "   rnd_double(1)*180 lon," +
+                            "   rnd_symbol('a') s," +
+                            "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                            "   from" +
+                            "   long_sequence(100)" +
+                            "), index(s) timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            String sql = "select k, s, first(lat) lat, last(lon) lon from x sample by 1h align to calendar time zone $1 with offset $2";
+
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setLong(0, 42);
+                sqlExecutionContext.getBindVariableService().setStr(1, "00:15");
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(91, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: 42");
+                }
+            }
+
+            sqlExecutionContext.getBindVariableService().clear();
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
+                sqlExecutionContext.getBindVariableService().setLong(1, 42);
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(106, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: 42");
                 }
             }
         });
@@ -1014,7 +1098,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffst() throws Exception {
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
@@ -1190,7 +1274,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "),index(s) timestamp(k)");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForward() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2020-10-23T00:00:00.000000Z\t2020-10-22T23:00:00.000000Z\ta\t142.30215575416736\t2020-10-23T22:10:00.000000Z\n" +
@@ -1382,7 +1466,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "sample by 3d");
     }
 
-    @Test
+    @Test//here
     public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
         assertQuery("k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -2211,8 +2295,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "exception in function factory"
+                0,
+                "inconvertible value: `ab` [STRING -> DOUBLE]"
         );
     }
 
@@ -2229,8 +2313,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "exception in function factory"
+                0,
+                "inconvertible value: `ac` [STRING -> DOUBLE]"
         );
     }
 
@@ -2885,6 +2969,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile(
                     "select k, count() from x sample by 90m align to calendar time zone $1 with offset $2",
                     sqlExecutionContext
@@ -2918,6 +3003,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
 
                 // invalid timezone
                 sqlExecutionContext.getBindVariableService().setStr(0, "Oopsie");
@@ -2929,6 +3015,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(67, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oopsie");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "uggs");
@@ -2939,6 +3026,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     Assert.assertEquals(82, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: uggs");
                 }
+                assertFactoryMemoryUsage();
 
                 sqlExecutionContext.getBindVariableService().setStr(0, "Europe/Prague");
                 sqlExecutionContext.getBindVariableService().setStr(1, "00:10");
@@ -2950,6 +3038,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             true
                     );
                 }
+                assertFactoryMemoryUsage();
             }
         });
     }
@@ -8032,7 +8121,7 @@ public class SampleByTest extends AbstractGriffinTest {
                             ") timestamp(k) partition by NONE",
                     sqlExecutionContext
             );
-
+            snapshotMemoryUsage();
             try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)", sqlExecutionContext).getRecordCursorFactory()) {
                 assertTimestamp("k", factory);
                 String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
@@ -8357,16 +8446,16 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithNullAndPrev() throws Exception {
+    public void testSampleFillValueListWithNullAndPrev() throws Exception { //here
         assertQuery("b\tsum\tcount\tmin\tmax\tavg\tk\n" +
                         "XYZ\t28.45577791213847\t1\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T01:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T01:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T01:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:00:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:00:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:30:00.000000Z\n" +
-                        "ABC\t20.56\tNaN\tNaN\tNaN\tInfinity\t1970-01-03T02:30:00.000000Z\n" +
+                        "ABC\t20.56\tNaN\tNaN\tNaN\tNaN\t1970-01-03T02:30:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:00:00.000000Z\n" +
                         "ABC\t79.05675319675964\t1\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T03:00:00.000000Z\n" +
                         "XYZ\t20.56\tNaN\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:30:00.000000Z\n" +
@@ -9210,6 +9299,120 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTimestampColumnAliasPosLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\ttime\tsum1\tsum2\n" +
+                            "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
+                            "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "time\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\tts\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tts\tsum2\n" +
+                            "33.423793766512645\t28.964416248629917\t1970-01-01T00:00:00.000000Z\t32.11038924761886\n" +
+                            "20.686394200400652\t18.863001213785466\t1970-01-01T01:00:00.000000Z\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), a.ts, sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "ts\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
     public void testSimpleLongArithmeticsInPeriod() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(a), k from x sample by (1+2)*10L m align to calendar",
@@ -9224,6 +9427,38 @@ public class SampleByTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 "k",
                 false);
+    }
+
+    @Test
+    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                null,
+                true,
+                false,
+                true);
     }
 
     @Test

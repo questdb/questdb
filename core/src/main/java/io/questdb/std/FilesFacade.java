@@ -48,6 +48,8 @@ public interface FilesFacade {
 
     void fadvise(long fd, long offset, long len, int advise);
 
+    void madvise(long address, long len, int advise);
+
     long findClose(long findPtr);
 
     long findFirst(LPSZ path);
@@ -76,6 +78,8 @@ public interface FilesFacade {
 
     boolean isRestrictedFileSystem();
 
+    boolean isSoftLink(LPSZ softLink);
+
     void iterateDir(LPSZ path, FindVisitor func);
 
     long length(long fd);
@@ -89,8 +93,6 @@ public interface FilesFacade {
     int mkdirs(Path path, int mode);
 
     long mmap(long fd, long len, long offset, int flags, int memoryTag);
-
-    long mmap(long fd, long len, long offset, int flags, long baseAddress, int memoryTag);
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag);
 
@@ -116,11 +118,15 @@ public interface FilesFacade {
 
     int rmdir(Path name);
 
+    int softLink(LPSZ src, LPSZ softLink);
+
     int sync();
 
     boolean touch(LPSZ path);
 
     boolean truncate(long fd, long size);
+
+    int unlink(LPSZ softLink);
 
     void walk(Path src, FindVisitor func);
 

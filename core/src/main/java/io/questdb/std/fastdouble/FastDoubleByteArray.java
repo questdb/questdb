@@ -48,13 +48,14 @@ final class FastDoubleByteArray {
      * See {@link io.questdb.std.fastdouble} for the grammar of
      * {@code FloatingPointLiteral}.
      *
-     * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
-     * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    static double parseFloatingPointLiteral(byte[] str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(byte[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;
@@ -92,11 +93,11 @@ final class FastDoubleByteArray {
         if (hasLeadingZero) {
             ch = ++index < endIndex ? str[index] : 0;
             if (ch == 'x' || ch == 'X') {
-                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative);
+                return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
         }
 
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     private static boolean isDigit(byte c) {
@@ -139,6 +140,7 @@ final class FastDoubleByteArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal.
      */
@@ -148,7 +150,8 @@ final class FastDoubleByteArray {
             int startIndex,
             int endIndex,
             boolean isNegative,
-            boolean hasLeadingZero
+            boolean hasLeadingZero,
+            boolean rejectOverflow
     ) throws NumericException {
         // Parse significand
         // -----------------
@@ -264,7 +267,8 @@ final class FastDoubleByteArray {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                exponentOfTruncatedSignificand
+                exponentOfTruncatedSignificand,
+                rejectOverflow
         );
     }
 
@@ -283,11 +287,12 @@ final class FastDoubleByteArray {
      * <dd><i>[HexDigits]</i> {@code .} <i>HexDigits</i>
      * </dl>
      *
-     * @param str        the input string
-     * @param index      index to the first character of RestOfHexFloatingPointLiteral
-     * @param startIndex the start index of the string
-     * @param endIndex   the end index of the string
-     * @param isNegative if the resulting number is negative
+     * @param str            the input string
+     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+     * @param startIndex     the start index of the string
+     * @param endIndex       the end index of the string
+     * @param isNegative     if the resulting number is negative
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal.
      */
@@ -296,7 +301,8 @@ final class FastDoubleByteArray {
             int index,
             int startIndex,
             int endIndex,
-            boolean isNegative
+            boolean isNegative,
+            boolean rejectOverflow
     ) throws NumericException {
 
         // Parse HexSignificand
@@ -406,8 +412,17 @@ final class FastDoubleByteArray {
             isSignificandTruncated = false;
         }
 
-        return valueOfHexLiteral(str, startIndex, endIndex, isNegative, significand, exponent, isSignificandTruncated,
-                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber);
+        return valueOfHexLiteral(
+                str,
+                startIndex,
+                endIndex,
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
+        );
     }
 
     /**
@@ -494,8 +509,9 @@ final class FastDoubleByteArray {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         double d = FastDoubleMath.tryDecFloatToDoubleTruncated(
                 isNegative,
                 significand,
@@ -503,9 +519,26 @@ final class FastDoubleByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Double.isNaN(d) ? Double.parseDouble(
-                new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)
-        ) : d;
+
+        if (Double.isNaN(d)) {
+            d = fallbackToJavaParaser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return d;
+    }
+
+    private static double fallbackToJavaParaser(byte[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        double d;
+        d = Double.parseDouble(new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1));
+        if (rejectOverflow &&
+                (
+                        d == Double.POSITIVE_INFINITY
+                                || d == Double.NEGATIVE_INFINITY
+                                || d == 0.0
+                )
+        ) {
+            throw NumericException.INSTANCE;
+        }
+        return d;
     }
 
     static double valueOfHexLiteral(
@@ -516,8 +549,9 @@ final class FastDoubleByteArray {
             long significand,
             int exponent,
             boolean isSignificandTruncated,
-            int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         double d = FastDoubleMath.tryHexFloatToDoubleTruncated(
                 isNegative,
                 significand,
@@ -525,8 +559,9 @@ final class FastDoubleByteArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Double.isNaN(d) ? Double.parseDouble(
-                new String(str, startIndex, endIndex - startIndex, StandardCharsets.ISO_8859_1)
-        ) : d;
+        if (Double.isNaN(d)) {
+            d = fallbackToJavaParaser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return d;
     }
 }

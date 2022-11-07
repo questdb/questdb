@@ -62,7 +62,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
         parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
+        recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
     }
@@ -77,7 +77,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     @Override
     public void close() {
         this.fd = -1;
-        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
+        recvBufStart = recvBufEnd = recvBufPos = Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_ILP_RSS);
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -204,7 +204,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
-                metrics.healthCheck().incrementUnhandledErrors();
+                metrics.health().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }

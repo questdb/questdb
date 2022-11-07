@@ -31,6 +31,6 @@ import java.nio.charset.StandardCharsets;
 public class FastFloatParserFromByteArrayNumericallyGeneratedTest extends AbstractFloatNumericallyGeneratedTest {
     @Override
     protected float parse(String str) throws NumericException {
-        return FastFloatParser.parseFloat(str.getBytes(StandardCharsets.ISO_8859_1));
+        return FastFloatParser.parseFloat(str.getBytes(StandardCharsets.ISO_8859_1), false);
     }
 }

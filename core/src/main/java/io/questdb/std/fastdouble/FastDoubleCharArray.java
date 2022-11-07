@@ -74,10 +74,19 @@ final class FastDoubleCharArray {
      * @param endIndex       end index (exclusive)
      * @param isNegative     true if the float value is negative
      * @param hasLeadingZero true if we have consumed the optional leading zero
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal
      */
-    private static double parseDecFloatLiteral(char[] str, int index, int startIndex, int endIndex, boolean isNegative, boolean hasLeadingZero) throws NumericException {
+    private static double parseDecFloatLiteral(
+            char[] str,
+            int index,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            boolean hasLeadingZero,
+            boolean rejectOverflow
+    ) throws NumericException {
         // Parse significand
         // -----------------
         // Note: a multiplication by a constant is cheaper than an
@@ -181,8 +190,17 @@ final class FastDoubleCharArray {
             isSignificandTruncated = false;
             exponentOfTruncatedSignificand = 0;
         }
-        return valueOfFloatLiteral(str, startIndex, endIndex, isNegative, significand, exponent, isSignificandTruncated,
-                exponentOfTruncatedSignificand);
+        return valueOfFloatLiteral(
+                str,
+                startIndex,
+                endIndex,
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand,
+                rejectOverflow
+        );
     }
 
     /**
@@ -197,13 +215,14 @@ final class FastDoubleCharArray {
      * See {@link io.questdb.std.fastdouble} for the grammar of
      * {@code FloatingPointLiteral}.
      *
-     * @param str    a string containing a {@code FloatingPointLiteralWithWhiteSpace}
-     * @param offset start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
-     * @param length length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param str            a string containing a {@code FloatingPointLiteralWithWhiteSpace}
+     * @param offset         start offset of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param length         length of {@code FloatingPointLiteralWithWhiteSpace} in {@code str}
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return if the input is legal;
      * @throws NumericException is the input is illegal.
      */
-    static double parseFloatingPointLiteral(char[] str, int offset, int length) throws NumericException {
+    static double parseFloatingPointLiteral(char[] str, int offset, int length, boolean rejectOverflow) throws NumericException {
         final int endIndex = offset + length;
         if (offset < 0 || endIndex > str.length) {
             throw NumericException.INSTANCE;
@@ -241,11 +260,11 @@ final class FastDoubleCharArray {
         if (hasLeadingZero) {
             ch = ++index < endIndex ? str[index] : 0;
             if (ch == 'x' || ch == 'X') {
-                return parseHexFloatLiteral(str, index + 1, offset, endIndex, isNegative);
+                return parseHexFloatLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
         }
 
-        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero);
+        return parseDecFloatLiteral(str, index, offset, endIndex, isNegative, hasLeadingZero, rejectOverflow);
     }
 
     /**
@@ -263,11 +282,12 @@ final class FastDoubleCharArray {
      * <dd><i>[HexDigits]</i> {@code .} <i>HexDigits</i>
      * </dl>
      *
-     * @param str        the input string
-     * @param index      index to the first character of RestOfHexFloatingPointLiteral
-     * @param startIndex the start index of the string
-     * @param endIndex   the end index of the string
-     * @param isNegative if the resulting number is negative
+     * @param str            the input string
+     * @param index          index to the first character of RestOfHexFloatingPointLiteral
+     * @param startIndex     the start index of the string
+     * @param endIndex       the end index of the string
+     * @param isNegative     if the resulting number is negative
+     * @param rejectOverflow reject parsed values that overflow double type
      * @return the parsed value, if the input is legal;
      * @throws NumericException if the input is illegal.
      */
@@ -276,7 +296,8 @@ final class FastDoubleCharArray {
             int index,
             int startIndex,
             int endIndex,
-            boolean isNegative
+            boolean isNegative,
+            boolean rejectOverflow
     ) throws NumericException {
 
         // Parse HexSignificand
@@ -393,7 +414,8 @@ final class FastDoubleCharArray {
                 significand,
                 exponent,
                 isSignificandTruncated,
-                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber
+                virtualIndexOfPoint - index + skipCountInTruncatedDigits + expNumber,
+                rejectOverflow
         );
     }
 
@@ -473,11 +495,12 @@ final class FastDoubleCharArray {
             int startIndex,
             int endIndex,
             boolean isNegative,
-                             long significand,
+            long significand,
             int exponent,
             boolean isSignificandTruncated,
-                             int exponentOfTruncatedSignificand
-    ) {
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
         double d = FastDoubleMath.tryDecFloatToDoubleTruncated(
                 isNegative,
                 significand,
@@ -485,14 +508,47 @@ final class FastDoubleCharArray {
                 isSignificandTruncated,
                 exponentOfTruncatedSignificand
         );
-        return Double.isNaN(d) ? Double.parseDouble(new String(str, startIndex, endIndex - startIndex)) : d;
+        if (Double.isNaN(d)) {
+            d = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return d;
     }
 
     private static double valueOfHexLiteral(
-            char[] str, int startIndex, int endIndex, boolean isNegative, long significand, int exponent,
-            boolean isSignificandTruncated, int exponentOfTruncatedSignificand) {
-        double d = FastDoubleMath.tryHexFloatToDoubleTruncated(isNegative, significand, exponent, isSignificandTruncated,
-                exponentOfTruncatedSignificand);
-        return Double.isNaN(d) ? Double.parseDouble(new String(str, startIndex, endIndex - startIndex)) : d;
+            char[] str,
+            int startIndex,
+            int endIndex,
+            boolean isNegative,
+            long significand,
+            int exponent,
+            boolean isSignificandTruncated,
+            int exponentOfTruncatedSignificand,
+            boolean rejectOverflow
+    ) throws NumericException {
+        double d = FastDoubleMath.tryHexFloatToDoubleTruncated(
+                isNegative,
+                significand,
+                exponent,
+                isSignificandTruncated,
+                exponentOfTruncatedSignificand
+        );
+        if (Double.isNaN(d)) {
+            d = fallbackToJavaParser(str, startIndex, endIndex, rejectOverflow);
+        }
+        return d;
+    }
+
+    private static double fallbackToJavaParser(char[] str, int startIndex, int endIndex, boolean rejectOverflow) throws NumericException {
+        double d;
+        d = Double.parseDouble(new String(str, startIndex, endIndex - startIndex));
+        if (rejectOverflow && (
+                d == Double.NEGATIVE_INFINITY
+                        || d == Double.POSITIVE_INFINITY
+                        || d == 0.0
+        )
+        ) {
+            throw NumericException.INSTANCE;
+        }
+        return d;
     }
 }

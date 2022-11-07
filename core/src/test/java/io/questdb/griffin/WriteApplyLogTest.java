@@ -59,7 +59,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                         ")",
                 sqlExecutionContext
         );
-        return "select to_long128(row_number() - 1 + " + tsStartSequence + "L, ts1) ts," +
+        return "select to_long128(rn - 1 + " + tsStartSequence + "L, ts1) ts," +
                 "ts1," +
                 "i," +
                 "timestamp," +
@@ -71,7 +71,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 "j," +
                 "l," +
                 "l256" +
-                " from (wal_" + tableId + " order by j)";
+                " from (select *, row_number() over() rn from (wal_" + tableId + " order by j))";
     }
 
     @NotNull
@@ -113,7 +113,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            // Create talbe to compare to without Long128 column
+            // Create table to compare to without Long128 column
             compile("create table wal_clean as (select * from wal_all)");
             compile("alter table wal_clean drop column ts");
             compile("alter table wal_clean rename column ts1 to ts");
@@ -124,7 +124,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     Path walPath = new Path()
             ) {
                 walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
@@ -133,7 +133,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
 
                 // Apply second WAL segment
                 LOG.info().$("=== Applying WAL transaction 2 ===").$();
-                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampLo2 = IntervalUtils.parseFloorPartialTimestamp(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
                 applyWal(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
@@ -164,7 +164,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            // Create talbe to compare to without Long128 column
+            // Create table to compare to without Long128 column
             compile("create table wal_clean as (select * from wal_all)");
             compile("alter table wal_clean drop column ts");
             compile("alter table wal_clean rename column ts1 to ts");
@@ -175,7 +175,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                     Path walPath = new Path()
             ) {
                 walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampLo = IntervalUtils.parseFloorPartialTimestamp(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
                 LOG.info().$("=== Applying WAL transaction ===").$();
@@ -186,7 +186,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
 
                 // Apply second WAL segment
                 LOG.info().$("=== Applying WAL transaction 2 ===").$();
-                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampLo2 = IntervalUtils.parseFloorPartialTimestamp(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
                 applyWal(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);

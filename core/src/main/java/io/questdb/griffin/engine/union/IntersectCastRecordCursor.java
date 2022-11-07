@@ -71,7 +71,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
 
         if (!isOpen) {
             this.isOpen = true;
-            map.reallocate();
+            map.reopen();
         }
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);

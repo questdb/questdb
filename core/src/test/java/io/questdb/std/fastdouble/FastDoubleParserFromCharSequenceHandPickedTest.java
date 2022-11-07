@@ -9,12 +9,12 @@ import io.questdb.std.NumericException;
 
 public class FastDoubleParserFromCharSequenceHandPickedTest extends AbstractDoubleHandPickedTest {
     @Override
-    double parse(CharSequence str) throws NumericException {
-        return FastDoubleParser.parseDouble(str);
+    double parse(CharSequence str, boolean rejectOverflow) throws NumericException {
+        return FastDoubleParser.parseDouble(str, rejectOverflow);
     }
 
     @Override
-    protected double parse(String str, int offset, int length) throws NumericException {
-        return FastDoubleParser.parseDouble(str, offset, length);
+    protected double parse(String str, int offset, int length, boolean rejectOverflow) throws NumericException {
+        return FastDoubleParser.parseDouble(str, offset, length, rejectOverflow);
     }
 }

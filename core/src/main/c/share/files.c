@@ -50,7 +50,27 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
          jlong address,
          jlong len,
          jlong offset) {
-    return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
+
+    off_t writeOffset = offset;
+    ssize_t written;
+
+    do {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        written = pwrite((int) fd, (void *) (address), count, writeOffset);
+        if (written < 0
+            // Signals should not interrupt pwrite on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            // If process interrupted, do another spin.
+            // Negative means error. Return negative.
+            return written;
+        }
+        len -= written;
+        writeOffset += written;
+        address += written;
+        // Exit if written == 0 or there is nothing to write
+    } while (len > 0 && written > 0);
+
+    return writeOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
@@ -85,7 +105,27 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
          jlong len,
          jlong offset) {
 
-    return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
+    off_t readOffset = offset;
+    ssize_t read;
+
+    do {
+        size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
+        read = pread((int) fd, (void *) (address), count, readOffset);
+        if (read < 0
+            // Signals should not interrupt pread on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            // If process interrupted, do another spin.
+            // Negative means error. Return negative.
+            return read;
+        }
+        len -= read;
+        readOffset += read;
+        address += read;
+
+        // Exit if read the given length or EOL (read == 0)
+    } while (len > 0 && read > 0);
+
+    return readOffset - offset;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
@@ -150,6 +190,26 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
         (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharHardLink) {
     return link((const char *) pcharSrc, (const char *) pcharHardLink);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
+    (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+
+    struct stat st;
+    if (lstat((const char *) pcharSoftLink, &st) == 0) {
+        return S_ISLNK(st.st_mode);
+    }
+    return JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *e, jclass cl, jlong pcharSrc, jlong pcharSoftLink) {
+    return symlink((const char *) pcharSrc, (const char *) pcharSoftLink);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink
+        (JNIEnv *e, jclass cl, jlong pcharSoftLink) {
+    return unlink((const char *) pcharSoftLink);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir
@@ -355,6 +415,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->entry->d_type;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->entry->d_type == DT_LNK;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock

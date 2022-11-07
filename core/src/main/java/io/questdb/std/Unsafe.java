@@ -121,6 +121,7 @@ public final class Unsafe {
 
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
         class Probe {
+            @SuppressWarnings("unused")
             private int intField; // Accessed through reflection
 
             boolean probe() {
@@ -239,8 +240,9 @@ public final class Unsafe {
             MALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.malloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
-                    + ", size=" + size + ", memoryTag=" + memoryTag);
+            System.err.printf(
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d",
+                    MEM_USED.get(), size, memoryTag);
             throw oom;
         }
     }
@@ -252,8 +254,9 @@ public final class Unsafe {
             REALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.realloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
-                    + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
+            System.err.printf(
+                    "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
+                    MEM_USED.get(), oldSize, newSize, memoryTag);
             throw oom;
         }
     }

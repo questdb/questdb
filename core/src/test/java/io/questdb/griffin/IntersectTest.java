@@ -97,7 +97,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-
+            snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true, true, true);
             }
@@ -126,7 +126,7 @@ public class IntersectTest extends AbstractGriffinTest {
                             " long_sequence(10))",
                     sqlExecutionContext
             );
-
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select * from x intersect y", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, true, true, false);
             }
@@ -155,7 +155,7 @@ public class IntersectTest extends AbstractGriffinTest {
                             " FROM long_sequence(7) x)",
                     sqlExecutionContext
             );
-
+            snapshotMemoryUsage();
             try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected, rcf, true, true, true);
             }
@@ -178,6 +178,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     sqlExecutionContext
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("select distinct t from x intersect y intersect z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, true, true, false);
             }
@@ -200,6 +201,7 @@ public class IntersectTest extends AbstractGriffinTest {
                     "5\tB\n" +
                     "1\tA\n";
 
+            snapshotMemoryUsage();
             try (RecordCursorFactory factory = compiler.compile("(select i,s from x) intersect (select i,first(s) from y)", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected, factory, true, true, false);
             }

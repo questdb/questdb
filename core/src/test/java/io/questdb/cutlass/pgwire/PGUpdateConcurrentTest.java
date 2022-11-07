@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -108,7 +109,11 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGWireServer server1 = createPGServer(1)) {
+            try (
+                    PGWireServer server1 = createPGServer(1);
+                    WorkerPool workerPool = server1.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
@@ -157,7 +162,10 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
             writerAsyncCommandMaxTimeout = 90_000L;
-            try (PGWireServer server1 = createPGServer(1)) {
+            try (
+                    PGWireServer server1 = createPGServer(1);
+                    WorkerPool workerPool = server1.getWorkerPool()) {
+                workerPool.start(LOG);
                 try (final Connection connection = getConnection(server1.getPort(), false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
                             " (select timestamp_sequence(0, 60 * 1000000L) ts," +
@@ -278,98 +286,102 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            final PGWireServer pgServer = createPGServer(2);
-            try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
-                PreparedStatement create = connection.prepareStatement("create table up as" +
-                        " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
-                        " 0 as x" +
-                        " from long_sequence(5))" +
-                        " timestamp(ts)" +
-                        (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
-                create.execute();
-                create.close();
-            }
-
-            Thread tick = new Thread(() -> {
-                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                    try (TableWriter tableWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "up",
-                            "test")) {
-                        tableWriter.tick();
-                    } catch (EntryUnavailableException ignored) {
-                    }
-                    Os.sleep(100);
+            try (
+                    final PGWireServer pgServer = createPGServer(2);
+                    WorkerPool workerPool = pgServer.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table up as" +
+                            " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
+                            " 0 as x" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts)" +
+                            (PartitionMode.isPartitioned(partitionMode) ? " partition by DAY" : ""));
+                    create.execute();
+                    create.close();
                 }
-            });
-            threads.add(tick);
-            tick.start();
 
-            for (int k = 0; k < numOfWriters; k++) {
-                Thread writer = new Thread(() -> {
-                    try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
-                        barrier.await();
-                        PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
-                        for (int i = 0; i < numOfUpdates; i++) {
-                            update.setInt(1, i);
-                            Assert.assertEquals(5, update.executeUpdate());
-                            current.incrementAndGet();
+                Thread tick = new Thread(() -> {
+                    while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                        try (TableWriter tableWriter = engine.getWriter(
+                                sqlExecutionContext.getCairoSecurityContext(),
+                                "up",
+                                "test")) {
+                            tableWriter.tick();
+                        } catch (EntryUnavailableException ignored) {
                         }
-                        update.close();
-                    } catch (Throwable th) {
-                        LOG.error().$("writer error ").$(th).$();
-                        exceptions.add(th);
+                        Os.sleep(100);
                     }
                 });
-                threads.add(writer);
-                writer.start();
-            }
+                threads.add(tick);
+                tick.start();
 
-            for (int k = 0; k < numOfReaders; k++) {
-                Thread reader = new Thread(() -> {
-                    IntObjHashMap<CharSequence[]> expectedValues = new IntObjHashMap<>();
-                    expectedValues.put(0, PartitionMode.getExpectedTimestamps(partitionMode));
-
-                    IntObjHashMap<Validator> validators = new IntObjHashMap<>();
-                    validators.put(0, Chars::equals);
-                    validators.put(1, new Validator() {
-                        private CharSequence value;
-
-                        @Override
-                        public boolean validate(CharSequence expected, CharSequence actual) {
-                            if (value == null) {
-                                value = actual.toString();
+                for (int k = 0; k < numOfWriters; k++) {
+                    Thread writer = new Thread(() -> {
+                        try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
+                            barrier.await();
+                            PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
+                            for (int i = 0; i < numOfUpdates; i++) {
+                                update.setInt(1, i);
+                                Assert.assertEquals(5, update.executeUpdate());
+                                current.incrementAndGet();
                             }
-                            return actual.equals(value);
-                        }
-
-                        @Override
-                        public void reset() {
-                            value = null;
+                            update.close();
+                        } catch (Throwable th) {
+                            LOG.error().$("writer error ").$(th).$();
+                            exceptions.add(th);
                         }
                     });
+                    threads.add(writer);
+                    writer.start();
+                }
 
-                    try {
-                        barrier.await();
-                        try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
-                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                                rdr.reload();
-                                assertReader(rdr, expectedValues, validators);
+                for (int k = 0; k < numOfReaders; k++) {
+                    Thread reader = new Thread(() -> {
+                        IntObjHashMap<CharSequence[]> expectedValues = new IntObjHashMap<>();
+                        expectedValues.put(0, PartitionMode.getExpectedTimestamps(partitionMode));
+
+                        IntObjHashMap<Validator> validators = new IntObjHashMap<>();
+                        validators.put(0, Chars::equals);
+                        validators.put(1, new Validator() {
+                            private CharSequence value;
+
+                            @Override
+                            public boolean validate(CharSequence expected, CharSequence actual) {
+                                if (value == null) {
+                                    value = actual.toString();
+                                }
+                                return actual.equals(value);
                             }
-                        }
-                    } catch (Throwable th) {
-                        LOG.error().$("reader error ").$(th).$();
-                        exceptions.add(th);
-                    }
-                });
-                threads.add(reader);
-                reader.start();
-            }
 
-            for (int i = 0; i < threads.size(); i++) {
-                threads.get(i).join();
+                            @Override
+                            public void reset() {
+                                value = null;
+                            }
+                        });
+
+                        try {
+                            barrier.await();
+                            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                                while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                                    rdr.reload();
+                                    assertReader(rdr, expectedValues, validators);
+                                }
+                            }
+                        } catch (Throwable th) {
+                            LOG.error().$("reader error ").$(th).$();
+                            exceptions.add(th);
+                        }
+                    });
+                    threads.add(reader);
+                    reader.start();
+                }
+
+                for (int i = 0; i < threads.size(); i++) {
+                    threads.get(i).join();
+                }
             }
-            pgServer.close();
 
             if (exceptions.size() != 0) {
                 Assert.fail(exceptions.poll().toString());

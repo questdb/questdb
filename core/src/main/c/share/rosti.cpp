@@ -25,9 +25,21 @@
 #include "rosti.h"
 #include <jni.h>
 
+//following variable and functions were added to make rosti OOM-testable
+volatile int ROSTI_TRIGGER_OOM = 0;
+
+void *rosti_malloc(size_t size){
+    if ( ROSTI_TRIGGER_OOM == 0 ){
+        return malloc(size);
+    } else {
+        return nullptr;
+    }
+}
+//end of rosti test functions
+
 rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, const uint64_t map_capacity) {
     int32_t slot_key_size = 0;
-    auto value_offsets = reinterpret_cast<int32_t *>(malloc(sizeof(int32_t) * (column_count + 1)));
+    auto value_offsets = reinterpret_cast<int32_t *>(rosti_malloc(sizeof(int32_t) * (column_count + 1)));
 
     if (value_offsets == nullptr) {
         return nullptr;
@@ -62,7 +74,7 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
         }
         value_offsets[i + 1] = slot_key_size;
     }
-    auto map = reinterpret_cast<rosti_t *>(malloc(sizeof(rosti_t)));
+    auto map = reinterpret_cast<rosti_t *>(rosti_malloc(sizeof(rosti_t)));
     if (map == nullptr) {
         free(value_offsets);
         return nullptr;
@@ -111,6 +123,21 @@ Java_io_questdb_std_Rosti_reset0(JNIEnv *env, jclass cl, jlong pRosti, jint newC
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Rosti_getAllocMemory(JNIEnv *env, jclass cl, jlong pRosti) {
     return memorySize(reinterpret_cast<rosti_t *>(pRosti));
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_enableOOMOnMalloc(JNIEnv *env, jclass cl) {
+    ROSTI_TRIGGER_OOM = 1;
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_disableOOMOnMalloc(JNIEnv *env, jclass cl) {
+    ROSTI_TRIGGER_OOM = 0;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_Rosti_isOOMOnMalloc(JNIEnv *env, jclass cl) {
+    return ROSTI_TRIGGER_OOM == 1;
 }
 
 }

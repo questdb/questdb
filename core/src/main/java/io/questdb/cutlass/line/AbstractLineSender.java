@@ -65,8 +65,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         this.capacity = capacity;
         this.enableValidation = true;
 
-        bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
-        bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
+        bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_ILP_RSS);
 
         lo = bufA;
         hi = lo + capacity;
@@ -112,8 +112,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         } finally {
             closed = true;
             lineChannel = Misc.free(lineChannel);
-            Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(bufA, capacity, MemoryTag.NATIVE_ILP_RSS);
+            Unsafe.free(bufB, capacity, MemoryTag.NATIVE_ILP_RSS);
         }
     }
 
