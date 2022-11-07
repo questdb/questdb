@@ -100,12 +100,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n"); // 2022-10-17 is gone
 
             // attach partition via soft link
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "S3");
+            String systemTableName = engine.getSystemTableName(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, systemTableName, partitionName, "S3");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
             // verify that the link has been renamed to what we expect
-            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
+            path.of(configuration.getRoot()).concat(systemTableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
 
@@ -144,7 +145,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 Assert.assertFalse(Files.exists(path));
             }
             // verify that a new partition folder has been created in the table data space (hot)
-            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
+            path.of(configuration.getRoot()).concat(systemTableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
             // verify cold storage folder exists
@@ -204,7 +205,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "SNOW");
+            String systemTableName = engine.getSystemTableName(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, systemTableName, partitionName, "SNOW");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -271,7 +273,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "IGLU");
+            String systemTableName = engine.getSystemTableName(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, systemTableName, partitionName, "IGLU");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -319,7 +322,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "FINLAND");
+            String systemTableName = engine.getSystemTableName(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, systemTableName, partitionName, "FINLAND");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -330,7 +334,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
                 // there is a reader, cannot unlink, thus the link will still exist
                 path.of(configuration.getRoot()) // <-- soft link path
-                        .concat(tableName)
+                        .concat(systemTableName)
                         .concat(partitionName)
                         .put(".2")
                         .$();
@@ -346,7 +350,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             engine.releaseAllWriters();
             engine.releaseInactive();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                for (; purgeJob.run(0); ) {
+                while (purgeJob.run(0)) {
                     Os.pause();
                 }
             }
@@ -390,7 +394,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
-            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, "LEGEND");
+            String systemTableName = engine.getSystemTableName(tableName);
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, systemTableName, partitionName, "LEGEND");
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             txn++;
 
@@ -435,7 +440,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify that no new partition folder has been created in the table data space (hot)
             // but rather the files in cold storage have been modified
             path.of(configuration.getRoot())
-                    .concat(tableName)
+                    .concat(systemTableName)
                     .concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
@@ -1689,7 +1694,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
+    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, String systemTableName, CharSequence partitionName, String otherLocation) throws IOException {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
@@ -1715,11 +1720,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
         other.of(s3Buckets) // <-- the copy of the now lost .detached folder
-                .concat(tableName)
+                .concat(systemTableName)
                 .concat(detachedPartitionName)
                 .$();
         path.of(configuration.getRoot()) // <-- soft link path
-                .concat(tableName)
+                .concat(systemTableName)
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())
                 .$();

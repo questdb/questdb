@@ -559,50 +559,50 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY BYPASS WAL"
             );
 
-            assertSql("all_tables()", "table\n" +
+            assertSql("all_tables() order by table", "table\n" +
                     tableName + "\n" +
                     tableNameNonWal + "\n");
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     tableName + "\n" +
                     tableNameNonWal + "\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     tableName + "\n" +
                     tableNameNonWal + "\n");
 
 
             compile("drop table " + tableName);
 
-            assertSql("all_tables()", "table\n" +
+            assertSql("all_tables() order by table", "table\n" +
                     tableNameNonWal + "\n");
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     tableNameNonWal + "\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     tableNameNonWal + "\n");
 
             drainWalQueue();
 
-            assertSql("all_tables()", "table\n" +
+            assertSql("all_tables() order by table", "table\n" +
                     tableNameNonWal + "\n");
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     tableNameNonWal + "\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     tableNameNonWal + "\n");
 
 
             engine.getTableSequencerAPI().reopen();
 
-            assertSql("all_tables()", "table\n" +
+            assertSql("all_tables() order by table", "table\n" +
                     tableNameNonWal + "\n");
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     tableNameNonWal + "\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     tableNameNonWal + "\n");
 
             compile("drop table " + tableNameNonWal);
 
-            assertSql("all_tables()", "table\n");
-            assertSql("select name from tables()", "name\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n");
+            assertSql("all_tables() order by table", "table\n");
+            assertSql("select name from tables() order by name", "name\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n");
         });
     }
 
@@ -727,7 +727,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             assertSql(newTableName, "x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n");
 
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     newTableName + "\n");
 
             for (int i = 0; i < 2; i++) {
@@ -740,11 +740,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                         "1\tDE\t2022-02-24T00:00:00.000000Z\n");
             }
 
-            assertSql("select name from tables()", "name\n" +
+            assertSql("select name from tables() order by name", "name\n" +
                     newTableName + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
-            assertSql("select relname from pg_class()", "relname\npg_class\n" +
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
                     newTableName + "\n");
         });
     }

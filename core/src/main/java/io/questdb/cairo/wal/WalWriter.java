@@ -379,6 +379,9 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
+        }
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
