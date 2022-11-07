@@ -4273,19 +4273,21 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void testRemoveActivePartition(int partitionBy, NextPartitionTimestampProvider provider, CharSequence partitionNameToDelete) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int N = 100;
-            int N_PARTITIONS = 5;
-            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
-            long stride = 100;
-            int bandStride = 1000;
+            final int N = 100;
+            final int N_PARTITIONS = 5;
+            final long stride = 100;
+            final int bandStride = 1000;
+            final String tableName = "table_by_" + PartitionBy.toString(partitionBy);
+
             int totalCount = 0;
+            long timestampUs = TimestampFormatUtils.parseTimestamp("2017-12-11T00:00:00.000Z");
 
             // model table
-            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
+            try (TableModel model = new TableModel(configuration, tableName, partitionBy).col("l", ColumnType.LONG).timestamp()) {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter writer = new TableWriter(configuration, "w", metrics)) {
+            try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
 
                 for (int k = 0; k < N_PARTITIONS; k++) {
                     long band = k * bandStride;
@@ -4293,51 +4295,51 @@ public class TableReaderTest extends AbstractCairoTest {
                         TableWriter.Row row = writer.newRow(timestampUs);
                         row.putLong(0, band + i);
                         row.append();
-                        writer.commit();
                         timestampUs += stride;
                     }
+                    writer.commit();
                     timestampUs = provider.getNext(timestampUs);
                 }
 
-                Assert.assertEquals(500, writer.size());
+                final int expectedSize = N_PARTITIONS * N;
+                Assert.assertEquals(expectedSize, writer.size());
 
 
                 // now open table reader having partition gap
-                try (TableReader reader = new TableReader(configuration, "w")) {
+                try (TableReader reader = new TableReader(configuration, tableName)) {
 
-                    Assert.assertEquals(500, reader.size());
+                    Assert.assertEquals(expectedSize, reader.size());
                     RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getLong(0);
                         totalCount++;
                     }
-                    Assert.assertEquals(500, totalCount);
-
+                    Assert.assertEquals(expectedSize, totalCount);
 
                     DateFormat fmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                    Assert.assertFalse(
+                    Assert.assertTrue(
+                            // active partition
                             writer.removePartition(fmt.parse(partitionNameToDelete, null))
                     );
 
-                    Assert.assertEquals(500, writer.size());
+                    // check writer
+                    final long newExpectedSize = (N_PARTITIONS - 1) * N;
+                    Assert.assertEquals(newExpectedSize, writer.size());
 
+                    // check reader
                     reader.reload();
-
                     totalCount = 0;
-
-                    Assert.assertEquals(N * N_PARTITIONS, reader.size());
-
+                    Assert.assertEquals(newExpectedSize, reader.size());
                     cursor = reader.getCursor();
                     record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getLong(0);
                         totalCount++;
                     }
-                    Assert.assertEquals(N * N_PARTITIONS, totalCount);
+                    Assert.assertEquals(newExpectedSize, totalCount);
                 }
             }
-
         });
     }
 

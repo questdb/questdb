@@ -16,7 +16,7 @@ find_and_own_dir() {
 
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
-# we will run as root for them until they change the mount to /var/lib/questdb or someting else
+# we will run as root for them until they change the mount to /var/lib/questdb or something else
 if [ "$IGNORE_DATA_ROOT_MOUNT_CHECK" = "false" ] && mount | grep "/root/.questdb" -q; then
     echo "Found /root/.questdb mount, overwriting QUESTDB_DATA_DIR"
     QUESTDB_DATA_DIR="/root/.questdb"
@@ -24,7 +24,7 @@ fi
 
 if [ $# -eq 0 ]; then
     echo "No arguments found, start with default arguments"
-    set -- /app/bin/java -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    set -- /app/bin/java -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"

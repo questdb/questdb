@@ -37,6 +37,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
+import org.hamcrest.Matchers;
 import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -109,6 +111,11 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public void statefulThrowExceptionIfTrippedNoThrottle() {
+                statefulThrowExceptionIfTripped();
+            }
+
+            @Override
             public boolean checkIfTripped() {
                 return false;
             }
@@ -135,6 +142,16 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public long getFd() {
                 return -1;
+            }
+
+            @Override
+            public void unsetTimer() {
+
+            }
+
+            @Override
+            public boolean isTimerSet() {
+                return false;
             }
         };
 
@@ -640,7 +657,7 @@ public class SecurityTest extends AbstractGriffinTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
+                MatcherAssert.assertThat(ex.toString(), Matchers.containsString("limit of 2 resizes exceeded"));
             }
         });
     }

@@ -817,7 +817,13 @@ public final class SqlParser {
 
     private void parseCreateTableIndexDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
         expectTok(lexer, '(');
-        final int columnIndex = getCreateTableColumnIndex(model, expectLiteral(lexer).token, lexer.lastTokenPosition());
+        final CharSequence columnName = expectLiteral(lexer).token;
+        final int position = lexer.lastTokenPosition();
+        final int columnIndex = getCreateTableColumnIndex(model, columnName, position);
+        final int columnType = model.getColumnType(columnIndex);
+        if (columnType > -1 && !ColumnType.isSymbol(columnType)) {
+            throw SqlException.$(position, "indexes are supported only for SYMBOL columns: ").put(columnName);
+        }
 
         if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
             int errorPosition = lexer.getPosition();
@@ -1403,7 +1409,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (isSelectKeyword(tok)) {
+        if (isSelectKeyword(tok) || isWithKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
@@ -1655,7 +1661,7 @@ public final class SqlParser {
                 expectTok(lexer, '(');
 
                 col = analyticColumnPool.next().of(null, expr);
-                tok = tok(lexer, "'");
+                tok = tokIncludingLocalBrace(lexer, "'partition' or 'order' or ')'");
 
                 if (isPartitionKeyword(tok)) {
                     expectTok(lexer, "by");
@@ -1667,7 +1673,6 @@ public final class SqlParser {
                         tok = tok(lexer, "'order' or ')'");
                     } while (Chars.equals(tok, ','));
                 }
-
                 if (isOrderKeyword(tok)) {
                     expectTok(lexer, "by");
 
@@ -1721,7 +1726,7 @@ public final class SqlParser {
             model.addBottomUpColumn(colPosition, col, false);
 
             if (model.getColumns().size() == 1 && tok == null && Chars.equals(expr.token, '*')) {
-                throw err(lexer, tok, "'from' expected");
+                throw err(lexer, null, "'from' expected");
             }
 
             if (tok == null || Chars.equals(tok, ';')) {

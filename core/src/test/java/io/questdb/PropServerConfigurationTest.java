@@ -385,7 +385,7 @@ public class PropServerConfigurationTest {
         env.put("QDB_HTTP_SECURITY_READONLY", "false");
 
         // long size
-        properties.setProperty("cairo.sql.append.page.size", "3G");
+        properties.setProperty("cairo.writer.data.append.page.size", "3G");
         env.put("QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE", "9G");
 
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, env, LOG, new BuildInformationHolder());
@@ -1003,7 +1003,7 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
 
-        // non existent type
+        // nonexistent type
         properties.setProperty("line.float.default.column.type", "FLAT");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
@@ -1062,7 +1062,7 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
-        // non existent type
+        // nonexistent type
         properties.setProperty("line.integer.default.column.type", "BITE");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());

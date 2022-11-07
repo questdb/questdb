@@ -214,6 +214,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         addBottomUpColumn(0, column, false, null);
     }
 
+    public void addBottomUpColumn(QueryColumn column, boolean allowDuplicates) throws SqlException {
+        addBottomUpColumn(0, column, allowDuplicates, null);
+    }
+
     public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
         addBottomUpColumn(position, column, allowDuplicates, null);
     }

@@ -303,7 +303,7 @@ final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = IntrinsicModel.FALSE;
+            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
             return false;
         }
 
@@ -695,7 +695,7 @@ final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = IntrinsicModel.FALSE;
+            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
             return false;
         }
 
@@ -1542,14 +1542,14 @@ final class WhereClauseParser implements Mutable {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
                 return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
-            case INTRINSIC_OP_GREATER:
-                return analyzeGreater(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER_EQ:
                 return analyzeGreater(model, node, true, functionParser, metadata, executionContext);
-            case INTRINSIC_OP_LESS:
-                return analyzeLess(model, node, false, functionParser, metadata, executionContext);
+            case INTRINSIC_OP_GREATER:
+                return analyzeGreater(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_LESS_EQ:
                 return analyzeLess(model, node, true, functionParser, metadata, executionContext);
+            case INTRINSIC_OP_LESS:
+                return analyzeLess(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
             case INTRINSIC_OP_NOT_EQ:

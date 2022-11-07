@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
@@ -40,6 +41,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private CountDownLatchSPI doneLatch;
     private AtomicInteger oomCounter;
     private RostiAllocFacade raf;
+    private ExecutionCircuitBreaker circuitBreaker;
 
     @Override
     public void clear() {
@@ -50,14 +52,17 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
 
     public boolean run(int workerId) {
         if (tryLock()) {
-            if (pRosti != null) {
-                long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
-                if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
-                    oomCounter.incrementAndGet();
+            if (!circuitBreaker.checkIfTripped() &&
+                    (oomCounter == null || oomCounter.get() == 0)) {
+                if (pRosti != null) {
+                    long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
+                    if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
+                        oomCounter.incrementAndGet();
+                    }
+                    raf.updateMemoryUsage(pRosti[workerId], oldSize);
+                } else {
+                    func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
                 }
-                raf.updateMemoryUsage(pRosti[workerId], oldSize);
-            } else {
-                func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
             }
             doneLatch.countDown();
             return true;
@@ -76,7 +81,8 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             CountDownLatchSPI doneLatch,
             // oom is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
-            RostiAllocFacade raf
+            RostiAllocFacade raf,
+            ExecutionCircuitBreaker circuitBreaker
     ) {
         of(sequence);
         this.pRosti = pRosti;
@@ -88,5 +94,6 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
         this.raf = raf;
+        this.circuitBreaker = circuitBreaker;
     }
 }

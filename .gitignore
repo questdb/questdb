@@ -25,3 +25,4 @@ core/CMakeCache.txt
 **/build
 **/CMakeFiles
 .envrc
+.vscode

@@ -1,5 +1,3 @@
-import { danger, fail } from "danger";
-
 const allowedTypes = [
   "feat",
   "fix",
@@ -9,7 +7,6 @@ const allowedTypes = [
   "refactor",
   "perf",
   "test",
-  "build",
   "ci",
   "chore",
   "revert",
@@ -25,9 +22,11 @@ const allowedSubTypes = [
   "pgwire",
   "http",
   "conf",
+  "ui",
+  "wal",
 ];
 
-const failMessage = `
+const errorMessage = `
 Please update the PR title to match this format:
 \`type(subType): description\`
 
@@ -44,17 +43,30 @@ perf(sql): improve pattern matching performance for SELECT sub-queries
 \`\`\`
 `.trim();
 
-function validatePrTitle() {
-  const prTitleRegex = new RegExp(
-    `^(?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join("|")})\\): .*`
-  );
+/* The basic valid PR title formats are:
+ * 1. allowedType(allowedSubtype): optional description
+ * 2. allowedType: optional description
+ *
+ * consult ./validate.test.js for a full list
+ * */
+const prTitleRegex = new RegExp(
+  `^(((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join(
+    "|"
+  )})\\))|build): .*`
+);
 
-  const { title } = danger.github.pr;
+function validate({ title, onError }) {
+  // Early return for title that matches predefined regex.
+  // No action required in such case.
   if (title.match(prTitleRegex)) {
     return;
   }
 
-  fail(failMessage);
+  onError(errorMessage);
 }
 
-validatePrTitle();
+module.exports = {
+  allowedTypes,
+  allowedSubTypes,
+  validate,
+};

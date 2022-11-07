@@ -22,33 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class SimlateCrashFunctionTest extends AbstractGriffinTest {
+public class LnFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select simulate_crash('0')",
-                sink,
-                "simulate_crash\n" +
-                        "false\n"
-        ));
+    public void testLnDouble() throws Exception {
+        assertLog("select ln(9989.2233)", "9.209262120872339\n");
+    }
 
+    @Test
+    public void testLnDoubleNull() throws Exception {
+        assertLog("select ln(NaN)", "NaN\n");
+    }
+
+    @Test
+    public void testLnInt() throws Exception {
+        assertLog("select ln(11211)", "9.324650718153594\n");
+    }
+
+    private void assertLog(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select simulate_crash('M')",
+                sql,
                 sink,
-                "simulate_crash\n" +
-                        "false\n"
+                "ln\n" +
+                        expected
         ));
     }
 }

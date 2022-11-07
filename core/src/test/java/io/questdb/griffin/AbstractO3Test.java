@@ -298,11 +298,6 @@ public class AbstractO3Test {
                     }
 
                     @Override
-                    public int getO3PartitionUpdateQueueCapacity() {
-                        return 0;
-                    }
-
-                    @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
                         return 0;
                     }
