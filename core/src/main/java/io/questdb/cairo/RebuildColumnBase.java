@@ -148,6 +148,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
+
     private void lock(FilesFacade ff) {
         try {
             path.trimTo(rootLen);
@@ -284,7 +285,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 }
             }
             //To validate if the table has any index or not
-            if (isIndexed) {
+            if (!isIndexed) {
                 throw CairoException.nonCritical().put(unsupportedTableMessage);
             }
         } else {
