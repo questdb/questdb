@@ -224,6 +224,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.spinBeforeFlush = spinBeforeFlush;
     }
 
+    public void setSizeLimit(String sizeLimit){ this.sizeLimit = sizeLimit; }
+
+    public void setLifeDuration(String lifeDuration){ this.lifeDuration = lifeDuration; }
+
     private void buildFilePath(Path path) {
         path.of("");
         locationParser.toSink(path);

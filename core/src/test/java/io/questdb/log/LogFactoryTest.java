@@ -34,6 +34,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -663,6 +664,12 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
+    @Ignore
+    @Test
+    public void testLogAutoDeleteByDirectorySize40k() throws Exception {
+        testAutoDeleteByDirectorySize("40k");
+    }
+
     private static void assertDisabled(LogRecord r) {
         Assert.assertFalse(r.isEnabled());
         r.$();
@@ -768,6 +775,40 @@ public class LogFactoryTest {
         Assert.assertTrue(fileCount > 0);
         Assert.assertEquals(expectedFileCount, Files.getOpenFileCount());
         Assert.assertEquals(expectedMemUsage, Unsafe.getMemUsed());
+    }
+
+    private void testAutoDeleteByDirectorySize(String sizeLimit) throws NumericException {
+        String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
+        long speed = 24 * 60000L;
+
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialTimestamp("2019-12-31"));
+
+        String base = temp.getRoot().getAbsolutePath() + Files.SEPARATOR;
+        String logFile = base + fileTemplate;
+        final LogRollingFileWriter[] writer = new LogRollingFileWriter[1];
+        try (LogFactory factory = new LogFactory()) {
+            LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
+                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                w.setLocation(logFile);
+                w.setRollSize("4k");
+                w.setRollEvery("day");
+                w.setSizeLimit(sizeLimit);
+                return w;
+            });
+
+            factory.add(config);
+            factory.bind();
+            factory.startThread();
+
+            Log logger = factory.create("x");
+            for (int i = 0; i < 10000; i++) {
+                logger.xinfo().$("test ").$(' ').$(i).$();
+                //maybe need to call flush() in here at certain times?
+            }
+        }
+        //LogRollingFileWriter only flushes once (at this point because it's closing) so only 1 log file is made
+        //And RemoveOldLogs() never gets called. I think I need multiple log files to show that some get deleted.
+        //How can I test this properly?
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
