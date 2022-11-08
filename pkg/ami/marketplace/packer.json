@@ -35,6 +35,7 @@
           "delete_on_termination": false
         }
       ],
+
       "ssh_username": "ec2-user",
       "tags": {
         "OS_Version": "Amazon Linux 2",
