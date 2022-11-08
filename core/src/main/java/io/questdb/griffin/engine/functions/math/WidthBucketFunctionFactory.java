@@ -50,7 +50,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
     }
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-        private final Function operand_func;
+        private final Function operandFunc;
         private final Function low_func;
         private final Function high_func;
         private final Function count_func;
