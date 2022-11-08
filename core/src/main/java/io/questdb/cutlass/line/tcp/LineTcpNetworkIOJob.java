@@ -34,6 +34,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
 
 class LineTcpNetworkIOJob implements NetworkIOJob {
@@ -72,6 +73,10 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     @Override
     public void close() {
+        if (busyContext != null) {
+            busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
+            busyContext = null;
+        }
         Misc.freeObjList(unusedSymbolCaches);
     }
 

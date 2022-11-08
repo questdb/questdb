@@ -49,7 +49,7 @@ public class WorkerPool implements Closeable {
     };
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
-    private final ObjList<Closeable> freeOnExist = new ObjList<>();
+    private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     private final HealthMetrics metrics;
@@ -129,7 +129,7 @@ public class WorkerPool implements Closeable {
     public void freeOnExit(Closeable closeable) {
         assert !running.get() && !closed.get();
 
-        freeOnExist.add(closeable);
+        freeOnExit.add(closeable);
     }
 
     public String getPoolName() {
@@ -150,7 +150,7 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            Misc.freeObjListAndClear(freeOnExist);
+            Misc.freeObjListAndClear(freeOnExit);
         }
     }
 
