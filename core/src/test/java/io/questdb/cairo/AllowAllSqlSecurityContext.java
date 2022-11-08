@@ -32,6 +32,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -122,6 +123,11 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public void clearAnalyticContext() {
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return null;
             }
 
             @Override

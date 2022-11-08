@@ -189,8 +189,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public MicrosecondClock getMicrosecondClock() {
+        return clock;
+    }
+
+    @Override
     public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+        now = clock.getTicks();
     }
 
     @Override

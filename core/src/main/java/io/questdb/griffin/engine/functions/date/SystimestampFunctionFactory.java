@@ -42,7 +42,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(configuration.getMicrosecondClock());
+        return new Func(sqlExecutionContext.getMicrosecondClock());
     }
 
     private static class Func extends TimestampFunction implements Function {

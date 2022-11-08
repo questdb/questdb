@@ -31,15 +31,18 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.ClosableInstance;
+import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
+    private final Rnd rnd;
     private final BindVariableService bindVariableService;
     private final SqlExecutionContext sqlExecutionContext;
     private final CairoEngine engine;
 
     public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
+        rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         sqlExecutionContext = new SqlExecutionContextImpl(
                 engine,
@@ -48,7 +51,7 @@ public class SqlToOperation implements Closeable {
         ).with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
-                        null,
+                        rnd,
                         -1,
                         null
                 )
@@ -59,6 +62,14 @@ public class SqlToOperation implements Closeable {
     @Override
     public void close() {
         sqlExecutionContext.close();
+    }
+
+    public Rnd getRnd() {
+        return rnd;
+    }
+
+    public Rnd getRandom() {
+        return rnd;
     }
 
     public BindVariableService getBindVariableService() {

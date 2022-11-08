@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
@@ -291,6 +292,8 @@ public class WalEventCursor {
     public class SqlInfo {
         private final StringSink sql = new StringSink();
         private int cmdType;
+        private long rndSeed0;
+        private long rndSeed1;
 
         public int getCmdType() {
             return cmdType;
@@ -298,6 +301,10 @@ public class WalEventCursor {
 
         public CharSequence getSql() {
             return sql;
+        }
+
+        public void resetRnd(Rnd rnd) {
+            rnd.reset(rndSeed0, rndSeed1);
         }
 
         public void populateBindVariableService(BindVariableService bindVariableService) {
@@ -426,6 +433,8 @@ public class WalEventCursor {
             cmdType = readInt();
             sql.clear();
             sql.put(readStr());
+            rndSeed0 = readLong();
+            rndSeed1 = readLong();
         }
     }
 }

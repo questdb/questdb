@@ -207,12 +207,14 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(-1);
     }
 
-    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
+    long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext, long rndSeed0, long rndSeed1) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.SQL);
         eventMem.putInt(cmdType); // byte would be enough probably
         eventMem.putStr(sql);
+        eventMem.putLong(rndSeed0);
+        eventMem.putLong(rndSeed1);
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
         writeNamedVariables(bindVariableService);

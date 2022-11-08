@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -94,6 +95,8 @@ public interface SqlExecutionContext extends Closeable {
     );
 
     void clearAnalyticContext();
+
+    MicrosecondClock getMicrosecondClock();
 
     void initNow();
 

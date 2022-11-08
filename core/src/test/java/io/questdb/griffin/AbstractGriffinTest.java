@@ -24,13 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -329,22 +328,16 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine, null, snapshotAgent);
-        bindVariableService = new BindVariableServiceImpl(configuration);
-        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService,
-                        null,
-                        -1,
-                        circuitBreaker);
-        bindVariableService.clear();
+        forEachNode(node -> node.initGriffin(circuitBreaker));
+        compiler = node1.getSqlCompiler();
+        bindVariableService = node1.getBindVariableService();
+        sqlExecutionContext = node1.getSqlExecutionContext();
     }
 
     @AfterClass
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
-        compiler.close();
+        forEachNode(QuestDBNode::closeGriffin);
         circuitBreaker = null;
     }
 
@@ -352,7 +345,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        bindVariableService.clear();
+        forEachNode(QuestDBNode::setUpGriffin);
     }
 
     protected static void assertQuery(
@@ -1507,14 +1500,22 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void executeOperation(
+            QuestDBNode node,
             String query,
             int opType
     ) throws SqlException {
-        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        CompiledQuery cq = node.getSqlCompiler().compile(query, node.getSqlExecutionContext());
         Assert.assertEquals(opType, cq.getType());
         try (OperationFuture fut = cq.execute(eventSubSequence)) {
             fut.await();
         }
+    }
+
+    protected void executeOperation(
+            String query,
+            int opType
+    ) throws SqlException {
+        executeOperation(node1, query, opType);
     }
 
     protected PlanSink getPlan(CharSequence query) throws SqlException {

@@ -50,8 +50,8 @@ public final class Files {
     public static final char SEPARATOR;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
-    private static LongHashSet openFds;
+    private static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
+    private static final LongHashSet openFds = new LongHashSet();
 
     private Files() {
         // Prevent construction.
@@ -72,9 +72,6 @@ public final class Files {
     }
 
     public static synchronized boolean auditOpen(long fd) {
-        if (null == openFds) {
-            openFds = new LongHashSet();
-        }
         if (fd < 0) {
             throw new IllegalStateException("Invalid fd " + fd);
         }
@@ -87,7 +84,6 @@ public final class Files {
 
     public static long bumpFileCount(long fd) {
         if (fd != -1) {
-            //noinspection AssertWithSideEffects
             assert auditOpen(fd);
             OPEN_FILE_COUNT.incrementAndGet();
         }
@@ -177,10 +173,7 @@ public final class Files {
     }
 
     public static String getOpenFdDebugInfo() {
-        if (openFds != null) {
-            return openFds.toString();
-        }
-        return null;
+        return openFds.toString();
     }
 
     public static long getOpenFileCount() {

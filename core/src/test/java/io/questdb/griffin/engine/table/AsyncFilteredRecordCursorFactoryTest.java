@@ -35,6 +35,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -869,6 +870,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
+        }
+
+        @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return sqlExecutionContext.getMicrosecondClock();
         }
 
         @Override
