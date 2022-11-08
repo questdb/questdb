@@ -50,12 +50,12 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public final void close(boolean truncate, byte truncateMode) {
-        long sz = getAppendOffset();
+        long sz = truncate ? getAppendOffset() : -1L;
         releaseCurrentPage();
         super.close();
         if (fd != -1) {
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, sz, truncateMode);
+                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
             } finally {
                 fd = -1;
             }

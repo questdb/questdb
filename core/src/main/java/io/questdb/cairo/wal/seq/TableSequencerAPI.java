@@ -45,9 +45,9 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
     private final CairoConfiguration configuration;
-    private final Function<CharSequence, TableSequencerEntry> createSequencerInstanceLambda;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
+    private final Function<CharSequence, TableSequencerEntry> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>();
     private volatile boolean closed;
@@ -55,7 +55,7 @@ public class TableSequencerAPI implements QuietCloseable {
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
         this.configuration = configuration;
         this.engine = engine;
-        this.createSequencerInstanceLambda = this::createSequencerInstance;
+        this.openSequencerInstanceLambda = this::openSequencerInstance;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
     }
@@ -209,8 +209,16 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void registerTable(int tableId, final TableStructure tableStructure) {
-        //noinspection EmptyTryBlock
-        try (TableSequencerImpl ignore = createSequencer(tableId, tableStructure)) {
+        String tableNameStr = Chars.toString(tableStructure.getTableName());
+        try (
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableNameStr, SequencerLockType.WRITE, (tableName) -> {
+                    TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableNameStr);
+                    sequencer.create(tableId, tableStructure);
+                    sequencer.open();
+                    return sequencer;
+                })
+        ) {
+            tableSequencer.unlockWrite();
         }
     }
 
@@ -269,35 +277,13 @@ public class TableSequencerAPI implements QuietCloseable {
         return isWalTable(tableName, path, ff);
     }
 
-    private @NotNull TableSequencerImpl createSequencer(int tableId, final TableStructure tableStructure) {
-        throwIfClosed();
-        final String tableName = Chars.toString(tableStructure.getTableName());
-        return seqRegistry.compute(tableName, (key, value) -> {
-            if (value == null) {
-                TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, tableName);
-                sequencer.create(tableId, tableStructure);
-                sequencer.open();
-                return sequencer;
-            }
-            return value;
-        });
-    }
-
-    private TableSequencerEntry createSequencerInstance(CharSequence tableNameStr) {
-        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (String) tableNameStr);
-        sequencer.open();
-        return sequencer;
-    }
-
     @NotNull
-    private TableSequencerEntry getTableSequencerEntryLocked(CharSequence tableName, SequencerLockType lock) {
-        String tableNameStr = Chars.toString(tableName);
-        int attempt = 0;
+    private TableSequencerEntry getTableSequencerEntry(String tableName, SequencerLockType lock, Function<CharSequence, TableSequencerEntry> getSequencerLambda) {
         TableSequencerEntry entry;
-
+        int attempt = 0;
         while (attempt < recreateDistressedSequencerAttempts) {
             throwIfClosed();
-            entry = seqRegistry.computeIfAbsent(tableNameStr, this.createSequencerInstanceLambda);
+            entry = seqRegistry.computeIfAbsent(tableName, getSequencerLambda);
             if (lock == SequencerLockType.READ) {
                 entry.readLock();
             } else if (lock == SequencerLockType.WRITE) {
@@ -322,29 +308,15 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableName).put(']');
     }
 
-    private @NotNull TableSequencerImpl openSequencerLocked(final CharSequence tableName, SequencerLockType lock) {
-        throwIfClosed();
+    private TableSequencerEntry openSequencerInstance(CharSequence tableNameStr) {
+        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, Chars.toString(tableNameStr));
+        sequencer.open();
+        return sequencer;
+    }
 
-        TableSequencerEntry entry = seqRegistry.get(tableName);
-        if (entry != null) {
-            if (lock == SequencerLockType.READ) {
-                entry.readLock();
-            } else if (lock == SequencerLockType.WRITE) {
-                entry.writeLock();
-            }
-
-            if (!entry.isDistressed() && !entry.isClosed()) {
-                return entry;
-            } else {
-                if (lock == SequencerLockType.READ) {
-                    entry.unlockRead();
-                } else if (lock == SequencerLockType.WRITE) {
-                    entry.unlockWrite();
-                }
-            }
-        }
-
-        return getTableSequencerEntryLocked(tableName, lock);
+    @NotNull
+    private TableSequencerEntry openSequencerLocked(CharSequence tableName, SequencerLockType lock) {
+        return getTableSequencerEntry(Chars.toString(tableName), lock, this.openSequencerInstanceLambda);
     }
 
     private boolean releaseEntries(long deadline) {
@@ -354,24 +326,21 @@ public class TableSequencerAPI implements QuietCloseable {
         }
         boolean removed = false;
         for (CharSequence tableSystemName : seqRegistry.keySet()) {
-            final TableSequencerEntry sequencer = seqRegistry.get(tableSystemName);
-            if (sequencer != null && deadline >= sequencer.releaseTime) {
-                sequencer.pool = null;
-                sequencer.close();
-                seqRegistry.remove(tableSystemName, sequencer);
-                removed = true;
+            String tableNameStr = (String) tableSystemName;
+            final TableSequencerEntry sequencer = seqRegistry.get(tableNameStr);
+            if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
+                assert tableNameStr.equals(sequencer.getTableName());
+                // Remove from registry only if this thread closed the instance
+                if (sequencer.checkClose()) {
+                    LOG.info().$("releasing idle table sequencer [table=").$(tableSystemName).$();
+                    seqRegistry.remove(tableNameStr, sequencer);
+                    removed = true;
+                }
             }
         }
         return removed;
     }
 
-    private boolean returnToPool(final TableSequencerEntry entry) {
-        if (closed) {
-            return false;
-        }
-        entry.releaseTime = configuration.getMicrosecondClock().getTicks();
-        return true;
-    }
 
     private void throwIfClosed() {
         if (closed) {
@@ -396,7 +365,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     private static class TableSequencerEntry extends TableSequencerImpl {
-        private TableSequencerAPI pool;
+        private final TableSequencerAPI pool;
         private volatile long releaseTime = Long.MAX_VALUE;
 
         TableSequencerEntry(TableSequencerAPI pool, CairoEngine engine, String tableName) {
@@ -406,17 +375,17 @@ public class TableSequencerAPI implements QuietCloseable {
 
         @Override
         public void close() {
-            TableSequencerAPI pool = this.pool;
-            if (pool != null && !pool.closed) {
+            if (!pool.closed) {
                 if (!isDistressed()) {
-                    if (pool.returnToPool(this)) {
-                        return;
+                    releaseTime = pool.configuration.getMicrosecondClock().getTicks();
+                } else {
+                    // Sequencer is distressed, close before removing from the pool.
+                    // Remove from registry only if this thread closed the instance.
+                    if (checkClose()) {
+                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).$();
+                        pool.seqRegistry.remove(getTableName(), this);
                     }
                 }
-
-                // Sequencer is distressed, close before removing from the pool.
-                super.close();
-                pool.seqRegistry.remove(getTableName(), this);
             } else {
                 super.close();
             }

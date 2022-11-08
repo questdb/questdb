@@ -69,9 +69,13 @@ public class TableTransactionLog implements Closeable {
 
     @Override
     public void close() {
-        txnMem.close(false);
-        txnMetaMem.close(false);
-        txnMetaMemIndex.close(false);
+        if (txnMem.isOpen()) {
+            long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
+            assert maxTxnInFile == maxTxn : "Max txn in the file " + maxTxnInFile + " but in memory is " + maxTxn;
+            txnMem.close(false);
+            txnMetaMem.close(false);
+            txnMetaMemIndex.close(false);
+        }
     }
 
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
@@ -110,7 +114,7 @@ public class TableTransactionLog implements Closeable {
 
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnMem.putLong(newStructureVersion);
-        txnMem.jumpTo(++maxTxn * RECORD_SIZE + HEADER_SIZE);
+        txnMem.jumpTo((maxTxn + 1) * RECORD_SIZE + HEADER_SIZE);
 
         txnMetaMem.putInt(0);
         long varMemBegin = txnMetaMem.getAppendOffset();
@@ -124,7 +128,7 @@ public class TableTransactionLog implements Closeable {
 
     long endMetadataChangeEntry(long newStructureVersion, long offset) {
         Unsafe.getUnsafe().storeFence();
-        txnMem.putLong(MAX_TXN_OFFSET, maxTxn);
+        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
         txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
         txnMem.putLong(TXN_META_SIZE_OFFSET, offset);
 
