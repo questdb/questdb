@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;

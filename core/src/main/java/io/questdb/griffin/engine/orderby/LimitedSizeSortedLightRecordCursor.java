@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;

@@ -30,6 +30,7 @@ import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
