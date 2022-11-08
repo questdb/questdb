@@ -28,12 +28,17 @@ import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.RowCursor;
 
 class DataFrameRowCursor implements RowCursor {
-    private long hi;
     private long current;
+    private long hi;
 
     @Override
     public boolean hasNext() {
         return current < hi;
+    }
+
+    @Override
+    public void jumpTo(long position) {
+        this.current = position;
     }
 
     @Override
@@ -44,10 +49,5 @@ class DataFrameRowCursor implements RowCursor {
     void of(DataFrame frame) {
         this.current = frame.getRowLo();
         this.hi = frame.getRowHi();
-    }
-
-    @Override
-    public void jumpTo(long position) {
-        this.current = position;
     }
 }

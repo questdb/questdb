@@ -44,32 +44,32 @@ import java.io.Closeable;
 import java.util.PriorityQueue;
 
 public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(ColumnPurgeJob.class);
-    private static final int TABLE_NAME_COLUMN = 1;
     private static final int COLUMN_NAME_COLUMN = 2;
-    private static final int TABLE_ID_COLUMN = 3;
-    private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int COLUMN_TYPE_COLUMN = 5;
-    private static final int PARTITION_BY_COLUMN = 6;
-    private static final int UPDATE_TXN_COLUMN = 7;
     private static final int COLUMN_VERSION_COLUMN = 8;
-    private static final int PARTITION_TIMESTAMP_COLUMN = 9;
-    private static final int PARTITION_NAME_COLUMN = 10;
+    private static final Log LOG = LogFactory.getLog(ColumnPurgeJob.class);
     private static final int MAX_ERRORS = 11;
-    private final String tableName;
+    private static final int PARTITION_BY_COLUMN = 6;
+    private static final int PARTITION_NAME_COLUMN = 10;
+    private static final int PARTITION_TIMESTAMP_COLUMN = 9;
+    private static final int TABLE_ID_COLUMN = 3;
+    private static final int TABLE_NAME_COLUMN = 1;
+    private static final int TABLE_TRUNCATE_VERSION = 4;
+    private static final int UPDATE_TXN_COLUMN = 7;
+    private final MicrosecondClock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
-    private final MicrosecondClock clock;
-    private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
-    private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
-    private final long retryDelayLimit;
     private final long retryDelay;
+    private final long retryDelayLimit;
     private final double retryDelayMultiplier;
+    private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
+    private final String tableName;
     private ColumnPurgeOperator columnPurgeOperator;
-    private SqlExecutionContextImpl sqlExecutionContext;
-    private TableWriter writer;
-    private SqlCompiler sqlCompiler;
     private int inErrorCount;
+    private SqlCompiler sqlCompiler;
+    private SqlExecutionContextImpl sqlExecutionContext;
+    private WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
+    private TableWriter writer;
 
     public ColumnPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
         CairoConfiguration configuration = engine.getConfiguration();
@@ -193,29 +193,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
-    private boolean purge() {
-        boolean useful = false;
-        final long now = clock.getTicks() + 1;
-        while (retryQueue.size() > 0) {
-            ColumnPurgeRetryTask nextTask = retryQueue.peek();
-            if (nextTask.nextRunTimestamp < now) {
-                retryQueue.poll();
-                useful = true;
-                if (!columnPurgeOperator.purge(nextTask)) {
-                    // Re-queue
-                    calculateNextTimestamp(nextTask, now);
-                    retryQueue.add(nextTask);
-                } else {
-                    taskPool.push(nextTask);
-                }
-            } else {
-                // All reruns are in the future.
-                return useful;
-            }
-        }
-        return useful;
-    }
-
     private void processTableRecords() {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
@@ -292,35 +269,27 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    @Override
-    protected boolean runSerially() {
-        if (inErrorCount >= MAX_ERRORS) {
-            return false;
-        }
-
-        try {
-            boolean useful = processInQueue();
-            boolean cleanupUseful = purge();
-            if (cleanupUseful) {
-                LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();
-            }
-            inErrorCount = 0;
-            return cleanupUseful || useful;
-        } catch (Throwable th) {
-            LOG.error().$("failed to clean up column versions").$(th).$();
-            inErrorCount++;
-            if (inErrorCount == MAX_ERRORS) {
-                if (retryQueue.size() > 0) {
-                    LOG.error().$("clean up column versions reached maximum error count and will be recycled. Some column version may be left behind.").$(th).$();
-                    retryQueue.clear();
-                    inErrorCount = 0;
+    private boolean purge() {
+        boolean useful = false;
+        final long now = clock.getTicks() + 1;
+        while (retryQueue.size() > 0) {
+            ColumnPurgeRetryTask nextTask = retryQueue.peek();
+            if (nextTask.nextRunTimestamp < now) {
+                retryQueue.poll();
+                useful = true;
+                if (!columnPurgeOperator.purge(nextTask)) {
+                    // Re-queue
+                    calculateNextTimestamp(nextTask, now);
+                    retryQueue.add(nextTask);
                 } else {
-                    LOG.error().$("clean up column versions reached maximum error count and will be DISABLED. Restart QuestDB to re-enable the job.").$(th).$();
-                    close();
+                    taskPool.push(nextTask);
                 }
+            } else {
+                // All reruns are in the future.
+                return useful;
             }
-            return false;
         }
+        return useful;
     }
 
     private void saveToStorage(ColumnPurgeRetryTask cleanTask) {
@@ -355,10 +324,41 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    @Override
+    protected boolean runSerially() {
+        if (inErrorCount >= MAX_ERRORS) {
+            return false;
+        }
+
+        try {
+            boolean useful = processInQueue();
+            boolean cleanupUseful = purge();
+            if (cleanupUseful) {
+                LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();
+            }
+            inErrorCount = 0;
+            return cleanupUseful || useful;
+        } catch (Throwable th) {
+            LOG.error().$("failed to clean up column versions").$(th).$();
+            inErrorCount++;
+            if (inErrorCount == MAX_ERRORS) {
+                if (retryQueue.size() > 0) {
+                    LOG.error().$("clean up column versions reached maximum error count and will be recycled. Some column version may be left behind.").$(th).$();
+                    retryQueue.clear();
+                    inErrorCount = 0;
+                } else {
+                    LOG.error().$("clean up column versions reached maximum error count and will be DISABLED. Restart QuestDB to re-enable the job.").$(th).$();
+                    close();
+                }
+            }
+            return false;
+        }
+    }
+
     static class ColumnPurgeRetryTask extends ColumnPurgeTask implements Mutable {
         public long nextRunTimestamp;
-        public long timestamp;
         public long retryDelay;
+        public long timestamp;
 
         public void copyFrom(ColumnPurgeTask inTask, long retryDelay, long nextRunTimestamp) {
             this.retryDelay = retryDelay;

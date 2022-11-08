@@ -78,16 +78,6 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x alter", 19, "'column' expected");
-    }
-
-    @Test
-    public void testAlterExpectColumnName() throws Exception {
-        assertFailure("alter table x alter column", 26, "column name expected");
-    }
-
-    @Test
     public void testAlterExpectCapacityKeyword() throws Exception {
         assertFailure("alter table x alter column y add index a", 39, "'capacity' expected");
     }
@@ -105,6 +95,16 @@ public class AlterTableAlterColumnTest extends AbstractGriffinTest {
     @Test
     public void testAlterExpectCapacityValueIsPositiveInteger() throws Exception {
         assertFailure("alter table x alter column y add index capacity -123", 48, "positive integer literal expected as index capacity");
+    }
+
+    @Test
+    public void testAlterExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x alter", 19, "'column' expected");
+    }
+
+    @Test
+    public void testAlterExpectColumnName() throws Exception {
+        assertFailure("alter table x alter column", 26, "column name expected");
     }
 
     @Test

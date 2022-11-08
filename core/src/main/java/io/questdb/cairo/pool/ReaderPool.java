@@ -34,6 +34,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
@@ -42,17 +43,17 @@ import java.util.Map;
 public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
 
     public static final int ENTRY_SIZE = 32;
-    private static final Log LOG = LogFactory.getLog(ReaderPool.class);
-    private static final long UNLOCKED = -1L;
-    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
-    private static final int NEXT_OPEN = 0;
+    private static final Log LOG = LogFactory.getLog(ReaderPool.class);
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
+    private static final int NEXT_OPEN = 0;
+    private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
+    private static final long UNLOCKED = -1L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
+    private final int maxEntries;
     private final int maxSegments;
     private final MessageBus messageBus;
-    private final int maxEntries;
 
     public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
         super(configuration, configuration.getInactiveReaderTTL());
@@ -158,12 +159,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     public boolean lock(CharSequence name) {
         Entry e = getEntry(name);
         final long thread = Thread.currentThread().getId();
-        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
+        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || (e.lockOwner == thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
-                    } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
+                    } else if (Unsafe.arrayGetVolatile(e.allocations, i) == thread) {
                         // same thread, don't need to order reads
                         if (e.readers[i] != null) {
                             // this thread has busy reader, it should close first
@@ -177,9 +178,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
                 }
 
-                // prevent new entries from being created
-                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                    break;
+                // try to prevent new entries from being created
+                if (e.next == null) {
+                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                        break;
+                    } else if (e.nextStatus == NEXT_ALLOCATED) {
+                        // now we must wait until another thread that executes a get() call
+                        // assigns the newly created next entry
+                        while (e.next == null) {
+                            Os.pause();
+                        }
+                    }
                 }
 
                 e = e.next;
@@ -221,54 +230,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (isClosed()) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
-        }
-    }
-
-    @Override
-    protected void closePool() {
-        super.closePool();
-        LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        int casFailures = 0;
-        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
-
-        for (Entry e : entries.values()) {
-            do {
-                for (int i = 0; i < ENTRY_SIZE; i++) {
-                    R r;
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getReader(i)) != null) {
-                        if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                            // check if deadline violation still holds
-                            if (deadline > e.releaseOrAcquireTimes[i]) {
-                                removed = true;
-                                closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
-                            }
-                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                        } else {
-                            casFailures++;
-                            if (deadline == Long.MAX_VALUE) {
-                                r.goodbye();
-                                LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
-                            }
-                        }
-                    }
-                }
-                // this does not release the next
-                e = e.next;
-            } while (e != null);
-        }
-
-        // when we are timing out entries the result is "true" if there was any work done
-        // when we're closing pool, the result is true when pool is empty
-        if (closeReason == PoolConstants.CR_IDLE) {
-            return removed;
-        } else {
-            return casFailures == 0;
         }
     }
 
@@ -337,15 +298,62 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         throw CairoException.critical(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
     }
 
+    @Override
+    protected void closePool() {
+        super.closePool();
+        LOG.info().$("closed").$();
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        long thread = Thread.currentThread().getId();
+        boolean removed = false;
+        int casFailures = 0;
+        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
+
+        for (Entry e : entries.values()) {
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    R r;
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getReader(i)) != null) {
+                        if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                            // check if deadline violation still holds
+                            if (deadline > e.releaseOrAcquireTimes[i]) {
+                                removed = true;
+                                closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                            }
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                        } else {
+                            casFailures++;
+                            if (deadline == Long.MAX_VALUE) {
+                                r.goodbye();
+                                LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
+                            }
+                        }
+                    }
+                }
+                // this does not release the next
+                e = e.next;
+            } while (e != null);
+        }
+
+        // when we are timing out entries the result is "true" if there was any work done
+        // when we're closing pool, the result is true when pool is empty
+        if (closeReason == PoolConstants.CR_IDLE) {
+            return removed;
+        } else {
+            return casFailures == 0;
+        }
+    }
+
     public static final class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
-        final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
-        final Object[] readers = new Object[ENTRY_SIZE];
         final int index;
+        final Object[] readers = new Object[ENTRY_SIZE];
+        final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
         volatile long lockOwner = -1L;
-        @SuppressWarnings("unused")
-        int nextStatus = 0;
         volatile Entry next;
+        volatile int nextStatus = NEXT_OPEN;
 
         public Entry(int index, long currentMicros) {
             this.index = index;
@@ -353,31 +361,31 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Arrays.fill(releaseOrAcquireTimes, currentMicros);
         }
 
-        public long getOwnerVolatile(int pos) {
-            return Unsafe.arrayGetVolatile(allocations, pos);
+        public Entry getNext() {
+            return next;
         }
 
-        public long getReleaseOrAcquireTime(int pos) {
-            return releaseOrAcquireTimes[pos];
+        public long getOwnerVolatile(int pos) {
+            return Unsafe.arrayGetVolatile(allocations, pos);
         }
 
         public R getReader(int pos) {
             return (R) readers[pos];
         }
 
-        public void setReader(int pos, R reader) {
-            readers[pos] = reader;
+        public long getReleaseOrAcquireTime(int pos) {
+            return releaseOrAcquireTimes[pos];
         }
 
-        public Entry getNext() {
-            return next;
+        public void setReader(int pos, R reader) {
+            readers[pos] = reader;
         }
     }
 
     public static class R extends TableReader {
         private final int index;
-        private ReaderPool pool;
         private Entry entry;
+        private ReaderPool pool;
 
         public R(ReaderPool pool, Entry entry, int index, CharSequence name, MessageBus messageBus) {
             super(pool.getConfiguration(), name, messageBus);

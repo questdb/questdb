@@ -25,9 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,5 +54,10 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
         assert filter != null;
         return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
+    }
+
+    @Override
+    protected StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex) {
+        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 }

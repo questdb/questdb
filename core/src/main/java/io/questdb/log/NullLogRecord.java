@@ -50,11 +50,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $utf8(long lo, long hi) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(int x) {
         return this;
     }
@@ -100,42 +95,7 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $ip(long ip) {
-        return this;
-    }
-
-    @Override
-    public LogRecord $ts(long x) {
-        return this;
-    }
-
-    @Override
     public LogRecord $256(long a, long b, long c, long d) {
-        return this;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return false;
-    }
-
-    @Override
-    public LogRecord ts() {
-        return this;
-    }
-
-    @Override
-    public LogRecord microTime(long x) {
-        return this;
-    }
-
-    @Override
-    public LogRecord utf8(CharSequence sequence) {
-        return this;
-    }
-
-    @Override
-    public LogRecord put(char c) {
         return this;
     }
 
@@ -146,6 +106,46 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $hexPadded(long value) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $ip(long ip) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $ts(long x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $utf8(long lo, long hi) {
+        return this;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return false;
+    }
+
+    @Override
+    public LogRecord microTime(long x) {
+        return this;
+    }
+
+    @Override
+    public LogRecord put(char c) {
+        return this;
+    }
+
+    @Override
+    public LogRecord ts() {
+        return this;
+    }
+
+    @Override
+    public LogRecord utf8(CharSequence sequence) {
         return this;
     }
 }

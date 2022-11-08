@@ -31,8 +31,8 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
 class IntCaseFunction extends IntFunction implements MultiArgFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public IntCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
         super();

@@ -53,16 +53,16 @@ import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
-    private final CairoEngine engine;
-    private SCSequence eventSubSeq;
-    private int status;
-    private long affectedRowsCount;
-    private long correlationId;
-    private String tableName;
-    private QueryFutureUpdateListener queryFutureUpdateListener;
-    private int tableNamePositionInSql;
-    private boolean closing;
     private final long busyWaitTimeout;
+    private final CairoEngine engine;
+    private long affectedRowsCount;
+    private boolean closing;
+    private long correlationId;
+    private SCSequence eventSubSeq;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
+    private int status;
+    private String tableName;
+    private int tableNamePositionInSql;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
@@ -86,29 +86,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         return await0(timeout > 0 ? timeout : busyWaitTimeout);
     }
 
-    private int await0(long timeout) throws SqlException {
-        if (status == QUERY_COMPLETE) {
-            return status;
-        }
-        status = Math.max(status, awaitWriterEvent(timeout));
-        return status;
-    }
-
-    @Override
-    public long getInstanceId() {
-        return correlationId;
-    }
-
-    @Override
-    public int getStatus() {
-        return status;
-    }
-
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
-    }
-
     @Override
     public void close() {
         if (eventSubSeq != null) {
@@ -124,6 +101,21 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             super.close();
             closing = false;
         }
+    }
+
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
+
+    @Override
+    public long getInstanceId() {
+        return correlationId;
+    }
+
+    @Override
+    public int getStatus() {
+        return status;
     }
 
     /***
@@ -183,6 +175,14 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             close();
             throw ex;
         }
+    }
+
+    private int await0(long timeout) throws SqlException {
+        if (status == QUERY_COMPLETE) {
+            return status;
+        }
+        status = Math.max(status, awaitWriterEvent(timeout));
+        return status;
     }
 
     private int awaitWriterEvent(long timeout) throws SqlException {

@@ -68,6 +68,16 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void clear() {
+            sink.resetCapacity();
+        }
+
+        @Override
+        public void close() {
+            sink.close();
+        }
+
+        @Override
         public void computeFirst(MapValue mapValue, Record record) {
             setNull();
             CharSequence str = arg.getStr(record);
@@ -88,26 +98,6 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
-            columnTypes.add(ColumnType.STRING);
-        }
-
-        @Override
-        public void setNull(MapValue mapValue) {
-            setNull();
-        }
-
-        @Override
-        public void clear() {
-            sink.resetCapacity();
-        }
-
-        @Override
-        public void close() {
-            sink.close();
-        }
-
-        @Override
         public CharSequence getStr(Record rec) {
             if (nullValue) {
                 return null;
@@ -125,18 +115,28 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private void setNull() {
-            sink.clear();
-            nullValue = true;
+        @Override
+        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+            columnTypes.add(ColumnType.STRING);
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
+            setNull();
+        }
+
+        private void append(CharSequence str) {
+            sink.put(str);
+            nullValue = false;
         }
 
         private void appendDelimiter() {
             sink.put(delimiter);
         }
 
-        private void append(CharSequence str) {
-            sink.put(str);
-            nullValue = false;
+        private void setNull() {
+            sink.clear();
+            nullValue = true;
         }
     }
 }

@@ -30,43 +30,29 @@ import org.junit.Test;
 public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
 
     @Test
-    public void testVanilla() throws Exception {
+    public void testArithmetic() throws Exception {
+        assertQuery(
+                "column\n" +
+                        "2022-03-11T22:00:30.555560Z\n",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCast() throws Exception {
         assertQuery(
                 "cast\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'",
+                        "1647018030555555\n",
+                "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)",
                 null,
                 null,
                 true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testValidAliasZone() throws Exception {
-        assertQuery(
-                "zone\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp zone",
-                null,
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testValidAliasTime() throws Exception {
-        assertQuery(
-                "time\n" +
-                        "2022-03-11T22:00:30.555555Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp time",
-                null,
-                null,
-                true,
-                true,
+                false,
                 true
         );
     }
@@ -112,29 +98,15 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testArithmetic() throws Exception {
+    public void testFunctionArg() throws Exception {
         assertQuery(
-                "column\n" +
-                        "2022-03-11T22:00:30.555560Z\n",
-                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC' + 5",
+                "date_trunc\n" +
+                        "2022-03-11T00:00:00.000000Z\n",
+                "select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')",
                 null,
                 null,
                 true,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testCast() throws Exception {
-        assertQuery(
-                "cast\n" +
-                        "1647018030555555\n",
-                "select cast('2022-03-11T22:00:30.555555Z'::timestamp at time zone 'EST' as string)",
-                null,
-                null,
-                true,
-                false,
                 true
         );
     }
@@ -158,11 +130,39 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFunctionArg() throws Exception {
+    public void testValidAliasTime() throws Exception {
         assertQuery(
-                "date_trunc\n" +
-                        "2022-03-11T00:00:00.000000Z\n",
-                "select date_trunc('day', '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC')",
+                "time\n" +
+                        "2022-03-11T22:00:30.555555Z\n",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp time",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testValidAliasZone() throws Exception {
+        assertQuery(
+                "zone\n" +
+                        "2022-03-11T22:00:30.555555Z\n",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp zone",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVanilla() throws Exception {
+        assertQuery(
+                "cast\n" +
+                        "2022-03-11T22:00:30.555555Z\n",
+                "select '2022-03-11T22:00:30.555555Z'::timestamp at time zone 'UTC'",
                 null,
                 null,
                 true,

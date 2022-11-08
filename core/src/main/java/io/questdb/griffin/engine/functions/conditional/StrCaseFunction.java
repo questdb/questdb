@@ -32,12 +32,22 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 class StrCaseFunction extends StrFunction implements MultiArgFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;
         this.args = args;
+    }
+
+    @Override
+    public ObjList<Function> getArgs() {
+        return args;
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        picker.pick(rec).getStr(rec, sink);
     }
 
     @Override
@@ -51,17 +61,7 @@ class StrCaseFunction extends StrFunction implements MultiArgFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        picker.pick(rec).getStr(rec, sink);
-    }
-
-    @Override
     public int getStrLen(Record rec) {
         return picker.pick(rec).getStrLen(rec);
-    }
-
-    @Override
-    public ObjList<Function> getArgs() {
-        return args;
     }
 }

@@ -70,12 +70,12 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public void setNull(MapValue mapValue) {
-        setLong(mapValue, Numbers.LONG_NaN);
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putTimestamp(this.valueIndex, value);
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(this.valueIndex, value);
+    public void setNull(MapValue mapValue) {
+        setLong(mapValue, Numbers.LONG_NaN);
     }
 }

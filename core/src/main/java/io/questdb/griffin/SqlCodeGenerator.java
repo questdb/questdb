@@ -74,57 +74,57 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
-    public static final int GKK_VANILLA_INT = 0;
     public static final int GKK_HOUR_INT = 1;
-    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
-    private static final IntHashSet limitTypes = new IntHashSet();
-    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
-    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
-    private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
-    private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
+    public static final int GKK_VANILLA_INT = 0;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
-    private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
-    private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
+    private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
+    private static final Log LOG = LogFactory.getLog(SqlCodeGenerator.class);
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
-    private final WhereClauseParser whereClauseParser = new WhereClauseParser();
-    private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
-    private final MemoryCARW jitIRMem;
-    private final boolean enableJitDebug;
-    private final FunctionParser functionParser;
-    private final CairoEngine engine;
+    private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
+    private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
+    private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
+    private static final IntHashSet limitTypes = new IntHashSet();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> maxConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> minConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
+    private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
+    private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     private final BytecodeAssembler asm = new BytecodeAssembler();
+    private final CairoConfiguration configuration;
+    private final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
+    private final boolean enableJitDebug;
+    private final CairoEngine engine;
+    private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final FunctionParser functionParser;
+    private final IntList groupByFunctionPositions = new IntList();
+    private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupedAnalytic = new ObjObjHashMap<>();
+    private final IntHashSet intHashSet = new IntHashSet();
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
+    private final MemoryCARW jitIRMem;
+    private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
+    private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    private final CairoConfiguration configuration;
-    private final RecordComparatorCompiler recordComparatorCompiler;
-    private final IntHashSet intHashSet = new IntHashSet();
-    private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-    private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-    private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-    private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
-    private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
-    private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
-    private final IntList tempKeyIndexesInBase = new IntList();
-    private final IntList tempSymbolSkewIndexes = new IntList();
-    private final IntList tempKeyIndex = new IntList();
-    private final IntList tempAggIndex = new IntList();
-    private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
-    private final IntList tempVecConstructorArgIndexes = new IntList();
-    private final IntList tempKeyKinds = new IntList();
-    private final ObjObjHashMap<IntList, ObjList<AnalyticFunction>> groupedAnalytic = new ObjObjHashMap<>();
-    private final IntList recordFunctionPositions = new IntList();
-    private final IntList groupByFunctionPositions = new IntList();
     private final LongList prefixes = new LongList();
-    private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final RecordComparatorCompiler recordComparatorCompiler;
+    private final IntList recordFunctionPositions = new IntList();
     private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
-    private final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
-    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
+    private final IntList tempAggIndex = new IntList();
+    private final IntList tempKeyIndex = new IntList();
+    private final IntList tempKeyIndexesInBase = new IntList();
+    private final IntList tempKeyKinds = new IntList();
+    private final GenericRecordMetadata tempMetadata = new GenericRecordMetadata();
+    private final IntList tempSymbolSkewIndexes = new IntList();
+    private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
+    private final IntList tempVecConstructorArgIndexes = new IntList();
+    private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+    private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -181,6 +181,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model, executionContext, true);
     }
 
+    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode node = column.getAst();
+
+            if (node.type != ExpressionNode.LITERAL) {
+                ExpressionNode columnAst = column.getAst();
+                CharSequence token = columnAst.token;
+                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
+                    return false;
+                }
+
+                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
                                                              RecordMetadata metadata,
                                                              RecordCursorFactory masterFactory,
@@ -217,28 +239,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return ORDER_DIRECTION_ASCENDING;
         }
         return model.getOrderByDirectionAdvice().getQuick(index);
-    }
-
-    private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                ExpressionNode columnAst = column.getAst();
-                CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
-                    return false;
-                }
-
-                if (columnAst.rhs.type != ExpressionNode.LITERAL || metadata.getColumnIndex(columnAst.rhs.token) < 0) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -2630,12 +2630,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         osz > 0,
                         base.recordCursorSupportsRandomAccess()
                 );
-
-                final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                if (!(f instanceof AnalyticFunction)) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                final Function f;
+                try {
+                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                    if (!(f instanceof AnalyticFunction)) {
+                        Misc.free(base);
+                        throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                    }
+                } finally {
+                    executionContext.clearAnalyticContext();
                 }
+
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out
@@ -4166,15 +4171,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    // used in tests
-    void setEnableJitNullChecks(boolean value) {
-        enableJitNullChecks = value;
-    }
-
-    void setFullFatJoins(boolean fullFatJoins) {
-        this.fullFatJoins = fullFatJoins;
-    }
-
     private Function toLimitFunction(
             SqlExecutionContext executionContext,
             ExpressionNode limit,
@@ -4295,6 +4291,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return metadata;
+    }
+
+    // used in tests
+    void setEnableJitNullChecks(boolean value) {
+        enableJitNullChecks = value;
+    }
+
+    void setFullFatJoins(boolean fullFatJoins) {
+        this.fullFatJoins = fullFatJoins;
     }
 
     @FunctionalInterface

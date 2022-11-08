@@ -26,48 +26,34 @@ package io.questdb.cutlass.line.tcp.load;
 
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
 public class TableData {
-    private final CharSequence tableName;
-    private final ObjList<LineData> rows = new ObjList<>();
     private final IntLongPriorityQueue index = new IntLongPriorityQueue();
-    private final SOCountDownLatch readyLatch = new SOCountDownLatch(1);
+    private final ObjList<LineData> rows = new ObjList<>();
+    private final CharSequence tableName;
+    private final AtomicLong writePermits = new AtomicLong();
 
     public TableData(CharSequence tableName) {
         this.tableName = tableName;
     }
 
-    public CharSequence getName() {
-        return tableName;
-    }
-
-    public void ready() {
-        readyLatch.countDown();
-    }
-
-    public void await() {
-        readyLatch.await();
-    }
-
-    public synchronized int size() {
-        int count = 0;
-        for (int i = 0, n = rows.size(); i < n; i++) {
-            if (rows.get(i).isValid()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     public synchronized void addLine(LineData line) {
         rows.add(line);
         index.add(rows.size() - 1, line.getTimestamp());
+    }
+
+    public void await() {
+        while (writePermits.get() > 0L) {
+            Os.pause();
+        }
     }
 
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
@@ -79,7 +65,7 @@ public class TableData {
             CharSequence column = colMetaData.getName();
             columns.add(column);
             defaults.add(getDefaultValue((short) colMetaData.getType()));
-            sb.append(column).append( i == n-1 ? "\n" : "\t");
+            sb.append(column).append(i == n - 1 ? "\n" : "\t");
         }
         for (int i = 0, n = rows.size(); i < n; i++) {
             final LineData line = rows.get(index.popIndex());
@@ -89,6 +75,10 @@ public class TableData {
             index.popValue();
         }
         return sb.toString();
+    }
+
+    public CharSequence getName() {
+        return tableName;
     }
 
     public synchronized LineData getRandomValidLine(Rnd rnd) {
@@ -102,7 +92,30 @@ public class TableData {
                 count++;
             }
         }
-        return rows.getQuick(i  % size);
+        return rows.getQuick(i % size);
+    }
+
+    public void obtainPermit() {
+        writePermits.incrementAndGet();
+    }
+
+    public void returnPermit() {
+        writePermits.decrementAndGet();
+    }
+
+    public synchronized int size() {
+        int count = 0;
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (rows.get(i).isValid()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public synchronized String toString() {
+        return "[" + tableName + ":" + rows + "]";
     }
 
     private String getDefaultValue(short colType) {
@@ -116,10 +129,5 @@ public class TableData {
             default:
                 throw new RuntimeException("Unexpected column type");
         }
-    }
-
-    @Override
-    public synchronized String toString() {
-        return "[" + tableName + ":" + rows + "]";
     }
 }

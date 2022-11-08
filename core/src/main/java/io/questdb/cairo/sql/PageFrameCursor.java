@@ -45,13 +45,13 @@ public interface PageFrameCursor extends Closeable, SymbolTableSource {
     @Nullable PageFrame next();
 
     /**
+     * @return size of page in bytes
+     */
+    long size();
+
+    /**
      * Return the cursor to the beginning of the page frame.
      * Sets page address to first column.
      */
     void toTop();
-
-    /**
-     * @return size of page in bytes
-     */
-    long size();
 }

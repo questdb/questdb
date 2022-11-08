@@ -617,12 +617,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Reader extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
         private final int readers;
+        private final TxnScoreboard scoreboard;
 
         private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;
@@ -677,12 +677,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Writer extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
         private final int readers;
+        private final TxnScoreboard scoreboard;
 
         private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;

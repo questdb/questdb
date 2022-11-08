@@ -32,12 +32,12 @@ import io.questdb.std.IntList;
 
 public class CompactMapRecord implements MapRecord {
 
-    private final MemoryARW entries;
     private final long[] columnOffsets;
+    private final MemoryARW entries;
     private final CompactMapValue value;
     private long offset;
-    private RecordCursor symbolTableResolver;
     private IntList symbolTableIndex;
+    private RecordCursor symbolTableResolver;
 
     public CompactMapRecord(MemoryARW entries, long[] columnOffsets, CompactMapValue value) {
         this.entries = entries;
@@ -88,6 +88,26 @@ public class CompactMapRecord implements MapRecord {
     @Override
     public float getFloat(int col) {
         return entries.getFloat(getColumnOffset(col));
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getShort(col);
     }
 
     @Override
@@ -145,26 +165,6 @@ public class CompactMapRecord implements MapRecord {
     @Override
     public CharSequence getSymB(int col) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).valueBOf(getInt(col));
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        return getByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getInt(col);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getLong(col);
     }
 
     @Override

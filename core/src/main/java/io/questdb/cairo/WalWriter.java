@@ -44,45 +44,45 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
-    static final String WAL_NAME_BASE = "wal";
     static final int WAL_FORMAT_VERSION = 0;
+    static final String WAL_NAME_BASE = "wal";
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
-    private final TableDescriptor tableDescriptor = new TableDescriptorImpl();
     private final ObjList<MemoryMA> columns;
-    private final ObjList<SymbolMapReader> symbolMapReaders;
-    private final IntList initialSymbolCounts = new IntList();
-    private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final MillisecondClock millisecondClock;
-    private final Path path;
-    private final LongList rowValueIsNotNull = new LongList();
-    private final int rootLen;
-    private final FilesFacade ff;
-    private final MemoryMAR symbolMapMem = Vm.getMARInstance();
-    private final int mkDirMode;
-    private final String tableName;
-    private final String walName;
-    private final int walId;
-    private final WalWriterMetadata metadata;
-    private final WalWriterEvents events;
-    private final Sequencer sequencer;
-    private final CairoEngine engine;
     private final CairoConfiguration configuration;
+    private final CairoEngine engine;
+    private final WalWriterEvents events;
+    private final FilesFacade ff;
+    private final IntList initialSymbolCounts = new IntList();
+    private final WalWriterMetadata metadata;
+    private final MillisecondClock millisecondClock;
+    private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
+    private final Path path;
+    private final int rootLen;
     private final RowImpl row = new RowImpl();
-    private long lockFd = -1;
+    private final LongList rowValueIsNotNull = new LongList();
+    private final Sequencer sequencer;
+    private final MemoryMAR symbolMapMem = Vm.getMARInstance();
+    private final ObjList<SymbolMapReader> symbolMapReaders;
+    private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final TableDescriptor tableDescriptor = new TableDescriptorImpl();
+    private final String tableName;
+    private final int walId;
+    private final String walName;
     private int columnCount;
-    private long startRowCount = -1;
-    private long rowCount = -1;
-    private long segmentId = -1;
-    private long segmentStartMillis;
-    private boolean txnOutOfOrder = false;
-    private long txnMinTimestamp = Long.MAX_VALUE;
-    private long txnMaxTimestamp = -1;
+    private long lockFd = -1;
     private boolean rollSegmentOnNextRow = false;
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
+    private long rowCount = -1;
+    private long segmentId = -1;
+    private long segmentStartMillis;
+    private long startRowCount = -1;
+    private long txnMaxTimestamp = -1;
+    private long txnMinTimestamp = Long.MAX_VALUE;
+    private boolean txnOutOfOrder = false;
 
     public WalWriter(CairoEngine engine, String tableName, int walId, Sequencer sequencer) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -119,22 +119,6 @@ public class WalWriter implements Closeable {
             doClose(false);
             throw e;
         }
-    }
-
-    public long getSegment() {
-        return segmentId;
-    }
-
-    public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
-        this.rollStrategy = rollStrategy;
-    }
-
-    private static int getPrimaryColumnIndex(int index) {
-        return index * 2;
-    }
-
-    private static int getSecondaryColumnIndex(int index) {
-        return getPrimaryColumnIndex(index) + 1;
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -177,8 +161,20 @@ public class WalWriter implements Closeable {
         }
     }
 
+    public long commit() {
+        return commit(false);
+    }
+
+    public long getSegment() {
+        return segmentId;
+    }
+
     public String getTableName() {
         return tableName;
+    }
+
+    public long getTransientRowCount() {
+        return rowCount - startRowCount;
     }
 
     public String getWalName() {
@@ -229,6 +225,40 @@ public class WalWriter implements Closeable {
         } catch (Throwable e) {
             throw new CairoError(e);
         }
+    }
+
+    public long rollSegment() {
+        try {
+            closeCurrentSegment();
+            final long rolledRowCount = rowCount;
+            openNewSegment();
+            return rolledRowCount;
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
+    }
+
+    public long rollSegmentIfLimitReached() {
+        long segmentSize = 0;
+        if (rollStrategy.isMaxSegmentSizeSet()) {
+            for (int i = 0; i < columnCount; i++) {
+                segmentSize = updateSegmentSize(segmentSize, i);
+            }
+        }
+
+        long segmentAge = 0;
+        if (rollStrategy.isRollIntervalSet()) {
+            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
+        }
+
+        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
+            return rollSegment();
+        }
+        return 0L;
+    }
+
+    public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
+        this.rollStrategy = rollStrategy;
     }
 
     public long size() {
@@ -297,6 +327,28 @@ public class WalWriter implements Closeable {
         }
     }
 
+    private static int getPrimaryColumnIndex(int index) {
+        return index * 2;
+    }
+
+    private static int getSecondaryColumnIndex(int index) {
+        return getPrimaryColumnIndex(index) + 1;
+    }
+
+    private void closeCurrentSegment() {
+        commit();
+    }
+
+    private long commit(boolean rollSegment) {
+        rollSegmentOnNextRow = rollSegment;
+        final long transientRowCount = getTransientRowCount();
+        if (transientRowCount != 0) {
+            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            resetDataTxnProperties();
+        }
+        return transientRowCount;
+    }
+
     private void configureColumn(int index, int type) {
         final MemoryMA primary;
         final MemoryMA secondary;
@@ -329,34 +381,6 @@ public class WalWriter implements Closeable {
             int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
                 configureColumn(i, columnType);
-            }
-        }
-    }
-
-    private void configureSymbolTable(TableDescriptor descriptor) {
-        // we should not need the reader here, this will not work in a distributed environment
-        // what if the wal is created on a node where the table itself is not present?
-        // maybe copying symbols from existing table is not the best or sequencer needs an API for it
-        // but then sequencer will have to keep track of all symbol tables
-        int columnReaderIndex = 0;
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            for (int i = 0; i < columnCount; i++) {
-                int columnType = metadata.getColumnType(i);
-                if (!ColumnType.isSymbol(columnType)) {
-                    // maintain sparse list of symbol writers
-                    symbolMapReaders.extendAndSet(i, null);
-                    initialSymbolCounts.extendAndSet(i, -1);
-                    symbolMaps.extendAndSet(i,null);
-                } else {
-                    SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnReaderIndex);
-                    int symbolCount = symbolMapReader.getSymbolCount();
-                    long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(i);
-                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolCount, columnNameTxn);
-                }
-
-                if (columnType > 0) {
-                    columnReaderIndex++;
-                }
             }
         }
     }
@@ -436,6 +460,44 @@ public class WalWriter implements Closeable {
         initialSymbolCounts.add(symbolCount);
     }
 
+    private void configureSymbolTable(TableDescriptor descriptor) {
+        // we should not need the reader here, this will not work in a distributed environment
+        // what if the wal is created on a node where the table itself is not present?
+        // maybe copying symbols from existing table is not the best or sequencer needs an API for it
+        // but then sequencer will have to keep track of all symbol tables
+        int columnReaderIndex = 0;
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = metadata.getColumnType(i);
+                if (!ColumnType.isSymbol(columnType)) {
+                    // maintain sparse list of symbol writers
+                    symbolMapReaders.extendAndSet(i, null);
+                    initialSymbolCounts.extendAndSet(i, -1);
+                    symbolMaps.extendAndSet(i, null);
+                } else {
+                    SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnReaderIndex);
+                    int symbolCount = symbolMapReader.getSymbolCount();
+                    long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(i);
+                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolCount, columnNameTxn);
+                }
+
+                if (columnType > 0) {
+                    columnReaderIndex++;
+                }
+            }
+        }
+    }
+
+    private int createSegmentDir() {
+        path.slash().put(segmentId);
+        final int segmentPathLen = path.length();
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
+        }
+        path.trimTo(segmentPathLen);
+        return segmentPathLen;
+    }
+
     private void doClose(boolean truncate) {
         Misc.free(metadata);
         Misc.free(events);
@@ -486,10 +548,6 @@ public class WalWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
     private void lock() {
         try {
             lockName(path);
@@ -501,6 +559,21 @@ public class WalWriter implements Closeable {
         if (lockFd == -1L) {
             throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
+    }
+
+    private long nextTxn() {
+        long txn;
+        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId)) == Sequencer.NO_TXN) {
+            // update table descriptor to get the latest version of the schema
+            sequencer.populateDescriptor(tableDescriptor);
+
+            // check schema diff !!!
+            // might need to reject transaction here depending on schema diff!
+
+            // then update metadata
+            //metadata.of(tableDescriptor);
+        }
+        return txn;
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
@@ -530,50 +603,6 @@ public class WalWriter implements Closeable {
         } finally {
             path.trimTo(pathTrimToLen);
         }
-    }
-
-    public long getTransientRowCount() {
-        return rowCount - startRowCount;
-    }
-
-    public long commit() {
-        return commit(false);
-    }
-
-    private long commit(boolean rollSegment) {
-        rollSegmentOnNextRow = rollSegment;
-        final long transientRowCount = getTransientRowCount();
-        if (transientRowCount != 0) {
-            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-            resetDataTxnProperties();
-        }
-        return transientRowCount;
-    }
-
-    private long nextTxn() {
-        long txn;
-        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId)) == Sequencer.NO_TXN) {
-            // update table descriptor to get the latest version of the schema
-            sequencer.populateDescriptor(tableDescriptor);
-
-            // check schema diff !!!
-            // might need to reject transaction here depending on schema diff!
-
-            // then update metadata
-            //metadata.of(tableDescriptor);
-        }
-        return txn;
-    }
-
-    private void resetDataTxnProperties() {
-        startRowCount = rowCount;
-        txnMinTimestamp = Long.MAX_VALUE;
-        txnMaxTimestamp = -1;
-        txnOutOfOrder = false;
-    }
-
-    private void closeCurrentSegment() {
-        commit();
     }
 
     private void openNewSegment() {
@@ -607,16 +636,6 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private int createSegmentDir() {
-        path.slash().put(segmentId);
-        final int segmentPathLen = path.length();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
-        }
-        path.trimTo(segmentPathLen);
-        return segmentPathLen;
-    }
-
     private void releaseLock(boolean keepLockFile) {
         if (lockFd != -1L) {
             ff.close(lockFd);
@@ -645,6 +664,13 @@ public class WalWriter implements Closeable {
         initialSymbolCounts.setQuick(index, -1);
     }
 
+    private void resetDataTxnProperties() {
+        startRowCount = rowCount;
+        txnMinTimestamp = Long.MAX_VALUE;
+        txnMaxTimestamp = -1;
+        txnOutOfOrder = false;
+    }
+
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < rowCount) {
@@ -664,34 +690,9 @@ public class WalWriter implements Closeable {
         rowCount++;
     }
 
-    public long rollSegment() {
-        try {
-            closeCurrentSegment();
-            final long rolledRowCount = rowCount;
-            openNewSegment();
-            return rolledRowCount;
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
-    }
-
-    public long rollSegmentIfLimitReached() {
-        long segmentSize = 0;
-        if (rollStrategy.isMaxSegmentSizeSet()) {
-            for (int i = 0; i < columnCount; i++) {
-                segmentSize = updateSegmentSize(segmentSize, i);
-            }
-        }
-
-        long segmentAge = 0;
-        if (rollStrategy.isRollIntervalSet()) {
-            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
-        }
-
-        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
-            return rollSegment();
-        }
-        return 0L;
+    private void setRowValueNotNull(int columnIndex) {
+        assert rowValueIsNotNull.getQuick(columnIndex) != rowCount;
+        rowValueIsNotNull.setQuick(columnIndex, rowCount);
     }
 
     private long updateSegmentSize(long segmentSize, int columnIndex) {
@@ -707,9 +708,8 @@ public class WalWriter implements Closeable {
         return segmentSize;
     }
 
-    private void setRowValueNotNull(int columnIndex) {
-        assert rowValueIsNotNull.getQuick(columnIndex) != rowCount;
-        rowValueIsNotNull.setQuick(columnIndex, rowCount);
+    SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     private class RowImpl implements TableWriter.Row {
@@ -798,6 +798,14 @@ public class WalWriter implements Closeable {
         }
 
         @Override
+        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
+            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            primaryColumn.putLong(lo);
+            primaryColumn.putLong(hi);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
         public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
             getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
             setRowValueNotNull(columnIndex);
@@ -812,14 +820,6 @@ public class WalWriter implements Closeable {
         @Override
         public void putLong256(int columnIndex, CharSequence hexString) {
             getPrimaryColumn(columnIndex).putLong256(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong128LittleEndian(int columnIndex, long hi, long lo) {
-            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(lo);
-            primaryColumn.putLong(hi);
             setRowValueNotNull(columnIndex);
         }
 

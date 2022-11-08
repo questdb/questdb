@@ -58,13 +58,13 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     }
 
     @Override
-    protected void _close() {
-        this.cursor.close();
-        super._close();
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    protected void _close() {
+        this.cursor.close();
+        super._close();
     }
 }

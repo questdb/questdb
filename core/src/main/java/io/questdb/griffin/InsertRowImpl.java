@@ -32,11 +32,11 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
 
 public class InsertRowImpl {
-    private final VirtualRecord virtualRecord;
     private final RecordToRowCopier copier;
-    private final Function timestampFunction;
     private final RowFactory rowFactory;
+    private final Function timestampFunction;
     private final int tupleIndex;
+    private final VirtualRecord virtualRecord;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
@@ -59,22 +59,10 @@ public class InsertRowImpl {
         }
     }
 
-    private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        return tableWriter.newRow(timestampFunction.getTimestamp(null));
-    }
-
-    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) throws SqlException {
-        return tableWriter.newRow(
-                SqlUtil.parseFloorPartialTimestamp(
-                        timestampFunction.getStr(null),
-                        tupleIndex,
-                        ColumnType.TIMESTAMP
-                )
-        );
-    }
-
-    private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
-        return tableWriter.newRow();
+    public void append(TableWriter writer) throws SqlException {
+        final TableWriter.Row row = rowFactory.getRow(writer);
+        copier.copy(virtualRecord, row);
+        row.append();
     }
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {
@@ -85,10 +73,22 @@ public class InsertRowImpl {
         }
     }
 
-    public void append(TableWriter writer) throws SqlException {
-        final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
+    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
+        return tableWriter.newRow(
+                SqlUtil.parseFloorPartialTimestamp(
+                        timestampFunction.getStr(null),
+                        tupleIndex,
+                        ColumnType.TIMESTAMP
+                )
+        );
+    }
+
+    private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
+        return tableWriter.newRow(timestampFunction.getTimestamp(null));
+    }
+
+    private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
+        return tableWriter.newRow();
     }
 
     @FunctionalInterface

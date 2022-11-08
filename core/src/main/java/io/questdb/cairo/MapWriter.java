@@ -64,6 +64,8 @@ public interface MapWriter extends SymbolCountProvider {
         }
     }
 
+    boolean getNullFlag();
+
     boolean isCached();
 
     int put(char c);
@@ -81,7 +83,5 @@ public interface MapWriter extends SymbolCountProvider {
     void updateCacheFlag(boolean flag);
 
     void updateNullFlag(boolean flag);
-
-    boolean getNullFlag();
 
 }

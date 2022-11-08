@@ -33,16 +33,14 @@ import io.questdb.std.str.StringSink;
 import java.util.List;
 
 public class LineData {
-    private final long timestampNanos;
-
+    private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
     // column/tag name and value pairs for each line
     // column/tag name can be different to real name (dupes, uppercase...)
     private final ObjList<CharSequence> names = new ObjList<>();
-    private final ObjList<CharSequence> values = new ObjList<>();
     private final BoolList tagFlags = new BoolList();
+    private final long timestampNanos;
     private final LowerCaseCharSequenceHashSet updated = new LowerCaseCharSequenceHashSet();
-
-    private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
+    private final ObjList<CharSequence> values = new ObjList<>();
     private int tagsCount;
 
     public LineData(long timestampMicros) {
@@ -57,10 +55,6 @@ public class LineData {
             tagsCount = names.size();
         }
         add(colName, colValue, false);
-    }
-
-    public long getTimestamp() {
-        return timestampNanos;
     }
 
     public void addTag(CharSequence tagName, CharSequence tagValue) {
@@ -94,14 +88,32 @@ public class LineData {
 
         double value = 5000.0 + rnd.nextInt(1000);
         String valueStr = String.valueOf(value);
-        values.set(fieldIndex, valueStr);
+        if (columnType == ColumnType.STRING) {
+            values.set(fieldIndex, '"' + valueStr + '"');
+        } else {
+            values.set(fieldIndex, valueStr);
+        }
 
-        boolean quote = columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL;
-        if (quote) {
+        if (columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL) {
             return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         } else {
             return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         }
+    }
+
+    public long getTimestamp() {
+        return timestampNanos;
+    }
+
+    public String toLine(final CharSequence tableName) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(tableName);
+        return toString(sb).append("\n").toString();
+    }
+
+    @Override
+    public String toString() {
+        return toString(new StringBuilder()).toString();
     }
 
     private String TimestampsToString(long uSecs) {
@@ -117,10 +129,30 @@ public class LineData {
         nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
-    public String toLine(final CharSequence tableName) {
+    private CharSequence getValue(CharSequence original) {
+        if (original.charAt(0) != '"') {
+            return original;
+        }
+        return original.toString().substring(1, original.length() - 1);
+    }
+
+    CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
         final StringBuilder sb = new StringBuilder();
-        sb.append(tableName);
-        return toString(sb).append("\n").toString();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final CharSequence colName = columns.get(i);
+            final int index = nameToIndex.get(colName);
+            sb.append(index < 0 ? defaults.get(i) : getValue(values.get(index))).append(i == n - 1 ? "\n" : "\t");
+        }
+        return sb.toString();
+    }
+
+    boolean isValid() {
+        for (int i = 0, n = values.size(); i < n; i++) {
+            if (tagFlags.get(i) && values.get(i).toString().contains(" ")) {
+                return false;
+            }
+        }
+        return true;
     }
 
     StringBuilder toString(final StringBuilder sb) {
@@ -148,36 +180,5 @@ public class LineData {
             sb.setLength(sb.length() - 1);
         }
         return sb.append(" ").append(timestampNanos);
-    }
-
-    CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
-        final StringBuilder sb = new StringBuilder();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final CharSequence colName = columns.get(i);
-            final int index = nameToIndex.get(colName);
-            sb.append(index < 0 ? defaults.get(i) : getValue(values.get(index))).append(i == n - 1 ? "\n" : "\t");
-        }
-        return sb.toString();
-    }
-
-    private CharSequence getValue(CharSequence original) {
-        if (original.charAt(0) != '"') {
-            return original;
-        }
-        return original.toString().substring(1, original.length() - 1);
-    }
-
-    boolean isValid() {
-        for (int i = 0, n = values.size(); i < n; i++) {
-            if (tagFlags.get(i) && values.get(i).toString().contains(" ")) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    public String toString() {
-        return toString(new StringBuilder()).toString();
     }
 }

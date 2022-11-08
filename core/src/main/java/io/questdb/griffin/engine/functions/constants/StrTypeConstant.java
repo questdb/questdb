@@ -39,12 +39,12 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
+    public void getStr(Record rec, CharSink sink) {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public CharSequence getStrB(Record rec) {
+        return null;
     }
 
     @Override

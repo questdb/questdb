@@ -31,8 +31,8 @@ public class CompactMapCursor implements RecordCursor {
 
     private final CompactMapRecord recordA;
     private final CompactMapRecord recordB;
-    private long offsetHi;
     private long nextOffset;
+    private long offsetHi;
 
     public CompactMapCursor(CompactMapRecord record) {
         this.recordA = record;
@@ -49,6 +49,11 @@ public class CompactMapCursor implements RecordCursor {
     }
 
     @Override
+    public MapRecord getRecordB() {
+        return recordB;
+    }
+
+    @Override
     public boolean hasNext() {
         if (nextOffset < offsetHi) {
             recordA.of(nextOffset);
@@ -59,13 +64,13 @@ public class CompactMapCursor implements RecordCursor {
     }
 
     @Override
-    public MapRecord getRecordB() {
-        return recordB;
+    public void recordAt(Record record, long atRowId) {
+        ((CompactMapRecord) record).of(atRowId);
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((CompactMapRecord) record).of(atRowId);
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -76,10 +81,5 @@ public class CompactMapCursor implements RecordCursor {
     void of(long offsetHi) {
         this.nextOffset = 0;
         this.offsetHi = offsetHi;
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 }

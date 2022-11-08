@@ -50,10 +50,10 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class TelemetryJob extends SynchronizedJob implements Closeable {
-    public final static CharSequence tableName = "telemetry";
     public final static CharSequence configTableName = "telemetry_config";
-    static final String QDB_PACKAGE = "QDB_PACKAGE";
+    public final static CharSequence tableName = "telemetry";
     static final String OS_NAME = "os.name";
+    static final String QDB_PACKAGE = "QDB_PACKAGE";
     private static final Log LOG = LogFactory.getLog(TelemetryJob.class);
     private static final String WRITER_LOCK_REASON = "telemetryJob";
     private final MicrosecondClock clock;
@@ -61,10 +61,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     private final RingQueue<TelemetryTask> queue;
     private final SCSequence subSeq;
     private final SCSequence tempSequence = new SCSequence();
+    private TableWriter configWriter;
     private boolean enabled;
     private TableWriter writer;
     private final QueueConsumer<TelemetryTask> myConsumer = this::newRowConsumer;
-    private TableWriter configWriter;
 
     public TelemetryJob(CairoEngine engine) throws SqlException {
         this(engine, null);

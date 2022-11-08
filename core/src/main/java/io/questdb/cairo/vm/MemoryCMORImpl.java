@@ -44,20 +44,16 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
+    public long addressOf(long offset) {
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset - mapFileOffset;
+    }
+
+    @Override
     public void close() {
         super.close();
         mapFileOffset = 0;
         offset = 0;
-    }
-
-    @Override
-    public void growToFileSize() {
-        long length = getFilesFacade().length(getFd());
-        if (length < 0) {
-            throw CairoException.critical(ff.errno()).put("could not get length fd: ").put(fd);
-        }
-
-        extend(length - mapFileOffset);
     }
 
     @Override
@@ -68,9 +64,18 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public long addressOf(long offset) {
-        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset - mapFileOffset;
+    public long getOffset() {
+        return offset;
+    }
+
+    @Override
+    public void growToFileSize() {
+        long length = getFilesFacade().length(getFd());
+        if (length < 0) {
+            throw CairoException.critical(ff.errno()).put("could not get length fd: ").put(fd);
+        }
+
+        extend(length - mapFileOffset);
     }
 
     @Override
@@ -103,28 +108,8 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public long getOffset() {
-        return offset;
-    }
-
-    @Override
     public long size() {
         return size + mapFileOffset - offset;
-    }
-
-    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
-        this.size = size;
-        if (size > 0) {
-            try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, mapOffset, memoryTag);
-            } catch (Throwable e) {
-                close();
-                throw e;
-            }
-        }
-
-        // ---------------V leave a space here for alignment with open log message
-        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 
     private void openFile(FilesFacade ff, LPSZ name) {
@@ -146,5 +131,20 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
             close();
             throw e;
         }
+    }
+
+    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
+        this.size = size;
+        if (size > 0) {
+            try {
+                this.pageAddress = TableUtils.mapRO(ff, fd, size, mapOffset, memoryTag);
+            } catch (Throwable e) {
+                close();
+                throw e;
+            }
+        }
+
+        // ---------------V leave a space here for alignment with open log message
+        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 }

@@ -35,59 +35,57 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 public class LineTcpParser {
 
-    public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
-    public static final byte ENTITY_TYPE_NULL = 0;
-    public static final byte ENTITY_TYPE_TAG = 1;
-    public static final byte ENTITY_TYPE_FLOAT = 2;
-    public static final byte ENTITY_TYPE_INTEGER = 3;
-    public static final byte ENTITY_TYPE_STRING = 4;
-    public static final byte ENTITY_TYPE_SYMBOL = 5;
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
-    public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_BYTE = 17;
     public static final byte ENTITY_TYPE_CACHED_TAG = 8;
+    public static final byte ENTITY_TYPE_CHAR = 19;
+    public static final byte ENTITY_TYPE_DATE = 18;
+    public static final byte ENTITY_TYPE_DOUBLE = 15;
+    public static final byte ENTITY_TYPE_FLOAT = 2;
     public static final byte ENTITY_TYPE_GEOBYTE = 9;
-    public static final byte ENTITY_TYPE_GEOSHORT = 10;
     public static final byte ENTITY_TYPE_GEOINT = 11;
     public static final byte ENTITY_TYPE_GEOLONG = 12;
-    public static final byte ENTITY_TYPE_TIMESTAMP = 13;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
+    public static final byte ENTITY_TYPE_GEOSHORT = 10;
+    public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_LONG = 14;
-    public static final byte ENTITY_TYPE_DOUBLE = 15;
+    public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_SHORT = 16;
-    public static final byte ENTITY_TYPE_BYTE = 17;
-    public static final byte ENTITY_TYPE_DATE = 18;
-    public static final byte ENTITY_TYPE_CHAR = 19;
+    public static final byte ENTITY_TYPE_STRING = 4;
+    public static final byte ENTITY_TYPE_SYMBOL = 5;
+    public static final byte ENTITY_TYPE_TAG = 1;
+    public static final byte ENTITY_TYPE_TIMESTAMP = 13;
+    public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
-
-    private static final byte ENTITY_HANDLER_TABLE = 0;
     private static final byte ENTITY_HANDLER_NAME = 1;
-    private static final byte ENTITY_HANDLER_VALUE = 2;
-    private static final byte ENTITY_HANDLER_TIMESTAMP = 3;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
+    private static final byte ENTITY_HANDLER_TABLE = 0;
+    private static final byte ENTITY_HANDLER_TIMESTAMP = 3;
+    private static final byte ENTITY_HANDLER_VALUE = 2;
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
     private static final boolean[] controlChars;
-
-    private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
+    private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
     private final boolean stringAsTagSupported;
     private final boolean symbolAsFieldSupported;
     private long bufAt;
+    private ProtoEntity currentEntity;
+    private byte entityHandler = -1;
     private long entityLo;
-    private boolean tagsComplete;
-    private boolean tagStartsWithQuote;
-    private int nEscapedChars;
+    private ErrorCode errorCode;
+    private boolean hasNonAscii;
     private boolean isQuotedFieldValue;
     private int nEntities;
-    private ProtoEntity currentEntity;
-    private ErrorCode errorCode;
-    private byte entityHandler = -1;
-    private long timestamp;
+    private int nEscapedChars;
     private int nQuoteCharacters;
-    private boolean scape;
     private boolean nextValueCanBeOpenQuote;
-    private boolean hasNonAscii;
+    private boolean scape;
+    private boolean tagStartsWithQuote;
+    private boolean tagsComplete;
+    private long timestamp;
 
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
         this.stringAsTagSupported = stringAsTagSupported;
@@ -536,10 +534,6 @@ public class LineTcpParser {
         return false; // missing tail quote as the string extends past the max allowed size
     }
 
-    public enum ParseResult {
-        MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
-    }
-
     public enum ErrorCode {
         EMPTY_LINE,
         NO_FIELDS,
@@ -555,13 +549,17 @@ public class LineTcpParser {
         NONE
     }
 
+    public enum ParseResult {
+        MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
+    }
+
     public class ProtoEntity {
         private final DirectByteCharSequence name = new DirectByteCharSequence();
         private final DirectByteCharSequence value = new DirectByteCharSequence();
-        private byte type = ENTITY_TYPE_NONE;
-        private long longValue;
         private boolean booleanValue;
         private double floatValue;
+        private long longValue;
+        private byte type = ENTITY_TYPE_NONE;
 
         public boolean getBooleanValue() {
             return booleanValue;

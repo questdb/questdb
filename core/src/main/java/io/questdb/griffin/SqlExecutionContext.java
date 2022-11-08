@@ -43,45 +43,11 @@ import java.io.Closeable;
 
 public interface SqlExecutionContext extends Closeable {
 
-    QueryFutureUpdateListener getQueryFutureUpdateListener();
+    void clearAnalyticContext();
 
-    BindVariableService getBindVariableService();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    default @NotNull MessageBus getMessageBus() {
-        return getCairoEngine().getMessageBus();
+    @Override
+    default void close() {
     }
-
-    boolean isTimestampRequired();
-
-    void popTimestampRequiredFlag();
-
-    void pushTimestampRequiredFlag(boolean flag);
-
-    int getWorkerCount();
-
-    default int getSharedWorkerCount() {
-        return getWorkerCount();
-    }
-
-    Rnd getRandom();
-
-    default Rnd getAsyncRandom() {
-        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
-    }
-
-    void setRandom(Rnd rnd);
-
-    @NotNull CairoEngine getCairoEngine();
-
-    long getRequestFd();
-
-    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
-
-    void storeTelemetry(short event, short origin);
-
-    AnalyticContext getAnalyticContext();
 
     void configureAnalyticContext(
             @Nullable VirtualRecord partitionByRecord,
@@ -91,19 +57,55 @@ public interface SqlExecutionContext extends Closeable {
             boolean baseSupportsRandomAccess
     );
 
-    void initNow();
+    AnalyticContext getAnalyticContext();
 
-    long getNow();
+    default Rnd getAsyncRandom() {
+        return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
+    }
+
+    BindVariableService getBindVariableService();
+
+    @NotNull CairoEngine getCairoEngine();
+
+    CairoSecurityContext getCairoSecurityContext();
+
+    @NotNull SqlExecutionCircuitBreaker getCircuitBreaker();
+
+    boolean getCloneSymbolTables();
 
     int getJitMode();
 
-    void setJitMode(int jitMode);
-
-    @Override
-    default void close(){
+    default @NotNull MessageBus getMessageBus() {
+        return getCairoEngine().getMessageBus();
     }
+
+    long getNow();
+
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    Rnd getRandom();
+
+    long getRequestFd();
+
+    default int getSharedWorkerCount() {
+        return getWorkerCount();
+    }
+
+    int getWorkerCount();
+
+    void initNow();
+
+    boolean isTimestampRequired();
+
+    void popTimestampRequiredFlag();
+
+    void pushTimestampRequiredFlag(boolean flag);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
-    boolean getCloneSymbolTables();
+    void setJitMode(int jitMode);
+
+    void setRandom(Rnd rnd);
+
+    void storeTelemetry(short event, short origin);
 }

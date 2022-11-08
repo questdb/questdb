@@ -46,23 +46,23 @@ public class WorkerPool implements Closeable {
             return 0;
         }
     };
-    private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final int workerCount;
-    private final int[] workerAffinity;
-    private final SOCountDownLatch started = new SOCountDownLatch(1);
-    private final ObjList<ObjHashSet<Job>> workerJobs;
-    private final SOCountDownLatch halted;
-    private final ObjList<Worker> workers = new ObjList<>();
-    private final ObjList<ObjList<Closeable>> threadLocalCleaners;
-    private final boolean haltOnError;
     private final boolean daemons;
-    private final String poolName;
-    private final long yieldThreshold;
-    private final long sleepThreshold;
-    private final long sleepMs;
     private final ObjList<Closeable> freeOnExist = new ObjList<>();
+    private final boolean haltOnError;
+    private final SOCountDownLatch halted;
     private final HealthMetrics metrics;
+    private final String poolName;
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final long sleepMs;
+    private final long sleepThreshold;
+    private final SOCountDownLatch started = new SOCountDownLatch(1);
+    private final ObjList<ObjList<Closeable>> threadLocalCleaners;
+    private final int[] workerAffinity;
+    private final int workerCount;
+    private final ObjList<ObjHashSet<Job>> workerJobs;
+    private final ObjList<Worker> workers = new ObjList<>();
+    private final long yieldThreshold;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this(configuration, DISABLED);
@@ -118,12 +118,6 @@ public class WorkerPool implements Closeable {
     public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         threadLocalCleaners.getQuick(worker).add(cleaner);
-    }
-
-    private void setupPathCleaner() {
-        for (int i = 0; i < workerCount; i++) {
-            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);
-        }
     }
 
     @Override
@@ -203,6 +197,12 @@ public class WorkerPool implements Closeable {
                 log.info().$("worker pool started [pool=").$(poolName).I$();
             }
             started.countDown();
+        }
+    }
+
+    private void setupPathCleaner() {
+        for (int i = 0; i < workerCount; i++) {
+            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);
         }
     }
 }

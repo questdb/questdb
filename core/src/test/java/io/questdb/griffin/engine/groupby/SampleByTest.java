@@ -157,40 +157,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
-        assertQuery("k\tcount\n" +
-                        "1970-01-03T00:00:00.000000Z\t6\n" +
-                        "1970-01-03T06:00:00.000000Z\t6\n" +
-                        "1970-01-03T12:00:00.000000Z\t6\n" +
-                        "1970-01-03T18:00:00.000000Z\t2\n",
-                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false);
-    }
-
-    @Test
-    public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
-        assertQuery("k\tcount\n" +
-                        "1970-01-03T00:00:00.000000Z\t6\n",
-                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", false, true, true);
-    }
-
-    @Test
     public void testGroupByAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
                         "HYRX\t108.4198\t129.3991122184773\t2127224767\t95\t57207\t1696566079386694074\n" +
@@ -1098,7 +1064,7 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffst() throws Exception {
+    public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
         assertSampleByIndexQuery("to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
@@ -1680,38 +1646,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexSampleByMonth() throws Exception {
-        assertQuery("k\ts\tlat\tlon\n",
-                "select k, s, last(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s = 'b' " +
-                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
-                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
-                        "sample by 1M",
-                "create table xx (k timestamp, s symbol, lat double, lon double)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                false,
-                true);
-
-        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
-                        "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
-                "select k, s, last(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s = 'b' " +
-                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
-                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
-                        "sample by 1M",
-                "insert into xx " +
-                        "values " +
-                        "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
-                        "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
-                        "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
-                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
-    }
-
-    @Test
     public void testIndexSampleByMicro() throws Exception {
         sampleByIndexSearchPageSize = 256;
         assertSampleByIndexQuery(
@@ -1831,6 +1765,38 @@ public class SampleByTest extends AbstractGriffinTest {
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY",
                 true);
+    }
+
+    @Test
+    public void testIndexSampleByMonth() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "create table xx (k timestamp, s symbol, lat double, lon double)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "insert into xx " +
+                        "values " +
+                        "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
+                        "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
+                        "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
+                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
     }
 
     @Test
@@ -2319,6 +2285,40 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
+    public void testSampleByAlignedToCalendarWithTimezoneEndingWithSemicolon() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n" +
+                        "1970-01-03T06:00:00.000000Z\t6\n" +
+                        "1970-01-03T12:00:00.000000Z\t6\n" +
+                        "1970-01-03T18:00:00.000000Z\t2\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC';",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false);
+    }
+
+    @Test
     public void testSampleByAllTypesAndInvalidTimestampColumn() throws Exception {
         assertFailure("select \n" +
                         "    LastUpdate, \n" +
@@ -2438,25 +2438,6 @@ public class SampleByTest extends AbstractGriffinTest {
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
                         "from x " +
                         "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
-                        "   from" +
-                        "   long_sequence(120)" +
-                        ") timestamp(k)", null, false);
-    }
-
-    @Test
-    public void testSampleByWithEmptyCursor() throws Exception {
-        assertQuery("to_timezone\ts\tlat\tlon\n",
-                "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('d') " +
                         "sample by 1d align to calendar time zone 'Europe/London')",
                 "create table x as " +
                         "(" +
@@ -2619,6 +2600,59 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 100U fill(none)",
+                "create table x" +
+                        "(" +
+                        " a double," +
+                        " b symbol," +
+                        " k timestamp" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 100) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
+                        "23.90529010846525\t1970-01-04T05:00:00.000200Z\n" +
+                        "70.94360487171201\t1970-01-04T05:00:00.000300Z\n" +
+                        "87.99634725391621\t1970-01-04T05:00:00.000400Z\n" +
+                        "32.881769076795045\t1970-01-04T05:00:00.000500Z\n" +
+                        "97.71103146051203\t1970-01-04T05:00:00.000600Z\n" +
+                        "81.46807944500559\t1970-01-04T05:00:00.000700Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.000800Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.000900Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.001000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.001100Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.001200Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.001300Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:00.001400Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:00.001500Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:00.001600Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:00.001700Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:00.001800Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:00.001900Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:00.002000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:00.002100Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:00.002200Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:00.002300Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:00.002400Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:00.002500Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:00.002600Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
+                false);
+    }
+
+    @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
         assertQuery("sum\tk\n",
                 "select sum(a), k from x sample by 100T fill(none)",
@@ -2671,59 +2705,6 @@ public class SampleByTest extends AbstractGriffinTest {
                         "94.41658975532606\t1970-01-04T05:00:02.700000Z\n" +
                         "62.5966045857722\t1970-01-04T05:00:02.800000Z\n" +
                         "94.55893004802432\t1970-01-04T05:00:02.900000Z\n",
-                false);
-    }
-
-    @Test
-    public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
-        assertQuery("sum\tk\n",
-                "select sum(a), k from x sample by 100U fill(none)",
-                "create table x" +
-                        "(" +
-                        " a double," +
-                        " b symbol," +
-                        " k timestamp" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 100) k" +
-                        " from" +
-                        " long_sequence(30)" +
-                        ") timestamp(k)",
-                "sum\tk\n" +
-                        "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
-                        "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
-                        "23.90529010846525\t1970-01-04T05:00:00.000200Z\n" +
-                        "70.94360487171201\t1970-01-04T05:00:00.000300Z\n" +
-                        "87.99634725391621\t1970-01-04T05:00:00.000400Z\n" +
-                        "32.881769076795045\t1970-01-04T05:00:00.000500Z\n" +
-                        "97.71103146051203\t1970-01-04T05:00:00.000600Z\n" +
-                        "81.46807944500559\t1970-01-04T05:00:00.000700Z\n" +
-                        "57.93466326862211\t1970-01-04T05:00:00.000800Z\n" +
-                        "12.026122412833129\t1970-01-04T05:00:00.000900Z\n" +
-                        "48.820511018586934\t1970-01-04T05:00:00.001000Z\n" +
-                        "26.922103479744898\t1970-01-04T05:00:00.001100Z\n" +
-                        "52.98405941762054\t1970-01-04T05:00:00.001200Z\n" +
-                        "84.45258177211063\t1970-01-04T05:00:00.001300Z\n" +
-                        "97.5019885372507\t1970-01-04T05:00:00.001400Z\n" +
-                        "49.00510449885239\t1970-01-04T05:00:00.001500Z\n" +
-                        "80.01121139739173\t1970-01-04T05:00:00.001600Z\n" +
-                        "92.050039469858\t1970-01-04T05:00:00.001700Z\n" +
-                        "45.6344569609078\t1970-01-04T05:00:00.001800Z\n" +
-                        "40.455469747939254\t1970-01-04T05:00:00.001900Z\n" +
-                        "56.594291398612405\t1970-01-04T05:00:00.002000Z\n" +
-                        "9.750574414434398\t1970-01-04T05:00:00.002100Z\n" +
-                        "12.105630273556178\t1970-01-04T05:00:00.002200Z\n" +
-                        "57.78947915182423\t1970-01-04T05:00:00.002300Z\n" +
-                        "86.85154305419587\t1970-01-04T05:00:00.002400Z\n" +
-                        "12.02416087573498\t1970-01-04T05:00:00.002500Z\n" +
-                        "49.42890511958454\t1970-01-04T05:00:00.002600Z\n" +
-                        "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
-                        "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
-                        "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
                 false);
     }
 
@@ -3097,6 +3078,57 @@ public class SampleByTest extends AbstractGriffinTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByWithEmptyCursor() throws Exception {
+        assertQuery("to_timezone\ts\tlat\tlon\n",
+                "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
+                        "from x " +
+                        "where s in ('d') " +
+                        "sample by 1d align to calendar time zone 'Europe/London')",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a','b',null) s," +
+                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
+                        "   from" +
+                        "   long_sequence(120)" +
+                        ") timestamp(k)", null, false);
+    }
+
+    @Test
+    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
+        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
+                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
+                "select * from (" +
+                        "  select" +
+                        "    first(price) AS open," +
+                        "    max(price) AS high," +
+                        "    min(price) AS low," +
+                        "    last(price) AS close," +
+                        "    sum(amount) AS volume," +
+                        "    created_at as timestamp" +
+                        "  from trades" +
+                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
+                        "  sample by 60m" +
+                        "  fill(null, null, null, null, 0) align to calendar" +
+                        ") order by timestamp desc limit 0, 1",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_str('btcusdt', 'ethusdt') market_id," +
+                        " rnd_double(0) * 100 price," +
+                        " rnd_double(0) * 100 amount," +
+                        " timestamp_sequence(172800000000, 3600000) created_at" +
+                        " from long_sequence(20)" +
+                        ") timestamp(created_at) partition by day",
+                null,
+                true,
+                false,
+                true);
     }
 
     @Test
@@ -8369,79 +8401,55 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueNotEnough() throws Exception {
-        assertFailure(
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
-                "create table x as " +
+    public void testSampleFillValueListWithLinearAllTypesNotKeyed() throws Exception {
+        assertQuery("first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n",
+                "select first(a),first(c),min(d),max(e),first(f),sum(j),first(l),first(p), k " +
+                        "from x sample by 15m fill(linear,linear,linear,linear,linear,linear,linear,linear)",
+                "create table x " +
                         "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_float(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_short() e," +
-                        " rnd_byte(3,10) f," +
-                        " rnd_long() g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                0,
-                "not enough values"
-        );
-    }
-
-    @Test
-    public void testSampleFillValueNotKeyed() throws Exception {
-        assertQuery("sum\tk\n" +
-                        "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T00:30:00.000000Z\n" +
-                        "42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T01:30:00.000000Z\n" +
-                        "23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T02:30:00.000000Z\n" +
-                        "70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T03:30:00.000000Z\n" +
-                        "87.99634725391621\t1970-01-03T04:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T04:30:00.000000Z\n" +
-                        "32.881769076795045\t1970-01-03T05:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T05:30:00.000000Z\n" +
-                        "97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T06:30:00.000000Z\n" +
-                        "81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T07:30:00.000000Z\n" +
-                        "57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
-                        "20.56\t1970-01-03T08:30:00.000000Z\n" +
-                        "12.026122412833129\t1970-01-03T09:00:00.000000Z\n",
-                "select sum(a), k from x sample by 30m fill(20.56)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(10)" +
+                        "a int," +
+                        " c char," +
+                        " d double," +
+                        " e float," +
+                        " f short," +
+                        " j long," +
+                        " l byte," +
+                        " p timestamp," +
+                        " k timestamp" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false);
-    }
-
-    @Test
-    public void testSampleFillValueListWithNullAndPrevAndLinear() throws Exception {
-        assertFailure(
-                "select b, sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol('ABC', 'XYZ') b," +
+                "insert into x select" +
+                        " rnd_int() a," +
+                        " rnd_char() c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " timestamp_sequence(0, 3600000000) p," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
-                        " long_sequence(10)" +
-                        ") timestamp(k) partition by NONE",
-                0,
-                "linear interpolation is not supported when using fill values for keyed sample by expression"
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n" +
+                        "-1148479920\tT\tNaN\t0.0849\t635\t-7611843578141082998\t45\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
+                        "-394179013\tU\tNaN\t0.3101\t615\t-7444863803039212544\t35\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:15:00.000000Z\n" +
+                        "360121893\tV\tNaN\t0.5352\t596\t-7277884027937342464\t25\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
+                        "1114422799\tW\tNaN\t0.7604\t576\t-7110904252835470336\t15\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:45:00.000000Z\n" +
+                        "1868723706\tY\t0.13123360041292131\t0.9856\t557\t-6943924477733600060\t5\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:00:00.000000Z\n" +
+                        "1299079178\tY\tNaN\t0.9295\t524\t-6204257507692568576\t7\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:15:00.000000Z\n" +
+                        "729434650\tY\tNaN\t0.8734\t492\t-5464590537651536896\t10\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:30:00.000000Z\n" +
+                        "159790122\tY\tNaN\t0.8172\t460\t-4724923567610504192\t12\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:45:00.000000Z\n" +
+                        "-409854405\tZ\tNaN\t0.7611\t428\t-3985256597569472057\t15\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:00:00.000000Z\n" +
+                        "-665460316\tX\tNaN\t0.6764\t452\t-4857888593628720128\t18\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:15:00.000000Z\n" +
+                        "-921066227\tW\tNaN\t0.5918\t476\t-5730520589687966720\t21\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:30:00.000000Z\n" +
+                        "-1176672138\tU\tNaN\t0.5071\t500\t-6603152585747214336\t24\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:45:00.000000Z\n" +
+                        "-1432278050\tT\t0.7261136209823622\t0.4224\t524\t-7475784581806461658\t27\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z\n" +
+                        "-1355500819\tP\t0.59422476067067\t0.4008\t631\t-4617290017241081856\t21\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:15:00.000000Z\n" +
+                        "-1278723588\tL\t0.4623359003589777\t0.3793\t738\t-1758795452675701248\t15\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:30:00.000000Z\n" +
+                        "-1201946357\tH\t0.3304470400472854\t0.3577\t845\t1099699111889679488\t9\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:45:00.000000Z\n" +
+                        "-1125169127\tE\t0.1985581797355932\t0.3361\t953\t3958193676455060057\t3\t1970-01-01T04:00:00.000000Z\t1970-01-03T04:00:00.000000Z\n",
+                false
         );
     }
 
@@ -8524,54 +8532,21 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithNullAndPrevAndLinearNotKeyed() throws Exception {
-        assertQuery("sum\tcount\tmin\tmax\tavg\tk\n" +
-                        "76.75673070796104\t1\t76.75673070796104\t76.75673070796104\t76.75673070796104\t1970-01-03T01:00:00.000000Z\n" +
-                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t73.52156685891707\t1970-01-03T01:30:00.000000Z\n" +
-                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t70.28640300987308\t1970-01-03T02:00:00.000000Z\n" +
-                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t67.05123916082911\t1970-01-03T02:30:00.000000Z\n" +
-                        "63.81607531178513\t1\t63.81607531178513\t63.81607531178513\t63.81607531178513\t1970-01-03T03:00:00.000000Z\n" +
-                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t50.868587087047125\t1970-01-03T03:30:00.000000Z\n" +
-                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t37.92109886230913\t1970-01-03T04:00:00.000000Z\n" +
-                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t24.973610637571127\t1970-01-03T04:30:00.000000Z\n" +
-                        "12.026122412833129\t1\t12.026122412833129\t12.026122412833129\t12.026122412833129\t1970-01-03T05:00:00.000000Z\n" +
-                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t15.750117679561072\t1970-01-03T05:30:00.000000Z\n" +
-                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t19.47411294628901\t1970-01-03T06:00:00.000000Z\n" +
-                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t23.198108213016955\t1970-01-03T06:30:00.000000Z\n" +
-                        "26.922103479744898\t1\t26.922103479744898\t26.922103479744898\t26.922103479744898\t1970-01-03T07:00:00.000000Z\n" +
-                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t41.30472305283633\t1970-01-03T07:30:00.000000Z\n" +
-                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t55.68734262592777\t1970-01-03T08:00:00.000000Z\n" +
-                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t70.0699621990192\t1970-01-03T08:30:00.000000Z\n" +
-                        "84.45258177211063\t1\t84.45258177211063\t84.45258177211063\t84.45258177211063\t1970-01-03T09:00:00.000000Z\n" +
-                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t75.59071245379606\t1970-01-03T09:30:00.000000Z\n" +
-                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t66.72884313548151\t1970-01-03T10:00:00.000000Z\n" +
-                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t57.86697381716695\t1970-01-03T10:30:00.000000Z\n" +
-                        "49.00510449885239\t1\t49.00510449885239\t49.00510449885239\t49.00510449885239\t1970-01-03T11:00:00.000000Z\n" +
-                        "132.50550921779725\t2\t40.455469747939254\t92.050039469858\t66.25275460889863\t1970-01-03T11:30:00.000000Z\n" +
-                        "9.750574414434398\t1\t9.750574414434398\t9.750574414434398\t9.750574414434398\t1970-01-03T12:00:00.000000Z\n" +
-                        "69.81364002755922\t2\t12.02416087573498\t57.78947915182423\t34.90682001377961\t1970-01-03T12:30:00.000000Z\n" +
-                        "58.912164838797885\t1\t58.912164838797885\t58.912164838797885\t58.912164838797885\t1970-01-03T13:00:00.000000Z\n" +
-                        "139.22127942393962\t2\t44.80468966861358\t94.41658975532606\t69.61063971196981\t1970-01-03T13:30:00.000000Z\n" +
-                        "94.55893004802432\t1\t94.55893004802432\t94.55893004802432\t94.55893004802432\t1970-01-03T14:00:00.000000Z\n",
-                "select sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
+    public void testSampleFillValueListWithNullAndPrevAndLinear() throws Exception {
+        assertFailure(
+                "select b, sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_symbol('ABC', 'XYZ') b," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        " union " +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(212400000000, 600000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
-                "k",
-                false);
+                0,
+                "linear interpolation is not supported when using fill values for keyed sample by expression"
+        );
     }
 
     @Test
@@ -8623,56 +8598,113 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueListWithLinearAllTypesNotKeyed() throws Exception {
-        assertQuery("first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n",
-                "select first(a),first(c),min(d),max(e),first(f),sum(j),first(l),first(p), k " +
-                        "from x sample by 15m fill(linear,linear,linear,linear,linear,linear,linear,linear)",
-                "create table x " +
+    public void testSampleFillValueListWithNullAndPrevAndLinearNotKeyed() throws Exception {
+        assertQuery("sum\tcount\tmin\tmax\tavg\tk\n" +
+                        "76.75673070796104\t1\t76.75673070796104\t76.75673070796104\t76.75673070796104\t1970-01-03T01:00:00.000000Z\n" +
+                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t73.52156685891707\t1970-01-03T01:30:00.000000Z\n" +
+                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t70.28640300987308\t1970-01-03T02:00:00.000000Z\n" +
+                        "20.56\tNaN\t76.75673070796104\t76.75673070796104\t67.05123916082911\t1970-01-03T02:30:00.000000Z\n" +
+                        "63.81607531178513\t1\t63.81607531178513\t63.81607531178513\t63.81607531178513\t1970-01-03T03:00:00.000000Z\n" +
+                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t50.868587087047125\t1970-01-03T03:30:00.000000Z\n" +
+                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t37.92109886230913\t1970-01-03T04:00:00.000000Z\n" +
+                        "20.56\tNaN\t63.81607531178513\t63.81607531178513\t24.973610637571127\t1970-01-03T04:30:00.000000Z\n" +
+                        "12.026122412833129\t1\t12.026122412833129\t12.026122412833129\t12.026122412833129\t1970-01-03T05:00:00.000000Z\n" +
+                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t15.750117679561072\t1970-01-03T05:30:00.000000Z\n" +
+                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t19.47411294628901\t1970-01-03T06:00:00.000000Z\n" +
+                        "20.56\tNaN\t12.026122412833129\t12.026122412833129\t23.198108213016955\t1970-01-03T06:30:00.000000Z\n" +
+                        "26.922103479744898\t1\t26.922103479744898\t26.922103479744898\t26.922103479744898\t1970-01-03T07:00:00.000000Z\n" +
+                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t41.30472305283633\t1970-01-03T07:30:00.000000Z\n" +
+                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t55.68734262592777\t1970-01-03T08:00:00.000000Z\n" +
+                        "20.56\tNaN\t26.922103479744898\t26.922103479744898\t70.0699621990192\t1970-01-03T08:30:00.000000Z\n" +
+                        "84.45258177211063\t1\t84.45258177211063\t84.45258177211063\t84.45258177211063\t1970-01-03T09:00:00.000000Z\n" +
+                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t75.59071245379606\t1970-01-03T09:30:00.000000Z\n" +
+                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t66.72884313548151\t1970-01-03T10:00:00.000000Z\n" +
+                        "20.56\tNaN\t84.45258177211063\t84.45258177211063\t57.86697381716695\t1970-01-03T10:30:00.000000Z\n" +
+                        "49.00510449885239\t1\t49.00510449885239\t49.00510449885239\t49.00510449885239\t1970-01-03T11:00:00.000000Z\n" +
+                        "132.50550921779725\t2\t40.455469747939254\t92.050039469858\t66.25275460889863\t1970-01-03T11:30:00.000000Z\n" +
+                        "9.750574414434398\t1\t9.750574414434398\t9.750574414434398\t9.750574414434398\t1970-01-03T12:00:00.000000Z\n" +
+                        "69.81364002755922\t2\t12.02416087573498\t57.78947915182423\t34.90682001377961\t1970-01-03T12:30:00.000000Z\n" +
+                        "58.912164838797885\t1\t58.912164838797885\t58.912164838797885\t58.912164838797885\t1970-01-03T13:00:00.000000Z\n" +
+                        "139.22127942393962\t2\t44.80468966861358\t94.41658975532606\t69.61063971196981\t1970-01-03T13:30:00.000000Z\n" +
+                        "94.55893004802432\t1\t94.55893004802432\t94.55893004802432\t94.55893004802432\t1970-01-03T14:00:00.000000Z\n",
+                "select sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, linear)",
+                "create table x as " +
                         "(" +
-                        "a int," +
-                        " c char," +
-                        " d double," +
-                        " e float," +
-                        " f short," +
-                        " j long," +
-                        " l byte," +
-                        " p timestamp," +
-                        " k timestamp" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select" +
-                        " rnd_int() a," +
-                        " rnd_char() c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_long() j," +
-                        " rnd_byte(2,50) l," +
-                        " timestamp_sequence(0, 3600000000) p," +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
-                        ") timestamp(k)",
-                "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n" +
-                        "-1148479920\tT\tNaN\t0.0849\t635\t-7611843578141082998\t45\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
-                        "-394179013\tU\tNaN\t0.3101\t615\t-7444863803039212544\t35\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:15:00.000000Z\n" +
-                        "360121893\tV\tNaN\t0.5352\t596\t-7277884027937342464\t25\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:30:00.000000Z\n" +
-                        "1114422799\tW\tNaN\t0.7604\t576\t-7110904252835470336\t15\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:45:00.000000Z\n" +
-                        "1868723706\tY\t0.13123360041292131\t0.9856\t557\t-6943924477733600060\t5\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:00:00.000000Z\n" +
-                        "1299079178\tY\tNaN\t0.9295\t524\t-6204257507692568576\t7\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:15:00.000000Z\n" +
-                        "729434650\tY\tNaN\t0.8734\t492\t-5464590537651536896\t10\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:30:00.000000Z\n" +
-                        "159790122\tY\tNaN\t0.8172\t460\t-4724923567610504192\t12\t1970-01-01T01:00:00.000000Z\t1970-01-03T01:45:00.000000Z\n" +
-                        "-409854405\tZ\tNaN\t0.7611\t428\t-3985256597569472057\t15\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:00:00.000000Z\n" +
-                        "-665460316\tX\tNaN\t0.6764\t452\t-4857888593628720128\t18\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:15:00.000000Z\n" +
-                        "-921066227\tW\tNaN\t0.5918\t476\t-5730520589687966720\t21\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:30:00.000000Z\n" +
-                        "-1176672138\tU\tNaN\t0.5071\t500\t-6603152585747214336\t24\t1970-01-01T02:00:00.000000Z\t1970-01-03T02:45:00.000000Z\n" +
-                        "-1432278050\tT\t0.7261136209823622\t0.4224\t524\t-7475784581806461658\t27\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z\n" +
-                        "-1355500819\tP\t0.59422476067067\t0.4008\t631\t-4617290017241081856\t21\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:15:00.000000Z\n" +
-                        "-1278723588\tL\t0.4623359003589777\t0.3793\t738\t-1758795452675701248\t15\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:30:00.000000Z\n" +
-                        "-1201946357\tH\t0.3304470400472854\t0.3577\t845\t1099699111889679488\t9\t1970-01-01T03:00:00.000000Z\t1970-01-03T03:45:00.000000Z\n" +
-                        "-1125169127\tE\t0.1985581797355932\t0.3361\t953\t3958193676455060057\t3\t1970-01-01T04:00:00.000000Z\t1970-01-03T04:00:00.000000Z\n",
-                false
+                        " union " +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(212400000000, 600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSampleFillValueNotEnough() throws Exception {
+        assertFailure(
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                0,
+                "not enough values"
         );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyed() throws Exception {
+        assertQuery("sum\tk\n" +
+                        "11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T00:30:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-03T01:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T01:30:00.000000Z\n" +
+                        "23.90529010846525\t1970-01-03T02:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T02:30:00.000000Z\n" +
+                        "70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T03:30:00.000000Z\n" +
+                        "87.99634725391621\t1970-01-03T04:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T04:30:00.000000Z\n" +
+                        "32.881769076795045\t1970-01-03T05:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T05:30:00.000000Z\n" +
+                        "97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T06:30:00.000000Z\n" +
+                        "81.46807944500559\t1970-01-03T07:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T07:30:00.000000Z\n" +
+                        "57.93466326862211\t1970-01-03T08:00:00.000000Z\n" +
+                        "20.56\t1970-01-03T08:30:00.000000Z\n" +
+                        "12.026122412833129\t1970-01-03T09:00:00.000000Z\n",
+                "select sum(a), k from x sample by 30m fill(20.56)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
     }
 
     @Test
@@ -9316,35 +9348,117 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByWithFilterAndOrderByAndLimit() throws Exception {
-        assertQuery("open\thigh\tlow\tclose\tvolume\ttimestamp\n" +
-                        "22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z\n",
-                "select * from (" +
-                        "  select" +
-                        "    first(price) AS open," +
-                        "    max(price) AS high," +
-                        "    min(price) AS low," +
-                        "    last(price) AS close," +
-                        "    sum(amount) AS volume," +
-                        "    created_at as timestamp" +
-                        "  from trades" +
-                        "  where market_id = 'btcusdt' AND created_at > dateadd('m', -60, 172800000000)" +
-                        "  sample by 60m" +
-                        "  fill(null, null, null, null, 0) align to calendar" +
-                        ") order by timestamp desc limit 0, 1",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_str('btcusdt', 'ethusdt') market_id," +
-                        " rnd_double(0) * 100 price," +
-                        " rnd_double(0) * 100 amount," +
-                        " timestamp_sequence(172800000000, 3600000) created_at" +
-                        " from long_sequence(20)" +
-                        ") timestamp(created_at) partition by day",
-                null,
-                true,
-                false,
-                true);
+    public void testTimestampColumnAliasPosFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "time\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\ttime\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAliasPosMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\ttime\tsum1\tsum2\n" +
+                            "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
+                            "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "time"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "ts\tsum\tsum1\tsum2\n" +
+                            "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
+                            "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
+                    "SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tsum2\tts\n" +
+                            "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
+                            "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnJoinTableAliasMid() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+            compiler.compile("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            assertQuery(
+                    "sum\tsum1\tts\tsum2\n" +
+                            "33.423793766512645\t28.964416248629917\t1970-01-01T00:00:00.000000Z\t32.11038924761886\n" +
+                            "20.686394200400652\t18.863001213785466\t1970-01-01T01:00:00.000000Z\t21.027598662521456\n",
+                    "SELECT sum(a.to_grid), sum(a.from_grid), a.ts, sum(b.hourly_production)\n" +
+                            "FROM 'eloverblik' as a, 'ap_systems' as b\n" +
+                            "WHERE a.ts = b.ts\n" +
+                            "SAMPLE BY 1h\n",
+                    "ts"
+            );
+        });
     }
 
     @Test

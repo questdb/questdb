@@ -56,9 +56,9 @@ import java.util.zip.GZIPInputStream;
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
     private LineTcpReceiverConfiguration lineConfiguration;
-    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
+    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
 
     @BeforeClass
     public static void setUpStatic() {

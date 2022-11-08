@@ -53,12 +53,12 @@ public class SymbolFunctionTest {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
+        public CharSequence valueBOf(int key) {
             return "XYZ";
         }
 
         @Override
-        public CharSequence valueBOf(int key) {
+        public CharSequence valueOf(int symbolKey) {
             return "XYZ";
         }
     };
@@ -66,6 +66,26 @@ public class SymbolFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testChar() {
         function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGeoShort() {
+        function.getGeoShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -156,25 +176,5 @@ public class SymbolFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
     }
 }

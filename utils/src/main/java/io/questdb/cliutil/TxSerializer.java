@@ -99,7 +99,7 @@ public class TxSerializer {
         long baseOffset = TX_BASE_HEADER_SIZE;
         long offsetOffset = isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32;
         long symbolSizeOffset = isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32;
-        long partitionSizeOffst = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
+        long partitionSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
 
         if (tx.ATTACHED_PARTITION_SIZE != 0 && (tx.ATTACHED_PARTITIONS == null || tx.ATTACHED_PARTITION_SIZE != tx.ATTACHED_PARTITIONS.size())) {
             String arraySize = tx.ATTACHED_PARTITIONS == null ? "null" : Integer.toString(tx.ATTACHED_PARTITIONS.size());
@@ -119,7 +119,7 @@ public class TxSerializer {
                 rwTxMem.putLong(TX_BASE_OFFSET_VERSION_64, version);
                 rwTxMem.putLong(offsetOffset, baseOffset);
                 rwTxMem.putLong(symbolSizeOffset, tx.TX_OFFSET_MAP_WRITER_COUNT * 8L);
-                rwTxMem.putLong(partitionSizeOffst, tx.ATTACHED_PARTITION_SIZE * 8L * 4L);
+                rwTxMem.putLong(partitionSizeOffset, tx.ATTACHED_PARTITION_SIZE * 8L * 4L);
 
                 rwTxMem.setTruncateSize(fileSize);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_TXN, tx.TX_OFFSET_TXN);

@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -40,21 +41,20 @@ import static io.questdb.cairo.WalTxnType.DATA;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
-
+    private final int columnCount;
+    private final ObjList<MemoryMR> columns;
+    private final WalDataCursor dataCursor = new WalDataCursor();
+    private final WalEventCursor eventCursor;
+    private final WalReaderEvents events;
     private final FilesFacade ff;
+    private final WalReaderMetadata metadata;
     private final Path path;
     private final int rootLen;
-    private final WalReaderMetadata metadata;
-    private final WalDataCursor dataCursor = new WalDataCursor();
-    private final WalReaderEvents events;
-    private final WalEventCursor eventCursor;
+    private final long rowCount;
+    private final long segmentId;
+    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
     private final String tableName;
     private final String walName;
-    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
-    private final long segmentId;
-    private final long rowCount;
-    private final ObjList<MemoryMR> columns;
-    private final int columnCount;
 
     public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
@@ -156,14 +156,6 @@ public class WalReader implements Closeable {
         return rowCount;
     }
 
-    static int getPrimaryColumnIndex(int index) {
-        return index * 2 + 2;
-    }
-
-    int getColumnCount() {
-        return columnCount;
-    }
-
     private void loadColumnAt(int columnIndex) {
         final int pathLen = path.length();
         try {
@@ -261,5 +253,13 @@ public class WalReader implements Closeable {
                 }
             }
         }
+    }
+
+    static int getPrimaryColumnIndex(int index) {
+        return index * 2 + 2;
+    }
+
+    int getColumnCount() {
+        return columnCount;
     }
 }

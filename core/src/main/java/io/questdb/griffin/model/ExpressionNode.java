@@ -32,29 +32,29 @@ import java.util.Objects;
 
 public class ExpressionNode implements Mutable, Sinkable {
 
-    public final static ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
-    public static final int OPERATION = 1;
+    public static final int ARRAY_ACCESS = 9;
+    public static final int BIND_VARIABLE = 6;
     public static final int CONSTANT = 2;
+    public static final int CONTROL = 16;
+    public final static ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
+    public static final int FUNCTION = 8;
     public static final int LITERAL = 4;
     public static final int MEMBER_ACCESS = 5;
-    public static final int BIND_VARIABLE = 6;
-    public static final int FUNCTION = 8;
-    public static final int ARRAY_ACCESS = 9;
-    public static final int CONTROL = 16;
-    public static final int SET_OPERATION = 32;
+    public static final int OPERATION = 1;
     public static final int QUERY = 65;
+    public static final int SET_OPERATION = 32;
     public static final int UNKNOWN = 0;
     public final ObjList<ExpressionNode> args = new ObjList<>(4);
-    public CharSequence token;
-    public QueryModel queryModel;
-    public int precedence;
-    public int position;
-    public ExpressionNode lhs;
-    public ExpressionNode rhs;
-    public int type;
-    public int paramCount;
-    public int intrinsicValue = IntrinsicModel.UNDEFINED;
     public boolean innerPredicate = false;
+    public int intrinsicValue = IntrinsicModel.UNDEFINED;
+    public ExpressionNode lhs;
+    public int paramCount;
+    public int position;
+    public int precedence;
+    public QueryModel queryModel;
+    public ExpressionNode rhs;
+    public CharSequence token;
+    public int type;
 
     // IMPORTANT: update deepClone method after adding a new field
     private ExpressionNode() {
@@ -113,6 +113,27 @@ public class ExpressionNode implements Mutable, Sinkable {
         return compareArgs(groupByExpr, columnExpr, translatingModel);
     }
 
+    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        ExpressionNode copy = pool.next();
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
+        }
+        copy.token = node.token;
+        copy.queryModel = node.queryModel;
+        copy.precedence = node.precedence;
+        copy.position = node.position;
+        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
+        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
+        copy.type = node.type;
+        copy.paramCount = node.paramCount;
+        copy.intrinsicValue = node.intrinsicValue;
+        copy.innerPredicate = node.innerPredicate;
+        return copy;
+    }
+
     public void clear() {
         args.clear();
         token = null;
@@ -125,6 +146,29 @@ public class ExpressionNode implements Mutable, Sinkable {
         intrinsicValue = IntrinsicModel.UNDEFINED;
         queryModel = null;
         innerPredicate = false;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ExpressionNode that = (ExpressionNode) o;
+        return precedence == that.precedence
+                && position == that.position
+                && type == that.type
+                && paramCount == that.paramCount
+                && intrinsicValue == that.intrinsicValue
+                && innerPredicate == that.innerPredicate
+                && Objects.equals(args, that.args)
+                && Objects.equals(token, that.token)
+                && Objects.equals(queryModel, that.queryModel)
+                && Objects.equals(lhs, that.lhs)
+                && Objects.equals(rhs, that.rhs);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
     }
 
     public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
@@ -207,29 +251,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        ExpressionNode that = (ExpressionNode) o;
-        return precedence == that.precedence
-                && position == that.position
-                && type == that.type
-                && paramCount == that.paramCount
-                && intrinsicValue == that.intrinsicValue
-                && innerPredicate == that.innerPredicate
-                && Objects.equals(args, that.args)
-                && Objects.equals(token, that.token)
-                && Objects.equals(queryModel, that.queryModel)
-                && Objects.equals(lhs, that.lhs)
-                && Objects.equals(rhs, that.rhs);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
-    }
-
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
@@ -280,26 +301,5 @@ public class ExpressionNode implements Mutable, Sinkable {
         public ExpressionNode newInstance() {
             return new ExpressionNode();
         }
-    }
-
-    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode copy = pool.next();
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
-        }
-        copy.token = node.token;
-        copy.queryModel = node.queryModel;
-        copy.precedence = node.precedence;
-        copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
-        copy.type = node.type;
-        copy.paramCount = node.paramCount;
-        copy.intrinsicValue = node.intrinsicValue;
-        copy.innerPredicate = node.innerPredicate;
-        return copy;
     }
 }

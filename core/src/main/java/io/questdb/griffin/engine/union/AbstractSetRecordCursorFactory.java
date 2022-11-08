@@ -35,10 +35,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
+    private final RecordCursorFactory factoryA;
+    private final RecordCursorFactory factoryB;
     protected AbstractSetRecordCursor cursor;
 
     public AbstractSetRecordCursorFactory(
@@ -53,14 +53,6 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;
         this.castFunctionsA = castFunctionsA;
-    }
-
-    @Override
-    protected void _close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.freeObjListAndClear(castFunctionsA);
-        Misc.freeObjListAndClear(castFunctionsB);
     }
 
     @Override
@@ -84,5 +76,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(factoryA);
+        Misc.free(factoryB);
+        Misc.freeObjListAndClear(castFunctionsA);
+        Misc.freeObjListAndClear(castFunctionsB);
     }
 }

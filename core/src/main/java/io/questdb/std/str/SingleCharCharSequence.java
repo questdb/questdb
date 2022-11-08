@@ -38,12 +38,12 @@ public final class SingleCharCharSequence extends AbstractCharSequence {
     }
 
     @Override
-    public int length() {
-        return 1;
+    public char charAt(int index) {
+        return value;
     }
 
     @Override
-    public char charAt(int index) {
-        return value;
+    public int length() {
+        return 1;
     }
 }

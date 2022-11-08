@@ -36,6 +36,15 @@ public class Long256Impl implements Long256, Sinkable {
     private long l2;
     private long l3;
 
+    public static Long256Impl add(final Long256Impl sum, final Long256 x, final Long256 y) {
+        if (x.equals(Long256Impl.NULL_LONG256) || y.equals(Long256Impl.NULL_LONG256)) {
+            return Long256Impl.NULL_LONG256;
+        }
+        sum.copyFrom(x);
+        Long256Util.add(sum, y);
+        return sum;
+    }
+
     public static void putNull(long appendPointer) {
         Unsafe.getUnsafe().putLong(appendPointer, NULL_LONG256.getLong0());
         Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, NULL_LONG256.getLong1());
@@ -97,15 +106,6 @@ public class Long256Impl implements Long256, Sinkable {
     @Override
     public void toSink(CharSink sink) {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
-    }
-
-    public static Long256Impl add(final Long256Impl sum, final Long256 x, final Long256 y) {
-        if (x.equals(Long256Impl.NULL_LONG256) || y.equals(Long256Impl.NULL_LONG256)) {
-            return Long256Impl.NULL_LONG256;
-        }
-        sum.copyFrom(x);
-        Long256Util.add(sum, y);
-        return sum;
     }
 
     static {

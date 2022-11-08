@@ -41,9 +41,9 @@ import org.junit.Test;
 public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(ContinuousMemoryMTest.class);
-    private final Rnd rnd = new Rnd();
     private final long _4M = 4 * 1024 * 1024;
     private final long _8M = 2 * _4M;
+    private final Rnd rnd = new Rnd();
 
     @Test
     public void testBoolAppend() throws Exception {

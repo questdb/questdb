@@ -45,21 +45,6 @@ public class LineSenderException extends RuntimeException {
         this.message.put(message);
     }
 
-    public LineSenderException put(CharSequence cs) {
-        message.put(cs);
-        return this;
-    }
-
-    public LineSenderException put(long value) {
-        message.put(value);
-        return this;
-    }
-
-    public LineSenderException putAsPrintable(CharSequence nonPrintable) {
-        message.putAsPrintable(nonPrintable);
-        return this;
-    }
-
     public LineSenderException appendIPv4(int ip) {
         Net.appendIP4(message, ip);
         return this;
@@ -75,10 +60,25 @@ public class LineSenderException extends RuntimeException {
         if (errno == Integer.MIN_VALUE) {
             return message.toString();
         }
-        String errNoRender =  "[" + errno + "]";
+        String errNoRender = "[" + errno + "]";
         if (message.length() == 0) {
             return errNoRender;
         }
         return errNoRender + " " + message;
+    }
+
+    public LineSenderException put(long value) {
+        message.put(value);
+        return this;
+    }
+
+    public LineSenderException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
+
+    public LineSenderException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
     }
 }

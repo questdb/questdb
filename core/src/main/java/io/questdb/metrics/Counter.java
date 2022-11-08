@@ -26,11 +26,11 @@ package io.questdb.metrics;
 
 public interface Counter extends Scrapable {
 
-    default void inc() {
-        add(1);
-    }
-
     void add(long value);
 
     long getValue();
+
+    default void inc() {
+        add(1);
+    }
 }

@@ -27,15 +27,37 @@ package io.questdb.griffin.engine.analytic;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class AnalyticContextImpl implements AnalyticContext {
+public class AnalyticContextImpl implements AnalyticContext, Mutable {
+    private boolean baseSupportsRandomAccess;
+    private boolean empty = true;
+    private boolean ordered;
+    private ColumnTypes partitionByKeyTypes;
     private VirtualRecord partitionByRecord;
     private RecordSink partitionBySink;
-    private ColumnTypes partitionByKeyTypes;
-    private boolean ordered;
-    private boolean baseSupportsRandomAccess;
+
+    @Override
+    public boolean baseSupportsRandomAccess() {
+        return baseSupportsRandomAccess;
+    }
+
+    @Override
+    public void clear() {
+        this.empty = true;
+        this.partitionByRecord = null;
+        this.partitionBySink = null;
+        this.partitionByKeyTypes = null;
+        this.ordered = false;
+        this.baseSupportsRandomAccess = false;
+    }
+
+    @Override
+    public ColumnTypes getPartitionByKeyTypes() {
+        return partitionByKeyTypes;
+    }
 
     @Override
     public VirtualRecord getPartitionByRecord() {
@@ -48,18 +70,13 @@ public class AnalyticContextImpl implements AnalyticContext {
     }
 
     @Override
-    public ColumnTypes getPartitionByKeyTypes() {
-        return partitionByKeyTypes;
+    public boolean isEmpty() {
+        return empty;
     }
 
     @Override
     public boolean isOrdered() {
         return ordered;
-    }
-
-    @Override
-    public boolean baseSupportsRandomAccess() {
-        return baseSupportsRandomAccess;
     }
 
     public void of(
@@ -69,6 +86,7 @@ public class AnalyticContextImpl implements AnalyticContext {
             boolean ordered,
             boolean baseSupportsRandomAccess
     ) {
+        this.empty = false;
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionByKeyTypes = partitionByKeyTypes;

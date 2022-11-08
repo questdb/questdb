@@ -54,71 +54,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
     }
 
-    @Override
-    public void testNoFieldValue2() {
-        assertThat(
-                "measurement,tag=x f= 10000\n",
-                "measurement,tag=x f= 10000\n"
-        );
-    }
-
-    @Override
-    public void testNoFieldValue3() {
-        assertThat(
-                "measurement,tag=x f= 10000\n",
-                "measurement,tag=x f=, 10000\n"
-        );
-    }
-
-    @Override
-    public void testNoTagValue1() {
-        assertThat(
-                "measurement,tag= field=\"x\" 10000\n",
-                "measurement,tag= field=\"x\" 10000\n"
-        );
-    }
-
-    @Override
-    public void testNoTagValue2() {
-        assertThat(
-                "measurement,tag= field=\"x\" 10000\n",
-                "measurement,tag=, field=\"x\" 10000\n"
-        );
-    }
-
-    @Override
-    public void testNoTagValue3() {
-        assertThat(
-                "measurement,tag=\n",
-                "measurement,tag="
-        );
-    }
-
-    @Override
-    public void testNoTagValue4() {
-        assertThat(
-                "measurement,tag=\n",
-                "measurement,tag=\n"
-        );
-    }
-
-    @Override
-    public void testSkipLine() {
-        assertThat(
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
-                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
-                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
-                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
-                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
-                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n"
-        );
-    }
-
-    @Test
-    public void testTrailingSpace() {
-        assertThat("measurement,a=10\n", "measurement,a=10 \n"); // Trailing space
-    }
-
     @Test
     public void testDoubleScientificNotation() {
         assertThat(
@@ -215,6 +150,22 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
     }
 
+    @Override
+    public void testNoFieldValue2() {
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f= 10000\n"
+        );
+    }
+
+    @Override
+    public void testNoFieldValue3() {
+        assertThat(
+                "measurement,tag=x f= 10000\n",
+                "measurement,tag=x f=, 10000\n"
+        );
+    }
+
     @Test
     public void testNoFields() {
         // Single space char between last tag and timestamp
@@ -247,9 +198,61 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         assertThat("measurement  10000--ERROR=NO_FIELDS--", "measurement  10000\n"); // Two space chars
     }
 
+    @Override
+    public void testNoTagValue1() {
+        assertThat(
+                "measurement,tag= field=\"x\" 10000\n",
+                "measurement,tag= field=\"x\" 10000\n"
+        );
+    }
+
+    @Override
+    public void testNoTagValue2() {
+        assertThat(
+                "measurement,tag= field=\"x\" 10000\n",
+                "measurement,tag=, field=\"x\" 10000\n"
+        );
+    }
+
+    @Override
+    public void testNoTagValue3() {
+        assertThat(
+                "measurement,tag=\n",
+                "measurement,tag="
+        );
+    }
+
+    @Override
+    public void testNoTagValue4() {
+        assertThat(
+                "measurement,tag=\n",
+                "measurement,tag=\n"
+        );
+    }
+
     @Test
     public void testNoTimestamp() {
         assertThat("measurement,a=10 v=11\n", "measurement,a=10 v=11\n"); // No trailing space
+    }
+
+    @Test
+    public void testNonAscii() {
+        assertThat(
+                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000--non ascii--\n",
+                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000\n"
+        );
+    }
+
+    @Override
+    public void testSkipLine() {
+        assertThat(
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n"
+        );
     }
 
     @Test
@@ -277,6 +280,11 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161--non ascii--\n",
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161\n"
         );
+    }
+
+    @Test
+    public void testTrailingSpace() {
+        assertThat("measurement,a=10\n", "measurement,a=10 \n"); // Trailing space
     }
 
     @Test
@@ -464,52 +472,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         sink.put('\n');
     }
 
-    protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
-        assertThat(expected, lineStr, 1);
-    }
-
-    protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
-        byte[] line = lineStr.getBytes(Files.UTF_8);
-        final int len = line.length;
-        final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
-        int fullLen = endWithEOL ? line.length : line.length + 1;
-        long memFull = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
-        long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
-        for (int j = 0; j < len; j++) {
-            Unsafe.getUnsafe().putByte(memFull + j, line[j]);
-        }
-        if (!endWithEOL) {
-            Unsafe.getUnsafe().putByte(memFull + len, (byte) '\n');
-        }
-
-        try {
-            for (int i = start; i < len; i++) {
-                for (int nextBreak = 0; nextBreak < len - i; nextBreak++) {
-                    sink.clear();
-                    resetParser(mem + fullLen);
-                    parseMeasurement(memFull, mem, fullLen, i, 0);
-                    if (nextBreak > 0) {
-                        parseMeasurement(memFull, mem, fullLen, i + nextBreak, i);
-                    }
-                    boolean complete;
-                    complete = parseMeasurement(memFull, mem, fullLen, fullLen, i + nextBreak);
-                    if (!complete || !Chars.equals(expected, sink)) {
-                        System.out.println(lineStr.substring(0, i));
-                        if (nextBreak > 0) {
-                            System.out.println(lineStr.substring(i, i + nextBreak));
-                        }
-                        System.out.println(lineStr.substring(i + nextBreak));
-                        TestUtils.assertEquals("parse split " + i, expected, sink);
-                    }
-                    Assert.assertTrue(complete);
-                }
-            }
-        } finally {
-            Unsafe.free(mem, fullLen, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(memFull, fullLen, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     private boolean parseMeasurement(long bufHi) {
         while (lineTcpParser.getBufferAddress() < bufHi) {
             ParseResult rc;
@@ -565,5 +527,51 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         onErrorLine = false;
         startOfLineAddr = mem;
         lineTcpParser.of(mem);
+    }
+
+    protected void assertThat(CharSequence expected, String lineStr) throws LineProtoException {
+        assertThat(expected, lineStr, 1);
+    }
+
+    protected void assertThat(CharSequence expected, String lineStr, int start) throws LineProtoException {
+        byte[] line = lineStr.getBytes(Files.UTF_8);
+        final int len = line.length;
+        final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
+        int fullLen = endWithEOL ? line.length : line.length + 1;
+        long memFull = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
+        long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
+        for (int j = 0; j < len; j++) {
+            Unsafe.getUnsafe().putByte(memFull + j, line[j]);
+        }
+        if (!endWithEOL) {
+            Unsafe.getUnsafe().putByte(memFull + len, (byte) '\n');
+        }
+
+        try {
+            for (int i = start; i < len; i++) {
+                for (int nextBreak = 0; nextBreak < len - i; nextBreak++) {
+                    sink.clear();
+                    resetParser(mem + fullLen);
+                    parseMeasurement(memFull, mem, fullLen, i, 0);
+                    if (nextBreak > 0) {
+                        parseMeasurement(memFull, mem, fullLen, i + nextBreak, i);
+                    }
+                    boolean complete;
+                    complete = parseMeasurement(memFull, mem, fullLen, fullLen, i + nextBreak);
+                    if (!complete || !Chars.equals(expected, sink)) {
+                        System.out.println(lineStr.substring(0, i));
+                        if (nextBreak > 0) {
+                            System.out.println(lineStr.substring(i, i + nextBreak));
+                        }
+                        System.out.println(lineStr.substring(i + nextBreak));
+                        TestUtils.assertEquals("parse split " + i, expected, sink);
+                    }
+                    Assert.assertTrue(complete);
+                }
+            }
+        } finally {
+            Unsafe.free(mem, fullLen, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(memFull, fullLen, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }

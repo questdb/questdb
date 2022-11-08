@@ -56,8 +56,8 @@ public class RndLogFunctionFactory implements FunctionFactory {
     }
 
     private static class TestLogFunction extends BooleanFunction {
-        private final long totalLogLines;
         private final double errorRatio; // error log percentage from the total log lines
+        private final long totalLogLines;
         private Rnd rnd;
 
         public TestLogFunction(long totalLogLines, double errorRatio) {
@@ -82,13 +82,13 @@ public class RndLogFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

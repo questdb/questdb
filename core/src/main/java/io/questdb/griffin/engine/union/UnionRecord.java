@@ -95,6 +95,40 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public byte getGeoByte(int col) {
+        if (useA) {
+            return recordA.getGeoByte(col);
+        }
+        return recordB.getGeoByte(col);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        if (useA) {
+            return recordA.getGeoInt(col);
+        }
+        return recordB.getGeoInt(col);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        if (useA) {
+            return recordA.getGeoLong(col);
+        }
+        return recordB.getGeoLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        if (useA) {
+            return recordA.getGeoShort(col);
+        }
+        return recordB.getGeoShort(col);
+    }
+
+    // symbol is not supported by set functions
+
+    @Override
     public int getInt(int col) {
         if (useA) {
             return recordA.getInt(col);
@@ -126,8 +160,6 @@ public class UnionRecord extends AbstractUnionRecord {
         }
         return recordB.getLong256A(col);
     }
-
-    // symbol is not supported by set functions
 
     @Override
     public Long256 getLong256B(int col) {
@@ -184,37 +216,5 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        if (useA) {
-            return recordA.getGeoByte(col);
-        }
-        return recordB.getGeoByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        if (useA) {
-            return recordA.getGeoShort(col);
-        }
-        return recordB.getGeoShort(col);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        if (useA) {
-            return recordA.getGeoInt(col);
-        }
-        return recordB.getGeoInt(col);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        if (useA) {
-            return recordA.getGeoLong(col);
-        }
-        return recordB.getGeoLong(col);
     }
 }

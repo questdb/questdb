@@ -34,8 +34,8 @@ import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
-    protected final Function filter;
     protected final int columnIndex;
+    protected final Function filter;
     private final Function symbolFunc;
     private AbstractDataFrameRecordCursor cursor;
 
@@ -50,6 +50,18 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         this.filter = filter;
+    }
+
+    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
+        final CharSequence symbol = symbolFunc.getStr(null);
+        int symbolKey = getSymbolTable(dataFrameCursor, columnIndex).keyOf(symbol);
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            dataFrameCursor.close();
+            return true;
+        }
+
+        this.cursor = createDataFrameCursorFor(symbolKey);
+        return false;
     }
 
     @Override
@@ -77,15 +89,5 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         return cursor;
     }
 
-    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStr(null);
-        int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            dataFrameCursor.close();
-            return true;
-        }
-
-        this.cursor = createDataFrameCursorFor(symbolKey);
-        return false;
-    }
+    protected abstract StaticSymbolTable getSymbolTable(DataFrameCursor dataFrameCursor, int columnIndex);
 }
