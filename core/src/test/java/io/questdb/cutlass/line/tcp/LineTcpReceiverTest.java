@@ -75,17 +75,17 @@ import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    private Path path;
     private final boolean walEnabled;
+    private Path path;
 
     public LineTcpReceiverTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name="{0}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -128,12 +128,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         path.close();
     }
 
-    private void mayDrainWalQueue() {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-    }
-
     @Test
     public void testColumnTypeStaysTheSameWhileColumnAdded() throws Exception {
         final String tableName = "weather";
@@ -169,7 +163,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // this will wait until the writer is returned into the pool
             finished.await();
             mayDrainWalQueue();
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            });
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 final int expectedNumOfRows = numOfRows / 2;
@@ -186,6 +181,46 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 throw new RuntimeException(e);
             }
         }, false, 250);
+    }
+
+    @Test
+    public void testCreationAttemptNonPartitionedTableWithWal() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        partitionByDefault = PartitionBy.NONE;
+
+        final String tableNonPartitioned = "weather_none";
+        final String tablePartitioned = "weather_day";
+
+        runInContext((receiver) -> {
+            // Pre-create a partitioned table, so we can wait until it's created.
+            try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
+                m.timestamp("ts").wal();
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            // Send non-partitioned table rows before the partitioned table ones.
+            final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
+                    tableNonPartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
+                    tablePartitioned + " windspeed=4.0 631170000000000000\n" +
+                    tablePartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n";
+            sendLinger(receiver, lineData, tablePartitioned);
+
+            mayDrainWalQueue();
+
+            // Verify that the partitioned table data has landed.
+            Assert.assertTrue(isWalTable(tablePartitioned));
+            String expected = "ts\twindspeed\ttimetocycle\n" +
+                    "1990-01-01T02:13:20.000000Z\t3.0\t0.0\n" +
+                    "1990-01-01T05:00:00.000000Z\t4.0\tNaN\n";
+            assertTable(expected, tablePartitioned);
+
+            // WAL is not supported on non-partitioned tables, so we create a non-WAL table as a fallback.
+            Assert.assertFalse(isWalTable(tableNonPartitioned));
+            expected = "windspeed\ttimestamp\ttimetocycle\n" +
+                    "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
+                    "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n";
+            assertTable(expected, tableNonPartitioned);
+        });
     }
 
     @Test
@@ -271,46 +306,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n" +
                             "4.0\t1990-01-01T05:00:00.000000Z\tNaN\n";
             assertTable(expected, "weather");
-        });
-    }
-
-    @Test
-    public void testCreationAttemptNonPartitionedTableWithWal() throws Exception {
-        Assume.assumeTrue(walEnabled);
-        partitionByDefault = PartitionBy.NONE;
-
-        final String tableNonPartitioned = "weather_none";
-        final String tablePartitioned = "weather_day";
-
-        runInContext((receiver) -> {
-            // Pre-create a partitioned table, so we can wait until it's created.
-            try (TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY)) {
-                m.timestamp("ts").wal();
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
-            }
-
-            // Send non-partitioned table rows before the partitioned table ones.
-            final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
-                    tableNonPartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n" +
-                    tablePartitioned + " windspeed=4.0 631170000000000000\n" +
-                    tablePartitioned + " timetocycle=0.0,windspeed=3.0 631160000000000000\n";
-            sendLinger(receiver, lineData, tablePartitioned);
-
-            mayDrainWalQueue();
-
-            // Verify that the partitioned table data has landed.
-            Assert.assertTrue(isWalTable(tablePartitioned));
-            String expected = "ts\twindspeed\ttimetocycle\n" +
-                    "1990-01-01T02:13:20.000000Z\t3.0\t0.0\n" +
-                    "1990-01-01T05:00:00.000000Z\t4.0\tNaN\n";
-            assertTable(expected, tablePartitioned);
-
-            // WAL is not supported on non-partitioned tables, so we create a non-WAL table as a fallback.
-            Assert.assertFalse(isWalTable(tableNonPartitioned));
-            expected = "windspeed\ttimestamp\ttimetocycle\n" +
-                    "2.0\t1989-12-31T23:26:40.000000Z\tNaN\n" +
-                    "3.0\t1990-01-01T02:13:20.000000Z\t0.0\n";
-            assertTable(expected, tableNonPartitioned);
         });
     }
 
@@ -442,6 +437,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final Rnd rnd = new Rnd();
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
+        // We set the minIdleMsBeforeWriterRelease interval to a rather large value
+        // (1 sec) to prevent false positive WAL writer releases.
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
@@ -463,7 +460,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
-        }, false, 250);
+        }, false, 1000);
 
         mayDrainWalQueue();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -622,7 +619,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             } finally {
                 // Clean engine hook
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {});
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                });
             }
         });
     }
@@ -1017,6 +1015,35 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testWriterCommitFails() throws Exception {
+        // This test only makes sense for TableWriter.
+        Assume.assumeFalse(walEnabled);
+
+        runInContext((receiver) -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public int rmdir(Path path) {
+                    return 5;
+                }
+            };
+
+            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
+                m.timestamp("ReceiveTime")
+                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
+                        .col("Length", ColumnType.INT);
+                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
+            }
+
+            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
+            sendLinger(receiver, lineData, "table_a");
+
+            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
+            assertTable(expected, "table_a");
+        });
+    }
+
+    @Test
     public void testWriterInsertNewSymbolsIntoTableWithExistingSymbols() throws Exception {
         // This test only makes sense to WAL tables since it writes into the table from multiple threads.
         Assume.assumeTrue(walEnabled);
@@ -1086,35 +1113,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     Assert.assertEquals("count should be 2 for sym" + i + " symbol", 1, symbolCounts.get("sym" + i));
                 }
             });
-        });
-    }
-
-    @Test
-    public void testWriterCommitFails() throws Exception {
-        // This test only makes sense for TableWriter.
-        Assume.assumeFalse(walEnabled);
-
-        runInContext((receiver) -> {
-            ff = new FilesFacadeImpl() {
-                @Override
-                public int rmdir(Path path) {
-                    return 5;
-                }
-            };
-
-            try (TableModel m = new TableModel(configuration, "table_a", PartitionBy.DAY)) {
-                m.timestamp("ReceiveTime")
-                        .col("SequenceNumber", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("MessageType", ColumnType.SYMBOL).indexed(true, 256)
-                        .col("Length", ColumnType.INT);
-                engine.createTableUnsafe(AllowAllCairoSecurityContext.INSTANCE, m.getMem(), m.getPath(), m);
-            }
-
-            String lineData = "table_a,MessageType=B,SequenceNumber=1 Length=92i,test=1.5 1465839830100400000\n";
-            sendLinger(receiver, lineData, "table_a");
-
-            String expected = "ReceiveTime\tSequenceNumber\tMessageType\tLength\n";
-            assertTable(expected, "table_a");
         });
     }
 
@@ -1286,6 +1284,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\tNaN\tNaN\tInfinity\t-Infinity\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "doubles");
         });
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
