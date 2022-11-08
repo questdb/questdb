@@ -63,32 +63,32 @@ public class WidthBucketFunctionFactoryTest extends AbstractFunctionFactoryTest 
         call(108.233, 53.169, 91.209, 8).andAssert(9);
     }
 
-	@Test
-	public void testNullInt() throws SqlException {
-		call(108.233, 53.169, 91.209, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
-	}
+    @Test
+    public void testNullInt() throws SqlException {
+        call(108.233, 53.169, 91.209, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    }
 
-	@Test
-	public void testNullDouble() throws SqlException {
-		call(108.233, Double.NaN, 91.209, 8).andAssert(Numbers.INT_NaN);
-	}
+    @Test
+    public void testNullDouble() throws SqlException {
+        call(108.233, Double.NaN, 91.209, 8).andAssert(Numbers.INT_NaN);
+    }
 
-	@Test
-	public void testEqualRangeEqual() throws SqlException {
-		call(108.233, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
-	}
+    @Test
+    public void testEqualRangeEqual() throws SqlException {
+        call(108.233, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
+    }
 
-	@Test
-	public void testEqualRangeLow() throws SqlException {
-		call(53.245, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
-	}
+    @Test
+    public void testEqualRangeLow() throws SqlException {
+        call(53.245, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
+    }
 
-	@Test
-	public void testEqualRangeHigh() throws SqlException {
-		call(245.357, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
-	}
+    @Test
+    public void testEqualRangeHigh() throws SqlException {
+        call(245.357, 108.233, 108.233, 8).andAssert(Numbers.INT_NaN);
+    }
 
-	@Test
+    @Test
     public void testReverseBelowRange() throws SqlException {
         call(0.235, 0.926, 0.893, 4).andAssert(0); //TODO
     }
