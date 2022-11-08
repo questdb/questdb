@@ -53,6 +53,16 @@ public class IntIntHashMap extends AbstractIntHashSet {
         putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(IntIntHashMap other) {
+        int[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != other.noEntryKeyValue) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public void putAt(int index, int key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
@@ -65,30 +75,8 @@ public class IntIntHashMap extends AbstractIntHashSet {
         }
     }
 
-    public void putAll(IntIntHashMap other) {
-        int[] otherKeys = other.keys;
-        int[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != other.noEntryKeyValue) {
-                put(otherKeys[i], otherValues[i]);
-            }
-        }
-    }
-
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = this.noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
     }
 
     private void rehash() {
@@ -113,5 +101,17 @@ public class IntIntHashMap extends AbstractIntHashSet {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }

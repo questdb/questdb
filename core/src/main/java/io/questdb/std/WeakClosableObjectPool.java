@@ -44,15 +44,15 @@ public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolB
     }
 
     @Override
-    public boolean push(T obj) {
-        return super.push(obj);
-    }
-
-    @Override
     public void close() {
         while (cache.size() > 0) {
             Misc.free(cache.pop());
         }
+    }
+
+    @Override
+    public boolean push(T obj) {
+        return super.push(obj);
     }
 
     @Override

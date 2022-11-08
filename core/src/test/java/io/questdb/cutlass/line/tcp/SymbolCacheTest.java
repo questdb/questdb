@@ -670,11 +670,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public int getSymbolCountWatermark(int columnIndex) {
-            return watermark;
-        }
-
-        @Override
         public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
             return 0;
         }
@@ -682,10 +677,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         @Override
         public long apply(UpdateOperation operation) {
             return 0;
-        }
-
-        @Override
-        public void truncate() {
         }
 
         @Override
@@ -718,6 +709,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
+        public int getSymbolCountWatermark(int columnIndex) {
+            return watermark;
+        }
+
+        @Override
         public CharSequence getTableName() {
             return null;
         }
@@ -739,6 +735,10 @@ public class SymbolCacheTest extends AbstractGriffinTest {
 
         @Override
         public void rollback() {
+        }
+
+        @Override
+        public void truncate() {
         }
     }
 }

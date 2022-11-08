@@ -39,56 +39,40 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
-    private long time;
     private final boolean walEnabled;
+    private long time;
 
     public LineTcpTypeConversionTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name="{0}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
-    private void mayDrainWalQueue() {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-    }
-
-    private void resetTime() {
-        time = 1465839830100400200L;
-    }
-
-    private long nextTime() {
-        return time += 1000;
+    @Test
+    public void testConversionToBinary() throws Exception {
+        testConversionToType("BINARY", "testCol\ttime\n");
     }
 
     @Test
-    public void testConversionToSymbol() throws Exception {
-        testConversionToType("SYMBOL", "testCol\ttime\n" +
-                "questdb\t2016-06-13T17:43:50.100401Z\n" +
-                "q\t2016-06-13T17:43:50.100402Z\n" +
-                "100i\t2016-06-13T17:43:50.100405Z\n" +
-                "-100i\t2016-06-13T17:43:50.100406Z\n" +
-                "0x100i\t2016-06-13T17:43:50.100407Z\n" +
-                "123\t2016-06-13T17:43:50.100408Z\n" +
-                "-54\t2016-06-13T17:43:50.100409Z\n" +
-                "23.3\t2016-06-13T17:43:50.100410Z\n" +
-                "T\t2016-06-13T17:43:50.100411Z\n" +
-                "false\t2016-06-13T17:43:50.100412Z\n" +
-                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n"
+    public void testConversionToBoolean() throws Exception {
+        testConversionToType("BOOLEAN", "testCol\ttime\n" +
+                "true\t2016-06-13T17:43:50.100424Z\n" +
+                "false\t2016-06-13T17:43:50.100425Z\n"
         );
     }
 
     @Test
-    public void testConversionToString() throws Exception {
-        testConversionToType("STRING", "testCol\ttime\n" +
-                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
-                "q\t2016-06-13T17:43:50.100417Z\n"
+    public void testConversionToByte() throws Exception {
+        testConversionToType("BYTE", "testCol\ttime\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "1\t2016-06-13T17:43:50.100424Z\n" +
+                "0\t2016-06-13T17:43:50.100425Z\n"
         );
     }
 
@@ -109,70 +93,10 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testConversionToLong256() throws Exception {
-        testConversionToType("LONG256", "testCol\ttime\n" +
-                "0x0150\t2016-06-13T17:43:50.100420Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToLong() throws Exception {
-        testConversionToType("LONG", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToInt() throws Exception {
-        testConversionToType("INT", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToShort() throws Exception {
-        testConversionToType("SHORT", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToByte() throws Exception {
-        testConversionToType("BYTE", "testCol\ttime\n" +
-                "100\t2016-06-13T17:43:50.100418Z\n" +
-                "-100\t2016-06-13T17:43:50.100419Z\n" +
-                "1\t2016-06-13T17:43:50.100424Z\n" +
-                "0\t2016-06-13T17:43:50.100425Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToBoolean() throws Exception {
-        testConversionToType("BOOLEAN", "testCol\ttime\n" +
-                "true\t2016-06-13T17:43:50.100424Z\n" +
-                "false\t2016-06-13T17:43:50.100425Z\n"
-        );
-    }
-
-    @Test
-    public void testConversionToFloat() throws Exception {
-        testConversionToType("FLOAT", "testCol\ttime\n" +
-                "100.0000\t2016-06-13T17:43:50.100418Z\n" +
-                "-100.0000\t2016-06-13T17:43:50.100419Z\n" +
-                "123.0000\t2016-06-13T17:43:50.100421Z\n" +
-                "-54.0000\t2016-06-13T17:43:50.100422Z\n" +
-                "23.3000\t2016-06-13T17:43:50.100423Z\n" +
-                "1.0000\t2016-06-13T17:43:50.100424Z\n" +
-                "0.0000\t2016-06-13T17:43:50.100425Z\n"
+    public void testConversionToDate() throws Exception {
+        testConversionToType("DATE", "testCol\ttime\n" +
+                "1970-01-01T00:00:00.100Z\t2016-06-13T17:43:50.100418Z\n" +
+                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100419Z\n"
         );
     }
 
@@ -190,6 +114,88 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testConversionToFloat() throws Exception {
+        testConversionToType("FLOAT", "testCol\ttime\n" +
+                "100.0000\t2016-06-13T17:43:50.100418Z\n" +
+                "-100.0000\t2016-06-13T17:43:50.100419Z\n" +
+                "123.0000\t2016-06-13T17:43:50.100421Z\n" +
+                "-54.0000\t2016-06-13T17:43:50.100422Z\n" +
+                "23.3000\t2016-06-13T17:43:50.100423Z\n" +
+                "1.0000\t2016-06-13T17:43:50.100424Z\n" +
+                "0.0000\t2016-06-13T17:43:50.100425Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToGeoHash() throws Exception {
+        testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
+                "questdb\t2016-06-13T17:43:50.100416Z\n" +
+                "\t2016-06-13T17:43:50.100417Z\n");
+    }
+
+    @Test
+    public void testConversionToInt() throws Exception {
+        testConversionToType("INT", "testCol\ttime\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "1\t2016-06-13T17:43:50.100424Z\n" +
+                "0\t2016-06-13T17:43:50.100425Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToLong() throws Exception {
+        testConversionToType("LONG", "testCol\ttime\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "1\t2016-06-13T17:43:50.100424Z\n" +
+                "0\t2016-06-13T17:43:50.100425Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToLong256() throws Exception {
+        testConversionToType("LONG256", "testCol\ttime\n" +
+                "0x0150\t2016-06-13T17:43:50.100420Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToShort() throws Exception {
+        testConversionToType("SHORT", "testCol\ttime\n" +
+                "100\t2016-06-13T17:43:50.100418Z\n" +
+                "-100\t2016-06-13T17:43:50.100419Z\n" +
+                "1\t2016-06-13T17:43:50.100424Z\n" +
+                "0\t2016-06-13T17:43:50.100425Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToString() throws Exception {
+        testConversionToType("STRING", "testCol\ttime\n" +
+                "questdbb\t2016-06-13T17:43:50.100416Z\n" +
+                "q\t2016-06-13T17:43:50.100417Z\n"
+        );
+    }
+
+    @Test
+    public void testConversionToSymbol() throws Exception {
+        testConversionToType("SYMBOL", "testCol\ttime\n" +
+                "questdb\t2016-06-13T17:43:50.100401Z\n" +
+                "q\t2016-06-13T17:43:50.100402Z\n" +
+                "100i\t2016-06-13T17:43:50.100405Z\n" +
+                "-100i\t2016-06-13T17:43:50.100406Z\n" +
+                "0x100i\t2016-06-13T17:43:50.100407Z\n" +
+                "123\t2016-06-13T17:43:50.100408Z\n" +
+                "-54\t2016-06-13T17:43:50.100409Z\n" +
+                "23.3\t2016-06-13T17:43:50.100410Z\n" +
+                "T\t2016-06-13T17:43:50.100411Z\n" +
+                "false\t2016-06-13T17:43:50.100412Z\n" +
+                "1465839830101500200t\t2016-06-13T17:43:50.100413Z\n"
+        );
+    }
+
+    @Test
     public void testConversionToTimestamp() throws Exception {
         testConversionToType("TIMESTAMP", "testCol\ttime\n" +
                 "1970-01-01T00:00:00.000100Z\t2016-06-13T17:43:50.100418Z\n" +
@@ -198,24 +204,43 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         );
     }
 
-    @Test
-    public void testConversionToDate() throws Exception {
-        testConversionToType("DATE", "testCol\ttime\n" +
-                "1970-01-01T00:00:00.100Z\t2016-06-13T17:43:50.100418Z\n" +
-                "1969-12-31T23:59:59.900Z\t2016-06-13T17:43:50.100419Z\n"
-        );
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
-    @Test
-    public void testConversionToBinary() throws Exception {
-        testConversionToType("BINARY", "testCol\ttime\n");
+    private long nextTime() {
+        return time += 1000;
     }
 
-    @Test
-    public void testConversionToGeoHash() throws Exception {
-        testConversionToType("GEOHASH(7c)", "testCol\ttime\n" +
-                "questdb\t2016-06-13T17:43:50.100416Z\n" +
-                "\t2016-06-13T17:43:50.100417Z\n");
+    private void resetTime() {
+        time = 1465839830100400200L;
+    }
+
+    private void testConversion(String table, String createTableCmd, String input, String expected) throws Exception {
+        runInContext(() -> {
+            try (
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                compiler.compile(createTableCmd, sqlExecutionContext);
+            } catch (SqlException ex) {
+                throw new RuntimeException(ex);
+            }
+
+            recvBuffer = input;
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            mayDrainWalQueue();
+            assertTable(expected, table);
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(table));
+            }
+        });
     }
 
     private void testConversionToType(String type, String expected) throws Exception {
@@ -251,30 +276,5 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                         table + " testCol=1465839830101500t " + nextTime() + "\n",
                 expected
         );
-    }
-
-    private void testConversion(String table, String createTableCmd, String input, String expected) throws Exception {
-        runInContext(() -> {
-            try (
-                    SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            ) {
-                compiler.compile(createTableCmd, sqlExecutionContext);
-            } catch (SqlException ex) {
-                throw new RuntimeException(ex);
-            }
-
-            recvBuffer = input;
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
-            closeContext();
-            mayDrainWalQueue();
-            assertTable(expected, table);
-            if (walEnabled) {
-                Assert.assertTrue(isWalTable(table));
-            }
-        });
     }
 }

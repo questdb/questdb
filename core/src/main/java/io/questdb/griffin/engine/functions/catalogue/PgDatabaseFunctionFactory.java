@@ -65,67 +65,6 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         return new CursorFunction(new PgDatabaseRecordCursorFactory());
     }
 
-    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
-        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
-
-        public PgDatabaseRecordCursorFactory() {
-            super(METADATA);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return true;
-        }
-    }
-
-    private static class PgDatabaseRecordCursor implements RecordCursor {
-        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
-        private boolean hasNext = true;
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return RECORD;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (hasNext) {
-                hasNext = false;
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return RECORD;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-        }
-
-        @Override
-        public void toTop() {
-            hasNext = true;
-        }
-
-        @Override
-        public long size() {
-            return 1;
-        }
-    }
-
     private static class PgDatabaseRecord implements Record {
         @Override
         public boolean getBool(int col) {
@@ -200,6 +139,67 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(int col) {
             return getStr(col).length();
+        }
+    }
+
+    private static class PgDatabaseRecordCursor implements RecordCursor {
+        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
+        private boolean hasNext = true;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return RECORD;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return RECORD;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasNext) {
+                hasNext = false;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            hasNext = true;
+        }
+    }
+
+    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
+
+        public PgDatabaseRecordCursorFactory() {
+            super(METADATA);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return true;
         }
     }
 

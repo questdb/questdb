@@ -61,11 +61,6 @@ public class DivLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
@@ -74,6 +69,11 @@ public class DivLongFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return l / r;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

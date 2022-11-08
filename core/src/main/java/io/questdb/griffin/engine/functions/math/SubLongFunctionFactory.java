@@ -61,11 +61,6 @@ public class SubLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public long getLong(Record rec) {
             long l = left.getLong(rec);
             long r = right.getLong(rec);
@@ -75,6 +70,11 @@ public class SubLongFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.LONG_NaN;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

@@ -97,83 +97,6 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SeedingLongSequenceCursorFactory extends AbstractRecordCursorFactory {
-        private final RecordCursor cursor;
-        private final Rnd rnd;
-        private final long seedLo;
-        private final long seedHi;
-
-        public SeedingLongSequenceCursorFactory(RecordMetadata metadata, long recordCount, long seedLo, long seedHi) {
-            super(metadata);
-            this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
-            this.rnd = new Rnd(this.seedLo = seedLo, this.seedHi = seedHi);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            rnd.reset(this.seedLo, this.seedHi);
-            executionContext.setRandom(rnd);
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return true;
-        }
-    }
-
-
-    static class LongSequenceRecordCursor implements RecordCursor {
-
-        private final long recordCount;
-        private final LongSequenceRecord recordA = new LongSequenceRecord();
-        private final LongSequenceRecord recordB = new LongSequenceRecord();
-
-        public LongSequenceRecordCursor(long recordCount) {
-            this.recordCount = recordCount;
-            this.recordA.of(0);
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return recordA;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (recordA.getValue() < recordCount) {
-                recordA.next();
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordB;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            ((LongSequenceRecord) record).of(atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            recordA.of(0);
-        }
-
-        @Override
-        public long size() {
-            return recordCount;
-        }
-    }
-
     static class LongSequenceRecord implements Record {
         private long value;
 
@@ -197,6 +120,82 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         void of(long value) {
             this.value = value;
+        }
+    }
+
+    static class LongSequenceRecordCursor implements RecordCursor {
+
+        private final LongSequenceRecord recordA = new LongSequenceRecord();
+        private final LongSequenceRecord recordB = new LongSequenceRecord();
+        private final long recordCount;
+
+        public LongSequenceRecordCursor(long recordCount) {
+            this.recordCount = recordCount;
+            this.recordA.of(0);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return recordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return recordB;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (recordA.getValue() < recordCount) {
+                recordA.next();
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            ((LongSequenceRecord) record).of(atRowId);
+        }
+
+        @Override
+        public long size() {
+            return recordCount;
+        }
+
+        @Override
+        public void toTop() {
+            recordA.of(0);
+        }
+    }
+
+    private static class SeedingLongSequenceCursorFactory extends AbstractRecordCursorFactory {
+        private final RecordCursor cursor;
+        private final Rnd rnd;
+        private final long seedHi;
+        private final long seedLo;
+
+        public SeedingLongSequenceCursorFactory(RecordMetadata metadata, long recordCount, long seedLo, long seedHi) {
+            super(metadata);
+            this.cursor = new LongSequenceRecordCursor(Math.max(0L, recordCount));
+            this.rnd = new Rnd(this.seedLo = seedLo, this.seedHi = seedHi);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            rnd.reset(this.seedLo, this.seedHi);
+            executionContext.setRandom(rnd);
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return true;
         }
     }
 

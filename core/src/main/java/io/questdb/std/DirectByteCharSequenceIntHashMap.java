@@ -41,12 +41,12 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
     public static final int NO_ENTRY_VALUE = -1;
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected final double loadFactor;
-    private final int noEntryValue;
     private final ObjList<String> list;
+    private final int noEntryValue;
+    protected int capacity;
+    protected int free;
     protected String[] keys;
     protected int mask;
-    protected int free;
-    protected int capacity;
     private int[] values;
 
     public DirectByteCharSequenceIntHashMap() {
@@ -142,6 +142,25 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return probe(key, lo, hi, index);
     }
 
+    public ObjList<String> keys() {
+        return list;
+    }
+
+    public boolean put(String key, int value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, String key, int value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+
+        putAt0(index, key, value);
+        list.add(key);
+        return true;
+    }
+
     public int remove(DirectByteCharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
@@ -194,6 +213,15 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return capacity - free;
     }
 
+    public int valueAt(int index) {
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noEntryValue;
+    }
+
+    public int valueQuick(int index) {
+        return valueAt(keyIndex(list.getQuick(index)));
+    }
+
     private void erase(int index) {
         keys[index] = null;
         values[index] = noEntryValue;
@@ -203,34 +231,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         keys[to] = keys[from];
         values[to] = values[from];
         erase(from);
-    }
-
-    public ObjList<String> keys() {
-        return list;
-    }
-
-    public boolean put(String key, int value) {
-        return putAt(keyIndex(key), key, value);
-    }
-
-    public boolean putAt(int index, String key, int value) {
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
-        }
-
-        putAt0(index, key, value);
-        list.add(key);
-        return true;
-    }
-
-    public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
-    }
-
-    public int valueQuick(int index) {
-        return valueAt(keyIndex(list.getQuick(index)));
     }
 
     private int probe(CharSequence key, int index) {

@@ -43,12 +43,12 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 }

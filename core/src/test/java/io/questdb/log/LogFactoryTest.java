@@ -33,7 +33,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -126,8 +128,7 @@ public class LogFactoryTest {
             for (int i = 0; i < messageCount; i++) {
                 logger1.criticalW().$("test ").$(i).$();
             }
-        }
-        finally {
+        } finally {
             factory.close(true);
         }
         Assert.assertEquals(messageCount, counter.get());
@@ -662,13 +663,13 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
         r.$();
     }
 
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
         r.$();
     }
 
@@ -770,9 +771,9 @@ public class LogFactoryTest {
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
-        private final long start;
-        private final long speed;
         private final long limit;
+        private final long speed;
+        private final long start;
         private long k;
 
         public TestMicrosecondClock(long start, long speed, long limit) {

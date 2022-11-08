@@ -31,58 +31,20 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class WorkerPoolManager {
 
-    public enum Requester {
-
-        HTTP_SERVER("http"),
-        HTTP_MIN_SERVER("min-http"),
-        PG_WIRE_SERVER("pg-wire"),
-        LINE_TCP_IO("line-tcp-io"),
-        LINE_TCP_WRITER("line-tcp-writer"),
-        OTHER("other"),
-        WAL_APPLY("wal-apply");
-
-        private final String requester;
-
-        Requester(String requester) {
-            this.requester = requester;
-        }
-
-        @Override
-        public String toString() {
-            return requester;
-        }
-    }
-
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
-
-    private final WorkerPool sharedPool;
-    private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
-
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final WorkerPool sharedPool;
     public WorkerPoolManager(ServerConfiguration config, HealthMetrics metrics) {
         sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
-    }
-
-    /**
-     * @param sharedPool A reference to the SHARED pool
-     */
-    protected abstract void configureSharedPool(final WorkerPool sharedPool);
-
-    public WorkerPool getSharedPool() {
-        return sharedPool;
-    }
-
-    public int getSharedWorkerCount() {
-        return sharedPool.getWorkerCount();
     }
 
     public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull HealthMetrics metrics, @NotNull Requester requester) {
@@ -110,23 +72,12 @@ public abstract class WorkerPoolManager {
         return pool;
     }
 
-    public void start(Log sharedPoolLog) {
-        if (running.compareAndSet(false, true)) {
-            sharedPool.start(sharedPoolLog);
-            LOG.info().$("started shared pool [name=").$(sharedPool.getPoolName())
-                    .$(", workers=").$(sharedPool.getWorkerCount())
-                    .I$();
+    public WorkerPool getSharedPool() {
+        return sharedPool;
+    }
 
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
-            for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-                CharSequence name = poolNames.get(i);
-                WorkerPool pool = dedicatedPools.get(name);
-                pool.start(sharedPoolLog);
-                LOG.info().$("started dedicated pool [name=").$(name)
-                        .$(", workers=").$(pool.getWorkerCount())
-                        .I$();
-            }
-        }
+    public int getSharedWorkerCount() {
+        return sharedPool.getWorkerCount();
     }
 
     public void halt() {
@@ -149,5 +100,51 @@ public abstract class WorkerPoolManager {
                 .I$();
         sharedPool.halt();
         closed.set(true);
+    }
+
+    public void start(Log sharedPoolLog) {
+        if (running.compareAndSet(false, true)) {
+            sharedPool.start(sharedPoolLog);
+            LOG.info().$("started shared pool [name=").$(sharedPool.getPoolName())
+                    .$(", workers=").$(sharedPool.getWorkerCount())
+                    .I$();
+
+            ObjList<CharSequence> poolNames = dedicatedPools.keys();
+            for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+                CharSequence name = poolNames.get(i);
+                WorkerPool pool = dedicatedPools.get(name);
+                pool.start(sharedPoolLog);
+                LOG.info().$("started dedicated pool [name=").$(name)
+                        .$(", workers=").$(pool.getWorkerCount())
+                        .I$();
+            }
+        }
+    }
+
+    /**
+     * @param sharedPool A reference to the SHARED pool
+     */
+    protected abstract void configureSharedPool(final WorkerPool sharedPool);
+
+    public enum Requester {
+
+        HTTP_SERVER("http"),
+        HTTP_MIN_SERVER("min-http"),
+        PG_WIRE_SERVER("pg-wire"),
+        LINE_TCP_IO("line-tcp-io"),
+        LINE_TCP_WRITER("line-tcp-writer"),
+        OTHER("other"),
+        WAL_APPLY("wal-apply");
+
+        private final String requester;
+
+        Requester(String requester) {
+            this.requester = requester;
+        }
+
+        @Override
+        public String toString() {
+            return requester;
+        }
     }
 }

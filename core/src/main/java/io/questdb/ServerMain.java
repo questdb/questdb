@@ -51,15 +51,15 @@ import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerMain implements Closeable {
-    private final PropServerConfiguration config;
-    private final Log log;
-    private final AtomicBoolean running = new AtomicBoolean();
+    private final String banner;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
-    private final WorkerPoolManager workerPoolManager;
+    private final PropServerConfiguration config;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
-    private final String banner;
+    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
+    private final Log log;
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));

@@ -59,10 +59,10 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends SymbolFunction implements UnaryFunction {
         private final Function arg;
+        private final int scale;
         private final StringSink sink = new StringSink();
         private final LongIntHashMap symbolTableShortcut = new LongIntHashMap();
         private final ObjList<String> symbols = new ObjList<>();
-        private final int scale;
         private int next = 1;
 
         public Func(Function arg, int scale) {
@@ -137,8 +137,13 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        public @Nullable SymbolTable newSymbolTable() {
+            Func copy = new Func(arg, scale);
+            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
 
         @Override
@@ -147,13 +152,8 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public @Nullable SymbolTable newSymbolTable() {
-            Func copy = new Func(arg, scale);
-            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
-            copy.symbols.clear();
-            copy.symbols.addAll(this.symbols);
-            copy.next = this.next;
-            return copy;
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
     }
 }

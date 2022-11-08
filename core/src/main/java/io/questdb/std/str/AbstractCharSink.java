@@ -37,6 +37,35 @@ public abstract class AbstractCharSink implements CharSink {
     private final char[] doubleDigits = new char[21];
 
     @Override
+    public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+        if (Character.isHighSurrogate(c)) {
+            if (hi - pos < 1) {
+                put('?');
+                return pos;
+            } else {
+                char c2 = in.charAt(pos++);
+                if (Character.isLowSurrogate(c2)) {
+                    dword = Character.toCodePoint(c, c2);
+                } else {
+                    put('?');
+                    return pos;
+                }
+            }
+        } else if (Character.isLowSurrogate(c)) {
+            put('?');
+            return pos;
+        } else {
+            dword = c;
+        }
+        put((char) (240 | dword >> 18)).
+                put((char) (128 | dword >> 12 & 63)).
+                put((char) (128 | dword >> 6 & 63)).
+                put((char) (128 | dword & 63));
+        return pos;
+    }
+
+    @Override
     public char[] getDoubleDigitsBuffer() {
         return doubleDigits;
     }
@@ -86,6 +115,13 @@ public abstract class AbstractCharSink implements CharSink {
         }
     }
 
+    public CharSink repeat(CharSequence value, int n) {
+        for (int i = 0; i < n; i++) {
+            put(value);
+        }
+        return this;
+    }
+
     private void put(StackTraceElement e) {
         put("\tat ");
         put(e.getClassName());
@@ -103,35 +139,6 @@ public abstract class AbstractCharSink implements CharSink {
             }
         }
         put(Misc.EOL);
-    }
-
-    @Override
-    public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-        int dword;
-        if (Character.isHighSurrogate(c)) {
-            if (hi - pos < 1) {
-                put('?');
-                return pos;
-            } else {
-                char c2 = in.charAt(pos++);
-                if (Character.isLowSurrogate(c2)) {
-                    dword = Character.toCodePoint(c, c2);
-                } else {
-                    put('?');
-                    return pos;
-                }
-            }
-        } else if (Character.isLowSurrogate(c)) {
-            put('?');
-            return pos;
-        } else {
-            dword = c;
-        }
-        put((char) (240 | dword >> 18)).
-                put((char) (128 | dword >> 12 & 63)).
-                put((char) (128 | dword >> 6 & 63)).
-                put((char) (128 | dword & 63));
-        return pos;
     }
 
     private void put(Throwable throwable, StackTraceElement[] enclosingTrace, String caption, String prefix, Set<Throwable> dejaVu) {
@@ -176,13 +183,6 @@ public abstract class AbstractCharSink implements CharSink {
                 put(cause, trace, "Caused by: ", prefix, dejaVu);
             }
         }
-    }
-
-    public CharSink repeat(CharSequence value, int n) {
-        for (int i = 0; i < n; i++) {
-            put(value);
-        }
-        return this;
     }
 
     private void put0(Throwable e) {

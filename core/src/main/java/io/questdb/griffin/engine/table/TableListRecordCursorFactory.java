@@ -41,9 +41,8 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
-
-    private final FilesFacade ff;
     private final TableListRecordCursor cursor;
+    private final FilesFacade ff;
     private Path path;
 
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
@@ -51,11 +50,6 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         this.ff = ff;
         path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
-    }
-
-    @Override
-    protected void _close() {
-        path = Misc.free(path);
     }
 
     @Override
@@ -68,9 +62,14 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
+    @Override
+    protected void _close() {
+        path = Misc.free(path);
+    }
+
     private class TableListRecordCursor implements RecordCursor {
-        private final StringSink sink = new StringSink();
         private final TableListRecord record = new TableListRecord();
+        private final StringSink sink = new StringSink();
         private long findPtr = 0;
 
         @Override
@@ -81,6 +80,11 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public Record getRecord() {
             return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -103,23 +107,18 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void toTop() {
-            close();
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            close();
         }
 
         private TableListRecordCursor of() {

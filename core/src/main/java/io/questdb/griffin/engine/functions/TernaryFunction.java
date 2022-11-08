@@ -38,6 +38,12 @@ public interface TernaryFunction extends Function {
         getRight().close();
     }
 
+    Function getCenter();
+
+    Function getLeft();
+
+    Function getRight();
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
@@ -48,6 +54,11 @@ public interface TernaryFunction extends Function {
     @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getCenter().isConstant() && getRight().isConstant();
+    }
+
+    @Override
+    default boolean isReadThreadSafe() {
+        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
 
     @Override
@@ -64,20 +75,9 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
-    }
-
-    @Override
     default void toTop() {
         getLeft().toTop();
         getCenter().toTop();
         getRight().toTop();
     }
-
-    Function getLeft();
-
-    Function getCenter();
-
-    Function getRight();
 }

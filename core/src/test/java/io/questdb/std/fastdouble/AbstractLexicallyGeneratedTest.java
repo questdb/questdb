@@ -48,6 +48,38 @@ abstract class AbstractLexicallyGeneratedTest {
     }
 
     @Test
+    public void testAsciiCharacterInputsUpTo4Characters() {
+        int maxLength = 4;
+        Random rng = new Random();
+        IntStream.range(0, 10_000).forEach(i -> {
+            char[] ch = new char[4];
+            int n = rng.nextInt(maxLength) + 1;
+            for (int j = 0; j < n; j++) {
+                ch[j] = nextAsciiChar(rng);
+            }
+            StringBuilder str = new StringBuilder();
+            for (int j = 0; j < 4; j++) {
+                char c = ch[j];
+                if (c >= ' ') {
+                    str.append(c);
+                }
+            }
+            testAgainstJdk(str.toString());
+        });
+    }
+
+    @Test
+    public void testRandomStringFrom10SyntaxRuleWithoutWhitespace() {
+        Random rng = new Random(SEED);
+        LexicalGenerator gen = new LexicalGenerator(false, true);
+        IntStream.range(0, 10_000).forEach(i -> {
+                    String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(10, rng);
+                    testAgainstJdk(str);
+                }
+        );
+    }
+
+    @Test
     public void testRandomStringFrom1SyntaxRuleWithoutWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
@@ -92,17 +124,6 @@ abstract class AbstractLexicallyGeneratedTest {
     }
 
     @Test
-    public void testRandomStringFrom10SyntaxRuleWithoutWhitespace() {
-        Random rng = new Random(SEED);
-        LexicalGenerator gen = new LexicalGenerator(false, true);
-        IntStream.range(0, 10_000).forEach(i -> {
-                    String str = gen.produceRandomInputStringFromLexicalRuleWithoutWhitespace(10, rng);
-                    testAgainstJdk(str);
-                }
-        );
-    }
-
-    @Test
     public void testRandomStringsOfIncreasingLengthWithWhitespace() {
         Random rng = new Random(SEED);
         LexicalGenerator gen = new LexicalGenerator(false, true);
@@ -111,27 +132,6 @@ abstract class AbstractLexicallyGeneratedTest {
                     testAgainstJdk(str);
                 }
         );
-    }
-
-    @Test
-    public void testAsciiCharacterInputsUpTo4Characters() {
-        int maxLength = 4;
-        Random rng = new Random();
-        IntStream.range(0, 10_000).forEach(i -> {
-            char[] ch = new char[4];
-            int n = rng.nextInt(maxLength) + 1;
-            for (int j = 0; j < n; j++) {
-                ch[j] = nextAsciiChar(rng);
-            }
-            StringBuilder str = new StringBuilder();
-            for (int j = 0; j < 4; j++) {
-                char c = ch[j];
-                if (c >= ' ') {
-                    str.append(c);
-                }
-            }
-            testAgainstJdk(str.toString());
-        });
     }
 
     private static char nextAsciiChar(Random rng) {

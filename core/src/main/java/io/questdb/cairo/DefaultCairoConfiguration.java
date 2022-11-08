@@ -32,26 +32,20 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
-    private final CharSequence root;
-    private final CharSequence confRoot;
-    private final CharSequence snapshotRoot;
-
-    private final TextConfiguration textConfiguration;
-    private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
-    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
-
     private final BuildInformation buildInformation = new BuildInformationHolder();
-
-    private final long databaseIdLo;
+    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
+    private final CharSequence confRoot;
     private final long databaseIdHi;
+    private final long databaseIdLo;
+    private final CharSequence root;
+    private final CharSequence snapshotRoot;
+    private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
+    private final TextConfiguration textConfiguration;
 
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
@@ -239,16 +233,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getInactiveWalWriterTTL() {
-        return 60_000;
-    }
-
-    @Override
-    public int getMetadataPoolCapacity() {
-        return getSqlModelPoolCapacity();
-    }
-
-    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }
@@ -286,6 +270,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveReaderTTL() {
         return -10000;
+    }
+
+    @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
     }
 
     @Override
@@ -331,6 +320,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return 1000;
+    }
+
+    @Override
+    public int getMetadataPoolCapacity() {
+        return getSqlModelPoolCapacity();
     }
 
     @Override
@@ -424,11 +418,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getStrFunctionMaxBufferLength() {
-        return 1024 * 1024;
-    }
-
-    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }
@@ -446,11 +435,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
-    }
-
-    @Override
-    public long getWalSegmentRolloverRowCount() {
-        return 200000;
     }
 
     @Override
@@ -731,6 +715,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public CharSequence getSystemTableNamePrefix() {
         return "__sys";
     }
@@ -763,6 +752,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return 30_000;
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return 200000;
     }
 
     @Override
@@ -812,11 +811,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
-    }
-
-    @Override
-    public int getWalRecreateDistressedSequencerAttempts() {
-        return 3;
     }
 
     @Override

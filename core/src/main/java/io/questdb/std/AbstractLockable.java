@@ -26,11 +26,11 @@ package io.questdb.std;
 
 public abstract class AbstractLockable {
     private static final long TARGET_SEQUENCE_OFFSET;
+    private int srcSequence;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
     // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
     private int tgtSequence;
-    private int srcSequence;
 
     public boolean tryLock() {
         return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);

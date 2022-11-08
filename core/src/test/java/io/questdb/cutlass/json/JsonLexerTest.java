@@ -709,12 +709,6 @@ public class JsonLexerTest {
         }
     }
 
-    private static final class NoOpParser implements JsonParser {
-        @Override
-        public void onEvent(int code, CharSequence tag, int position) {
-        }
-    }
-
     private static class JsonAssemblingParser implements JsonParser, Mutable {
         private final StringBuffer buffer = new StringBuffer();
         private final IntStack itemCountStack = new IntStack();
@@ -726,10 +720,6 @@ public class JsonLexerTest {
             buffer.setLength(0);
             itemCount = 0;
             itemCountStack.clear();
-        }
-
-        public CharSequence value() {
-            return buffer;
         }
 
         @Override
@@ -788,6 +778,16 @@ public class JsonLexerTest {
                 default:
                     break;
             }
+        }
+
+        public CharSequence value() {
+            return buffer;
+        }
+    }
+
+    private static final class NoOpParser implements JsonParser {
+        @Override
+        public void onEvent(int code, CharSequence tag, int position) {
         }
     }
 }

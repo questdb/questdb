@@ -30,7 +30,9 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;

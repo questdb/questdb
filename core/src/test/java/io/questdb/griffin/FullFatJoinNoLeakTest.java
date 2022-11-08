@@ -37,8 +37,8 @@ import java.lang.reflect.Proxy;
 
 public class FullFatJoinNoLeakTest extends AbstractCairoTest {
 
-    protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
+    protected static SqlExecutionContext sqlExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {

@@ -49,14 +49,14 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        filter.close();
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    protected void _close() {
+        super._close();
+        filter.close();
     }
 
     @Override

@@ -46,24 +46,23 @@ import java.io.File;
 import java.io.IOException;
 
 public class TableBackupTest {
+    private static final int ERRNO_EIO = 5;
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
-    private static final int ERRNO_EIO = 5;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
     private CharSequence backupRoot;
-    private Path path;
     private Path finalBackupPath;
     private int finalBackupPathLen;
-
+    private SqlCompiler mainCompiler;
     private CairoConfiguration mainConfiguration;
     private CairoEngine mainEngine;
-    private SqlCompiler mainCompiler;
     private SqlExecutionContext mainSqlExecutionContext;
-    private int renameErrno;
     private int mkdirsErrno;
     private int mkdirsErrnoCountDown = 0;
+    private Path path;
+    private int renameErrno;
 
     @Before
     public void setup() throws IOException {
@@ -109,8 +108,8 @@ public class TableBackupTest {
         backupRoot = temp.newFolder("dbBackupRoot").getAbsolutePath();
         mainConfiguration = new DefaultCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                return ff;
+            public DateFormat getBackupDirTimestampFormat() {
+                return new TimestampFormatCompiler().compile("ddMMMyyyy");
             }
 
             @Override
@@ -119,8 +118,8 @@ public class TableBackupTest {
             }
 
             @Override
-            public DateFormat getBackupDirTimestampFormat() {
-                return new TimestampFormatCompiler().compile("ddMMMyyyy");
+            public FilesFacade getFilesFacade() {
+                return ff;
             }
 
             @Override
@@ -537,6 +536,15 @@ public class TableBackupTest {
         });
     }
 
+    private void assertConf() {
+        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
+        final int trimLen = finalBackupPath.length();
+        Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
+        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
+    }
+
     private void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -548,6 +556,19 @@ public class TableBackupTest {
                 mainEngine.clear();
             }
         });
+    }
+
+    private void assertTabIndex() {
+        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(path));
+        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+        Assert.assertTrue(Files.exists(finalBackupPath));
+    }
+
+    private void assertTables(String tb1) throws Exception {
+        selectAll(tb1, false, sink1);
+        selectAll(tb1, true, sink2);
+        TestUtils.assertEquals(sink1, sink2);
     }
 
     private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
@@ -583,6 +604,10 @@ public class TableBackupTest {
         }
     }
 
+    private void setFinalBackupPath() {
+        setFinalBackupPath(0);
+    }
+
     private void setFinalBackupPath(int n) {
         DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
         finalBackupPath.of(mainConfiguration.getBackupRoot()).slash();
@@ -594,31 +619,5 @@ public class TableBackupTest {
         finalBackupPath.slash$();
         finalBackupPathLen = finalBackupPath.length();
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.DB_DIRECTORY).slash$();
-    }
-
-    private void setFinalBackupPath() {
-        setFinalBackupPath(0);
-    }
-
-    private void assertTables(String tb1) throws Exception {
-        selectAll(tb1, false, sink1);
-        selectAll(tb1, true, sink2);
-        TestUtils.assertEquals(sink1, sink2);
-    }
-
-    private void assertTabIndex() {
-        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(path));
-        finalBackupPath.concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(finalBackupPath));
-    }
-
-    private void assertConf() {
-        finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
-        final int trimLen = finalBackupPath.length();
-        Assert.assertTrue(Files.exists(finalBackupPath.concat("server.conf").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("mime.types").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("log-file.conf").$()));
-        Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
     }
 }

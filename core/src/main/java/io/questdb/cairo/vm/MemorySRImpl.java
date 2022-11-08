@@ -34,18 +34,22 @@ import io.questdb.std.FilesFacade;
 // "sliding" read only memory that reads file descriptor used for append
 public class MemorySRImpl extends MemoryPARWImpl {
     private static final Log LOG = LogFactory.getLog(MemorySRImpl.class);
-    private FilesFacade ff;
     private long fd = -1;
-    private long size = 0;
+    private FilesFacade ff;
     private long pageAddress;
     private int pageIndex;
     private MemoryMA parent;
+    private long size = 0;
 
     @Override
     public void close() {
         super.close();
         closeFile();
         releasePage();
+    }
+
+    public long getFd() {
+        return fd;
     }
 
     @Override
@@ -56,15 +60,6 @@ public class MemorySRImpl extends MemoryPARWImpl {
     @Override
     public long getPageSize() {
         return getExtendSegmentSize();
-    }
-
-    @Override
-    protected long mapWritePage(int page, long offset) {
-        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use extend() instead.");
-    }
-
-    public long getFd() {
-        return fd;
     }
 
     public void of(MemoryMA parent, int memoryTag) {
@@ -131,5 +126,10 @@ public class MemorySRImpl extends MemoryPARWImpl {
     private void releasePage() {
         releaseCurrentPage();
         invalidateCurrentPage();
+    }
+
+    @Override
+    protected long mapWritePage(int page, long offset) {
+        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use extend() instead.");
     }
 }

@@ -43,24 +43,24 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final IntStack timestampRequiredStack = new IntStack();
-    private final int workerCount;
-    private final int sharedWorkerCount;
+    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final MicrosecondClock clock;
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
+    private final int sharedWorkerCount;
     private final RingQueue<TelemetryTask> telemetryQueue;
-    private Sequence telemetryPubSeq;
-    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private final IntStack timestampRequiredStack = new IntStack();
+    private final int workerCount;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private boolean cloneSymbolTables = false;
+    private int jitMode;
+    private long now;
     private Rnd random;
     private long requestFd = -1;
-    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    private long now;
-    private int jitMode;
-    private boolean cloneSymbolTables = false;
+    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private Sequence telemetryPubSeq;
     private boolean walApplication;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
@@ -83,12 +83,34 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-       this(cairoEngine, workerCount, workerCount);
+        this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
-    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
+    public void clearAnalyticContext() {
+        analyticContext.clear();
+    }
+
+    @Override
+    public void configureAnalyticContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Transient @Nullable ColumnTypes partitionByKeyTypes,
+            boolean ordered,
+            boolean baseSupportsRandomAccess
+    ) {
+        analyticContext.of(
+                partitionByRecord,
+                partitionBySink,
+                partitionByKeyTypes,
+                ordered,
+                baseSupportsRandomAccess
+        );
+    }
+
+    @Override
+    public AnalyticContext getAnalyticContext() {
+        return analyticContext;
     }
 
     @Override
@@ -97,8 +119,68 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @NotNull CairoEngine getCairoEngine() {
+        return cairoEngine;
+    }
+
+    @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return cairoSecurityContext;
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return cloneSymbolTables;
+    }
+
+    @Override
+    public int getJitMode() {
+        return jitMode;
+    }
+
+    @Override
+    public MicrosecondClock getMicrosecondClock() {
+        return clock;
+    }
+
+    @Override
+    public long getNow() {
+        return now;
+    }
+
+    @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public long getRequestFd() {
+        return requestFd;
+    }
+
+    @Override
+    public int getSharedWorkerCount() {
+        return sharedWorkerCount;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    @Override
+    public void initNow() {
+        now = clock.getTicks();
     }
 
     @Override
@@ -122,18 +204,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getWorkerCount() {
-        return workerCount;
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
     }
 
     @Override
-    public int getSharedWorkerCount() {
-        return sharedWorkerCount;
-    }
-
-    @Override
-    public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    public void setJitMode(int jitMode) {
+        this.jitMode = jitMode;
     }
 
     @Override
@@ -142,75 +219,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public @NotNull CairoEngine getCairoEngine() {
-        return cairoEngine;
-    }
-
-    @Override
-    public long getRequestFd() {
-        return requestFd;
-    }
-
-    @Override
-    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
-    }
-
-    @Override
     public void storeTelemetry(short event, short origin) {
         telemetryMethod.store(event, origin);
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
-    }
-
-    @Override
-    public void configureAnalyticContext(
-            @Nullable VirtualRecord partitionByRecord,
-            @Nullable RecordSink partitionBySink,
-            @Transient @Nullable ColumnTypes partitionByKeyTypes,
-            boolean ordered,
-            boolean baseSupportsRandomAccess
-    ) {
-        analyticContext.of(
-                partitionByRecord,
-                partitionBySink,
-                partitionByKeyTypes,
-                ordered,
-                baseSupportsRandomAccess
-        );
-    }
-
-    @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
-    }
-
-    @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return clock;
-    }
-
-    @Override
-    public void initNow() {
-        now = clock.getTicks();
-    }
-
-    @Override
-    public long getNow() {
-        return now;
-    }
-
-    @Override
-    public int getJitMode() {
-        return jitMode;
-    }
-
-    @Override
-    public void setJitMode(int jitMode) {
-        this.jitMode = jitMode;
     }
 
     public SqlExecutionContextImpl with(
@@ -223,11 +233,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         walApplication = false;
         return this;
-    }
-
-    @Override
-    public void setCloneSymbolTables(boolean cloneSymbolTables) {
-        this.cloneSymbolTables = cloneSymbolTables;
     }
 
     public SqlExecutionContextImpl with(
@@ -263,10 +268,5 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void storeTelemetryNoop(short event, short origin) {
-    }
-
-    @Override
-    public boolean getCloneSymbolTables() {
-        return cloneSymbolTables;
     }
 }

@@ -66,6 +66,21 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -82,21 +97,6 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex + 1) > 0 ? rec.getLong(valueIndex) : Numbers.LONG_NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     @Override

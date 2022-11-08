@@ -853,6 +853,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public MicrosecondClock getMicrosecondClock() {
+            return sqlExecutionContext.getMicrosecondClock();
+        }
+
+        @Override
         public long getNow() {
             return sqlExecutionContext.getNow();
         }
@@ -870,11 +875,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
-        }
-
-        @Override
-        public MicrosecondClock getMicrosecondClock() {
-            return sqlExecutionContext.getMicrosecondClock();
         }
 
         @Override

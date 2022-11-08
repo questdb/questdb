@@ -30,13 +30,15 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
+public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     AsyncWriterCommand deserialize(TableWriterTask task);
 
+    String getCommandName();
+
     int getCommandType();
 
-    String getCommandName();
+    long getCorrelationId();
 
     int getTableId();
 
@@ -46,21 +48,19 @@ public interface AsyncWriterCommand extends TableMetadataChange,Closeable {
 
     long getTableVersion();
 
-    long getCorrelationId();
-
     boolean isStructureChange();
-
-    void startAsync();
 
     void serialize(TableWriterTask task);
 
     void setCommandCorrelationId(long correlationId);
 
+    void startAsync();
+
     interface Error {
+        int CAIRO_ERROR = -3;
         int OK = 0;
         int READER_OUT_OF_DATE = -1;
         int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
-        int CAIRO_ERROR = -3;
         int UNEXPECTED_ERROR = -4;
     }
 }

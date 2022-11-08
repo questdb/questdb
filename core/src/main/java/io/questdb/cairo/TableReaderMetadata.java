@@ -33,20 +33,20 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
-    private final FilesFacade ff;
-    private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private final String tableName;
     private final CairoConfiguration configuration;
-    private Path path;
+    private final FilesFacade ff;
+    private final String tableName;
+    private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private long commitLag;
+    private int maxUncommittedRows;
     private MemoryMR metaMem;
     private int partitionBy;
-    private int tableId;
-    private int maxUncommittedRows;
-    private long commitLag;
+    private Path path;
+    private int plen;
     private long structureVersion;
+    private int tableId;
     private MemoryMR transitionMeta;
     private boolean walEnabled;
-    private int plen;
 
     public TableReaderMetadata(CairoConfiguration configuration, String tableName) {
         this.configuration = configuration;
@@ -221,6 +221,16 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return columnCount;
     }
 
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -238,16 +248,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public String getTableName() {
         return tableName;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    @Override
-    public long getCommitLag() {
-        return commitLag;
     }
 
     public boolean isWalEnabled() {

@@ -28,10 +28,10 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
 public class ThreadSafeObjectPool<T> {
+    private final int capacity;
     private final ObjectFactory<T> fact;
     private final AtomicIntegerArray locks;
     private final ObjList<Slot> slots;
-    private final int capacity;
 
     public ThreadSafeObjectPool(ObjectFactory<T> fact, int capacity) {
         this.fact = fact;
@@ -40,21 +40,6 @@ public class ThreadSafeObjectPool<T> {
         slots = new ObjList<>(capacity);
         for (int i = 0; i < capacity; i++) {
             slots.add(new Slot(i));
-        }
-    }
-
-    public void releaseInactive() {
-        for (int i = 0, n = slots.size(); i < n; i++) {
-            if (locks.compareAndSet(i, 0, 1)) {
-                slots.getQuick(i).clear();
-                locks.set(i, 0);
-            }
-        }
-    }
-
-    public void releaseAll() {
-        for (int i = 0, n = slots.size(); i < n; i++) {
-            slots.getQuick(i).clear();
         }
     }
 
@@ -68,6 +53,21 @@ public class ThreadSafeObjectPool<T> {
                 }
             }
             Os.pause();
+        }
+    }
+
+    public void releaseAll() {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).clear();
+        }
+    }
+
+    public void releaseInactive() {
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            if (locks.compareAndSet(i, 0, 1)) {
+                slots.getQuick(i).clear();
+                locks.set(i, 0);
+            }
         }
     }
 

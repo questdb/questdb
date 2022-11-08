@@ -82,13 +82,13 @@ public class AtomicIntListTest {
     }
 
     @Test
-    public void testHammerListSingleReader() throws Exception {
-        testHammerList(1, 1024);
+    public void testHammerListMultipleReaders() throws Exception {
+        testHammerList(4, 1024);
     }
 
     @Test
-    public void testHammerListMultipleReaders() throws Exception {
-        testHammerList(4, 1024);
+    public void testHammerListSingleReader() throws Exception {
+        testHammerList(1, 1024);
     }
 
     private void testHammerList(int readers, int maxSize) throws Exception {
@@ -112,10 +112,10 @@ public class AtomicIntListTest {
 
     private static class Reader extends Thread {
 
-        private final AtomicIntList list;
+        private final AtomicInteger anomalies;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
-        private final AtomicInteger anomalies;
+        private final AtomicIntList list;
         private final int maxSize;
 
         private Reader(AtomicIntList list, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomalies, int maxSize) {
@@ -153,10 +153,10 @@ public class AtomicIntListTest {
 
     private static class Writer extends Thread {
 
-        private final AtomicIntList list;
+        private final AtomicInteger anomalies;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
-        private final AtomicInteger anomalies;
+        private final AtomicIntList list;
         private final int maxSize;
 
         private Writer(AtomicIntList list, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomalies, int maxSize) {

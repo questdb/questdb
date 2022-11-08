@@ -40,33 +40,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     protected final MimeTypesCache mimeTypesCache;
     private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
-
-    private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public CharSequence getIndexFileName() {
-            return "index.html";
-        }
-
-        @Override
-        public MimeTypesCache getMimeTypesCache() {
-            return mimeTypesCache;
-        }
-
-        @Override
-        public CharSequence getPublicDirectory() {
-            return ".";
-        }
-
-        @Override
-        public String getKeepAliveHeader() {
-            return null;
-        }
-    };
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
         @Override
         public MillisecondClock getClock() {
@@ -76,6 +49,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return Numbers.MAX_SCALE;
         }
 
         @Override
@@ -89,11 +67,6 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_SCALE;
-        }
-
-        @Override
         public CharSequence getKeepAliveHeader() {
             return "Keep-Alive: timeout=5, max=10000\r\n";
         }
@@ -101,6 +74,32 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
+        }
+    };
+    private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public CharSequence getIndexFileName() {
+            return "index.html";
+        }
+
+        @Override
+        public String getKeepAliveHeader() {
+            return null;
+        }
+
+        @Override
+        public MimeTypesCache getMimeTypesCache() {
+            return mimeTypesCache;
+        }
+
+        @Override
+        public CharSequence getPublicDirectory() {
+            return ".";
         }
     };
 
@@ -142,8 +141,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isQueryCacheEnabled() {
-        return true;
+    public String getPoolName() {
+        return "http";
     }
 
     @Override
@@ -157,16 +156,16 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
+        return staticContentProcessorConfiguration;
+    }
+
+    @Override
     public WaitProcessorConfiguration getWaitProcessorConfiguration() {
         return new WaitProcessorConfiguration() {
             @Override
             public MillisecondClock getClock() {
                 return MillisecondClockImpl.INSTANCE;
-            }
-
-            @Override
-            public long getMaxWaitCapMs() {
-                return 1000;
             }
 
             @Override
@@ -183,12 +182,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             public int getMaxProcessingQueueSize() {
                 return 4096;
             }
-        };
-    }
 
-    @Override
-    public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-        return staticContentProcessorConfiguration;
+            @Override
+            public long getMaxWaitCapMs() {
+                return 1000;
+            }
+        };
     }
 
     @Override
@@ -197,7 +196,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public String getPoolName() {
-        return "http";
+    public boolean isQueryCacheEnabled() {
+        return true;
     }
 }

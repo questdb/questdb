@@ -89,8 +89,18 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
+    public void clear() {
+        accumulator.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public long getDate(Record rec) {
+        return accumulator.longValue();
     }
 
     @Override
@@ -101,6 +111,11 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NaN);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -115,27 +130,12 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
-    }
-
-    @Override
-    public void clear() {
-        accumulator.reset();
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return accumulator.longValue();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put("MinDateVector(").put(columnIndex).put(')');
+    }
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
     }
 }

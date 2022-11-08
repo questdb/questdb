@@ -29,8 +29,8 @@ import java.util.Arrays;
 
 public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     public static final int NO_ENTRY_VALUE = -1;
-    private final int noEntryValue;
     private final ObjList<CharSequence> list;
+    private final int noEntryValue;
     private int[] values;
 
     public CharSequenceIntHashMap() {
@@ -62,29 +62,6 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
 
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-        values[index] = noEntryValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
     }
 
     public void increment(CharSequence key) {
@@ -134,6 +111,16 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         }
     }
 
+    @Override
+    public void removeAt(int index) {
+        if (index < 0) {
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
     public int valueAt(int index) {
         int index1 = -index - 1;
         return index < 0 ? values[index1] : noEntryValue;
@@ -168,5 +155,18 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }

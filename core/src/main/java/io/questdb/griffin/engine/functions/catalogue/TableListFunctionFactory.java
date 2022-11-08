@@ -42,14 +42,14 @@ import io.questdb.std.str.StringSink;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TableListFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
-    private static final int idColumn;
-    private static final int nameColumn;
-    private static final int partitionByColumn;
-    private static final int maxUncommittedRowsColumn;
     private static final int commitLagColumn;
     private static final int designatedTimestampColumn;
-    private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
+    private static final int idColumn;
+    private static final int maxUncommittedRowsColumn;
+    private static final int nameColumn;
+    private static final int partitionByColumn;
     private static final int writeModeColumn;
 
     @Override
@@ -79,8 +79,8 @@ public class TableListFunctionFactory implements FunctionFactory {
     }
 
     private static class TableListCursorFactory extends AbstractRecordCursorFactory {
-        private final FilesFacade ff;
         private final TableListRecordCursor cursor;
+        private final FilesFacade ff;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
         private Path path;
@@ -114,8 +114,8 @@ public class TableListFunctionFactory implements FunctionFactory {
         }
 
         private class TableListRecordCursor implements RecordCursor {
-            private final StringSink sink = new StringSink();
             private final TableListRecord record = new TableListRecord();
+            private final StringSink sink = new StringSink();
             private long findPtr = 0;
 
             @Override
@@ -127,6 +127,11 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
+            }
+
+            @Override
+            public Record getRecordB() {
+                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -151,18 +156,8 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public void recordAt(Record record, long atRowId) {
                 throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public void toTop() {
-                close();
             }
 
             @Override
@@ -170,11 +165,16 @@ public class TableListFunctionFactory implements FunctionFactory {
                 return -1;
             }
 
+            @Override
+            public void toTop() {
+                close();
+            }
+
             public class TableListRecord implements Record {
-                private int tableId;
-                private int maxUncommittedRows;
                 private long commitLag;
+                private int maxUncommittedRows;
                 private int partitionBy;
+                private int tableId;
 
                 @Override
                 public boolean getBool(int col) {

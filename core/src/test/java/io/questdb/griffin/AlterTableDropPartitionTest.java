@@ -243,35 +243,6 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropPartitionWithO3Version() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "x";
-            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
-                tm.timestamp();
-                TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
-            }
-            compiler.compile("insert into " + tableName + " " +
-                    "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
-                    "from long_sequence(50)", sqlExecutionContext);
-
-            assertPartitionResult("count\n44\n", "2020-01-01");
-
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
-                path.concat("2020-01-01.1").concat("timestamp.d").$();
-                Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
-                if (Os.type == Os.WINDOWS) {
-                    engine.releaseAllReaders();
-                }
-
-                compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
-
-                assertPartitionResult("count\n0\n", "2020-01-01");
-                Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
-            }
-        });
-    }
-
-    @Test
     public void testDropPartitionWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
@@ -301,6 +272,35 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     "8\t2022-02-26T13:10:00.000000Z\t8\n" +
                     "9\t2022-02-26T13:20:00.000000Z\t9\n" +
                     "10\t2022-02-26T13:30:00.000000Z\t10\n");
+        });
+    }
+
+    @Test
+    public void testDropPartitionWithO3Version() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "x";
+            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
+                tm.timestamp();
+                TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
+            }
+            compiler.compile("insert into " + tableName + " " +
+                    "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
+                    "from long_sequence(50)", sqlExecutionContext);
+
+            assertPartitionResult("count\n44\n", "2020-01-01");
+
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
+                path.concat("2020-01-01.1").concat("timestamp.d").$();
+                Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
+                if (Os.type == Os.WINDOWS) {
+                    engine.releaseAllReaders();
+                }
+
+                compile("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
+
+                assertPartitionResult("count\n0\n", "2020-01-01");
+                Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
+            }
         });
     }
 

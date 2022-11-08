@@ -34,31 +34,31 @@ import java.io.Closeable;
 
 public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
-    private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
+    private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final int lineRollBufLimit;
-    private CharSequence tableName;
-    private boolean ignoreEolOnce;
-    private long lineRollBufCur;
-    private Listener textLexerListener;
-    private long lastLineStart;
-    private int lineRollBufSize;
-    private long lineRollBufPtr;
-    private boolean header;
-    private long lastQuotePos = -1;
-    private long errorCount = 0;
-    private int lineCountLimit;
-    private int fieldMax = -1;
-    private int fieldIndex;
-    private long lineCount;
-    private boolean eol;
-    private boolean useLineRollBuf = false;
-    private boolean rollBufferUnusable = false;
-    private boolean inQuote;
     private boolean delayedOutQuote;
-    private long fieldLo;
+    private boolean eol;
+    private long errorCount = 0;
     private long fieldHi;
+    private int fieldIndex;
+    private long fieldLo;
+    private int fieldMax = -1;
+    private boolean header;
+    private boolean ignoreEolOnce;
+    private boolean inQuote;
+    private long lastLineStart;
+    private long lastQuotePos = -1;
+    private long lineCount;
+    private int lineCountLimit;
+    private long lineRollBufCur;
+    private long lineRollBufPtr;
+    private int lineRollBufSize;
+    private boolean rollBufferUnusable = false;
     private boolean skipLinesWithExtraValues;
+    private CharSequence tableName;
+    private Listener textLexerListener;
+    private boolean useLineRollBuf = false;
 
     public AbstractTextLexer(TextConfiguration textConfiguration) {
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
@@ -168,12 +168,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         fieldMax++;
     }
 
-    protected void checkEol(long lo) {
-        if (eol) {
-            uneol(lo);
-        }
-    }
-
     private boolean checkState(long ptr, byte c) {
         if (!rollBufferUnusable && !useLineRollBuf && !delayedOutQuote) {
             this.fieldHi++;
@@ -208,8 +202,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         lineRollBufCur = lineRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
     }
-
-    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
 
     private void eol(long ptr, byte c) {
         if (c == '\n' || c == '\r') {
@@ -291,15 +283,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         ignoreEolOnce = false;
     }
 
-    protected void onColumnDelimiter(long lo) {
-        if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
-            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
-            this.fieldLo = this.fieldHi;
-        } else {
-            onColumnDelimiterSlow(lo);
-        }
-    }
-
     private void onColumnDelimiterSlow(long lo) {
         checkEol(lo);
 
@@ -307,40 +290,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             return;
         }
         stashFieldSlow(fieldIndex++);
-    }
-
-    protected void onLineEnd(long ptr) throws LineLimitException {
-        if (inQuote) {
-            return;
-        }
-
-        if (eol) {
-            this.fieldLo = this.fieldHi;
-            return;
-        }
-
-        stashField(fieldIndex);
-
-        if (ignoreEolOnce) {
-            ignoreEolOnce();
-            return;
-        }
-
-        triggerLine(ptr);
-
-        if (lineCount > lineCountLimit) {
-            throw LineLimitException.INSTANCE;
-        }
-    }
-
-    protected void onQuote() {
-        if (inQuote) {
-            delayedOutQuote = !delayedOutQuote;
-            lastQuotePos = this.fieldHi;
-        } else if (fieldHi - fieldLo == 1) {
-            inQuote = true;
-            this.fieldLo = this.fieldHi;
-        }
     }
 
     private void parse0(long lo, long hi) {
@@ -388,10 +337,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             lineRollBufCur = lineRollBufPtr + l;
             shift(lo + lastLineStart - lineRollBufPtr);
         }
-    }
-
-    void setTableName(CharSequence tableName) {
-        this.tableName = tableName;
     }
 
     private void shift(long d) {
@@ -452,6 +397,61 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private void uneol(long lo) {
         eol = false;
         this.lastLineStart = this.fieldLo - lo;
+    }
+
+    protected void checkEol(long lo) {
+        if (eol) {
+            uneol(lo);
+        }
+    }
+
+    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
+
+    protected void onColumnDelimiter(long lo) {
+        if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
+            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
+            this.fieldLo = this.fieldHi;
+        } else {
+            onColumnDelimiterSlow(lo);
+        }
+    }
+
+    protected void onLineEnd(long ptr) throws LineLimitException {
+        if (inQuote) {
+            return;
+        }
+
+        if (eol) {
+            this.fieldLo = this.fieldHi;
+            return;
+        }
+
+        stashField(fieldIndex);
+
+        if (ignoreEolOnce) {
+            ignoreEolOnce();
+            return;
+        }
+
+        triggerLine(ptr);
+
+        if (lineCount > lineCountLimit) {
+            throw LineLimitException.INSTANCE;
+        }
+    }
+
+    protected void onQuote() {
+        if (inQuote) {
+            delayedOutQuote = !delayedOutQuote;
+            lastQuotePos = this.fieldHi;
+        } else if (fieldHi - fieldLo == 1) {
+            inQuote = true;
+            this.fieldLo = this.fieldHi;
+        }
+    }
+
+    void setTableName(CharSequence tableName) {
+        this.tableName = tableName;
     }
 
     @FunctionalInterface

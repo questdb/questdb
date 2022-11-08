@@ -27,10 +27,10 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryR;
 
 public class BinarySearch {
-    // Up is decreasing direction
-    public static final int SCAN_UP = -1;
     // Down is increasing direction
     public static final int SCAN_DOWN = 1;
+    // Up is decreasing direction
+    public static final int SCAN_UP = -1;
 
     /**
      * Performs binary search on column of Long values.

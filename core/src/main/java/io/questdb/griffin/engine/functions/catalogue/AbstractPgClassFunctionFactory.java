@@ -42,25 +42,24 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
 
 public abstract class AbstractPgClassFunctionFactory implements FunctionFactory {
+    private static final int INDEX_OID = 0;
+    private static final int INDEX_RELNAME = 1;
     private static final Log LOG = LogFactory.getLog(AbstractPgClassFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String[] relNames = {"pg_class"};
     private static final int fixedClassLen = relNames.length;
-    private static final int INDEX_OID = 0;
-    private static final int INDEX_RELNAME = 1;
-
     private static final int[] staticOid = {PGOids.PG_CLASS_OID};
-    private static final int[] staticRelNamespace = {PG_CATALOG_OID};
-    private static final int[] staticRelType = {0};
-    private static final int[] staticRelOfType = {0};
-    private static final int[] staticRelOwner = {0};
+    private static final int[] staticRelAllVisible = {0};
     private static final int[] staticRelAm = {0};
     private static final int[] staticRelFileNode = {0};
+    private static final int[] staticRelNamespace = {PG_CATALOG_OID};
+    private static final int[] staticRelOfType = {0};
+    private static final int[] staticRelOwner = {0};
+    private static final int[] staticRelRewrite = {0};
     // todo: adjust tablespace
     private static final int[] staticRelTablespace = {0};
-    private static final int[] staticRelAllVisible = {0};
     private static final int[] staticRelToastRelId = {0};
-    private static final int[] staticRelRewrite = {0};
+    private static final int[] staticRelType = {0};
     private static final int[][] staticIntColumns = {
             staticOid,
             null,
@@ -114,8 +113,8 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
 
-        private final Path path = new Path();
         private final PgClassRecordCursor cursor;
+        private final Path path = new Path();
         private final long tempMem;
 
         public PgClassCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -143,14 +142,14 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
     }
 
     private static class PgClassRecordCursor implements NoRandomAccessRecordCursor {
-        private final Path path;
-        private final FilesFacade ff;
-        private final DelegatingRecord record = new DelegatingRecord();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
-        private final StringSink sink = new StringSink();
-        private final int plimit;
+        private final FilesFacade ff;
         private final int[] intValues = new int[28];
+        private final Path path;
+        private final int plimit;
+        private final DelegatingRecord record = new DelegatingRecord();
+        private final StringSink sink = new StringSink();
+        private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
         private final long tempMem;
         private long findFileStruct = 0;
         private int fixedRelPos = -1;
@@ -220,15 +219,15 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         }
 
         @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
         public void toTop() {
             findFileStruct = ff.findClose(findFileStruct);
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-        }
-
-        @Override
-        public long size() {
-            return -1;
         }
 
         private boolean next0() {
@@ -261,72 +260,6 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             return false;
         }
 
-        private class StaticReadingRecord implements Record {
-            @Override
-            public boolean getBool(int col) {
-                return false;
-            }
-
-            @Override
-            public char getChar(int col) {
-                switch (col) {
-                    case 15:
-                        // relpersistence
-                        return 'u';
-                    case 16:
-                        // relkind
-                        return 'r';
-                    default:
-                        // relreplident
-                        return 'd';
-                }
-            }
-
-            @Override
-            public short getShort(int col) {
-                // todo: do we need the number of columns for 'relnatts'?
-                return 0;
-            }
-
-            @Override
-            public float getFloat(int col) {
-                return -1;
-            }
-
-            @Override
-            public int getInt(int col) {
-                return staticIntColumns[col][fixedRelPos];
-            }
-
-            @Override
-            public long getLong(int col) {
-                return 0;
-            }
-
-            @Override
-            public CharSequence getStr(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return relNames[fixedRelPos];
-                }
-                return null;
-            }
-
-            @Override
-            public CharSequence getStrB(int col) {
-                return getStr(col);
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                if (col == INDEX_RELNAME) {
-                    // relname
-                    return relNames[fixedRelPos].length();
-                }
-                return -1;
-            }
-        }
-
         private class DiskReadingRecord implements Record {
             private final StringSink utf8SinkB = new StringSink();
 
@@ -352,12 +285,6 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             @Override
-            public short getShort(int col) {
-                // todo: do we need the number of columns for 'relnatts'?
-                return 0;
-            }
-
-            @Override
             public float getFloat(int col) {
                 return -1;
             }
@@ -369,6 +296,12 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
             @Override
             public long getLong(int col) {
+                return 0;
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
                 return 0;
             }
 
@@ -407,6 +340,72 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
                 } else {
                     return null;
                 }
+            }
+        }
+
+        private class StaticReadingRecord implements Record {
+            @Override
+            public boolean getBool(int col) {
+                return false;
+            }
+
+            @Override
+            public char getChar(int col) {
+                switch (col) {
+                    case 15:
+                        // relpersistence
+                        return 'u';
+                    case 16:
+                        // relkind
+                        return 'r';
+                    default:
+                        // relreplident
+                        return 'd';
+                }
+            }
+
+            @Override
+            public float getFloat(int col) {
+                return -1;
+            }
+
+            @Override
+            public int getInt(int col) {
+                return staticIntColumns[col][fixedRelPos];
+            }
+
+            @Override
+            public long getLong(int col) {
+                return 0;
+            }
+
+            @Override
+            public short getShort(int col) {
+                // todo: do we need the number of columns for 'relnatts'?
+                return 0;
+            }
+
+            @Override
+            public CharSequence getStr(int col) {
+                if (col == INDEX_RELNAME) {
+                    // relname
+                    return relNames[fixedRelPos];
+                }
+                return null;
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                return getStr(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                if (col == INDEX_RELNAME) {
+                    // relname
+                    return relNames[fixedRelPos].length();
+                }
+                return -1;
             }
         }
     }

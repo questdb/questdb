@@ -26,11 +26,11 @@ package io.questdb.std;
 
 public final class Vect {
 
+    public static native double avgDoubleAcc(long pInt, long count, long pCount);
+
     public static native double avgIntAcc(long pInt, long count, long pCount);
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
-
-    public static native double avgDoubleAcc(long pInt, long count, long pCount);
 
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
@@ -55,10 +55,6 @@ public final class Vect {
     public static native void copyFromTimestampIndex(long pIndex, long indexLo, long indexHi, long pTs);
 
     public static native void flattenIndex(long pIndex, long count);
-
-    public static native void sort3LongAscInPlace(long address, long count);
-
-    private static native void freeMergedIndex(long pIndex);
 
     public static void freeMergedIndex(long pIndex, long indexSize) {
         freeMergedIndex(pIndex);
@@ -88,6 +84,8 @@ public final class Vect {
         return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
     }
 
+    public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle256Bit(long pSrc, long pDest, long pIndex, long count);
@@ -95,8 +93,6 @@ public final class Vect {
     public static native void indexReshuffle32Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
-
-    public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
@@ -130,12 +126,9 @@ public final class Vect {
         mergeLongIndexesAscInner(pIndexStructArray, count, mergedIndexAddr);
     }
 
-    // accept externally allocated memory for merged index of proper size
-    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+    public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
-
-    public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
@@ -214,6 +207,8 @@ public final class Vect {
      */
     public static native void sort128BitAscInPlace(long pLongData, long count);
 
+    public static native void sort3LongAscInPlace(long address, long count);
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void sortULongAscInPlace(long pLongData, long count);
@@ -237,5 +232,10 @@ public final class Vect {
 
     public static native long sumLong(long pLong, long count);
 
+    private static native void freeMergedIndex(long pIndex);
+
     private static native void memcpy0(long src, long dst, long len);
+
+    // accept externally allocated memory for merged index of proper size
+    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
 }

@@ -39,13 +39,13 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumLong256VectorAggregateFunction extends Long256Function implements VectorAggregateFunction {
     private static final ThreadLocal<Long256Impl> partialSums = new ThreadLocal<>(Long256Impl::new);
+    private final int columnIndex;
+    private final LongAdder count = new LongAdder();
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private final SimpleSpinLock lock = new SimpleSpinLock();
     private final Long256Impl sumA = new Long256Impl();
     private final Long256Impl sumB = new Long256Impl();
-    private final LongAdder count = new LongAdder();
-    private final int columnIndex;
-    private final DistinctFunc distinctFunc;
-    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
     public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -86,8 +86,38 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public void clear() {
+        sumA.setAll(0, 0, 0, 0);
+        sumB.setAll(0, 0, 0, 0);
+        count.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public void getLong256(Record rec, CharSink sink) {
+        Long256Impl v = (Long256Impl) getLong256A(rec);
+        v.toSink(sink);
+    }
+
+    @Override
+    public Long256 getLong256A(Record rec) {
+        if (count.sum() > 0) {
+            return sumA;
+        }
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public Long256 getLong256B(Record rec) {
+        if (count.sum() > 0) {
+            sumB.copyFrom(sumA);
+            return sumB;
+        }
+        return Long256Impl.NULL_LONG256;
     }
 
     @Override
@@ -119,36 +149,6 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
-    }
-
-    @Override
-    public void clear() {
-        sumA.setAll(0, 0, 0, 0);
-        sumB.setAll(0, 0, 0, 0);
-        count.reset();
-    }
-
-    @Override
-    public void getLong256(Record rec, CharSink sink) {
-        Long256Impl v = (Long256Impl) getLong256A(rec);
-        v.toSink(sink);
-    }
-
-    @Override
-    public Long256 getLong256A(Record rec) {
-        if (count.sum() > 0) {
-            return sumA;
-        }
-        return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public Long256 getLong256B(Record rec) {
-        if (count.sum() > 0) {
-            sumB.copyFrom(sumA);
-            return sumB;
-        }
-        return Long256Impl.NULL_LONG256;
     }
 
     private Long256Impl sumLong256(Long256Impl sum, long address, long count) {

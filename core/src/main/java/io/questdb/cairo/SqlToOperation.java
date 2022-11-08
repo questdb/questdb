@@ -36,10 +36,10 @@ import io.questdb.std.Rnd;
 import java.io.Closeable;
 
 public class SqlToOperation implements Closeable {
-    private final Rnd rnd;
     private final BindVariableService bindVariableService;
-    private final SqlExecutionContext sqlExecutionContext;
     private final CairoEngine engine;
+    private final Rnd rnd;
+    private final SqlExecutionContext sqlExecutionContext;
 
     public SqlToOperation(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         rnd = new Rnd();
@@ -64,16 +64,16 @@ public class SqlToOperation implements Closeable {
         sqlExecutionContext.close();
     }
 
-    public Rnd getRnd() {
-        return rnd;
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     public Rnd getRandom() {
         return rnd;
     }
 
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
+    public Rnd getRnd() {
+        return rnd;
     }
 
     public AlterOperation toAlterOperation(CharSequence alterStatement) {

@@ -44,23 +44,55 @@ public class QuestDBNode {
     private Cairo cairo;
     private Griffin griffin;
 
+    public void closeCairo() {
+        cairo.close();
+    }
+
+    public void closeGriffin() {
+        griffin.close();
+    }
+
+    public BindVariableService getBindVariableService() {
+        return griffin.bindVariableService;
+    }
+
+    public CairoConfiguration getConfiguration() {
+        return cairo.configuration;
+    }
+
+    public CairoEngine getEngine() {
+        return cairo.engine;
+    }
+
+    public MessageBus getMessageBus() {
+        return cairo.messageBus;
+    }
+
+    public Metrics getMetrics() {
+        return cairo.metrics;
+    }
+
+    public CharSequence getRoot() {
+        return cairo.root;
+    }
+
+    public DatabaseSnapshotAgent getSnapshotAgent() {
+        return cairo.snapshotAgent;
+    }
+
+    public SqlCompiler getSqlCompiler() {
+        return griffin.compiler;
+    }
+
+    public SqlExecutionContext getSqlExecutionContext() {
+        return griffin.sqlExecutionContext;
+    }
+
     public void initCairo(String dbRootName) {
         if (dbRootName == null || dbRootName.isEmpty()) {
             throw new IllegalArgumentException("must specify dbRoot");
         }
         cairo = new Cairo(dbRootName);
-    }
-
-    public void closeCairo() {
-        cairo.close();
-    }
-
-    public void setUpCairo() {
-        cairo.setUp();
-    }
-
-    public void tearDownCairo(boolean removeDir) {
-        cairo.tearDown(removeDir);
     }
 
     public void initGriffin(SqlExecutionCircuitBreaker circuitBreaker) {
@@ -70,12 +102,16 @@ public class QuestDBNode {
         griffin = new Griffin(cairo, circuitBreaker);
     }
 
-    public void closeGriffin() {
-        griffin.close();
+    public void setUpCairo() {
+        cairo.setUp();
     }
 
     public void setUpGriffin() {
         griffin.setUp();
+    }
+
+    public void tearDownCairo(boolean removeDir) {
+        cairo.tearDown(removeDir);
     }
 
     public void tearDownGriffin() {
@@ -83,12 +119,12 @@ public class QuestDBNode {
     }
 
     private static class Cairo {
-        private final CharSequence root;
         private final CairoConfiguration configuration;
         private final MessageBus messageBus;
+        private final Metrics metrics;
+        private final CharSequence root;
         private CairoEngine engine;
         private DatabaseSnapshotAgent snapshotAgent;
-        private final Metrics metrics;
 
         private Cairo(String dbRootName) {
             try {
@@ -111,11 +147,6 @@ public class QuestDBNode {
             messageBus = engine.getMessageBus();
         }
 
-        private void close() {
-            snapshotAgent = Misc.free(snapshotAgent);
-            engine = Misc.free(engine);
-        }
-
         public void setUp() {
             TestUtils.createTestPath(root);
             engine.getTableIdGenerator().open();
@@ -130,12 +161,17 @@ public class QuestDBNode {
                 TestUtils.removeTestPath(root);
             }
         }
+
+        private void close() {
+            snapshotAgent = Misc.free(snapshotAgent);
+            engine = Misc.free(engine);
+        }
     }
 
     private static class Griffin {
         private final BindVariableService bindVariableService;
-        private final SqlExecutionContext sqlExecutionContext;
         private final SqlCompiler compiler;
+        private final SqlExecutionContext sqlExecutionContext;
 
         private Griffin(Cairo cairo, SqlExecutionCircuitBreaker circuitBreaker) {
             compiler = new SqlCompiler(cairo.engine, null, cairo.snapshotAgent);
@@ -150,51 +186,15 @@ public class QuestDBNode {
             bindVariableService.clear();
         }
 
-        private void close() {
-            compiler.close();
-        }
-
         public void setUp() {
             bindVariableService.clear();
         }
 
         public void tearDown() {
         }
-    }
 
-    public CharSequence getRoot() {
-        return cairo.root;
-    }
-
-    public CairoConfiguration getConfiguration() {
-        return cairo.configuration;
-    }
-
-    public MessageBus getMessageBus() {
-        return cairo.messageBus;
-    }
-
-    public CairoEngine getEngine() {
-        return cairo.engine;
-    }
-
-    public DatabaseSnapshotAgent getSnapshotAgent() {
-        return cairo.snapshotAgent;
-    }
-
-    public Metrics getMetrics() {
-        return cairo.metrics;
-    }
-
-    public BindVariableService getBindVariableService() {
-        return griffin.bindVariableService;
-    }
-
-    public SqlExecutionContext getSqlExecutionContext() {
-        return griffin.sqlExecutionContext;
-    }
-
-    public SqlCompiler getSqlCompiler() {
-        return griffin.compiler;
+        private void close() {
+            compiler.close();
+        }
     }
 }

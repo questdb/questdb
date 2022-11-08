@@ -65,6 +65,11 @@ public class GeoLongColumn extends GeoLongFunction {
         return true;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoLongColumn(").put(columnIndex).put(')');
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;
@@ -79,10 +84,5 @@ public class GeoLongColumn extends GeoLongFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOLONG_MIN_BITS] = new GeoLongColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("GeoLongColumn(").put(columnIndex).put(')');
     }
 }

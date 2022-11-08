@@ -29,10 +29,10 @@ import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
 public class SharedRandom {
-    public static final ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
     // async random is used by SQL Async implementation in order to
     // not disturb the existing tests
     public static final ThreadLocal<Rnd> ASYNC_RANDOM = new ThreadLocal<>();
+    public static final ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     public static Rnd getAsyncRandom(CairoConfiguration configuration) {
         return getRnd(configuration, ASYNC_RANDOM);

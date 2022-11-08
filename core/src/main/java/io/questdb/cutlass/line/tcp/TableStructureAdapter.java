@@ -36,12 +36,12 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
-    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
-    private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final CairoConfiguration cairoConfiguration;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
+    private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
+    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
+    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private CharSequence tableName;
     private int timestampIndex = -1;
 
@@ -79,18 +79,18 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public long getCommitLag() {
+        return cairoConfiguration.getCommitLag();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
+    public int getMaxUncommittedRows() {
+        return cairoConfiguration.getMaxUncommittedRows();
     }
 
     @Override
@@ -119,13 +119,13 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return cairoConfiguration.getMaxUncommittedRows();
+    public boolean isIndexed(int columnIndex) {
+        return false;
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
+    public boolean isSequential(int columnIndex) {
+        return false;
     }
 
     @Override

@@ -48,7 +48,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+    public void clearAnalyticContext() {
+    }
+
+    @Override
+    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
+    }
+
+    @Override
+    public AnalyticContext getAnalyticContext() {
         return null;
     }
 
@@ -58,8 +66,62 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public @NotNull CairoEngine getCairoEngine() {
+        return engine;
+    }
+
+    @Override
     public CairoSecurityContext getCairoSecurityContext() {
         return null;
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return false;
+    }
+
+    @Override
+    public int getJitMode() {
+        return 0;
+    }
+
+    @Override
+    public MicrosecondClock getMicrosecondClock() {
+        return null;
+    }
+
+    @Override
+    public long getNow() {
+        return 0;
+    }
+
+    @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return null;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return null;
+    }
+
+    @Override
+    public long getRequestFd() {
+        return 0;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return 0;
+    }
+
+    @Override
+    public void initNow() {
     }
 
     @Override
@@ -81,68 +143,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public int getWorkerCount() {
-        return 0;
-    }
-
-    @Override
-    public Rnd getRandom() {
-        return null;
-    }
-
-    @Override
-    public void setRandom(Rnd rnd) {
-    }
-
-    @Override
-    public @NotNull CairoEngine getCairoEngine() {
-        return engine;
-    }
-
-    @Override
-    public long getRequestFd() {
-        return 0;
-    }
-
-    @Override
-    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    }
-
-    @Override
-    public void storeTelemetry(short event, short origin) {
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return null;
-    }
-
-    @Override
-    public void configureAnalyticContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, boolean baseSupportsRandomAccess) {
-    }
-
-    @Override
-    public void clearAnalyticContext() {
-    }
-
-    @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return null;
-    }
-
-    @Override
-    public void initNow() {
-    }
-
-    @Override
-    public long getNow() {
-        return 0;
-    }
-
-    @Override
-    public int getJitMode() {
-        return 0;
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
     }
 
     @Override
@@ -150,11 +151,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+    public void setRandom(Rnd rnd) {
     }
 
     @Override
-    public boolean getCloneSymbolTables() {
-        return false;
+    public void storeTelemetry(short event, short origin) {
     }
 }

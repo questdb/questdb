@@ -69,16 +69,16 @@ timestamp (ts) PARTITION BY HOUR;
 alter TABLE 'request_logs' set PARAM maxUncommittedRows = 20000;
  */
 public class LineTCPSenderMainFileLimitSimulation {
-    private static final StringSink sink = new StringSink();
-    private static final String[] auui = new String[50];
-    private static final String[] puui = new String[70];
     private static final String[] atuuid = new String[101];
-    private static final String[] node_uid = new String[46];
-    private static final String[] rpcm = new String[41];
+    private static final String[] auui = new String[50];
     private static final String[] buuid = new String[71];
-    private static final String[] nnet = new String[70];
-    private static final String[] nr = new String[70];
     private static final String[] code1 = new String[70];
+    private static final String[] nnet = new String[70];
+    private static final String[] node_uid = new String[46];
+    private static final String[] nr = new String[70];
+    private static final String[] puui = new String[70];
+    private static final String[] rpcm = new String[41];
+    private static final StringSink sink = new StringSink();
     private static final String[] t5 = new String[70];
 
     public static void main(String[] args) throws NumericException {
@@ -114,6 +114,24 @@ public class LineTCPSenderMainFileLimitSimulation {
         }
     }
 
+    private static void fillDates(Rnd rnd, LineTcpSender sender) throws NumericException {
+        long period = Timestamps.MINUTE_MICROS * 1000L * 10;
+        long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
+        long endTs = IntervalUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
+
+        while (ts < endTs) {
+            sendLine(rnd, sender, ts);
+            ts += period + rnd.nextLong(Timestamps.MINUTE_MICROS * 1000L);
+        }
+        sender.flush();
+    }
+
+    private static void generateStrings(Rnd rnd, String[] auui, int length) {
+        for (int i = 0; i < auui.length; i++) {
+            auui[i] = rnd.nextString(length);
+        }
+    }
+
     private static void sendLine(Rnd rnd, LineTcpSender sender, long ts) {
         sender.metric("request_logs")
                 .tag("auui", auui[rnd.nextInt(auui.length)])
@@ -142,23 +160,5 @@ public class LineTCPSenderMainFileLimitSimulation {
                 .field("b2", rnd.nextString(rnd.nextPositiveInt() % 15))
                 .field("mob", rnd.nextBoolean())
                 .$(ts);
-    }
-
-    private static void fillDates(Rnd rnd, LineTcpSender sender) throws NumericException {
-        long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
-        long endTs = IntervalUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
-
-        while (ts < endTs) {
-            sendLine(rnd, sender, ts);
-            ts += period + rnd.nextLong(Timestamps.MINUTE_MICROS * 1000L);
-        }
-        sender.flush();
-    }
-
-    private static void generateStrings(Rnd rnd, String[] auui, int length) {
-        for (int i = 0; i < auui.length; i++) {
-            auui[i] = rnd.nextString(length);
-        }
     }
 }

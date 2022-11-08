@@ -42,6 +42,15 @@ import java.io.InputStream;
 import java.util.Properties;
 
 public class CmdUtils {
+    static PropServerConfiguration readServerConfiguration(
+            final String rootDirectory,
+            final Properties properties,
+            Log log,
+            final BuildInformation buildInformation
+    ) throws ServerConfigurationException, JsonException {
+        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
+    }
+
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) throws IOException, ServerConfigurationException, JsonException {
         String rootDirectory = params.tablePath + Files.SEPARATOR + ".." + Files.SEPARATOR + "..";
         final Properties properties = new Properties();
@@ -60,14 +69,5 @@ public class CmdUtils {
         } catch (CairoException ex) {
             log.error().$(ex.getFlyweightMessage()).$();
         }
-    }
-
-    static PropServerConfiguration readServerConfiguration(
-            final String rootDirectory,
-            final Properties properties,
-            Log log,
-            final BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
-        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 }

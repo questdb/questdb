@@ -303,10 +303,6 @@ public class WalEventCursor {
             return sql;
         }
 
-        public void resetRnd(Rnd rnd) {
-            rnd.reset(rndSeed0, rndSeed1);
-        }
-
         public void populateBindVariableService(BindVariableService bindVariableService) {
             bindVariableService.clear();
             try {
@@ -315,6 +311,10 @@ public class WalEventCursor {
             } catch (SqlException e) {
                 throw CairoException.critical(0).put(e.getMessage());
             }
+        }
+
+        public void resetRnd(Rnd rnd) {
+            rnd.reset(rndSeed0, rndSeed1);
         }
 
         private void populateIndexedVariables(BindVariableService bindVariableService) throws SqlException {

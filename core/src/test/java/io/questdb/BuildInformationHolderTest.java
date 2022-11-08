@@ -31,11 +31,6 @@ import org.junit.Test;
 public class BuildInformationHolderTest {
 
     @Test
-    public void testAsCharSequenceDefault() {
-        TestUtils.assertEquals("Unknown Version:Unknown Version:Unknown Version", new BuildInformationHolder());
-    }
-
-    @Test
     public void testAsCharSequence() {
         TestUtils.assertEquals("Unknown Version:Unknown Version:Unknown Version", new BuildInformationHolder());
         BuildInformationHolder holder = new BuildInformationHolder("a", "b", "c");
@@ -45,9 +40,14 @@ public class BuildInformationHolderTest {
         Assert.assertEquals("c", holder.getJdkVersion());
         char[] expected = {'a', ':', 'b', ':', 'c'};
         Assert.assertEquals(expected.length, holder.length());
-        for (int i=0; i < expected.length; i++) {
+        for (int i = 0; i < expected.length; i++) {
             Assert.assertEquals(expected[i], holder.charAt(i));
         }
         Assert.assertEquals("a:b:c", holder.subSequence(0, 5));
+    }
+
+    @Test
+    public void testAsCharSequenceDefault() {
+        TestUtils.assertEquals("Unknown Version:Unknown Version:Unknown Version", new BuildInformationHolder());
     }
 }
