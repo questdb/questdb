@@ -686,6 +686,39 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateViaWal_Random() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        currentMicros = rnd.nextLong();
+        sqlExecutionContext.getRandom().reset(currentMicros * 1000, currentMicros);
+
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+
+            addRowsToWalsAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, true);
+            TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
+
+            forEachNode(node -> {
+                try {
+                    executeOperation(node, "UPDATE " + tableName + " SET INT=rnd_int()", CompiledQuery.UPDATE);
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                drainWalQueue(node);
+            });
+
+            executeOperation("UPDATE " + tableCopyName + " SET INT=rnd_int()", CompiledQuery.UPDATE);
+            TestUtils.assertSqlCursors(node1, nodes, tableCopyName, tableName, LOG, false);
+        });
+    }
+
+    @Test
     public void testWalTxnRepublishing() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -818,6 +851,48 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         return tableId;
     }
 
+    @SuppressWarnings("SameParameterValue")
+    private void addRowsToWalsAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, boolean inOrder) throws Exception {
+        final ObjList<WalWriter> walWriters = new ObjList<>();
+        forEachNode(node -> {
+            final WalWriter walWriter = node.getEngine().getWalWriter(node.getSqlExecutionContext().getCairoSecurityContext(), tableName);
+            walWriters.add(walWriter);
+        });
+
+        try (TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "copy")) {
+            if (!inOrder) {
+                startTs += (rowsToInsertTotal - 1) * tsIncrement;
+                tsIncrement = -tsIncrement;
+            }
+
+            for (int i = 0; i < rowsToInsertTotal; i++) {
+                String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
+                String rndStr = rnd.nextInt(10) == 5 ? null : rnd.nextString(20);
+
+                long rowTs = startTs;
+                if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
+                    // Add jitter to the timestamps to randomise things even more.
+                    rowTs += rnd.nextLong(2 * tsIncrement);
+                }
+
+                for (int j = 0; j < walWriters.size(); j++) {
+                    addRowRwAllTypes(iteration, walWriters.get(j).newRow(rowTs), i, symbol, rndStr);
+                }
+                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
+                startTs += tsIncrement;
+            }
+
+            copyWriter.commit();
+            for (int j = 0; j < walWriters.size(); j++) {
+                final WalWriter walWriter = walWriters.get(j);
+                walWriter.commit();
+                walWriter.close();
+            }
+
+            forEachNode(AbstractCairoTest::drainWalQueue);
+        }
+    }
+
     private void assertMaxUncommittedRows(CharSequence tableName, int expectedMaxUncommittedRows) throws SqlException {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
@@ -831,11 +906,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     private void createTableAndCopy(String tableName, String tableCopyName) {
         // tableName is WAL enabled
         try (TableModel model = createTableModel(tableName).wal()) {
-            engine.createTableUnsafe(
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    model.getMem(),
-                    model.getPath(),
-                    model
+            forEachNode(node ->
+                node.getEngine().createTableUnsafe(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        model.getMem(),
+                        model.getPath(),
+                        model
+                )
             );
         }
 
