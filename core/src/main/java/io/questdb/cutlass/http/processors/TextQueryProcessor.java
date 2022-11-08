@@ -433,29 +433,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
         DirectByteCharSequence delimiter = request.getUrlParam("delimiter");
         state.delimiter = ',';
-        int pos = 0;
 
-        if (delimiter != null) {
-            if (delimiter.charAt(pos) == '\\') {
-                switch (delimiter.charAt(++pos)) {
-                    case 'r':
-                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\r');
-                        break;
-                    case 'n':
-                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\n');
-                        break;
-                    case 't':
-                        Unsafe.getUnsafe().putChar(delimiter.getLo() + pos, '\t');
-                        break;
-                    default:
-                        pos--;
-                        break;
-                }
-            }
-
-            if (delimiter.length() - pos == 1) {
-                state.delimiter = delimiter.charAt(pos);
-            }
+        if (delimiter != null && delimiter.length() == 1) {
+            state.delimiter = delimiter.charAt(0);
         }
 
         state.skip = skip;
