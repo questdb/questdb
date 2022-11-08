@@ -36,7 +36,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
@@ -57,7 +56,7 @@ public class CmdUtils {
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
 
-        try (InputStream is = new FileInputStream(configurationFile)) {
+        try (InputStream is = java.nio.file.Files.newInputStream(configurationFile.toPath())) {
             properties.load(is);
         }
         final Log log = LogFactory.getLog("recover-var-index");

@@ -2421,7 +2421,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class EntryIterator<V> extends BaseIterator<V>
             implements Iterator<Map.Entry<CharSequence, V>> {
 
-        public final Map.Entry<CharSequence, V> next() {
+        public Map.Entry<CharSequence, V> next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -2471,14 +2471,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     (v == r || v.equals(r)));
         }
 
-        public final boolean equals(Object o) {
+        public boolean equals(Object o) {
             Set<?> c;
             return ((o instanceof Set) &&
                     ((c = (Set<?>) o) == this ||
                             (containsAll(c) && c.containsAll(this))));
         }
 
-        public final int hashCode() {
+        public int hashCode() {
             int h = 0;
             Node<V>[] t = map.table;
             if (t != null) {
@@ -2553,7 +2553,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class KeyIterator<V> extends BaseIterator<V>
             implements Iterator<CharSequence> {
 
-        public final CharSequence next() {
+        public CharSequence next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -3275,7 +3275,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * using tree comparisons from root, but continues linear
          * search when lock not available.
          */
-        final Node<V> find(int h, CharSequence k) {
+        Node<V> find(int h, CharSequence k) {
             if (k != null) {
                 for (Node<V> e = first; e != null; ) {
                     int s;
@@ -3309,7 +3309,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return null if added
          */
-        final TreeNode<V> putTreeVal(int h, CharSequence k, V v) {
+        TreeNode<V> putTreeVal(int h, CharSequence k, V v) {
             Class<?> kc = null;
             boolean searched = false;
             for (TreeNode<V> p = root; ; ) {
@@ -3376,7 +3376,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return true if now too small, so should be untreeified
          */
-        final boolean removeTreeNode(TreeNode<V> p) {
+        boolean removeTreeNode(TreeNode<V> p) {
             TreeNode<V> next = (TreeNode<V>) p.next;
             TreeNode<V> pred = p.prev;  // unlink traversal pointers
             TreeNode<V> r, rl;
@@ -3525,7 +3525,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Returns the TreeNode (or null if not found) for the given key
          * starting at given root.
          */
-        final TreeNode<V> findTreeNode(int h, CharSequence k, Class<?> kc) {
+        TreeNode<V> findTreeNode(int h, CharSequence k, Class<?> kc) {
             if (k != null) {
                 TreeNode<V> p = this;
                 do {
@@ -3561,7 +3561,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
     static final class ValueIterator<V> extends BaseIterator<V>
             implements Iterator<V> {
-        public final V next() {
+        public V next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -3586,26 +3586,26 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             super(map);
         }
 
-        public final boolean add(V e) {
+        public boolean add(V e) {
             throw new UnsupportedOperationException();
         }
 
-        public final boolean addAll(@NotNull Collection<? extends V> c) {
+        public boolean addAll(@NotNull Collection<? extends V> c) {
             throw new UnsupportedOperationException();
         }
 
-        public final boolean contains(Object o) {
+        public boolean contains(Object o) {
             return map.containsValue(o);
         }
 
         @NotNull
-        public final Iterator<V> iterator() {
+        public Iterator<V> iterator() {
             ValueIterator<V> it = tlValueIterator.get();
             it.of(map);
             return it;
         }
 
-        public final boolean remove(Object o) {
+        public boolean remove(Object o) {
             if (o != null) {
                 for (Iterator<V> it = iterator(); it.hasNext(); ) {
                     if (o.equals(it.next())) {

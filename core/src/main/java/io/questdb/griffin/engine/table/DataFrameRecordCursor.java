@@ -39,6 +39,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
     private BooleanSupplier next;
     private RowCursor rowCursor;
+    private final BooleanSupplier nextRow = this::nextRow;
+    private final BooleanSupplier nextFrame = this::nextFrame;
 
     public DataFrameRecordCursor(
             RowCursorFactory rowCursorFactory,
@@ -52,10 +54,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.entityCursor = entityCursor;
         this.filter = filter;
     }
-
-    private final BooleanSupplier nextRow = this::nextRow;
-
-    private final BooleanSupplier nextFrame = this::nextFrame;
 
     @Override
     public boolean hasNext() {
