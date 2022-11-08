@@ -69,6 +69,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -139,10 +140,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
             // verify that the link does not exist
-            if (Os.type != Os.WINDOWS) {
-                // in windows the handle is held and cannot be deleted
-                Assert.assertFalse(Files.exists(path));
-            }
+            // in windows the handle is held and cannot be deleted
+            Assert.assertFalse(Files.exists(path));
             // verify that a new partition folder has been created in the table data space (hot)
             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
@@ -346,7 +345,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             engine.releaseAllWriters();
             engine.releaseInactive();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                for (; purgeJob.run(0); ) {
+                while (purgeJob.run(0)) {
                     Os.pause();
                 }
             }
@@ -354,9 +353,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // verify cold storage folder still exists
             Assert.assertTrue(Files.exists(other));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
             Assert.assertFalse(Files.exists(path));
         });
@@ -365,7 +362,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -439,7 +435,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
-            Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(path));
+            Assert.assertTrue(Files.isSoftLink(path));
             // in windows, detecting a soft link is tricky, and unnecessary. Removing
             // a soft link does not remove the target's content, so we do not need to
             // call unlink, thus we do not need isSoftLink. It has been implemented however
@@ -455,7 +451,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 //  The later will be achieved in a later PR.
                 path.trimTo(len).concat(file).$();
                 Long lm = lastModified.get(path.toString());
-                Assert.assertTrue(lm == null || lm.longValue() == ff.getLastModified(path));
+                Assert.assertTrue(lm == null || lm == ff.getLastModified(path));
             });
         });
     }

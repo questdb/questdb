@@ -46,7 +46,6 @@ public class TextDelimiterScanner implements Closeable {
     private final double maxRequiredDelimiterStdDev;
     private final double maxRequiredLineLengthStdDev;
     private CharSequence tableName;
-
     public TextDelimiterScanner(TextConfiguration configuration) {
         this.lineCountLimit = configuration.getTextAnalysisMaxLines();
         this.matrixRowSize = 256 * Integer.BYTES;

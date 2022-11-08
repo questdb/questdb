@@ -68,15 +68,11 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
     private static class PgDatabaseRecord implements Record {
         @Override
         public boolean getBool(int col) {
-            if (col == 6) {
-                // datistemplate
-                // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
-                return false;
-            } else {
-                // datallowconn
-                // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
-                return true;
-            }
+            // datistemplate
+            // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
+            // datallowconn
+            // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
+            return col != 6;
         }
 
         @Override

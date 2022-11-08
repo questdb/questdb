@@ -556,6 +556,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
                 return "timestamp";

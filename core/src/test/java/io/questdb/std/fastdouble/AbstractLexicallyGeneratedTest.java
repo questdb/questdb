@@ -15,7 +15,7 @@ import java.util.stream.IntStream;
 
 /**
  * The purpose of the tests in this class is to discover new cases, where
- * {@link FastDoubleParser#parseDouble(CharSequence)} does not
+ * {@link FastDoubleParser#parseDouble(CharSequence, boolean)} does not
  * produce the same result like {@link Double#parseDouble(String)}.
  * <p>
  * Unfortunately, the space of input values is huge, it includes
@@ -142,7 +142,7 @@ abstract class AbstractLexicallyGeneratedTest {
 
     /**
      * Given an input String {@code str},
-     * tests if {@link FastDoubleParser#parseDouble(CharSequence)}
+     * tests if {@link FastDoubleParser#parseDouble(CharSequence, boolean)}
      * produces the same result like {@link Double#parseDouble(String)}.
      *
      * @param str the given input string
