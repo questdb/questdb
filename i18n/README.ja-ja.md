@@ -58,7 +58,6 @@ QuestDB を実行するには、Docker を使用してすぐに開始できま�
 ```bash
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
-
 macOS ユーザーは Homebrew を使用できます。
 
 ```bash

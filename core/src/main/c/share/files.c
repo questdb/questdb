@@ -490,4 +490,3 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
     return access((const char *) lpsz, F_OK) == 0;
 }
-

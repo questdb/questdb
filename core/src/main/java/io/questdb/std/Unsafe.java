@@ -39,16 +39,16 @@ public final class Unsafe {
     public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
     public static final long INT_SCALE;
-    public static final Module JAVA_BASE_MODULE = System.class.getModule();
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
+    public static final Module JAVA_BASE_MODULE = System.class.getModule();
+    private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     //#if jdk.version!=8
     private static final long OVERRIDE;
-    private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
@@ -63,6 +63,56 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
+     * it does not produce an illegal access error or warning.
+     *
+     * @param accessibleObject the instance to make accessible
+     */
+    public static void makeAccessible(AccessibleObject accessibleObject) {
+        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
+    }
+
+    //#if jdk.version!=8
+    private static long AccessibleObject_override_fieldOffset() {
+        if (isJava8Or11()) {
+            return getFieldOffset(AccessibleObject.class, "override");
+        }
+        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
+        boolean is32BitJVM = is32BitJVM();
+        if (is32BitJVM) {
+            return 8L;
+        }
+        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
+            return 12L;
+        }
+        return 16L;
+    }
+    //#endif
+
+    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
+        class Probe {
+            @SuppressWarnings("unused")
+            private int intField; // Accessed through reflection
+
+            boolean probe() {
+                long offset = getFieldOffset(Probe.class, "intField");
+                if (offset == 8L) {
+                    assert is32BitJVM;
+                    return false;
+                }
+                if (offset == 12L) {
+                    return true;
+                }
+                if (offset == 16L) {
+                    return false;
+                }
+                throw new AssertionError(offset);
+            }
+        }
+        return new Probe().probe();
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
@@ -172,16 +222,6 @@ public final class Unsafe {
         return UNSAFE;
     }
 
-    /**
-     * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
-     * it does not produce an illegal access error or warning.
-     *
-     * @param accessibleObject the instance to make accessible
-     */
-    public static void makeAccessible(AccessibleObject accessibleObject) {
-        UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
-    }
-
     public static long malloc(long size, int memoryTag) {
         try {
             long ptr = getUnsafe().allocateMemory(size);
@@ -229,60 +269,21 @@ public final class Unsafe {
         return (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) | (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
     }
 
+    //most significant bit
+    private static int msb(int value) {
+        return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
     //#if jdk.version!=8
-    private static long AccessibleObject_override_fieldOffset() {
-        if (isJava8Or11()) {
-            return getFieldOffset(AccessibleObject.class, "override");
-        }
-        // From Java 12 onwards, AccessibleObject#override is protected and cannot be accessed reflectively.
-        boolean is32BitJVM = is32BitJVM();
-        if (is32BitJVM) {
-            return 8L;
-        }
-        if (getOrdinaryObjectPointersCompressionStatus(is32BitJVM)) {
-            return 12L;
-        }
-        return 16L;
-    }
-
-    private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
-        class Probe {
-            @SuppressWarnings("unused")
-            private int intField; // Accessed through reflection
-
-            boolean probe() {
-                long offset = getFieldOffset(Probe.class, "intField");
-                if (offset == 8L) {
-                    assert is32BitJVM;
-                    return false;
-                }
-                if (offset == 12L) {
-                    return true;
-                }
-                if (offset == 16L) {
-                    return false;
-                }
-                throw new AssertionError(offset);
-            }
-        }
-        return new Probe().probe();
-    }
 
     private static boolean is32BitJVM() {
         String sunArchDataModel = System.getProperty("sun.arch.data.model");
         return sunArchDataModel.equals("32");
     }
 
-    //#if jdk.version!=8
-
     private static boolean isJava8Or11() {
         String javaVersion = System.getProperty("java.version");
         return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
-    }
-
-    //most significant bit
-    private static int msb(int value) {
-        return 31 - Integer.numberOfLeadingZeros(value);
     }
 
     interface AnonymousClassDefiner {
@@ -295,10 +296,10 @@ public final class Unsafe {
      */
     static class MethodHandlesClassDefiner implements AnonymousClassDefiner {
 
-        private static Method defineMethod;
-        private static Object hiddenClassOptions;
         private static Object lookupBase;
         private static long lookupOffset;
+        private static Method defineMethod;
+        private static Object hiddenClassOptions;
 
         @Nullable
         public static MethodHandlesClassDefiner newInstance() {
