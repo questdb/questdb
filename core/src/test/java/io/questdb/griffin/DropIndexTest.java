@@ -442,7 +442,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
-            } catch (SqlException ex) {
+            } catch (SqlException | CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Column is not indexed");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
