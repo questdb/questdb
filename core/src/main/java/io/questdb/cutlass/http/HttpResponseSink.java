@@ -63,6 +63,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private long totalBytesSent = 0;
     private long z_streamp = 0;
+
     public HttpResponseSink(HttpContextConfiguration configuration) {
         final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();

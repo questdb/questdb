@@ -79,7 +79,7 @@ public final class TlsProxy {
             acceptorThread.start();
             return serverSocket.getLocalPort();
         } catch (NoSuchAlgorithmException | IOException | KeyManagementException | CertificateException |
-                KeyStoreException | UnrecoverableKeyException e) {
+                 KeyStoreException | UnrecoverableKeyException e) {
             throw new RuntimeException(e);
         }
     }

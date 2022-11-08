@@ -39,10 +39,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class PrometheusSimpleClientBenchmark {
 
-    private static final Counter counterWithoutLabels = Counter.build()
-            .name("counter_without_labels")
-            .help("counter")
-            .register();
     private static final Counter counterWithOneLabel = Counter.build()
             .name("counter_with_one_label")
             .help("counter")
@@ -52,6 +48,10 @@ public class PrometheusSimpleClientBenchmark {
             .name("counter_with_two_labels")
             .help("counter")
             .labelNames("label0", "label1")
+            .register();
+    private static final Counter counterWithoutLabels = Counter.build()
+            .name("counter_without_labels")
+            .help("counter")
             .register();
     private static final Gauge gauge = Gauge.build()
             .name("gauge")
@@ -72,11 +72,6 @@ public class PrometheusSimpleClientBenchmark {
     }
 
     @Benchmark
-    public void testCounterWithoutLabels() {
-        counterWithoutLabels.inc();
-    }
-
-    @Benchmark
     public void testCounterWithOneLabel() {
         counterWithOneLabel.labels("label0").inc();
     }
@@ -84,6 +79,11 @@ public class PrometheusSimpleClientBenchmark {
     @Benchmark
     public void testCounterWithTwoLabels() {
         counterWithTwoLabels.labels("label0", "label1").inc();
+    }
+
+    @Benchmark
+    public void testCounterWithoutLabels() {
+        counterWithoutLabels.inc();
     }
 
     @Benchmark

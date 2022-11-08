@@ -24,7 +24,10 @@
 
 package org.questdb;
 
-import io.questdb.metrics.*;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.Gauge;
+import io.questdb.metrics.MetricsRegistry;
+import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 import org.openjdk.jmh.annotations.*;
@@ -59,13 +62,6 @@ public class MetricsScrapeBenchmark {
 
     @Benchmark
     @Group
-    @GroupThreads()
-    public void testScrape() {
-        metricsRegistry.scrapeIntoPrometheus(sink);
-    }
-
-    @Benchmark
-    @Group
     @GroupThreads(4)
     public void testCounter() {
         counter.inc();
@@ -78,7 +74,19 @@ public class MetricsScrapeBenchmark {
         gauge.inc();
     }
 
+    @Benchmark
+    @Group
+    @GroupThreads()
+    public void testScrape() {
+        metricsRegistry.scrapeIntoPrometheus(sink);
+    }
+
     private static class NullCharSink implements CharSink {
+
+        @Override
+        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+            return 0;
+        }
 
         @Override
         public CharSink encodeUtf8(CharSequence cs) {
@@ -102,11 +110,6 @@ public class MetricsScrapeBenchmark {
 
         @Override
         public CharSink put(char c) {
-            return this;
-        }
-
-        @Override
-        public CharSink putUtf8(char c) {
             return this;
         }
 
@@ -151,6 +154,16 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
+        public CharSink put(char[] chars, int start, int len) {
+            return this;
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+            return this;
+        }
+
+        @Override
         public CharSink putISODate(long value) {
             return this;
         }
@@ -166,18 +179,8 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public CharSink put(char[] chars, int start, int len) {
+        public CharSink putUtf8(char c) {
             return this;
-        }
-
-        @Override
-        public CharSink put(CharSequence cs) {
-            return this;
-        }
-
-        @Override
-        public int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
-            return 0;
         }
     }
 }
