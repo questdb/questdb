@@ -27,9 +27,13 @@ package io.questdb.cliutil;
 import io.questdb.std.Files;
 
 public class RebuildColumnCommandArgs {
-    String tablePath;
-    String partition;
     String column;
+    String partition;
+    String tablePath;
+
+    private static void printUsage(String command) {
+        System.out.println("usage: " + command + " <table_path> [-p <partition_name>] [-c <column_name>]");
+    }
 
     static RebuildColumnCommandArgs parseCommandArgs(String[] args, String command) {
 
@@ -67,9 +71,5 @@ public class RebuildColumnCommandArgs {
         }
 
         return res;
-    }
-
-    private static void printUsage(String command) {
-        System.out.println("usage: " + command + " <table_path> [-p <partition_name>] [-c <column_name>]");
     }
 }
