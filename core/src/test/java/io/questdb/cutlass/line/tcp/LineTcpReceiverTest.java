@@ -455,7 +455,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 for (int i = 1; i < numOfColumns; i++) {
                     sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13 - (int) Math.log10(i)) + i + "=32 " + i + "\n");
                 }
-                finished.await(30_000_000_000L);
+                finished.await();
             } finally {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });

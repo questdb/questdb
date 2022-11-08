@@ -101,6 +101,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         boolean busy = false;
         if (busyContext != null) {
             if (handleIO(busyContext)) {
+                // queue is still full
                 return true;
             }
             LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();
