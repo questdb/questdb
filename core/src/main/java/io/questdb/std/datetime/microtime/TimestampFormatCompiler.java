@@ -138,6 +138,7 @@ public class TimestampFormatCompiler {
     private final LongList frameOffsets = new LongList();
     private final GenericLexer lexer = new GenericLexer(2048);
     private final IntList ops = new IntList();
+
     public TimestampFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));

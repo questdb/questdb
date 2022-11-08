@@ -39,8 +39,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 public class LineTCPSenderMainVarLenStrings {
+    private static final char[] chars = new char[]{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', ' ', '"', '\\', '\n'};
     private static final StringSink sink = new StringSink();
-    private static final char[] chars = new char[] {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', ' ', '"', '\\', '\n'};
 
     public static void main(String[] args) {
         final long count = 2_000_000_000L;
@@ -51,7 +51,7 @@ public class LineTCPSenderMainVarLenStrings {
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
         FilesFacade ff = new FilesFacadeImpl();
-        try(Path path = new Path()) {
+        try (Path path = new Path()) {
             long logFd = -1;
             if (args.length == 1) {
                 path.put(args[0]).$();
@@ -62,19 +62,19 @@ public class LineTCPSenderMainVarLenStrings {
                 for (int i = 0; i < count; i++) {
                     sender.metric("md_msgs");
                     sender
-                        .field("ts_nsec", rnd.nextPositiveLong())
-                        .field("pkt_size", rnd.nextPositiveInt())
-                        .field("pcap_file", nextString(rnd.nextPositiveInt() % 64, rnd))
-                        .field("raw_msg", nextString(rnd.nextPositiveInt() % 512, rnd))
-                        .field("Length", rnd.nextInt())
-                        .field("MsgSeqNum", i)
-                        .field("MsgType", rnd.nextInt() % 1000)
-                        .field("src_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
-                        .field("dst_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
-                        .field("src_port", rnd.nextInt() % 10000)
-                        .field("dst_port", rnd.nextInt() % 10000)
-                        .field("first_dir", rnd.nextBoolean())
-                        .$(i * 10_000_000L);
+                            .field("ts_nsec", rnd.nextPositiveLong())
+                            .field("pkt_size", rnd.nextPositiveInt())
+                            .field("pcap_file", nextString(rnd.nextPositiveInt() % 64, rnd))
+                            .field("raw_msg", nextString(rnd.nextPositiveInt() % 512, rnd))
+                            .field("Length", rnd.nextInt())
+                            .field("MsgSeqNum", i)
+                            .field("MsgType", rnd.nextInt() % 1000)
+                            .field("src_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
+                            .field("dst_ip", rnd.nextString(rnd.nextPositiveInt() % 16))
+                            .field("src_port", rnd.nextInt() % 10000)
+                            .field("dst_port", rnd.nextInt() % 10000)
+                            .field("first_dir", rnd.nextBoolean())
+                            .$(i * 10_000_000L);
                 }
                 sender.flush();
             } finally {
@@ -96,9 +96,9 @@ public class LineTCPSenderMainVarLenStrings {
     }
 
     private static class LoggingLineChannel implements LineChannel {
-        private LineChannel delegate;
-        private final long outFileFd;
         private final FilesFacade ff;
+        private final long outFileFd;
+        private LineChannel delegate;
         private long fileOffset = 0;
 
         private LoggingLineChannel(LineChannel delegate, long outFileFd, FilesFacade ff) {
@@ -113,14 +113,8 @@ public class LineTCPSenderMainVarLenStrings {
         }
 
         @Override
-        public void send(long ptr, int len) {
-            if (outFileFd > -1) {
-                if (ff.write(outFileFd, ptr, len, fileOffset) != len) {
-                    throw CairoException.critical(ff.errno()).put("Cannot write to file");
-                }
-                fileOffset += len;
-            }
-            delegate.send(ptr, len);
+        public int errno() {
+            return delegate.errno();
         }
 
         @Override
@@ -129,8 +123,14 @@ public class LineTCPSenderMainVarLenStrings {
         }
 
         @Override
-        public int errno() {
-            return delegate.errno();
+        public void send(long ptr, int len) {
+            if (outFileFd > -1) {
+                if (ff.write(outFileFd, ptr, len, fileOffset) != len) {
+                    throw CairoException.critical(ff.errno()).put("Cannot write to file");
+                }
+                fileOffset += len;
+            }
+            delegate.send(ptr, len);
         }
     }
 }

@@ -123,13 +123,12 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     }
 
     private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
-        StringBuilder sb = new StringBuilder("name\tvalue\n")
-                .append("total_commits").append('\t').append(metricsSnapshot.commitCount).append('\n')
-                .append("o3commits").append('\t').append(metricsSnapshot.o3CommitCount).append('\n')
-                .append("rollbacks").append('\t').append(metricsSnapshot.rollbackCount).append('\n')
-                .append("committed_rows").append('\t').append(metricsSnapshot.committedRows).append('\n')
-                .append("physically_written_rows").append('\t').append(metricsSnapshot.physicallyWrittenRows).append('\n');
-        return sb.toString();
+        return "name\tvalue\n" +
+                "total_commits" + '\t' + metricsSnapshot.commitCount + '\n' +
+                "o3commits" + '\t' + metricsSnapshot.o3CommitCount + '\n' +
+                "rollbacks" + '\t' + metricsSnapshot.rollbackCount + '\n' +
+                "committed_rows" + '\t' + metricsSnapshot.committedRows + '\n' +
+                "physically_written_rows" + '\t' + metricsSnapshot.physicallyWrittenRows + '\n';
     }
 
     private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {

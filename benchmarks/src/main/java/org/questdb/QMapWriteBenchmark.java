@@ -45,12 +45,11 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class QMapWriteBenchmark {
 
-    private static final double loadFactor = 0.5;
     private static final int M = 25;
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final double loadFactor = 0.5;
     private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
@@ -86,15 +85,15 @@ public class QMapWriteBenchmark {
     }
 
     @Benchmark
+    public void testHashMap() {
+        hmap.put(rnd.nextChars(M).toString(), 20L);
+    }
+
+    @Benchmark
     public void testQMap() {
         MapKey key = qmap.withKey();
         key.putStr(rnd.nextChars(M));
         MapValue value = key.createValue();
         value.putLong(0, 20);
-    }
-
-    @Benchmark
-    public void testHashMap() {
-        hmap.put(rnd.nextChars(M).toString(), 20L);
     }
 }
