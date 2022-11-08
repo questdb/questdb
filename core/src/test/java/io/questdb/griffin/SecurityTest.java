@@ -43,11 +43,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractGriffinTest {
     private static final AtomicInteger nCheckInterruptedCalls = new AtomicInteger();
-    private static SqlExecutionContext readOnlyExecutionContext;
-    private static SqlCompiler memoryRestrictedCompiler;
-    private static CairoEngine memoryRestrictedEngine;
     private static long circuitBreakerCallLimit = Long.MAX_VALUE;
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
+    private static SqlCompiler memoryRestrictedCompiler;
+    private static CairoEngine memoryRestrictedEngine;
+    private static SqlExecutionContext readOnlyExecutionContext;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -110,8 +110,32 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean checkIfTripped(long millis, long fd) {
+                return false;
+            }
+
+            @Override
             public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
                 return null;
+            }
+
+            @Override
+            public long getFd() {
+                return -1;
+            }
+
+            @Override
+            public boolean isTimerSet() {
+                return false;
+            }
+
+            @Override
+            public void resetTimer() {
+                deadline = circuitBreakerTimeoutDeadline;
+            }
+
+            @Override
+            public void setFd(long fd) {
             }
 
             @Override
@@ -129,32 +153,8 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, long fd) {
-                return false;
-            }
-
-            @Override
-            public void resetTimer() {
-                deadline = circuitBreakerTimeoutDeadline;
-            }
-
-            @Override
-            public void setFd(long fd) {
-            }
-
-            @Override
-            public long getFd() {
-                return -1;
-            }
-
-            @Override
             public void unsetTimer() {
 
-            }
-
-            @Override
-            public boolean isTimerSet() {
-                return false;
             }
         };
 

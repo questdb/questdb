@@ -30,39 +30,6 @@ import static org.junit.Assert.*;
 
 public class ConcurrentHashMapTest {
     @Test
-    public void testComputeIfAbsent() {
-        ConcurrentHashMap<String> map = identityMap();
-
-        map.computeIfAbsent("X", k -> "X");
-        assertTrue(map.containsKey("X"));
-
-        assertEquals("A", map.computeIfAbsent("A", k -> "X"));
-
-        map.computeIfAbsent("Y", k -> null);
-        assertFalse(map.containsKey("Y"));
-
-        try {
-            map.computeIfAbsent(null, k -> null);
-            fail("Null key");
-        } catch (NullPointerException ignored) {}
-    }
-
-    @Test
-    public void testComputeIfPresent() {
-        ConcurrentHashMap<String> map = identityMap();
-
-        map.computeIfPresent("X", (k, v) -> "X");
-        assertFalse(map.containsKey("X"));
-
-        assertEquals("X", map.computeIfPresent("A", (k, v) -> "X"));
-
-        try {
-            map.computeIfPresent(null, (k, v) -> null);
-            fail("Null key");
-        } catch (NullPointerException ignored) {}
-    }
-
-    @Test
     public void testCompute() {
         ConcurrentHashMap<String> map = identityMap();
         //add
@@ -79,7 +46,43 @@ public class ConcurrentHashMapTest {
         try {
             map.compute(null, (k, v) -> null);
             fail("Null key");
-        } catch (NullPointerException ignored) {}
+        } catch (NullPointerException ignored) {
+        }
+    }
+
+    @Test
+    public void testComputeIfAbsent() {
+        ConcurrentHashMap<String> map = identityMap();
+
+        map.computeIfAbsent("X", k -> "X");
+        assertTrue(map.containsKey("X"));
+
+        assertEquals("A", map.computeIfAbsent("A", k -> "X"));
+
+        map.computeIfAbsent("Y", k -> null);
+        assertFalse(map.containsKey("Y"));
+
+        try {
+            map.computeIfAbsent(null, k -> null);
+            fail("Null key");
+        } catch (NullPointerException ignored) {
+        }
+    }
+
+    @Test
+    public void testComputeIfPresent() {
+        ConcurrentHashMap<String> map = identityMap();
+
+        map.computeIfPresent("X", (k, v) -> "X");
+        assertFalse(map.containsKey("X"));
+
+        assertEquals("X", map.computeIfPresent("A", (k, v) -> "X"));
+
+        try {
+            map.computeIfPresent(null, (k, v) -> null);
+            fail("Null key");
+        } catch (NullPointerException ignored) {
+        }
     }
 
     private static ConcurrentHashMap<String> identityMap() {

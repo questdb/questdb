@@ -46,10 +46,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name="{0}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -878,10 +878,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 false);
     }
 
-    private void assertTypeNoTable(String expected, CharSequence[] values, boolean isTag) throws Exception {
-        assertType(ColumnType.UNDEFINED, expected, values, isTag);
-    }
-
     private void assertType(int columnType, String expected, CharSequence[] values, boolean isTag) throws Exception {
         runInContext(() -> {
             if (columnType != ColumnType.UNDEFINED) {
@@ -911,6 +907,10 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 TestUtils.assertReader(expected, reader, sink);
             }
         });
+    }
+
+    private void assertTypeNoTable(String expected, CharSequence[] values, boolean isTag) throws Exception {
+        assertType(ColumnType.UNDEFINED, expected, values, isTag);
     }
 
     private void mayDrainWalQueue() {

@@ -64,14 +64,9 @@ public class AtomicIntList {
         this.pos = pos + 1;
     }
 
-    public void set(int index, int value) {
+    public int capacity() {
         int[] data = this.data;
-        int pos = this.pos;
-        if (index < pos) {
-            Unsafe.arrayPutOrdered(data, index, value);
-            return;
-        }
-        throw new ArrayIndexOutOfBoundsException(index);
+        return data.length;
     }
 
     public void extendAndSet(int index, int value) {
@@ -103,13 +98,18 @@ public class AtomicIntList {
         return Unsafe.arrayGetVolatile(data, index);
     }
 
-    public int size() {
-        return this.pos;
+    public void set(int index, int value) {
+        int[] data = this.data;
+        int pos = this.pos;
+        if (index < pos) {
+            Unsafe.arrayPutOrdered(data, index, value);
+            return;
+        }
+        throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public int capacity() {
-        int[] data = this.data;
-        return data.length;
+    public int size() {
+        return this.pos;
     }
 
     @Override

@@ -56,11 +56,11 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
     private final ConcurrentLinkedQueue<String> updatesQueue = new ConcurrentLinkedQueue<>();
-    private int numOfUpdates;
-    private SOCountDownLatch updatesDone;
-    private int numOfUpdateThreads;
     private SqlCompiler[] compilers;
     private SqlExecutionContext[] executionContexts;
+    private int numOfUpdateThreads;
+    private int numOfUpdates;
+    private SOCountDownLatch updatesDone;
 
     public LineTcpReceiverUpdateFuzzTest(WalMode walMode) {
         super(walMode);
@@ -123,40 +123,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 throw new RuntimeException(ex);
             }
         }
-    }
-
-    @Override
-    protected Log getLog() {
-        return LOG;
-    }
-
-    @Override
-    protected CharSequence pickTableName(int threadId) {
-        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), false);
-    }
-
-    @Override
-    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
-        super.startThread(threadId, socket, threadPushFinished);
-        while (numOfUpdateThreads-- > 0) {
-            startUpdateThread(numOfUpdateThreads, updatesDone);
-        }
-    }
-
-    @Override
-    protected void waitDone() {
-        // wait for update threads to finish
-        updatesDone.await();
-
-        // Repeat all updates after all lines are guaranteed to be landed in the tables
-        super.waitDone();
-
-        final SqlCompiler compiler = compilers[0];
-        final SqlExecutionContext executionContext = executionContexts[0];
-        for (String sql: updatesQueue) {
-            executeUpdate(compiler, executionContext, sql, null);
-        }
-        mayDrainWalQueue();
     }
 
     private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) {
@@ -235,5 +201,39 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 Path.clearThreadLocals();
             }
         }).start();
+    }
+
+    @Override
+    protected Log getLog() {
+        return LOG;
+    }
+
+    @Override
+    protected CharSequence pickTableName(int threadId) {
+        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), false);
+    }
+
+    @Override
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
+        super.startThread(threadId, socket, threadPushFinished);
+        while (numOfUpdateThreads-- > 0) {
+            startUpdateThread(numOfUpdateThreads, updatesDone);
+        }
+    }
+
+    @Override
+    protected void waitDone() {
+        // wait for update threads to finish
+        updatesDone.await();
+
+        // Repeat all updates after all lines are guaranteed to be landed in the tables
+        super.waitDone();
+
+        final SqlCompiler compiler = compilers[0];
+        final SqlExecutionContext executionContext = executionContexts[0];
+        for (String sql : updatesQueue) {
+            executeUpdate(compiler, executionContext, sql, null);
+        }
+        mayDrainWalQueue();
     }
 }

@@ -41,23 +41,9 @@ import java.util.function.Consumer;
 
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
-    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
+    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
     protected static final int PORT = RCVR_CONF.getPort();
-
-    protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
-        AbstractLineProtoUdpReceiver lpr;
-        if (Os.type == Os.LINUX_AMD64) {
-            lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
-        } else {
-            lpr = new LineUdpReceiver(RCVR_CONF, engine, null);
-        }
-        return lpr;
-    }
-
-    protected static AbstractLineSender createLineProtoSender() {
-        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
-    }
 
     protected static void assertReader(String tableName, String expected) {
         assertReader(tableName, expected, (String[]) null);
@@ -113,5 +99,19 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 assertReader(tableName, expected, expectedExtraStringColumns);
             }
         });
+    }
+
+    protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
+        AbstractLineProtoUdpReceiver lpr;
+        if (Os.type == Os.LINUX_AMD64) {
+            lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
+        } else {
+            lpr = new LineUdpReceiver(RCVR_CONF, engine, null);
+        }
+        return lpr;
+    }
+
+    protected static AbstractLineSender createLineProtoSender() {
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
     }
 }

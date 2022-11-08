@@ -31,13 +31,13 @@ import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private final String systemTableName;
-    private int tableId;
-    private int metaFileSize;
-    private int symbolMapCount;
-    private int version;
-    private int maxUncommittedRows;
     private long commitLag;
+    private int maxUncommittedRows;
+    private int metaFileSize;
     private long structureVersion;
+    private int symbolMapCount;
+    private int tableId;
+    private int version;
     private boolean walEnabled;
 
     public TableWriterMetadata(String systemTableName, MemoryMR metaMem) {
@@ -50,23 +50,13 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         // nothing to release
     }
 
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
     public int getFileDataSize() {
         return metaFileSize;
-    }
-
-    @Override
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    @Override
-    public int getTableId() {
-        return tableId;
-    }
-
-    @Override
-    public String getSystemTableName() {
-        return systemTableName;
     }
 
     @Override
@@ -75,24 +65,22 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
-    public void setMaxUncommittedRows(int rows) {
-        this.maxUncommittedRows = rows;
-    }
-
-    public void setStructureVersion(long value) {
-        this.structureVersion = value;
+    public long getStructureVersion() {
+        return structureVersion;
     }
 
     public int getSymbolMapCount() {
         return symbolMapCount;
+    }
+
+    @Override
+    public String getSystemTableName() {
+        return systemTableName;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
     }
 
     public int getTableVersion() {
@@ -144,6 +132,18 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
             offset += Vm.getStorageLength(name);
         }
         metaFileSize = (int) offset;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
+    }
+
+    public void setMaxUncommittedRows(int rows) {
+        this.maxUncommittedRows = rows;
+    }
+
+    public void setStructureVersion(long value) {
+        this.structureVersion = value;
     }
 
     public void setTableVersion() {

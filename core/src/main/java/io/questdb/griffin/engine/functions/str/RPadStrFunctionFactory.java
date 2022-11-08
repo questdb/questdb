@@ -65,12 +65,12 @@ public class RPadStrFunctionFactory implements FunctionFactory {
 
     public static class RPadStrFunc extends StrFunction implements TernaryFunction {
 
-        private final Function strFunc;
-        private final Function lenFunc;
         private final Function fillTextFunc;
+        private final Function lenFunc;
         private final int maxLength;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final Function strFunc;
 
         public RPadStrFunc(Function strFunc, Function lenFunc, Function fillTexFunc, int maxLength) {
             this.strFunc = strFunc;
@@ -80,13 +80,13 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return strFunc;
+        public Function getCenter() {
+            return lenFunc;
         }
 
         @Override
-        public Function getCenter() {
-            return lenFunc;
+        public Function getLeft() {
+            return strFunc;
         }
 
         @Override

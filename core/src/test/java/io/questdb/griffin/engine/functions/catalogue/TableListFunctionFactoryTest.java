@@ -74,6 +74,34 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMetadataQueryMissingMetaFile() throws Exception {
+        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+        }
+        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
+            tm1.timestamp("ts2");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+        }
+
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+
+        FilesFacade filesFacade = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            CharSequence systemTableName = engine.getSystemTableName("table1");
+            path.concat(configuration.getRoot()).concat(systemTableName).concat(META_FILE_NAME).$();
+            filesFacade.remove(path);
+        }
+        assertSql(
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                        "2\ttable2\tts2\tNONE\t1000\t0\n"
+        );
+    }
+
+    @Test
     public void testMetadataQueryWithWhere() throws Exception {
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);
@@ -108,34 +136,6 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
                 "select designatedTimestamp from tables where name = 'table1'",
                 "designatedTimestamp\n" +
                         "ts1\n"
-        );
-    }
-
-    @Test
-    public void testMetadataQueryMissingMetaFile() throws Exception {
-        try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
-            tm1.col("abc", ColumnType.STRING);
-            tm1.timestamp("ts1");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-        try (TableModel tm1 = new TableModel(configuration, "table2", PartitionBy.NONE)) {
-            tm1.timestamp("ts2");
-            createPopulateTable(tm1, 0, "2020-01-01", 0);
-        }
-
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
-
-        FilesFacade filesFacade = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName("table1");
-            path.concat(configuration.getRoot()).concat(systemTableName).concat(META_FILE_NAME).$();
-            filesFacade.remove(path);
-        }
-        assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t0\n"
         );
     }
 }

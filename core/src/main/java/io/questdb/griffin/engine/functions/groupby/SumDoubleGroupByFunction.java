@@ -66,25 +66,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Double.NaN);
-        mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
     public Function getArg() {
         return arg;
     }
@@ -101,6 +82,25 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setDouble(MapValue mapValue, double value) {
+        mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override

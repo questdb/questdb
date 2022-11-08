@@ -78,24 +78,6 @@ public class EqStrFunctionFactory implements FunctionFactory {
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getStrLen(rec) == -1L);
-        }
-    }
-
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequence constant;
@@ -126,16 +108,6 @@ public class EqStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             // important to compare A and B strings in case
             // these are columns of the same record
@@ -148,6 +120,34 @@ public class EqStrFunctionFactory implements FunctionFactory {
             }
 
             return negated != Chars.equalsNc(a, b);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+    }
+
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getStrLen(rec) == -1L);
         }
     }
 }

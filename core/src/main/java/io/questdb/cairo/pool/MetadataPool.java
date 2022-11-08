@@ -40,6 +40,11 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_METADATA;
+    }
+
+    @Override
     protected MetadataTenant newTenant(String systemTableName, Entry<MetadataTenant> entry, int index) {
         String tableName = tableSequencerAPI.getTableNameBySystemName(systemTableName);
         if (tableName != null) {
@@ -51,70 +56,15 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         throw CairoException.nonCritical().put("table does not exist [systemTableName=").put(systemTableName).put(']');
     }
 
-    @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_METADATA;
-    }
-
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
-    }
-
-    private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
-        private final int index;
-        private AbstractMultiTenantPool<MetadataTenant> pool;
-        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
-
-        public TableReaderMetadataTenant(
-                AbstractMultiTenantPool<MetadataTenant> pool,
-                AbstractMultiTenantPool.Entry<MetadataTenant> entry,
-                int index,
-                String tableName,
-                String systemTableName
-        ) {
-            super(pool.getConfiguration(), tableName, systemTableName);
-            this.pool = pool;
-            this.entry = entry;
-            this.index = index;
-        }
-
-        @Override
-        public void close() {
-            if (pool != null && getEntry() != null) {
-                if (pool.returnToPool(this)) {
-                    return;
-                }
-            }
-            super.close();
-        }
-
-        public void goodbye() {
-            entry = null;
-            pool = null;
-        }
-
-        @Override
-        public void refresh() {
-            reload();
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
-        }
     }
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
-        private final TableSequencerAPI tableSequencerAPI;
-        private AbstractMultiTenantPool<MetadataTenant> pool;
-        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
         private final String systemTableName;
+        private final TableSequencerAPI tableSequencerAPI;
+        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
+        private AbstractMultiTenantPool<MetadataTenant> pool;
 
         public SequencerMetadataTenant(
                 AbstractMultiTenantPool<MetadataTenant> pool,
@@ -141,6 +91,17 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             super.close();
         }
 
+        @SuppressWarnings("unchecked")
+        @Override
+        public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;
@@ -149,6 +110,35 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         @Override
         public void refresh() {
             tableSequencerAPI.reloadMetadataConditionally(systemTableName, getStructureVersion(), this);
+        }
+    }
+
+    private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
+        private final int index;
+        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
+        private AbstractMultiTenantPool<MetadataTenant> pool;
+
+        public TableReaderMetadataTenant(
+                AbstractMultiTenantPool<MetadataTenant> pool,
+                AbstractMultiTenantPool.Entry<MetadataTenant> entry,
+                int index,
+                String tableName,
+                String systemTableName
+        ) {
+            super(pool.getConfiguration(), tableName, systemTableName);
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+        }
+
+        @Override
+        public void close() {
+            if (pool != null && getEntry() != null) {
+                if (pool.returnToPool(this)) {
+                    return;
+                }
+            }
+            super.close();
         }
 
         @SuppressWarnings("unchecked")
@@ -160,6 +150,16 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         @Override
         public int getIndex() {
             return index;
+        }
+
+        public void goodbye() {
+            entry = null;
+            pool = null;
+        }
+
+        @Override
+        public void refresh() {
+            reload();
         }
     }
 }

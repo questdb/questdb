@@ -68,21 +68,6 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
         return keyIndex(key) < 0;
     }
 
-    public CharSequence keyAt(int index) {
-        return keys[-index - 1];
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -110,6 +95,10 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
         return hashCode;
     }
 
+    public CharSequence keyAt(int index) {
+        return keys[-index - 1];
+    }
+
     private void rehash() {
         int newCapacity = capacity * 2;
         final int size = size();
@@ -126,5 +115,16 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
                 keys[keyIndex(key)] = key;
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

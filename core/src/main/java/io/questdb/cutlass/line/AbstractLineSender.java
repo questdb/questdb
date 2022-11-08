@@ -27,38 +27,29 @@ package io.questdb.cutlass.line;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.tcp.AuthDb;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
-import java.security.Signature;
-import java.security.SignatureException;
+import java.security.*;
 import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
     protected final int capacity;
     private final long bufA;
     private final long bufB;
-    private boolean quoted = false;
-
-    private long lo;
-    private long hi;
-    private long ptr;
-    private long lineStart;
-    private boolean hasTable;
+    protected LineChannel lineChannel;
+    private boolean closed;
+    private boolean enableValidation;
     private boolean hasColumns;
     private boolean hasSymbols;
-    protected LineChannel lineChannel;
-    private boolean enableValidation;
-    private boolean closed;
+    private boolean hasTable;
+    private long hi;
+    private long lineStart;
+    private long lo;
+    private long ptr;
+    private boolean quoted = false;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity) {
         this.lineChannel = lineChannel;
@@ -84,6 +75,12 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
+    public final void at(long timestamp) {
+        put(' ').put(timestamp);
+        atNow();
+    }
+
+    @Override
     public final void atNow() {
         if (!hasColumns && !hasSymbols && enableValidation) {
             throw new LineSenderException("no symbols or columns were provided");
@@ -96,10 +93,23 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         hasSymbols = false;
     }
 
+    public final void authenticate(String keyId, PrivateKey privateKey) {
+        validateNotClosed();
+        encodeUtf8(keyId).put('\n');
+        sendAll();
+
+        byte[] challengeBytes = receiveChallengeBytes();
+        byte[] signature = signAndEncode(privateKey, challengeBytes);
+        for (int n = 0, m = signature.length; n < m; n++) {
+            put((char) signature[n]);
+        }
+        put('\n');
+        sendAll();
+    }
+
     @Override
-    public final void at(long timestamp) {
-        put(' ').put(timestamp);
-        atNow();
+    public final AbstractLineSender boolColumn(CharSequence name, boolean value) {
+        return field(name, value);
     }
 
     @Override
@@ -117,14 +127,21 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    public AbstractLineSender field(CharSequence name, long value) {
-        writeFieldName(name).put(value).put('i');
-        return this;
+    /**
+     * This is for testing only. Where we want to test server with a misbehaving client.
+     */
+    public void disableValidation() {
+        enableValidation = false;
     }
 
     @Override
-    public final AbstractLineSender longColumn(CharSequence name, long value) {
+    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
         return field(name, value);
+    }
+
+    public AbstractLineSender field(CharSequence name, long value) {
+        writeFieldName(name).put(value).put('i');
+        return this;
     }
 
     public AbstractLineSender field(CharSequence name, CharSequence value) {
@@ -136,19 +153,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    @Override
-    public final AbstractLineSender stringColumn(CharSequence name, CharSequence value) {
-        return field(name, value);
-    }
-
     public AbstractLineSender field(CharSequence name, double value) {
         writeFieldName(name).put(value);
         return this;
-    }
-
-    @Override
-    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        return field(name, value);
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
@@ -157,21 +164,30 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender boolColumn(CharSequence name, boolean value) {
-        return field(name, value);
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
-        writeFieldName(name).put(value).put('t');
-        return this;
-    }
-
-    @Override
     public void flush() {
         validateNotClosed();
         sendLine();
         ptr = lineStart = lo;
+    }
+
+    @Override
+    public final AbstractLineSender longColumn(CharSequence name, long value) {
+        return field(name, value);
+    }
+
+    public AbstractLineSender metric(CharSequence metric) {
+        validateNotClosed();
+        validateTableName(metric);
+        if (hasTable) {
+            throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
+        }
+        if (metric.length() == 0) {
+            throw new LineSenderException("table name cannot be empty");
+        }
+        quoted = false;
+        hasTable = true;
+        encodeUtf8(metric);
+        return this;
     }
 
     @Override
@@ -219,92 +235,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    public AbstractLineSender metric(CharSequence metric) {
-        validateNotClosed();
-        validateTableName(metric);
-        if (hasTable) {
-            throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
-        }
-        if (metric.length() == 0) {
-            throw new LineSenderException("table name cannot be empty");
-        }
-        quoted = false;
-        hasTable = true;
-        encodeUtf8(metric);
-        return this;
-    }
-
-    protected final void validateNotClosed() {
-        if (closed) {
-            throw new LineSenderException("sender already closed");
-        }
-    }
-
-    private void validateColumnName(CharSequence name) {
-        if (!enableValidation) {
-            return;
-        }
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
-        }
-    }
-
-    /**
-     * This is for testing only. Where we want to test server with a misbehaving client.
-     */
-    public void disableValidation() {
-        enableValidation = false;
-    }
-
-    private void validateTableName(CharSequence name) {
-        if (!enableValidation) {
-            return;
-        }
-        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
-        }
-    }
-
-    @Override
-    public final AbstractLineSender table(CharSequence table) {
-        return metric(table);
-    }
-
-    public AbstractLineSender tag(CharSequence tag, CharSequence value) {
-        if (!hasTable) {
-            throw new LineSenderException("table expected");
-        }
-        if (hasColumns) {
-            throw new LineSenderException("symbols must be written before any other column types");
-        }
-        validateColumnName(tag);
-        put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
-        hasSymbols = true;
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender symbol(CharSequence name, CharSequence value) {
-        return tag(name, value);
-    }
-
-    private CharSink writeFieldName(CharSequence name) {
-        validateNotClosed();
-        validateColumnName(name);
-        if (hasTable) {
-            if (!hasColumns) {
-                put(' ');
-                hasColumns = true;
-            } else {
-                put(',');
-            }
-            return encodeUtf8(name).put('=');
-        }
-        throw new LineSenderException("table expected");
-    }
-
     @Override
     public void putUtf8Special(char c) {
         validateNotClosed();
@@ -334,52 +264,38 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    private void sendLine() {
-        if (lo < lineStart) {
-            int len = (int) (lineStart - lo);
-            lineChannel.send(lo, len);
-        }
+    @Override
+    public final AbstractLineSender stringColumn(CharSequence name, CharSequence value) {
+        return field(name, value);
     }
 
-    protected void send00() {
-        validateNotClosed();
-        int len = (int) (ptr - lineStart);
-        if (len == 0) {
-            sendLine();
-            ptr = lineStart = lo;
-        } else if (len < capacity) {
-            long target = lo == bufA ? bufB : bufA;
-            Vect.memcpy(target, lineStart, len);
-            sendLine();
-            lineStart = lo = target;
-            ptr = target + len;
-            hi = lo + capacity;
-        } else {
-            throw new LineSenderException("line too long. increase buffer size.");
-        }
+    @Override
+    public final AbstractLineSender symbol(CharSequence name, CharSequence value) {
+        return tag(name, value);
     }
 
-    public final void authenticate(String keyId, PrivateKey privateKey) {
-        validateNotClosed();
-        encodeUtf8(keyId).put('\n');
-        sendAll();
-
-        byte[] challengeBytes = receiveChallengeBytes();
-        byte[] signature = signAndEncode(privateKey, challengeBytes);
-        for (int n = 0, m = signature.length; n < m; n++) {
-            put((char)signature[n]);
-        }
-        put('\n');
-        sendAll();
+    @Override
+    public final AbstractLineSender table(CharSequence table) {
+        return metric(table);
     }
 
-    protected void sendAll() {
-        validateNotClosed();
-        if (lo < ptr) {
-            int len = (int) (ptr - lo);
-            lineChannel.send(lo, len);
-            lineStart = ptr = lo;
+    public AbstractLineSender tag(CharSequence tag, CharSequence value) {
+        if (!hasTable) {
+            throw new LineSenderException("table expected");
         }
+        if (hasColumns) {
+            throw new LineSenderException("symbols must be written before any other column types");
+        }
+        validateColumnName(tag);
+        put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
+        hasSymbols = true;
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
+        writeFieldName(name).put(value).put('t');
+        return this;
     }
 
     private static int findEOL(long ptr, int len) {
@@ -394,7 +310,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     private byte[] receiveChallengeBytes() {
         int n = 0;
-        for (;;) {
+        for (; ; ) {
             int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
                 close();
@@ -419,6 +335,75 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return challengeBytes;
     }
 
+    private void sendLine() {
+        if (lo < lineStart) {
+            int len = (int) (lineStart - lo);
+            lineChannel.send(lo, len);
+        }
+    }
+
+    private void validateColumnName(CharSequence name) {
+        if (!enableValidation) {
+            return;
+        }
+        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+        }
+    }
+
+    private void validateTableName(CharSequence name) {
+        if (!enableValidation) {
+            return;
+        }
+        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+        }
+    }
+
+    private CharSink writeFieldName(CharSequence name) {
+        validateNotClosed();
+        validateColumnName(name);
+        if (hasTable) {
+            if (!hasColumns) {
+                put(' ');
+                hasColumns = true;
+            } else {
+                put(',');
+            }
+            return encodeUtf8(name).put('=');
+        }
+        throw new LineSenderException("table expected");
+    }
+
+    protected void send00() {
+        validateNotClosed();
+        int len = (int) (ptr - lineStart);
+        if (len == 0) {
+            sendLine();
+            ptr = lineStart = lo;
+        } else if (len < capacity) {
+            long target = lo == bufA ? bufB : bufA;
+            Vect.memcpy(target, lineStart, len);
+            sendLine();
+            lineStart = lo = target;
+            ptr = target + len;
+            hi = lo + capacity;
+        } else {
+            throw new LineSenderException("line too long. increase buffer size.");
+        }
+    }
+
+    protected void sendAll() {
+        validateNotClosed();
+        if (lo < ptr) {
+            int len = (int) (ptr - lo);
+            lineChannel.send(lo, len);
+            lineStart = ptr = lo;
+        }
+    }
+
     protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
         // protected for testing
         byte[] rawSignature;
@@ -438,5 +423,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             throw new LineSenderException("unsupported signing algorithm", ex);
         }
         return Base64.getEncoder().encode(rawSignature);
+    }
+
+    protected final void validateNotClosed() {
+        if (closed) {
+            throw new LineSenderException("sender already closed");
+        }
     }
 }

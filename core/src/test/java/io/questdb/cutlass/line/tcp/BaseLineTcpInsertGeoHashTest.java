@@ -59,34 +59,34 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public abstract void testGeoHashes() throws Exception;
-
-    @Test
-    public abstract void testGeoHashesTruncating() throws Exception;
-
-    @Test
-    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
-
-    @Test
     public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
+
+    @Test
+    public abstract void testGeoHashes() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
 
     @Test
-    public abstract void testWrongCharGeoHashes() throws Exception;
+    public abstract void testGeoHashesTruncating() throws Exception;
 
     @Test
     public abstract void testNullGeoHash() throws Exception;
 
-    protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
-        assertGeoHash(columnBits, inboundLines, expected, (String[]) null);
-    }
+    @Test
+    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
+
+    @Test
+    public abstract void testWrongCharGeoHashes() throws Exception;
 
     private void mayDrainWalQueue() {
         if (walEnabled) {
             drainWalQueue();
         }
+    }
+
+    protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
+        assertGeoHash(columnBits, inboundLines, expected, (String[]) null);
     }
 
     protected void assertGeoHash(int columnBits,

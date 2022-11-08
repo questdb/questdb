@@ -29,18 +29,18 @@ import io.questdb.std.*;
 import java.text.DateFormatSymbols;
 
 public class DateLocale {
-    private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
-    private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
-    private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
-    private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
-    private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
-    private final String[] monthArray;
-    private final String[] shortMonthArray;
-    private final String[] weekdayArray;
-    private final String[] shortWeekdayArray;
     private final String[] ampmArray;
+    private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
     private final String[] eraArray;
+    private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
     private final TimeZoneRuleFactory factory;
+    private final String[] monthArray;
+    private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
+    private final String[] shortMonthArray;
+    private final String[] shortWeekdayArray;
+    private final String[] weekdayArray;
+    private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
 
     public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory, @Transient CharSequenceHashSet cache) {
         this.factory = timeZoneRuleFactory;

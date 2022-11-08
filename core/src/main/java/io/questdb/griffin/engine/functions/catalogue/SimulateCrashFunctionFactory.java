@@ -53,7 +53,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                                 SqlExecutionContext sqlExecutionContext
     ) {
 
-        if (configuration.getSimulateCrashEnabled())  {
+        if (configuration.getSimulateCrashEnabled()) {
             char killType = args.get(0).getChar(null);
             switch (killType) {
                 case '0':
@@ -65,10 +65,14 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         return Dummy;
     }
 
-    private static class SimulateCrashFunction extends BooleanFunction {
+    private static class DoNothingInstance extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            Unsafe.getUnsafe().getLong(0L);
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
             return true;
         }
     }
@@ -80,14 +84,10 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoNothingInstance extends BooleanFunction {
+    private static class SimulateCrashFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
+            Unsafe.getUnsafe().getLong(0L);
             return true;
         }
     }

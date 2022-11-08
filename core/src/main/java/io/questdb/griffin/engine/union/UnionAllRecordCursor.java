@@ -30,8 +30,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 
 class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
-    private final AbstractUnionRecord record;
     private final NextMethod nextB = this::nextB;
+    private final AbstractUnionRecord record;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
 
@@ -55,14 +55,6 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
     }
 
     @Override
-    public void toTop() {
-        record.setAb(true);
-        nextMethod = nextA;
-        cursorA.toTop();
-        cursorB.toTop();
-    }
-
-    @Override
     public long size() {
         final long sizeA = cursorA.size();
         final long sizeB = cursorB.size();
@@ -70,6 +62,14 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
             return -1;
         }
         return sizeA + sizeB;
+    }
+
+    @Override
+    public void toTop() {
+        record.setAb(true);
+        nextMethod = nextA;
+        cursorA.toTop();
+        cursorB.toTop();
     }
 
     private boolean nextA() {
@@ -80,16 +80,16 @@ class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAc
         return cursorB.hasNext();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker ) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        record.of(cursorA.getRecord(), cursorB.getRecord());
-        toTop();
-    }
-
     private boolean switchToSlaveCursor() {
         record.setAb(false);
         nextMethod = nextB;
         return nextMethod.next();
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        record.of(cursorA.getRecord(), cursorB.getRecord());
+        toTop();
     }
 
     interface NextMethod {

@@ -37,8 +37,9 @@ public class BaseFunctionFactoryTest extends AbstractGriffinTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected final static QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
-    protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
-        return functionParser.parseFunction(expr(expression), metadata, sqlExecutionContext);
+    @Before
+    public void setUp4() {
+        functions.clear();
     }
 
     protected static ExpressionNode expr(CharSequence expression) throws SqlException {
@@ -46,9 +47,8 @@ public class BaseFunctionFactoryTest extends AbstractGriffinTest {
         return compiler.testParseExpression(expression, queryModel);
     }
 
-    @Before
-    public void setUp4() {
-        functions.clear();
+    protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+        return functionParser.parseFunction(expr(expression), metadata, sqlExecutionContext);
     }
 
     @NotNull

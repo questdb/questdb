@@ -44,7 +44,7 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public boolean isGroupBy() {
+    public boolean isBoolean() {
         return false;
     }
 
@@ -54,7 +54,7 @@ public class AdvisoryUnlockAll implements FunctionFactory {
     }
 
     @Override
-    public boolean isBoolean() {
+    public boolean isGroupBy() {
         return false;
     }
 

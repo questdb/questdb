@@ -6,14 +6,14 @@
 package io.questdb.std.fastdouble;
 
 public final class TestData {
-    private final String title;
-    private final String input;
-    private final int charOffset;
-    private final int charLength;
-    private final int byteOffset;
     private final int byteLength;
+    private final int byteOffset;
+    private final int charLength;
+    private final int charOffset;
     private final double expectedDoubleValue;
     private final float expectedFloatValue;
+    private final String input;
+    private final String title;
     private final boolean valid;
 
     public TestData(String title,
@@ -73,28 +73,20 @@ public final class TestData {
                 Float.NaN, false);
     }
 
-    public String title() {
-        return title;
-    }
-
-    public String input() {
-        return input;
-    }
-
-    public int charOffset() {
-        return charOffset;
-    }
-
-    public int charLength() {
-        return charLength;
+    public int byteLength() {
+        return byteLength;
     }
 
     public int byteOffset() {
         return byteOffset;
     }
 
-    public int byteLength() {
-        return byteLength;
+    public int charLength() {
+        return charLength;
+    }
+
+    public int charOffset() {
+        return charOffset;
     }
 
     public double expectedDoubleValue() {
@@ -103,6 +95,14 @@ public final class TestData {
 
     public float expectedFloatValue() {
         return expectedFloatValue;
+    }
+
+    public String input() {
+        return input;
+    }
+
+    public String title() {
+        return title;
     }
 
     public boolean valid() {

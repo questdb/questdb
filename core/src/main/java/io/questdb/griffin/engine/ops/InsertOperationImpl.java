@@ -39,13 +39,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertOperationImpl implements InsertOperation {
-    private final long structureVersion;
-    private final String tableName;
-    private final String systemTableName;
+    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
+    private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
-    private final CairoEngine engine;
-    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
+    private final long structureVersion;
+    private final String systemTableName;
+    private final String tableName;
 
     public InsertOperationImpl(
             CairoEngine engine,
@@ -60,8 +60,8 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
-        return createMethod(executionContext, engine);
+    public void addInsertRow(InsertRowImpl row) {
+        insertRows.add(row);
     }
 
     @Override
@@ -79,8 +79,8 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public void addInsertRow(InsertRowImpl row) {
-        insertRows.add(row);
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+        return createMethod(executionContext, engine);
     }
 
     @Override
@@ -103,6 +103,16 @@ public class InsertOperationImpl implements InsertOperation {
         private TableWriterAPI writer = null;
 
         @Override
+        public void close() {
+            writer = Misc.free(writer);
+        }
+
+        @Override
+        public void commit() {
+            writer.commit();
+        }
+
+        @Override
         public long execute() throws SqlException {
             for (int i = 0, n = insertRows.size(); i < n; i++) {
                 InsertRowImpl row = insertRows.get(i);
@@ -112,33 +122,23 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public void commit() {
-            writer.commit();
-        }
-
-        @Override
         public TableWriterAPI popWriter() {
             TableWriterAPI w = writer;
             this.writer = null;
             return w;
-        }
-
-        @Override
-        public void close() {
-            writer = Misc.free(writer);
         }
     }
 
     private class InsertOperationFuture extends DoneOperationFuture {
 
         @Override
-        public long getInstanceId() {
-            return -3L;
+        public long getAffectedRowsCount() {
+            return insertRows.size();
         }
 
         @Override
-        public long getAffectedRowsCount() {
-            return insertRows.size();
+        public long getInstanceId() {
+            return -3L;
         }
     }
 }

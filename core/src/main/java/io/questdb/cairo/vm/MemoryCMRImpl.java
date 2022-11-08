@@ -107,25 +107,6 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         of(ff, name, ff.getMapPageSize(), -1, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, final long size) {
-        this.size = size;
-        if (size > 0) {
-            try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
-                ff.madvise(pageAddress, size, madviseOpts);
-            } catch (Throwable e) {
-                close();
-                throw e;
-            }
-        } else {
-            assert size > -1;
-            this.pageAddress = 0;
-        }
-
-        // ---------------V leave a space here for alignment with open log message
-        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
-    }
-
     private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
@@ -147,5 +128,24 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             close();
             throw e;
         }
+    }
+
+    protected void map(FilesFacade ff, LPSZ name, final long size) {
+        this.size = size;
+        if (size > 0) {
+            try {
+                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                ff.madvise(pageAddress, size, madviseOpts);
+            } catch (Throwable e) {
+                close();
+                throw e;
+            }
+        } else {
+            assert size > -1;
+            this.pageAddress = 0;
+        }
+
+        // ---------------V leave a space here for alignment with open log message
+        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 }

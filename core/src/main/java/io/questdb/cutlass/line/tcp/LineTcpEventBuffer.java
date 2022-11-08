@@ -50,30 +50,6 @@ public class LineTcpEventBuffer {
         this.bufSize = bufLo + bufSize;
     }
 
-    public long getAddress() {
-        return bufLo;
-    }
-
-    public long getAddressAfterHeader() {
-        // The header contains structure version (long), timestamp (long) and number of columns (int).
-        return bufLo + 2 * Long.BYTES + Integer.BYTES;
-    }
-
-    public void addStructureVersion(long address, long structureVersion) {
-        checkCapacity(address, Long.BYTES);
-        Unsafe.getUnsafe().putLong(address, structureVersion);
-    }
-
-    public void addDesignatedTimestamp(long address, long timestamp) {
-        checkCapacity(address, Long.BYTES);
-        Unsafe.getUnsafe().putLong(address, timestamp);
-    }
-
-    public void addNumOfColumns(long address, int numOfColumns) {
-        checkCapacity(address, Integer.BYTES);
-        Unsafe.getUnsafe().putInt(address, numOfColumns);
-    }
-
     public long addBoolean(long address, byte value) {
         checkCapacity(address, Byte.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_BOOLEAN);
@@ -120,6 +96,11 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_DATE);
         Unsafe.getUnsafe().putLong(address + Byte.BYTES, value);
         return address + Long.BYTES + Byte.BYTES;
+    }
+
+    public void addDesignatedTimestamp(long address, long timestamp) {
+        checkCapacity(address, Long.BYTES);
+        Unsafe.getUnsafe().putLong(address, timestamp);
     }
 
     public long addDouble(long address, double value) {
@@ -191,6 +172,11 @@ public class LineTcpEventBuffer {
         return address + Byte.BYTES;
     }
 
+    public void addNumOfColumns(long address, int numOfColumns) {
+        checkCapacity(address, Integer.BYTES);
+        Unsafe.getUnsafe().putInt(address, numOfColumns);
+    }
+
     public long addShort(long address, short value) {
         checkCapacity(address, Short.BYTES + Byte.BYTES);
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_SHORT);
@@ -200,6 +186,11 @@ public class LineTcpEventBuffer {
 
     public long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars) {
         return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
+    }
+
+    public void addStructureVersion(long address, long structureVersion) {
+        checkCapacity(address, Long.BYTES);
+        Unsafe.getUnsafe().putLong(address, structureVersion);
     }
 
     public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
@@ -240,44 +231,6 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
-    public byte readByte(long address) {
-        return Unsafe.getUnsafe().getByte(address);
-    }
-
-    public char readChar(long address) {
-        return Unsafe.getUnsafe().getChar(address);
-    }
-
-    public double readDouble(long address) {
-        return Unsafe.getUnsafe().getDouble(address);
-    }
-
-    public float readFloat(long address) {
-        return Unsafe.getUnsafe().getFloat(address);
-    }
-
-    public int readInt(long address) {
-        return Unsafe.getUnsafe().getInt(address);
-    }
-
-    public long readLong(long address) {
-        return Unsafe.getUnsafe().getLong(address);
-    }
-
-    public short readShort(long address) {
-        return Unsafe.getUnsafe().getShort(address);
-    }
-
-    public CharSequence readUtf16Chars(long address) {
-        int len = readInt(address);
-        return readUtf16Chars(address + Integer.BYTES, len);
-    }
-
-    public CharSequence readUtf16Chars(long address, int length) {
-        tempSink.asCharSequence(address,  address + length * 2L);
-        return tempSink;
-    }
-
     public long columnValueLength(byte entityType, long offset) {
         CharSequence cs;
         switch (entityType) {
@@ -313,6 +266,53 @@ public class LineTcpEventBuffer {
             default:
                 throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
         }
+    }
+
+    public long getAddress() {
+        return bufLo;
+    }
+
+    public long getAddressAfterHeader() {
+        // The header contains structure version (long), timestamp (long) and number of columns (int).
+        return bufLo + 2 * Long.BYTES + Integer.BYTES;
+    }
+
+    public byte readByte(long address) {
+        return Unsafe.getUnsafe().getByte(address);
+    }
+
+    public char readChar(long address) {
+        return Unsafe.getUnsafe().getChar(address);
+    }
+
+    public double readDouble(long address) {
+        return Unsafe.getUnsafe().getDouble(address);
+    }
+
+    public float readFloat(long address) {
+        return Unsafe.getUnsafe().getFloat(address);
+    }
+
+    public int readInt(long address) {
+        return Unsafe.getUnsafe().getInt(address);
+    }
+
+    public long readLong(long address) {
+        return Unsafe.getUnsafe().getLong(address);
+    }
+
+    public short readShort(long address) {
+        return Unsafe.getUnsafe().getShort(address);
+    }
+
+    public CharSequence readUtf16Chars(long address) {
+        int len = readInt(address);
+        return readUtf16Chars(address + Integer.BYTES, len);
+    }
+
+    public CharSequence readUtf16Chars(long address, int length) {
+        tempSink.asCharSequence(address, address + length * 2L);
+        return tempSink;
     }
 
     private long addString(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, byte entityTypeString) {

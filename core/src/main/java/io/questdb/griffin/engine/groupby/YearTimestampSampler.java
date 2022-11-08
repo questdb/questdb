@@ -29,13 +29,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 class YearTimestampSampler implements TimestampSampler {
 
     private final int bucket;
-    private int startMonth;
     private int startDay;
     private int startHour;
-    private int startMin;
-    private int startSec;
-    private int startMillis;
     private int startMicros;
+    private int startMillis;
+    private int startMin;
+    private int startMonth;
+    private int startSec;
 
     public YearTimestampSampler(int bucket) {
         this.bucket = bucket;

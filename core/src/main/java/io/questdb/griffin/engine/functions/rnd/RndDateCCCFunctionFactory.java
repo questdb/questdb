@@ -62,8 +62,8 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
 
     private static class Func extends DateFunction implements Function {
         private final long lo;
-        private final long range;
         private final int nanRate;
+        private final long range;
         private Rnd rnd;
 
         public Func(long lo, long hi, int nanRate) {
@@ -81,13 +81,13 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

@@ -34,17 +34,6 @@ import org.junit.Test;
 
 public class SimpleTableTest extends AbstractGriffinTest {
     @Test
-    public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 2, "2020-01-01", 1);
-        }
-
-        assertSql("select ts from tab1 where id > 1", "ts\n" +
-                "2020-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
     public void testTimeStampWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t (timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
@@ -74,5 +63,16 @@ public class SimpleTableTest extends AbstractGriffinTest {
 
             assertSql("select cast('2020-12-31 15:15:51.663+00:00' as timestamp with time zone) time, timestamp from t;", expected3);
         });
+    }
+
+    @Test
+    public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
+        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 2, "2020-01-01", 1);
+        }
+
+        assertSql("select ts from tab1 where id > 1", "ts\n" +
+                "2020-01-01T00:00:00.000000Z\n");
     }
 }

@@ -43,10 +43,10 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
-    private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
-    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
+    private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
+    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
     public DefaultServerConfiguration(CharSequence root) {
@@ -59,13 +59,18 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+        return null;
+    }
+
+    @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-        return null;
+    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+        return lineTcpReceiverConfiguration;
     }
 
     @Override
@@ -74,8 +79,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-        return lineTcpReceiverConfiguration;
+    public MetricsConfiguration getMetricsConfiguration() {
+        return metricsConfiguration;
+    }
+
+    @Override
+    public PGWireConfiguration getPGWireConfiguration() {
+        return pgWireConfiguration;
     }
 
     @Override
@@ -86,15 +96,5 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return httpServerConfiguration;
-    }
-
-    @Override
-    public PGWireConfiguration getPGWireConfiguration() {
-        return pgWireConfiguration;
-    }
-
-    @Override
-    public MetricsConfiguration getMetricsConfiguration() {
-        return metricsConfiguration;
     }
 }

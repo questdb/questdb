@@ -218,9 +218,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWalSegmentRolloverRowCount() { return conf.getWalSegmentRolloverRowCount(); }
-
-    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }
@@ -753,6 +750,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return conf.getWalRecreateDistressedSequencerAttempts();
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return conf.getWalSegmentRolloverRowCount();
     }
 
     @Override

@@ -25,18 +25,22 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import io.questdb.cairo.TableReader;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
@@ -348,16 +352,16 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             private CharSequence value;
 
                             @Override
+                            public void reset() {
+                                value = null;
+                            }
+
+                            @Override
                             public boolean validate(CharSequence expected, CharSequence actual) {
                                 if (value == null) {
                                     value = actual.toString();
                                 }
                                 return actual.equals(value);
-                            }
-
-                            @Override
-                            public void reset() {
-                                value = null;
                             }
                         });
 
@@ -392,14 +396,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     private enum PartitionMode {
         NONE, SINGLE, MULTIPLE;
 
-        static boolean isPartitioned(PartitionMode mode) {
-            return mode != NONE;
-        }
-
-        static long getTimestampSeq(PartitionMode mode) {
-            return mode == MULTIPLE ? 43200000000L : 1000000L;
-        }
-
         static CharSequence[] getExpectedTimestamps(PartitionMode mode) {
             return mode == MULTIPLE ?
                     new CharSequence[]{
@@ -416,6 +412,14 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             "1970-01-01T00:00:03.000000Z",
                             "1970-01-01T00:00:04.000000Z"
                     };
+        }
+
+        static long getTimestampSeq(PartitionMode mode) {
+            return mode == MULTIPLE ? 43200000000L : 1000000L;
+        }
+
+        static boolean isPartitioned(PartitionMode mode) {
+            return mode != NONE;
         }
     }
 

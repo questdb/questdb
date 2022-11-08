@@ -351,24 +351,6 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhereEquals() throws Exception {
-        assertQuery(
-                "uuid\tts1\ti\n" +
-                        "00000000-0000-0009-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n",
-                "testWhereEquals where uuid = to_long128(9, -9)",
-                "create table testWhereEquals as (" +
-                        " select to_long128(x, -x) uuid," +
-                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
-                        " cast(x as int) i" +
-                        " from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testUpdateLong128ColumnToNull() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table testUpdateLong128ColumnToNull as " +
@@ -396,5 +378,23 @@ public class Long128Tests extends AbstractGriffinTest {
             );
 
         });
+    }
+
+    @Test
+    public void testWhereEquals() throws Exception {
+        assertQuery(
+                "uuid\tts1\ti\n" +
+                        "00000000-0000-0009-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n",
+                "testWhereEquals where uuid = to_long128(9, -9)",
+                "create table testWhereEquals as (" +
+                        " select to_long128(x, -x) uuid," +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true
+        );
     }
 }

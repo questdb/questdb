@@ -41,8 +41,8 @@ import java.util.concurrent.TimeUnit;
 
 public class PerformanceTest extends AbstractCairoTest {
 
-    private static final int TEST_DATA_SIZE = 1_000_000;
     private static final Log LOG = LogFactory.getLog(PerformanceTest.class);
+    private static final int TEST_DATA_SIZE = 1_000_000;
     private long timeoutResult;
 
     @Test

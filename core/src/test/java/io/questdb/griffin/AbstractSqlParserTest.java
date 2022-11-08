@@ -69,10 +69,6 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
-        AbstractSqlParserTest.assertSyntaxError(compiler, query, position, contains, tableModels);
-    }
-
     private static void checkLiteralIsInSet(
             ExpressionNode node,
             ObjList<LowerCaseCharSequenceHashSet> nameSets,
@@ -116,10 +112,6 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         }
     }
 
-    protected void assertColumnNames(String query, String... columns) throws SqlException {
-        assertColumnNames(compiler, query, columns);
-    }
-
     private void assertColumnNames(SqlCompiler compiler, String query, String... columns) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordMetadata metadata = cc.getRecordCursorFactory().getMetadata();
@@ -127,6 +119,64 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
         for (int idx = 0; idx < columns.length; idx++) {
             TestUtils.assertEquals(metadata.getColumnName(idx), columns[idx]);
         }
+    }
+
+    private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            runnable.run();
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
+                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
+                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
+    }
+
+    private void validateTopDownColumns(QueryModel model) {
+        ObjList<QueryColumn> columns = model.getColumns();
+        final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
+
+        QueryModel nested = model.getNestedModel();
+        while (nested != null) {
+            nameSets.clear();
+
+            for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
+                LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
+                final QueryModel m = nested.getJoinModels().getQuick(i);
+                final ObjList<QueryColumn> cols = m.getTopDownColumns();
+                for (int j = 0, k = cols.size(); j < k; j++) {
+                    QueryColumn qc = cols.getQuick(j);
+                    Assert.assertTrue(set.add(qc.getName()));
+                }
+                nameSets.add(set);
+            }
+
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
+            }
+
+            columns = nested.getTopDownColumns();
+            nested = nested.getNestedModel();
+        }
+    }
+
+    protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
+        AbstractSqlParserTest.assertSyntaxError(compiler, query, position, contains, tableModels);
+    }
+
+    protected static TableModel modelOf(String tableName) {
+        return new TableModel(configuration, tableName, PartitionBy.NONE);
+    }
+
+    protected void assertColumnNames(String query, String... columns) throws SqlException {
+        assertColumnNames(compiler, query, columns);
     }
 
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
@@ -157,55 +207,5 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
 
     protected void assertUpdate(String expected, String query, TableModel... tableModels) throws SqlException {
         assertModel(expected, query, ExecutionModel.UPDATE, tableModels);
-    }
-
-    private void createModelsAndRun(SqlParserTest.CairoAware runnable, TableModel... tableModels) throws SqlException {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            runnable.run();
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                CharSequence systemTableName = engine.getSystemTableName(tableModel.getName());
-                Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName).slash$();
-                Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
-    }
-
-    protected static TableModel modelOf(String tableName) {
-        return new TableModel(configuration, tableName, PartitionBy.NONE);
-    }
-
-    private void validateTopDownColumns(QueryModel model) {
-        ObjList<QueryColumn> columns = model.getColumns();
-        final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
-
-        QueryModel nested = model.getNestedModel();
-        while (nested != null) {
-            nameSets.clear();
-
-            for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
-                LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
-                final QueryModel m = nested.getJoinModels().getQuick(i);
-                final ObjList<QueryColumn> cols = m.getTopDownColumns();
-                for (int j = 0, k = cols.size(); j < k; j++) {
-                    QueryColumn qc = cols.getQuick(j);
-                    Assert.assertTrue(set.add(qc.getName()));
-                }
-                nameSets.add(set);
-            }
-
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
-            }
-
-            columns = nested.getTopDownColumns();
-            nested = nested.getNestedModel();
-        }
     }
 }

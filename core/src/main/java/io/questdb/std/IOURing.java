@@ -33,6 +33,9 @@ public interface IOURing extends Closeable {
     @Override
     void close();
 
+    @TestOnly
+    long enqueueNop();
+
     long enqueueRead(long fd, long offset, long bufPtr, int len);
 
     long getCqeId();
@@ -61,7 +64,4 @@ public interface IOURing extends Closeable {
      * @return number of submitted sqes.
      */
     int submitAndWait();
-
-    @TestOnly
-    long enqueueNop();
 }

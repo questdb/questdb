@@ -56,13 +56,13 @@ public class AtomicIntListBenchmark {
     }
 
     @Benchmark
-    public int testBaseline(RndState rndState) {
-        return rndState.rnd.nextInt() & (SIZE - 1);
+    public int testAtomicGet(RndState rndState) {
+        return atomicList.get(rndState.rnd.nextInt() & (SIZE - 1));
     }
 
     @Benchmark
-    public int testAtomicGet(RndState rndState) {
-        return atomicList.get(rndState.rnd.nextInt() & (SIZE - 1));
+    public int testBaseline(RndState rndState) {
+        return rndState.rnd.nextInt() & (SIZE - 1);
     }
 
     @State(Scope.Thread)

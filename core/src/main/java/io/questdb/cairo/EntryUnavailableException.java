@@ -40,6 +40,6 @@ public class EntryUnavailableException extends CairoException {
     }
 
     public String getReason() {
-         return reason;
+        return reason;
     }
 }

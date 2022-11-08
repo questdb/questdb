@@ -32,16 +32,57 @@ public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
     }
 
     @Test
-    public void testInsertNoValueByteGeoHash() throws Exception {
-        assertGeoHash(5,
+    public void test() throws Exception {
+        assertGeoHash(10,
                 "tracking geohash=,here=\"no\" 1000000000\n",
                 "geohash\ttimestamp\there\n" +
                         "\t1970-01-01T00:00:01.000000Z\tno\n");
     }
 
+    @Override
+    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
+        assertGeoHash(4,
+                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
+                "geohash\ttimestamp\n" +
+                        "0100\t1970-01-01T00:00:01.000000Z\n");
+    }
+
+    @Override
+    public void testGeoHashes() throws Exception {
+        assertGeoHash(5,
+                "tracking geohash=\"9\" 1000000000\n" +
+                        "tracking geohash=\"4\" 2000000000\n" +
+                        "tracking geohash=\"j\" 3000000000\n" +
+                        "tracking geohash=\"z\" 4000000000\n" +
+                        "tracking geohash=\"h\" 5000000000\n",
+                "geohash\ttimestamp\n" +
+                        "9\t1970-01-01T00:00:01.000000Z\n" +
+                        "4\t1970-01-01T00:00:02.000000Z\n" +
+                        "j\t1970-01-01T00:00:03.000000Z\n" +
+                        "z\t1970-01-01T00:00:04.000000Z\n" +
+                        "h\t1970-01-01T00:00:05.000000Z\n");
+    }
+
+    @Override
+    public void testGeoHashesNotEnoughPrecision() throws Exception {
+        // TODO: there is no binary representation allowing to represent less than 5 bits
+    }
+
+    @Override
+    public void testGeoHashesTruncating() throws Exception {
+        assertGeoHash(4,
+                "tracking geohash=\"9\" 1000000000\n" +
+                        "tracking geohash=\"4\" 2000000000\n" +
+                        "tracking geohash=\"j\" 3000000000\n",
+                "geohash\ttimestamp\n" +
+                        "0100\t1970-01-01T00:00:01.000000Z\n" +
+                        "0010\t1970-01-01T00:00:02.000000Z\n" +
+                        "1000\t1970-01-01T00:00:03.000000Z\n");
+    }
+
     @Test
-    public void testInsertNoValueShortGeoHash() throws Exception {
-        assertGeoHash(10,
+    public void testInsertNoValueByteGeoHash() throws Exception {
+        assertGeoHash(5,
                 "tracking geohash=,here=\"no\" 1000000000\n",
                 "geohash\ttimestamp\there\n" +
                         "\t1970-01-01T00:00:01.000000Z\tno\n");
@@ -64,7 +105,7 @@ public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
     }
 
     @Test
-    public void test() throws Exception {
+    public void testInsertNoValueShortGeoHash() throws Exception {
         assertGeoHash(10,
                 "tracking geohash=,here=\"no\" 1000000000\n",
                 "geohash\ttimestamp\there\n" +
@@ -72,31 +113,11 @@ public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
     }
 
     @Override
-    public void testGeoHashes() throws Exception {
-        assertGeoHash(5,
-                "tracking geohash=\"9\" 1000000000\n" +
-                        "tracking geohash=\"4\" 2000000000\n" +
-                        "tracking geohash=\"j\" 3000000000\n" +
-                        "tracking geohash=\"z\" 4000000000\n" +
-                        "tracking geohash=\"h\" 5000000000\n",
+    public void testNullGeoHash() throws Exception {
+        assertGeoHash(1,
+                "tracking geohash=\"\" 1000000000\n",
                 "geohash\ttimestamp\n" +
-                        "9\t1970-01-01T00:00:01.000000Z\n" +
-                        "4\t1970-01-01T00:00:02.000000Z\n" +
-                        "j\t1970-01-01T00:00:03.000000Z\n" +
-                        "z\t1970-01-01T00:00:04.000000Z\n" +
-                        "h\t1970-01-01T00:00:05.000000Z\n");
-    }
-
-    @Override
-    public void testGeoHashesTruncating() throws Exception {
-        assertGeoHash(4,
-                "tracking geohash=\"9\" 1000000000\n" +
-                        "tracking geohash=\"4\" 2000000000\n" +
-                        "tracking geohash=\"j\" 3000000000\n",
-                "geohash\ttimestamp\n" +
-                        "0100\t1970-01-01T00:00:01.000000Z\n" +
-                        "0010\t1970-01-01T00:00:02.000000Z\n" +
-                        "1000\t1970-01-01T00:00:03.000000Z\n");
+                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 
     @Override
@@ -110,19 +131,6 @@ public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
                         "\t1970-01-01T00:00:02.000000Z\t4\n" +
                         "\t1970-01-01T00:00:03.000000Z\tj\n",
                 "carrots");
-    }
-
-    @Override
-    public void testExcessivelyLongGeoHashesAreTruncated() throws Exception {
-        assertGeoHash(4,
-                "tracking geohash=\"9v1s8hm7wpkssv1h\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "0100\t1970-01-01T00:00:01.000000Z\n");
-    }
-
-    @Override
-    public void testGeoHashesNotEnoughPrecision() throws Exception {
-        // TODO: there is no binary representation allowing to represent less than 5 bits
     }
 
     @Override
@@ -140,13 +148,5 @@ public class LineTcpInsertByteGeoHashTest extends BaseLineTcpInsertGeoHashTest {
                         "\t1970-01-01T00:00:02.000000Z\t4-12\tlion taming\n" +
                         "\t1970-01-01T00:00:03.000000Z\t\t\n",
                 "john", "activity");
-    }
-
-    @Override
-    public void testNullGeoHash() throws Exception {
-        assertGeoHash(1,
-                "tracking geohash=\"\" 1000000000\n",
-                "geohash\ttimestamp\n" +
-                        "\t1970-01-01T00:00:01.000000Z\n");
     }
 }

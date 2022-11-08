@@ -33,7 +33,7 @@ import java.io.Closeable;
 public interface TableWriterAPI extends Closeable {
     long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 
-    long apply(UpdateOperation operation) ;
+    long apply(UpdateOperation operation);
 
     @Override
     void close();
@@ -53,18 +53,6 @@ public interface TableWriterAPI extends Closeable {
      */
     long getStructureVersion();
 
-    String getSystemTableName();
-
-    CharSequence getTableName();
-
-    long getUncommittedRowCount();
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
-
     /**
      * Returns safe watermark for the symbol count stored in the given column.
      * The purpose of the watermark is to let ILP I/O threads (SymbolCache) to
@@ -76,6 +64,18 @@ public interface TableWriterAPI extends Closeable {
      * Implementations must be thread-safe.
      */
     int getSymbolCountWatermark(int columnIndex);
+
+    String getSystemTableName();
+
+    CharSequence getTableName();
+
+    long getUncommittedRowCount();
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
 
     void truncate();
 }

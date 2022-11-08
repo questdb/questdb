@@ -60,8 +60,8 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends SymbolFunction implements Function {
-        private final ObjList<String> symbols;
         private final int count;
+        private final ObjList<String> symbols;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols) {
@@ -95,13 +95,13 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(symbolKey);
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
         }
 
         @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(symbolKey);
         }
 
         private int next() {

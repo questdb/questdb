@@ -51,37 +51,38 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 
 public final class TableUtils {
-    public static final int TABLE_EXISTS = 0;
-    public static final int TABLE_DOES_NOT_EXIST = 1;
-    public static final int TABLE_RESERVED = 2;
-    public static final String META_FILE_NAME = "_meta";
-    public static final String TXN_FILE_NAME = "_txn";
-    public static final String COLUMN_VERSION_FILE_NAME = "_cv";
-    public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
-    public static final String UPGRADE_FILE_NAME = "_upgrade.d";
-    public static final String DETACHED_DIR_MARKER = ".detached";
-    public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
-    public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
-    public static final int INITIAL_TXN = 0;
-    public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
-    public static final long META_OFFSET_COUNT = 0;
-    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    public static final long META_OFFSET_VERSION = 12;
-    public static final long META_OFFSET_TABLE_ID = 16;
-    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
-    public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
-    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
-    public static final long META_OFFSET_WAL_ENABLED = 40; // INT
-    public static final String FILE_SUFFIX_I = ".i";
+    public static final long COLUMN_NAME_TXN_NONE = -1L;
+    public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    public static final String DEFAULT_PARTITION_NAME = "default";
+    public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String FILE_SUFFIX_D = ".d";
-    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
+    public static final String FILE_SUFFIX_I = ".i";
+    public static final int INITIAL_TXN = 0;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
-    public static final String DEFAULT_PARTITION_NAME = "default";
-    public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_COLUMN_DATA_SIZE = 32;
+    public static final String META_FILE_NAME = "_meta";
+    public static final long META_OFFSET_COLUMN_TYPES = 128;
+    public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
+    public static final long META_OFFSET_COUNT = 0;
+    public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
+    public static final long META_OFFSET_TABLE_ID = 16;
+    public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long META_OFFSET_VERSION = 12;
+    public static final long META_OFFSET_WAL_ENABLED = 40; // INT
+    public static final int NULL_LEN = -1;
+    public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
+    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
+    public static final char SYSTEM_TABLE_NAME_SUFFIX = ':';
+    public static final int TABLE_DOES_NOT_EXIST = 1;
+    public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_RESERVED = 2;
+    public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TXN_FILE_NAME = "_txn";
+    public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
     public static final long TX_BASE_OFFSET_VERSION_64 = 0;
@@ -92,6 +93,7 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
     public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
@@ -103,14 +105,16 @@ public final class TableUtils {
     public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
     public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
     public static final long TX_OFFSET_SEQ_TXN_64 = TX_OFFSET_TRUNCATE_VERSION_64 + 8;
-    public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
-    public static final long COLUMN_NAME_TXN_NONE = -1L;
-    public static final char SYSTEM_TABLE_NAME_SUFFIX = ':';
-    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
-    static final byte TODO_RESTORE_META = 2;
-    static final byte TODO_TRUNCATE = 1;
+    public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+    static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_NOT_INDEXED = 0;
+    static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
+    // INT - symbol map count, this is a variable part of transaction file
+    // below this offset we will have INT values for symbol map size
+    static final long META_OFFSET_PARTITION_BY = 4;
+    static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
      * struct {
@@ -129,19 +133,15 @@ public final class TableUtils {
      */
 
     static final String META_SWAP_FILE_NAME = "_meta.swp";
-    static final String META_PREV_FILE_NAME = "_meta.prev";
-    // INT - symbol map count, this is a variable part of transaction file
-    // below this offset we will have INT values for symbol map size
-    static final long META_OFFSET_PARTITION_BY = 4;
-    static final int META_FLAG_BIT_NOT_INDEXED = 0;
-    static final int META_FLAG_BIT_INDEXED = 1;
-    static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
+    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final String TODO_FILE_NAME = "_todo_";
-    private static final int MIN_SYMBOL_CAPACITY = 2;
+    static final byte TODO_RESTORE_META = 2;
+    static final byte TODO_TRUNCATE = 1;
+    private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
-    private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
-    private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    private static final int MIN_SYMBOL_CAPACITY = 2;
 
     private TableUtils() {
     }
@@ -160,6 +160,14 @@ public final class TableUtils {
         return path.$();
     }
 
+    public static long checkMemSize(MemoryMR metaMem, long minSize) {
+        final long memSize = metaMem.size();
+        if (memSize < minSize) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+        }
+        return memSize;
+    }
+
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -168,19 +176,6 @@ public final class TableUtils {
             }
         }
         return count;
-    }
-
-    public static String toTableNameFromSystemName(String systemTableName) {
-        int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
-        if (suffixIndex == -1) {
-            return systemTableName;
-        }
-
-        if (suffixIndex != systemTableName.length() - 1) {
-            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
-            return null;
-        }
-        return systemTableName.substring(0, suffixIndex);
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -1062,6 +1057,19 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
+    public static String toTableNameFromSystemName(String systemTableName) {
+        int suffixIndex = Chars.indexOf(systemTableName, SYSTEM_TABLE_NAME_SUFFIX);
+        if (suffixIndex == -1) {
+            return systemTableName;
+        }
+
+        if (suffixIndex != systemTableName.length() - 1) {
+            // This is tableName:id system name. If it's not registered in TableNameRegistry it's a dropped table corpse
+            return null;
+        }
+        return systemTableName.substring(0, suffixIndex);
+    }
+
     public static void txnPartition(CharSink path, long txn) {
         path.put('.').put(txn);
     }
@@ -1139,14 +1147,6 @@ public final class TableUtils {
         }
     }
 
-    public static long checkMemSize(MemoryMR metaMem, long minSize) {
-        final long memSize = metaMem.size();
-        if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
-        }
-        return memSize;
-    }
-
     public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
@@ -1200,13 +1200,6 @@ public final class TableUtils {
         }
     }
 
-    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
-        if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
-        }
-        return metaMem.getInt(offset);
-    }
-
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
         if (strLength < 1 || strLength > 255) {
             // EXT4 and many others do not allow file name length > 255 bytes
@@ -1219,8 +1212,30 @@ public final class TableUtils {
         return metaMem.getStr(offset);
     }
 
+    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
+        if (memSize < offset + Integer.BYTES) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+        }
+        return metaMem.getInt(offset);
+    }
+
+    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
+        int errno = ex.getErrno();
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
+    }
+
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
+    }
+
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
+    }
+
+    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
@@ -1229,10 +1244,6 @@ public final class TableUtils {
 
     static boolean isSequential(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
-    }
-
-    static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {
@@ -1282,17 +1293,6 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
-        }
-    }
-
-    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 
     public interface FailureCloseable {

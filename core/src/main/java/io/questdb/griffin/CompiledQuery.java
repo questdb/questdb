@@ -33,46 +33,32 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 
 public interface CompiledQuery {
-    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
-    short SELECT = 1;
-    short INSERT = 2;
-    short TRUNCATE = 3;
     short ALTER = 4;
-    short REPAIR = 5;
-    short SET = 6;
-    short DROP = 7;
-    short COPY_LOCAL = 8;
-    short CREATE_TABLE = 9;
-    short INSERT_AS_SELECT = 10;
-    short COPY_REMOTE = 11;
-    short RENAME_TABLE = 12;
     short BACKUP_TABLE = 13;
-    short UPDATE = 14;
-    short LOCK = 15;
-    short UNLOCK = 16;
-    short VACUUM = 17;
     short BEGIN = 18;
     short COMMIT = 19;
-    short ROLLBACK = 20;
+    short COPY_LOCAL = 8;
+    short COPY_REMOTE = 11;
+    short CREATE_TABLE = 9;
     short CREATE_TABLE_AS_SELECT = 21;
-    short SNAPSHOT_DB_PREPARE = 22;
-    short SNAPSHOT_DB_COMPLETE = 23;
     short DEALLOCATE = 24;
+    short DROP = 7;
+    short INSERT = 2;
+    short INSERT_AS_SELECT = 10;
+    short LOCK = 15;
+    short RENAME_TABLE = 12;
+    short REPAIR = 5;
+    short ROLLBACK = 20;
+    // these values should be covered in both JsonQueryProcessor and PGConnectionContext
+    short SELECT = 1;
+    short SET = 6;
+    short SNAPSHOT_DB_COMPLETE = 23;
+    short SNAPSHOT_DB_PREPARE = 22;
+    short TRUNCATE = 3;
     short TYPES_COUNT = DEALLOCATE;
-
-    RecordCursorFactory getRecordCursorFactory();
-
-    String getSqlStatement();
-
-    TextLoader getTextLoader();
-
-    InsertOperation getInsertOperation();
-
-    UpdateOperation getUpdateOperation();
-
-    AlterOperation getAlterOperation();
-
-    short getType();
+    short UNLOCK = 16;
+    short UPDATE = 14;
+    short VACUUM = 17;
 
     /***
      * Executes the query.
@@ -92,10 +78,24 @@ public interface CompiledQuery {
      */
     long getAffectedRowsCount();
 
+    AlterOperation getAlterOperation();
+
+    InsertOperation getInsertOperation();
+
+    RecordCursorFactory getRecordCursorFactory();
+
+    String getSqlStatement();
+
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
      */
     CharSequence getStatementName();
+
+    TextLoader getTextLoader();
+
+    short getType();
+
+    UpdateOperation getUpdateOperation();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 

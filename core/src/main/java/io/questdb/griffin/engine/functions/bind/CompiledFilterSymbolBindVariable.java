@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -37,20 +37,14 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
  */
 public class CompiledFilterSymbolBindVariable extends SymbolFunction implements ScalarFunction {
 
-    private final Function symbolFunction;
     private final int columnIndex;
+    private final Function symbolFunction;
     private StaticSymbolTable symbolTable;
 
     public CompiledFilterSymbolBindVariable(Function symbolFunction, int columnIndex) {
         assert symbolFunction.getType() == ColumnType.STRING || symbolFunction.getType() == ColumnType.SYMBOL;
         this.symbolFunction = symbolFunction;
         this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
-        this.symbolFunction.init(symbolTableSource, executionContext);
     }
 
     @Override
@@ -70,13 +64,19 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public boolean isSymbolTableStatic() {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
+        this.symbolFunction.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
         return true;
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
+    public boolean isSymbolTableStatic() {
+        return true;
     }
 
     @Override
@@ -85,7 +85,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

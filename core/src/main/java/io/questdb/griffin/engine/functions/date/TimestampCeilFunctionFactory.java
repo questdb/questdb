@@ -102,28 +102,6 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilMMFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilMM(timestamp);
-        }
-    }
-
-    public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilYYYYFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long ceil(long timestamp) {
-            return Timestamps.ceilYYYY(timestamp);
-        }
-    }
-
     public static class TimestampCeilHHFunction extends AbstractTimestampCeilFunction {
         public TimestampCeilHHFunction(Function arg) {
             super(arg);
@@ -146,14 +124,14 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
-        public TimestampCeilSSFunction(Function arg) {
+    public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
+        public TimestampCeilMMFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long ceil(long timestamp) {
-            return Timestamps.ceilSS(timestamp);
+            return Timestamps.ceilMM(timestamp);
         }
     }
 
@@ -165,6 +143,28 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilMS(timestamp);
+        }
+    }
+
+    public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
+        public TimestampCeilSSFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long ceil(long timestamp) {
+            return Timestamps.ceilSS(timestamp);
+        }
+    }
+
+    public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
+        public TimestampCeilYYYYFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long ceil(long timestamp) {
+            return Timestamps.ceilYYYY(timestamp);
         }
     }
 }

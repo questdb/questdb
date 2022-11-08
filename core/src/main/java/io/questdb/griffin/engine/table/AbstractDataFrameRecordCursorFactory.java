@@ -44,16 +44,6 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    protected void _close() {
-        Misc.free(dataFrameCursorFactory);
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return dataFrameCursorFactory.supportTableRowId(tableName);
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         try {
@@ -62,6 +52,16 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
             dataFrameCursor.close();
             throw e;
         }
+    }
+
+    @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return dataFrameCursorFactory.supportTableRowId(tableName);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(dataFrameCursorFactory);
     }
 
     protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException;

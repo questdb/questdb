@@ -55,6 +55,7 @@ import static io.questdb.cairo.vm.Vm.getStorageLength;
 
 public class O3FailureTest extends AbstractO3Test {
 
+    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
     private final static AtomicInteger counter = new AtomicInteger(0);
     private static final FilesFacade ffOpenIndexFailure = new FilesFacadeImpl() {
         @Override
@@ -65,7 +66,6 @@ public class O3FailureTest extends AbstractO3Test {
             return super.openRW(name, opts);
         }
     };
-    private static final Log LOG = LogFactory.getLog(O3FailureTest.class);
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffOpenFailure = new FilesFacadeImpl() {
         @Override
@@ -78,8 +78,8 @@ public class O3FailureTest extends AbstractO3Test {
         }
     };
     private static final FilesFacade ffFailToAllocateIndex = new FilesFacadeImpl() {
-        long theFd;
         boolean failNextAlloc = false;
+        long theFd;
 
         @Override
         public boolean allocate(long fd, long size) {
@@ -117,56 +117,6 @@ public class O3FailureTest extends AbstractO3Test {
             return fd;
         }
     };
-
-    @Test
-    public void testOOOFollowedByAnotherOOO() throws Exception {
-        counter.set(1);
-        final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
-        executeWithPool(0,
-                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
-                new FilesFacadeImpl() {
-
-                    long theFd = 0;
-                    boolean armageddon = false;
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (restoreDiskSpace.get()) {
-                            return super.allocate(fd, size);
-                        }
-
-                        if (armageddon) {
-                            return false;
-                        }
-                        if (fd == theFd) {
-                            theFd = 0;
-                            armageddon = true;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
-                    }
-
-                    @Override
-                    public boolean close(long fd) {
-                        if (fd == theFd) {
-                            theFd = 0;
-                        }
-                        return super.close(fd);
-                    }
-
-                    @Override
-                    public long openRW(LPSZ name, long opts) {
-                        long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
-                            if (counter.decrementAndGet() == 0) {
-                                theFd = fd;
-                            }
-                        }
-                        return fd;
-                    }
-                });
-    }
-
     private static final FilesFacade ffAllocateFailure = new FilesFacadeImpl() {
         private boolean failNextAlloc = false;
 
@@ -192,8 +142,8 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffIndexAllocateFailure = new FilesFacadeImpl() {
 
-        long theFd = 0;
         boolean failNextAlloc = false;
+        long theFd = 0;
 
         @Override
         public boolean allocate(long fd, long size) {
@@ -749,6 +699,55 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
+    public void testOOOFollowedByAnotherOOO() throws Exception {
+        counter.set(1);
+        final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
+        executeWithPool(0,
+                (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
+                new FilesFacadeImpl() {
+
+                    boolean armageddon = false;
+                    long theFd = 0;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (restoreDiskSpace.get()) {
+                            return super.allocate(fd, size);
+                        }
+
+                        if (armageddon) {
+                            return false;
+                        }
+                        if (fd == theFd) {
+                            theFd = 0;
+                            armageddon = true;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public boolean close(long fd) {
+                        if (fd == theFd) {
+                            theFd = 0;
+                        }
+                        return super.close(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Chars.endsWith(name, "x" + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                            if (counter.decrementAndGet() == 0) {
+                                theFd = fd;
+                            }
+                        }
+                        return fd;
+                    }
+                });
+    }
+
+    @Test
     public void testOutOfFileHandles() throws Exception {
         counter.set(1536);
         executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new FilesFacadeImpl() {
@@ -1191,6 +1190,41 @@ public class O3FailureTest extends AbstractO3Test {
         });
     }
 
+    private static void assertO3DataConsistency(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, URISyntaxException {
+        // create third table, which will contain both X and 1AM
+        compiler.compile("create table y as (x union all append)", sqlExecutionContext);
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
+        engine.releaseAllReaders();
+        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
+    }
+
+    private static void assertSqlResultAgainstFile(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String resourceName
+    ) throws URISyntaxException, SqlException {
+        printSqlResult(compiler, sqlExecutionContext, "x");
+
+        URL url = O3FailureTest.class.getResource(resourceName);
+        Assert.assertNotNull(url);
+        TestUtils.assertEquals(new File(url.toURI()), sink);
+    }
+
+    private static void assertXCount(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expectedMaxTimestamp
+    ) throws SqlException {
+        assertXCount(compiler, sqlExecutionContext);
+        assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
+    }
+
     private static FilesFacade failOnOpeRW(String fileName, int count) {
         AtomicInteger counter = new AtomicInteger(count);
         return new FilesFacadeImpl() {
@@ -1202,6 +1236,25 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    @NotNull
+    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                sink2
+        );
+
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select max(ts) from x",
+                sink
+        );
+
+        return Chars.toString(sink);
     }
 
     private static void testAllocateFailsAtO3OpenColumn0(
@@ -1780,6 +1833,26 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
+    private static void testAllocateFailsAtO3OpenColumnAppendRows(TableWriter w) {
+        TableWriter.Row row;
+        // this row goes into a non-recent partition
+        // triggering O3
+        row = w.newRow(518300000000L);
+        row.putInt(0, 10);
+        row.putLong(1, 3500000L);
+        // skip over the timestamp
+        row.putDouble(3, 10.2);
+        row.append();
+
+        // another O3 row, this time it is appended to last partition
+        row = w.newRow(549900000000L);
+        row.putInt(0, 10);
+        row.putLong(1, 3500000L);
+        // skip over the timestamp
+        row.putDouble(3, 10.2);
+        row.append();
+    }
+
     private static void testAllocateToResizeLastPartition0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1870,404 +1943,6 @@ public class O3FailureTest extends AbstractO3Test {
                 sink
         );
         TestUtils.assertEquals(sink2, sink);
-    }
-
-    private static void testAllocateFailsAtO3OpenColumnAppendRows(TableWriter w) {
-        TableWriter.Row row;
-        // this row goes into a non-recent partition
-        // triggering O3
-        row = w.newRow(518300000000L);
-        row.putInt(0, 10);
-        row.putLong(1, 3500000L);
-        // skip over the timestamp
-        row.putDouble(3, 10.2);
-        row.append();
-
-        // another O3 row, this time it is appended to last partition
-        row = w.newRow(549900000000L);
-        row.putInt(0, 10);
-        row.putLong(1, 3500000L);
-        // skip over the timestamp
-        row.putDouble(3, 10.2);
-        row.append();
-    }
-
-    private static void testInsertAsSelectNulls0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i, " +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
-                        " cast(x as short) l" +
-                        " from long_sequence(50)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table top as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " case WHEN x < 2 THEN CAST(NULL as TIMESTAMP) ELSE CAST(x as TIMESTAMP) END ts," +
-                        " cast(x + 1000 as short)  l" +
-                        " from long_sequence(100)" +
-                        ")",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            compiler.compile("insert into x select * from top", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ex) {
-            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
-        }
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (select * from top where ts >= 0 union all select * from x)",
-                "insert into x select * from top where ts >= 0"
-        );
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testInsertAsSelectNegativeTimestamp0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i, " +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
-                        " cast(x as short) l" +
-                        " from long_sequence(50)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table top as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " timestamp_sequence(-500,10L) ts," +
-                        " cast(x + 1000 as short)  l" +
-                        " from long_sequence(100)" +
-                        ")",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            compiler.compile("insert into x select * from top", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ex) {
-            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
-        }
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (select * from top where ts >= 0 union all select * from x)",
-                "insert into x select * from top where ts >= 0"
-        );
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,1000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        // create table with 1AM data
-
-        compiler.compile(
-                "create table top as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(15000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(1000)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            compiler.compile("insert into x select * from top", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ignored) {
-        }
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (select * from x union all select * from top)",
-                "insert into x select * from top"
-        );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        for (int i = 0; i < 20; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException | CairoError ignored) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedWithAllocationCallLimit0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " timestamp_sequence(500000000000L,1000000L) ts" +
-                        " from long_sequence(100000L)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " timestamp_sequence(518300000010L,100000L) ts" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOODataIndexedFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ignored) {
-        }
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopLastDataOOODataFailRetry0(
@@ -2426,156 +2101,6 @@ public class O3FailureTest extends AbstractO3Test {
 
     }
 
-    private static void testColumnTopMidDataMergeDataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
-
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
-
-        compiler.compile(
-                "insert into x " +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(549920000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t," +
-//        --------     new columns here ---------------
-                        " rnd_double() v," +
-                        " rnd_float() v1," +
-                        " rnd_int() v2," +
-                        " rnd_byte() v3," +
-                        " rnd_short() v4," +
-                        " rnd_boolean() v5," +
-                        " rnd_date() v6," +
-                        " rnd_timestamp(10,100000,356) v7," +
-                        " rnd_symbol('AAA','BBB', null) v8," +
-                        " rnd_char() v10," +
-                        " rnd_str() v11," +
-                        " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(1000)",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(549900000000L,50000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t," +
-//        --------     new columns here ---------------
-                        " rnd_double() v," +
-                        " rnd_float() v1," +
-                        " rnd_int() v2," +
-                        " rnd_byte() v3," +
-                        " rnd_short() v4," +
-                        " rnd_boolean() v5," +
-                        " rnd_date() v6," +
-                        " rnd_timestamp(10,100000,356) v7," +
-                        " rnd_symbol('AAA','BBB', null) v8," +
-                        " rnd_char() v10," +
-                        " rnd_str() v11," +
-                        " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        try {
-            compiler.compile("insert into x select * from append", sqlExecutionContext);
-            Assert.fail();
-        } catch (CairoException ignored) {
-        }
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        assertSqlResultAgainstFile(
-                compiler,
-                sqlExecutionContext,
-                "/o3/testColumnTopMidDataMergeData.txt"
-        );
-    }
-
-    private static void assertXCount(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence expectedMaxTimestamp
-    ) throws SqlException {
-        assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.engine, sqlExecutionContext, expectedMaxTimestamp);
-    }
-
     private static void testColumnTopLastOOOPrefixFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -2716,181 +2241,6 @@ public class O3FailureTest extends AbstractO3Test {
         );
     }
 
-    @NotNull
-    private static String prepareCountAndMaxTimestampSinks(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select count() from x",
-                sink2
-        );
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select max(ts) from x",
-                sink
-        );
-
-        return Chars.toString(sink);
-    }
-
-    private static void assertO3DataConsistency(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
-        // create third table, which will contain both X and 1AM
-        compiler.compile("create table y as (x union all append)", sqlExecutionContext);
-        compiler.compile("insert into x select * from append", sqlExecutionContext);
-
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
-        engine.releaseAllReaders();
-        assertSqlResultAgainstFile(compiler, sqlExecutionContext, "/o3/testColumnTopMidAppendColumn.txt");
-    }
-
-    private static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String resourceName
-    ) throws URISyntaxException, SqlException {
-        printSqlResult(compiler, sqlExecutionContext, "x");
-
-        URL url = O3FailureTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
-    }
-
-    private static void testPartitionedDataAppendOODataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                executionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                executionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, executionContext);
-
-        for (int i = 0; i < 10; i++) {
-            try {
-                compiler.compile("insert into x select * from append", executionContext);
-                Assert.fail();
-            } catch (CairoException ignored) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCount(compiler, executionContext, expectedMaxTimestamp);
-
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                executionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
-    }
-
-    private static void testVarColumnStress(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-
-        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
-        // max timestamp should be 100_000
-        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
-
-        String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
-        final int symbolLen = symbols.length;
-
-
-        Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
-        int batches = 0;
-        int batchCount = 75;
-        while (batches < batchCount) {
-            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
-                for (int i = 0; i < batchCount; i++) {
-                    batches++;
-                    for (int k = 0; k < 1000; k++) {
-                        TableWriter.Row r = w.newRow(rnd.nextPositiveInt() % 100_000);
-                        r.putSym(0, symbols[rnd.nextInt(symbolLen)]);
-                        r.putStr(1, rnd.nextChars(7));
-                        r.putStr(2, rnd.nextChars(8));
-                        r.putStr(3, rnd.nextChars(4));
-                        r.putStr(4, rnd.nextChars(6));
-                        r.putSym(5, symbols[rnd.nextInt(symbolLen)]);
-                        r.putInt(6, rnd.nextInt());
-                        r.append();
-                    }
-                    try {
-                        w.commitWithLag(10000L);
-                    } catch (Throwable e) {
-                        try {
-                            w.rollback();
-                        } catch (Throwable ex) {
-                            // ignore
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-
     private static void testColumnTopMidAppendBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -2996,117 +2346,6 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertIndexConsistency(compiler, executionContext, engine);
         assertXCountY(compiler, executionContext);
-    }
-
-    private static void testColumnTopMidMergeBlankColumnFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(500)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518300000000L-1000L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t," +
-                        //  ------------------- new columns ------------------
-                        " rnd_double() v," +
-                        " rnd_float() v1," +
-                        " rnd_int() v2," +
-                        " rnd_byte() v3," +
-                        " rnd_short() v4," +
-                        " rnd_boolean() v5," +
-                        " rnd_date() v6," +
-                        " rnd_timestamp(10,100000,356) v7," +
-                        " rnd_symbol('AAA','BBB', null) v8," +
-                        " rnd_char() v10," +
-                        " rnd_str() v11," +
-                        " rnd_bin() v12," +
-                        " rnd_long() v9" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        for (int i = 0; i < 10; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ignored) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
     }
 
     private static void testColumnTopMidAppendColumnFailRetry0(
@@ -3249,39 +2488,12 @@ public class O3FailureTest extends AbstractO3Test {
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
     }
 
-    private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
+    private static void testColumnTopMidDataMergeDataFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        testPartitionedDataAppendOOPrependOODataFailRetry0(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                false
-        );
-    }
+    ) throws SqlException, URISyntaxException {
 
-    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        testPartitionedDataAppendOOPrependOODataFailRetry0(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                true
-        );
-    }
-
-    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            boolean reopenTableWriter
-    ) throws SqlException {
-        // create table with roughly 2AM data
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -3299,16 +2511,66 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_long() j," +
                         " timestamp_sequence(500000000000L,100000000L) ts," +
                         " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
+                        " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t" +
-                        " from long_sequence(510)" +
+                        " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(549920000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(1000)",
+                sqlExecutionContext
+        );
+
         compiler.compile(
                 "create table append as (" +
                         "select" +
@@ -3324,52 +2586,50 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " timestamp_sequence(549900000000L,50000000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
+                        " rnd_char() t," +
+//        --------     new columns here ---------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
-        for (int i = 0; i < 15; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ignored) {
-            }
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
         }
-
-        fixFailure.set(true);
 
         assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
-        if (reopenTableWriter) {
-            engine.releaseAllWriters();
-        }
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
-                engine,
+        assertSqlResultAgainstFile(
                 compiler,
                 sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
+                "/o3/testColumnTopMidDataMergeData.txt"
         );
-
-        assertIndexConsistency(
-                compiler,
-                sqlExecutionContext,
-                engine);
-
-        assertXCountY(compiler, sqlExecutionContext);
     }
 
-    private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
+    private static void testColumnTopMidMergeBlankColumnFailRetry0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -3392,16 +2652,28 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_long() j," +
                         " timestamp_sequence(500000000000L,100000000L) ts," +
                         " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
+                        " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_char() t" +
-                        " from long_sequence(510)" +
+                        " from long_sequence(500)" +
                         "), index(sym) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
+        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+
         compiler.compile(
                 "create table append as (" +
                         "select" +
@@ -3417,12 +2689,26 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " timestamp_sequence(518300000000L-1000L,100000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
+                        " rnd_char() t," +
+                        //  ------------------- new columns ------------------
+                        " rnd_double() v," +
+                        " rnd_float() v1," +
+                        " rnd_int() v2," +
+                        " rnd_byte() v3," +
+                        " rnd_short() v4," +
+                        " rnd_boolean() v5," +
+                        " rnd_date() v6," +
+                        " rnd_timestamp(10,100000,356) v7," +
+                        " rnd_symbol('AAA','BBB', null) v8," +
+                        " rnd_char() v10," +
+                        " rnd_str() v11," +
+                        " rnd_bin() v12," +
+                        " rnd_long() v9" +
+                        " from long_sequence(100)" +
                         ") timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -3441,48 +2727,118 @@ public class O3FailureTest extends AbstractO3Test {
 
         assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
 
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
-        compiler.compile(
-                "create table append2 as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(551000000000L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "create table y as (x union all append2)",
-                "insert into x select * from append2"
+                "create table y as (x union all append)",
+                "insert into x select * from append"
         );
 
-        assertIndexConsistency(
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testInsertAsSelectNegativeTimestamp0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " cast(x as short) l" +
+                        " from long_sequence(50)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(-500,10L) ts," +
+                        " cast(x + 1000 as short)  l" +
+                        " from long_sequence(100)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        try {
+            compiler.compile("insert into x select * from top", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ex) {
+            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
+        }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        assertO3DataConsistency(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                engine);
+                "create table y as (select * from top where ts >= 0 union all select * from x)",
+                "insert into x select * from top where ts >= 0"
+        );
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
 
+    private static void testInsertAsSelectNulls0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i, " +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " cast(x as short) l" +
+                        " from long_sequence(50)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " case WHEN x < 2 THEN CAST(NULL as TIMESTAMP) ELSE CAST(x as TIMESTAMP) END ts," +
+                        " cast(x + 1000 as short)  l" +
+                        " from long_sequence(100)" +
+                        ")",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        try {
+            compiler.compile("insert into x select * from top", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ex) {
+            Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
+        }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (select * from top where ts >= 0 union all select * from x)",
+                "insert into x select * from top where ts >= 0"
+        );
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
         assertXCountY(compiler, sqlExecutionContext);
     }
 
@@ -3615,57 +2971,6 @@ public class O3FailureTest extends AbstractO3Test {
         assertXCountY(compiler, sqlExecutionContext);
     }
 
-    private static void testTwoRowsConsistency0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x (ts timestamp, block_nr long) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                "ts\tblock_nr\n"
-        );
-
-        TestUtils.insert(
-                compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)"
-        );
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                "ts\tblock_nr\n" +
-                        "2010-02-04T21:43:14.000000Z\t38304\n"
-        );
-
-        TestUtils.insert(
-                compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)"
-        );
-
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "x",
-                sink,
-                "ts\tblock_nr\n" +
-                        "2010-02-04T21:43:14.000000Z\t38304\n" +
-                        "2010-02-14T23:52:59.000000Z\t40320\n"
-        );
-
-    }
-
     private static void testOutOfFileHandles0(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -3792,6 +3097,699 @@ public class O3FailureTest extends AbstractO3Test {
             pool1.halt();
             pool2.halt();
             Assert.assertTrue(errorCount.get() > 0);
+        }
+    }
+
+    private static void testPartitionedDataAppendOODataFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                executionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, executionContext);
+
+        for (int i = 0; i < 10; i++) {
+            try {
+                compiler.compile("insert into x select * from append", executionContext);
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+        }
+
+        fixFailure.set(true);
+
+        assertXCount(compiler, executionContext, expectedMaxTimestamp);
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                executionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertIndexConsistency(compiler, executionContext, engine);
+        assertXCountY(compiler, executionContext);
+    }
+
+    private static void testPartitionedDataAppendOODataIndexedFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        try {
+            compiler.compile("insert into x select * from append", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " cast(null as binary) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(510)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518300000010L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        for (int i = 0; i < 20; i++) {
+            try {
+                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException | CairoError ignored) {
+            }
+        }
+
+        fixFailure.set(true);
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " cast(null as binary) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(510)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // all records but one is appended to middle partition
+        // last record is prepended to the last partition
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(101)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        for (int i = 0; i < 10; i++) {
+            try {
+                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+        }
+
+        fixFailure.set(true);
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        // all records but one is appended to middle partition
+        // last record is prepended to the last partition
+        compiler.compile(
+                "create table append2 as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(551000000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(101)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append2)",
+                "insert into x select * from append2"
+        );
+
+        assertIndexConsistency(
+                compiler,
+                sqlExecutionContext,
+                engine);
+
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        testPartitionedDataAppendOOPrependOODataFailRetry0(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                true
+        );
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            boolean reopenTableWriter
+    ) throws SqlException {
+        // create table with roughly 2AM data
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " cast(null as binary) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(510)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // all records but one is appended to middle partition
+        // last record is prepended to the last partition
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(518390000000L,100000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(101)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        for (int i = 0; i < 15; i++) {
+            try {
+                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ignored) {
+            }
+        }
+
+        fixFailure.set(true);
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        if (reopenTableWriter) {
+            engine.releaseAllWriters();
+        }
+
+        // create third table, which will contain both X and 1AM
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertIndexConsistency(
+                compiler,
+                sqlExecutionContext,
+                engine);
+
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        testPartitionedDataAppendOOPrependOODataFailRetry0(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                false
+        );
+    }
+
+    private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(500000000000L,1000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(500)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        // create table with 1AM data
+
+        compiler.compile(
+                "create table top as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(15000000000L,100000000L) ts," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_char() t" +
+                        " from long_sequence(1000)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
+
+        try {
+            compiler.compile("insert into x select * from top", sqlExecutionContext);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
+
+        assertXCount(compiler, sqlExecutionContext, expectedMaxTimestamp);
+
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (select * from x union all select * from top)",
+                "insert into x select * from top"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testPartitionedWithAllocationCallLimit0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " timestamp_sequence(500000000000L,1000000L) ts" +
+                        " from long_sequence(100000L)" +
+                        "), index(sym) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile(
+                "create table append as (" +
+                        "select" +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " timestamp_sequence(518300000010L,100000L) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        compiler.compile("insert into x select * from append", sqlExecutionContext);
+        assertO3DataConsistency(
+                engine,
+                compiler,
+                sqlExecutionContext,
+                "create table y as (x union all append)",
+                "insert into x select * from append"
+        );
+
+        assertIndexConsistency(compiler, sqlExecutionContext, engine);
+        assertXCountY(compiler, sqlExecutionContext);
+    }
+
+    private static void testTwoRowsConsistency0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        compiler.compile(
+                "create table x (ts timestamp, block_nr long) timestamp (ts) partition by DAY",
+                sqlExecutionContext
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n"
+        );
+
+        TestUtils.insert(
+                compiler,
+                sqlExecutionContext,
+                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n" +
+                        "2010-02-04T21:43:14.000000Z\t38304\n"
+        );
+
+        TestUtils.insert(
+                compiler,
+                sqlExecutionContext,
+                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)"
+        );
+
+        TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "x",
+                sink,
+                "ts\tblock_nr\n" +
+                        "2010-02-04T21:43:14.000000Z\t38304\n" +
+                        "2010-02-14T23:52:59.000000Z\t40320\n"
+        );
+
+    }
+
+    private static void testVarColumnStress(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+
+        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
+        // max timestamp should be 100_000
+        compiler.compile("insert into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+
+        String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
+        final int symbolLen = symbols.length;
+
+
+        Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
+        int batches = 0;
+        int batchCount = 75;
+        while (batches < batchCount) {
+            try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
+                for (int i = 0; i < batchCount; i++) {
+                    batches++;
+                    for (int k = 0; k < 1000; k++) {
+                        TableWriter.Row r = w.newRow(rnd.nextPositiveInt() % 100_000);
+                        r.putSym(0, symbols[rnd.nextInt(symbolLen)]);
+                        r.putStr(1, rnd.nextChars(7));
+                        r.putStr(2, rnd.nextChars(8));
+                        r.putStr(3, rnd.nextChars(4));
+                        r.putStr(4, rnd.nextChars(6));
+                        r.putSym(5, symbols[rnd.nextInt(symbolLen)]);
+                        r.putInt(6, rnd.nextInt());
+                        r.append();
+                    }
+                    try {
+                        w.commitWithLag(10000L);
+                    } catch (Throwable e) {
+                        try {
+                            w.rollback();
+                        } catch (Throwable ex) {
+                            // ignore
+                        }
+                    }
+                }
+            }
         }
     }
 

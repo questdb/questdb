@@ -36,14 +36,14 @@ import java.io.InputStream;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
+    public static final int FREEBSD = 5;
+    public static final int LINUX_AMD64 = 2;
+    public static final int LINUX_ARM64 = 4;
+    public static final int OSX_AMD64 = 1;
+    public static final int OSX_ARM64 = 6;
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
     public static final int type;
-    public static final int OSX_AMD64 = 1;
-    public static final int LINUX_AMD64 = 2;
-    public static final int LINUX_ARM64 = 4;
-    public static final int FREEBSD = 5;
-    public static final int OSX_ARM64 = 6;
 
     private Os() {
     }
@@ -164,13 +164,11 @@ public final class Os {
         }
     }
 
-    private static native int setCurrentThreadAffinity0(int cpu);
-
-    private static native long generateKrbToken(long spn);
+    private static native long forkExec(long argv);
 
     private static native void freeKrbToken(long struct);
 
-    private static native long forkExec(long argv);
+    private static native long generateKrbToken(long spn);
 
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
@@ -204,6 +202,8 @@ public final class Os {
             Misc.free(is);
         }
     }
+
+    private static native int setCurrentThreadAffinity0(int cpu);
 
     static {
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {

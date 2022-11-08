@@ -30,49 +30,22 @@ import org.junit.Test;
 public class OrderByExpressionTest extends AbstractGriffinTest {
 
     @Test
-    public void testOrderByTwoExpressions() throws Exception {
-        assertQuery("x\n10\n9\n8\n7\n6\n",
-                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true, true);
-    }
-
-    @Test
-    public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
+    public void testOrderByColumnInJoinedSubquery() throws Exception {
+        assertQuery("x\toth\n" +
+                        "1\t100\n" +
+                        "1\t81\n" +
+                        "1\t64\n",
                 "select * from \n" +
                         "(\n" +
-                        "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
+                        "  selecT x from long_sequence(10) \n" +
                         ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
-    }
-
-    @Test
-    public void testOrderByExpressionInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
-                "select * from \n" +
+                        "cross join \n" +
                         "(\n" +
-                        "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
+                        "  select * from \n" +
+                        "  (\n" +
+                        "    selecT x*x as oth from long_sequence(10) order by x desc limit 5 \n" +
+                        "  )\n" +
                         ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
-    }
-
-    @Test
-    public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
-                "select * from \n" +
-                        "(\n" +
-                        "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
-                        ")\n" +
-                        "order by x*2 asc\n" +
-                        "limit 3", null, null, true, true, true);
-    }
-
-    @Test
-    public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
-        assertQuery("x\n6\n7\n8\n",
-                "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
-                        "select * from q\n" +
                         "order by x*2 asc\n" +
                         "limit 3", null, null, true, true, true);
     }
@@ -98,6 +71,17 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByExpressionInNestedQuery() throws Exception {
+        assertQuery("x\n6\n7\n8\n",
+                "select * from \n" +
+                        "(\n" +
+                        "  select x from long_sequence(10) order by x/2 desc limit 5 \n" +
+                        ")\n" +
+                        "order by x*2 asc\n" +
+                        "limit 3", null, null, true, true, true);
+    }
+
+    @Test
     public void testOrderByExpressionWhenColumnHasAliasInJoinedSubquery() throws Exception {
         assertQuery("x\text\n1\t100\n1\t81\n1\t64\n",
                 "select * from \n" +
@@ -113,21 +97,37 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByColumnInJoinedSubquery() throws Exception {
-        assertQuery("x\toth\n" +
-                        "1\t100\n" +
-                        "1\t81\n" +
-                        "1\t64\n",
+    public void testOrderByExpressionWithFunctionCallInNestedQuery() throws Exception {
+        assertQuery("x\n6\n7\n8\n",
                 "select * from \n" +
                         "(\n" +
-                        "  selecT x from long_sequence(10) \n" +
+                        "    select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 \n" +
                         ")\n" +
-                        "cross join \n" +
+                        "order by x*2 asc\n" +
+                        "limit 3", null, null, true, true, true);
+    }
+
+    @Test
+    public void testOrderByExpressionWithFunctionCallInWithClause() throws Exception {
+        assertQuery("x\n6\n7\n8\n",
+                "with q as (select x from long_sequence(10) order by x+rnd_int(1,10,0)*0 desc limit 5 ) \n" +
+                        "select * from q\n" +
+                        "order by x*2 asc\n" +
+                        "limit 3", null, null, true, true, true);
+    }
+
+    @Test
+    public void testOrderByTwoExpressions() throws Exception {
+        assertQuery("x\n10\n9\n8\n7\n6\n",
+                "select x from long_sequence(10) order by x/100, x*x desc  limit 5", null, null, true, true, true);
+    }
+
+    @Test
+    public void testOrderByTwoExpressionsInNestedQuery() throws Exception {
+        assertQuery("x\n6\n7\n8\n",
+                "select * from \n" +
                         "(\n" +
-                        "  select * from \n" +
-                        "  (\n" +
-                        "    selecT x*x as oth from long_sequence(10) order by x desc limit 5 \n" +
-                        "  )\n" +
+                        "  select x from long_sequence(10) order by x/2 desc, x*8 desc limit 5 \n" +
                         ")\n" +
                         "order by x*2 asc\n" +
                         "limit 3", null, null, true, true, true);

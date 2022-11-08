@@ -40,6 +40,12 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         compiledQuery = new CompiledQueryImpl(engine);
     }
 
+    @Override
+    public void close() {
+        super.close();
+        this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
+    }
+
     public CompiledQuery getCompiledQuery() {
         return compiledQuery;
     }
@@ -53,11 +59,5 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         compiledQuery.withSqlStatement(sqlStatement);
         updateOperation.withSqlStatement(sqlStatement);
         copyTypesFrom(bindVariableService);
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
     }
 }

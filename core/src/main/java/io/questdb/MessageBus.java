@@ -95,11 +95,29 @@ public interface MessageBus extends Closeable {
 
     MCSequence getPageFrameReduceSubSeq(int shard);
 
+    FanOut getQueryCacheEventFanOut();
+
+    MPSequence getQueryCacheEventPubSeq();
+
     FanOut getTableWriterEventFanOut();
 
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
+
+    SCSequence getTextImportColSeq();
+
+    Sequence getTextImportPubSeq();
+
+    RingQueue<TextImportTask> getTextImportQueue();
+
+    MPSequence getTextImportRequestPubSeq();
+
+    RingQueue<TextImportRequestTask> getTextImportRequestQueue();
+
+    Sequence getTextImportRequestSubSeq();
+
+    Sequence getTextImportSubSeq();
 
     Sequence getVectorAggregatePubSeq();
 
@@ -107,27 +125,9 @@ public interface MessageBus extends Closeable {
 
     Sequence getVectorAggregateSubSeq();
 
-    MPSequence getQueryCacheEventPubSeq();
-
-    FanOut getQueryCacheEventFanOut();
-
-    RingQueue<TextImportTask> getTextImportQueue();
-
-    Sequence getTextImportPubSeq();
-
-    Sequence getTextImportSubSeq();
-
-    SCSequence getTextImportColSeq();
-
-    RingQueue<TextImportRequestTask> getTextImportRequestQueue();
-
-    MPSequence getTextImportRequestPubSeq();
-
-    Sequence getTextImportRequestSubSeq();
+    Sequence getWalTxnNotificationPubSequence();
 
     RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
-
-    Sequence getWalTxnNotificationPubSequence();
 
     Sequence getWalTxnNotificationSubSequence();
 }

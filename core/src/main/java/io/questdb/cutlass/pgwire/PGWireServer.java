@@ -122,11 +122,6 @@ public class PGWireServer implements Closeable {
         }
     }
 
-    @TestOnly
-    public WorkerPool getWorkerPool() {
-        return workerPool;
-    }
-
     @Override
     public void close() {
         Misc.free(dispatcher);
@@ -134,6 +129,11 @@ public class PGWireServer implements Closeable {
 
     public int getPort() {
         return dispatcher.getPort();
+    }
+
+    @TestOnly
+    public WorkerPool getWorkerPool() {
+        return workerPool;
     }
 
     public static class PGConnectionContextFactory extends MutableIOContextFactory<PGConnectionContext> {

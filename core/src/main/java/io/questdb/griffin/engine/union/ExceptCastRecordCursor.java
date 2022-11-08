@@ -27,19 +27,21 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 class ExceptCastRecordCursor extends AbstractSetRecordCursor {
+    private final UnionCastRecord castRecord;
     private final Map map;
     private final RecordSink recordSink;
-    private final UnionCastRecord castRecord;
+    private boolean isOpen;
     // this is the B record of except cursor, required by sort algo
     private UnionCastRecord recordB;
-    private boolean isOpen;
 
     public ExceptCastRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.map = map;
@@ -57,22 +59,20 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
         }
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        this.castRecord.of(cursorA.getRecord(), cursorB.getRecord());
-        this.castRecord.setAb(false);
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
-        }
-        hashCursorB();
-        castRecord.setAb(true);
-        toTop();
-    }
-
     @Override
     public Record getRecord() {
         return castRecord;
+    }
+
+    @Override
+    public Record getRecordB() {
+        if (recordB == null) {
+            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
+            recordB.setAb(true);
+            // we do not need cursorB here, it is likely to be closed anyway
+            recordB.of(cursorA.getRecordB(), null);
+        }
+        return recordB;
     }
 
     @Override
@@ -89,29 +89,18 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        if (recordB == null) {
-            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
-            recordB.setAb(true);
-            // we do not need cursorB here, it is likely to be closed anyway
-            recordB.of(cursorA.getRecordB(), null);
-        }
-        return recordB;
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
         cursorA.recordAt(((UnionCastRecord) record).getRecordA(), atRowId);
     }
 
     @Override
-    public void toTop() {
-        cursorA.toTop();
+    public long size() {
+        return -1;
     }
 
     @Override
-    public long size() {
-        return -1;
+    public void toTop() {
+        cursorA.toTop();
     }
 
     private void hashCursorB() {
@@ -125,5 +114,18 @@ class ExceptCastRecordCursor extends AbstractSetRecordCursor {
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
         this.cursorB = Misc.free(this.cursorB);
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        this.castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        this.castRecord.setAb(false);
+        if (!isOpen) {
+            isOpen = true;
+            map.reopen();
+        }
+        hashCursorB();
+        castRecord.setAb(true);
+        toTop();
     }
 }

@@ -29,12 +29,12 @@ public class WalTxnNotificationTask {
     private int tableId;
     private long txn;
 
-    public int getTableId() {
-        return tableId;
-    }
-
     public String getSystemTableName() {
         return systemTableName;
+    }
+
+    public int getTableId() {
+        return tableId;
     }
 
     public long getTxn() {

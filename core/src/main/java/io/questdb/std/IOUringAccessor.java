@@ -26,36 +26,91 @@ package io.questdb.std;
 
 public class IOUringAccessor {
 
+    static final short CQE_RES_OFFSET;
+    static final short CQE_USER_DATA_OFFSET;
+    static final short CQ_CQES_OFFSET;
+    static final short CQ_KHEAD_OFFSET;
+    static final short CQ_KRING_ENTRIES_OFFSET;
+    static final short CQ_KRING_MASK_OFFSET;
+    static final short CQ_KTAIL_OFFSET;
     static final byte IORING_OP_NOP = 0;
     static final byte IORING_OP_READ = 22;
-
     static final short RING_FD_OFFSET;
-
+    static final short SIZEOF_CQE;
+    static final short SIZEOF_SQE;
+    static final short SQE_ADDR_OFFSET;
+    static final short SQE_FD_OFFSET;
+    static final short SQE_LEN_OFFSET;
+    static final short SQE_OFF_OFFSET;
+    static final short SQE_OPCODE_OFFSET;
+    static final short SQE_USER_DATA_OFFSET;
     static final short SQ_KHEAD_OFFSET;
-    static final short SQ_KTAIL_OFFSET;
-    static final short SQ_KRING_MASK_OFFSET;
     static final short SQ_KRING_ENTRIES_OFFSET;
+    static final short SQ_KRING_MASK_OFFSET;
+    static final short SQ_KTAIL_OFFSET;
     static final short SQ_SQES_OFFSET;
     static final short SQ_SQE_HEAD_OFFSET;
     static final short SQ_SQE_TAIL_OFFSET;
 
-    static final short SIZEOF_SQE;
-    static final short SQE_OPCODE_OFFSET;
-    static final short SQE_FD_OFFSET;
-    static final short SQE_OFF_OFFSET;
-    static final short SQE_ADDR_OFFSET;
-    static final short SQE_LEN_OFFSET;
-    static final short SQE_USER_DATA_OFFSET;
+    static native void close(long ptr);
 
-    static final short CQ_KHEAD_OFFSET;
-    static final short CQ_KTAIL_OFFSET;
-    static final short CQ_KRING_MASK_OFFSET;
-    static final short CQ_KRING_ENTRIES_OFFSET;
-    static final short CQ_CQES_OFFSET;
+    static native long create(int capacity);
 
-    static final short SIZEOF_CQE;
-    static final short CQE_USER_DATA_OFFSET;
-    static final short CQE_RES_OFFSET;
+    static native short getCqCqesOffset();
+
+    static native short getCqKheadOffset();
+
+    static native short getCqKringEntriesOffset();
+
+    static native short getCqKringMaskOffset();
+
+    static native short getCqKtailOffset();
+
+    static native short getCqOffset();
+
+    static native short getCqeResOffset();
+
+    static native short getCqeSize();
+
+    static native short getCqeUserDataOffset();
+
+    static native short getRingFdOffset();
+
+    static native short getSqKheadOffset();
+
+    static native short getSqKringEntriesOffset();
+
+    static native short getSqKringMaskOffset();
+
+    static native short getSqKtailOffset();
+
+    static native short getSqOffset();
+
+    static native short getSqSqeHeadOffset();
+
+    static native short getSqSqeTailOffset();
+
+    static native short getSqSqesOffset();
+
+    static native short getSqeAddrOffset();
+
+    static native short getSqeFDOffset();
+
+    static native short getSqeLenOffset();
+
+    static native short getSqeOffOffset();
+
+    static native short getSqeOpcodeOffset();
+
+    static native short getSqeSize();
+
+    static native short getSqeUserDataOffset();
+
+    static native String kernelVersion();
+
+    static native int submit(long ptr);
+
+    static native int submitAndWait(long ptr, int waitNr);
 
     static {
         RING_FD_OFFSET = getRingFdOffset();
@@ -88,64 +143,4 @@ public class IOUringAccessor {
         CQE_USER_DATA_OFFSET = getCqeUserDataOffset();
         CQE_RES_OFFSET = getCqeResOffset();
     }
-
-    static native String kernelVersion();
-
-    static native long create(int capacity);
-
-    static native void close(long ptr);
-
-    static native int submit(long ptr);
-
-    static native int submitAndWait(long ptr, int waitNr);
-
-    static native short getRingFdOffset();
-
-    static native short getSqOffset();
-
-    static native short getSqKheadOffset();
-
-    static native short getSqKtailOffset();
-
-    static native short getSqKringMaskOffset();
-
-    static native short getSqKringEntriesOffset();
-
-    static native short getSqSqesOffset();
-
-    static native short getSqSqeHeadOffset();
-
-    static native short getSqSqeTailOffset();
-
-    static native short getSqeSize();
-
-    static native short getSqeOpcodeOffset();
-
-    static native short getSqeFDOffset();
-
-    static native short getSqeOffOffset();
-
-    static native short getSqeAddrOffset();
-
-    static native short getSqeLenOffset();
-
-    static native short getSqeUserDataOffset();
-
-    static native short getCqOffset();
-
-    static native short getCqKheadOffset();
-
-    static native short getCqKtailOffset();
-
-    static native short getCqKringMaskOffset();
-
-    static native short getCqKringEntriesOffset();
-
-    static native short getCqCqesOffset();
-
-    static native short getCqeSize();
-
-    static native short getCqeUserDataOffset();
-
-    static native short getCqeResOffset();
 }

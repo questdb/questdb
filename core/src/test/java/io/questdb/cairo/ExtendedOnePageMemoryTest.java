@@ -40,9 +40,9 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ExtendedOnePageMemoryTest {
+    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     private static final int FILE_SIZE = 1024;
     private static final Path path = new Path(4096);
-    private static final AtomicBoolean FILE_MAP_FAIL = new AtomicBoolean(false);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     private static FilesFacade ff;

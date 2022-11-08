@@ -42,17 +42,17 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCursor, Closeable {
+    protected final Function offsetFunc;
+    protected final int offsetFuncPos;
     protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
-    protected final Function offsetFunc;
-    protected final int offsetFuncPos;
-    protected long tzOffset;
-    protected long prevDst;
     protected long fixedOffset;
-    protected TimeZoneRules rules;
-    protected long nextDstUTC;
     protected long localEpoch;
+    protected long nextDstUTC;
+    protected long prevDst;
+    protected TimeZoneRules rules;
+    protected long tzOffset;
 
     public AbstractSampleByCursor(
             TimestampSampler timestampSampler,

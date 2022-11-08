@@ -78,8 +78,8 @@ public class RndStringListFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends StrFunction implements Function {
-        private final ObjList<String> symbols;
         private final int count;
+        private final ObjList<String> symbols;
         private Rnd rnd;
 
         public Func(ObjList<String> symbols) {

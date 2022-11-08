@@ -39,10 +39,10 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class DynamicTableReaderMetadata extends TableReaderMetadata implements Closeable {
     private static final Log LOG = LogFactory.getLog(DynamicTableReaderMetadata.class);
-    private final CairoConfiguration configuration;
-    private TxReader txFile;
     private final MillisecondClock clock;
+    private final CairoConfiguration configuration;
     private long rowCount;
+    private TxReader txFile;
     private long txn = TableUtils.INITIAL_TXN;
 
     public DynamicTableReaderMetadata(CairoConfiguration configuration, CharSequence tableName, String systemTableName) {
@@ -58,6 +58,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
             throw e;
         }
     }
+
     @Override
     public void close() {
         this.txFile = Misc.free(txFile);

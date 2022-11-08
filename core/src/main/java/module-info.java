@@ -24,7 +24,7 @@
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.catalogue.PgClassFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {

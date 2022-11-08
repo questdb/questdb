@@ -47,6 +47,14 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     }
 
     @Override
+    public void close() {
+        if (isOpen()) {
+            map.close();
+            super.close();
+        }
+    }
+
+    @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) {
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
@@ -73,14 +81,6 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
             }
         } finally {
             map.clear();
-        }
-    }
-
-    @Override
-    public void close() {
-        if (isOpen()) {
-            map.close();
-            super.close();
         }
     }
 }

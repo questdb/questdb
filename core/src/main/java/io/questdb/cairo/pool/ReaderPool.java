@@ -52,8 +52,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     public static class R extends TableReader implements PoolTenant {
         private final int index;
-        private AbstractMultiTenantPool<R> pool;
         private Entry<R> entry;
+        private AbstractMultiTenantPool<R> pool;
 
         public R(AbstractMultiTenantPool<R> pool, Entry<R> entry, int index, String name, String systemName, MessageBus messageBus) {
             super(pool.getConfiguration(), name, systemName, messageBus);
@@ -76,6 +76,17 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             }
         }
 
+        @SuppressWarnings("unchecked")
+        @Override
+        public Entry<R> getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;
@@ -89,17 +100,6 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 close();
                 throw ex;
             }
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public Entry<R> getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
         }
     }
 }

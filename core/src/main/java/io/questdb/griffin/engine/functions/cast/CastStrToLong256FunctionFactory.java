@@ -47,9 +47,9 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
 
     private static class Func extends Long256Function implements UnaryFunction {
         private final Function arg;
-        private final Long256Impl long256builder = new Long256Impl();
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
+        private final Long256Impl long256builder = new Long256Impl();
 
         public Func(Function arg) {
             this.arg = arg;
@@ -58,6 +58,14 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            final CharSequence value = arg.getStr(rec);
+            if (value != null) {
+                CastSymbolToLong256FunctionFactory.appendLong256(value, long256builder, sink);
+            }
         }
 
         @Override
@@ -76,14 +84,6 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
                 return Long256Impl.NULL_LONG256;
             }
             return Numbers.parseLong256(value, value.length(), long256b);
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            final CharSequence value = arg.getStr(rec);
-            if (value != null) {
-                CastSymbolToLong256FunctionFactory.appendLong256(value, long256builder, sink);
-            }
         }
     }
 }

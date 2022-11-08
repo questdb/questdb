@@ -29,6 +29,23 @@ import io.questdb.std.QuietCloseable;
 public interface PoolTenant extends QuietCloseable {
 
     /**
+     * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
+     * usually assigned to the tenant in the constructor.
+     *
+     * @param <T> typically type of the subclass
+     * @return entry instance.
+     */
+    <T> AbstractMultiTenantPool.Entry<T> getEntry();
+
+    /**
+     * Opaque index, which is usually assigned to tenant in the constructor. Tenant instances must keep it safe and
+     * unchanged and provide when requested.
+     *
+     * @return opaque index value
+     */
+    int getIndex();
+
+    /**
      * Name of table this reader is attached to. Pooled reader instances cannot be reused across
      * more than one table.
      *
@@ -47,21 +64,4 @@ public interface PoolTenant extends QuietCloseable {
      * the reader to be fully up-to-date with all data and metadata changes.
      */
     void refresh();
-
-    /**
-     * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
-     * usually assigned to the tenant in the constructor.
-     *
-     * @param <T> typically type of the subclass
-     * @return entry instance.
-     */
-    <T> AbstractMultiTenantPool.Entry<T> getEntry();
-
-    /**
-     * Opaque index, which is usually assigned to tenant in the constructor. Tenant instances must keep it safe and
-     * unchanged and provide when requested.
-     *
-     * @return opaque index value
-     */
-    int getIndex();
 }

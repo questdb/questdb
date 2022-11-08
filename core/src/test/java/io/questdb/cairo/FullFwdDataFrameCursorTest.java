@@ -42,12 +42,12 @@ import org.junit.Test;
 
 public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
-    private static final int WORK_STEALING_DONT_TEST = 0;
-    private static final int WORK_STEALING_NO_PICKUP = 1;
-    private static final int WORK_STEALING_BUSY_QUEUE = 2;
-    private static final int WORK_STEALING_HIGH_CONTENTION = 3;
-    private static final int WORK_STEALING_CAS_FLAP = 4;
     private static final Log LOG = LogFactory.getLog(FullFwdDataFrameCursorTest.class);
+    private static final int WORK_STEALING_BUSY_QUEUE = 2;
+    private static final int WORK_STEALING_CAS_FLAP = 4;
+    private static final int WORK_STEALING_DONT_TEST = 0;
+    private static final int WORK_STEALING_HIGH_CONTENTION = 3;
+    private static final int WORK_STEALING_NO_PICKUP = 1;
 
     @Test
     public void testClose() throws Exception {
@@ -785,10 +785,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private TableReader createTableReader(CairoConfiguration configuration, String name) {
-        return newTableReader(configuration, name);
-    }
-
     @Test
     public void testSymbolIndexReadByDay() throws Exception {
         testSymbolIndexRead(PartitionBy.DAY, 1000000 * 60 * 5, 3);
@@ -847,12 +843,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSymbolIndexReadByYearAfterAlter() throws Exception {
         testSymbolIndexReadAfterAlter(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, 1000);
-    }
-
-    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
-        cursor.toTop();
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
     }
 
     private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
@@ -1001,6 +991,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(M * 2, count);
     }
 
+    private TableReader createTableReader(CairoConfiguration configuration, String name) {
+        return newTableReader(configuration, name);
+    }
+
     private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment, int count) {
         long timestamp = ts;
         for (int i = 0; i < count; i++) {
@@ -1143,11 +1137,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
                 }
@@ -1155,6 +1144,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public long getDataIndexValueAppendPageSize() {
                     return 65535;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
                 }
             };
 
@@ -1477,16 +1471,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
-                public int getParallelIndexThreshold() {
-                    return 1;
-                }
-
-                @Override
                 public long getDataIndexKeyAppendPageSize() {
                     return 65535;
                 }
@@ -1494,6 +1478,16 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 @Override
                 public long getDataIndexValueAppendPageSize() {
                     return 65535;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public int getParallelIndexThreshold() {
+                    return 1;
                 }
             };
 
@@ -2386,12 +2380,54 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
+        cursor.toTop();
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
+    }
+
+    final static class MyWorkScheduler extends MessageBusImpl {
+        private final Sequence pubSeq;
+        private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
+        private final Sequence subSeq;
+
+        public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
+
+            super(configuration);
+
+            this.pubSeq = pubSequence;
+            this.subSeq = subSequence;
+            if (subSeq != null) {
+                this.pubSeq.then(this.subSeq).then(this.pubSeq);
+            }
+        }
+
+        public MyWorkScheduler() {
+            this(new MPSequence(1024), new MCSequence(1024));
+        }
+
+        @Override
+        public Sequence getIndexerPubSequence() {
+            return pubSeq;
+        }
+
+        @Override
+        public RingQueue<ColumnIndexerTask> getIndexerQueue() {
+            return queue;
+        }
+
+        @Override
+        public Sequence getIndexerSubSequence() {
+            return subSeq;
+        }
+    }
+
     private static class SymbolGroup {
 
+        final int S;
         final String[] symA;
         final String[] symB;
         final String[] symC;
-        final int S;
 
         public SymbolGroup(Rnd rnd, int S, int N, int partitionBy, boolean useDefaultBlockSize) {
             this.S = S;
@@ -2436,42 +2472,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
             return timestamp;
-        }
-    }
-
-    final static class MyWorkScheduler extends MessageBusImpl {
-        private final RingQueue<ColumnIndexerTask> queue = new RingQueue<>(ColumnIndexerTask::new, 1024);
-        private final Sequence pubSeq;
-        private final Sequence subSeq;
-
-        public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
-
-            super(configuration);
-
-            this.pubSeq = pubSequence;
-            this.subSeq = subSequence;
-            if (subSeq != null) {
-                this.pubSeq.then(this.subSeq).then(this.pubSeq);
-            }
-        }
-
-        public MyWorkScheduler() {
-            this(new MPSequence(1024), new MCSequence(1024));
-        }
-
-        @Override
-        public Sequence getIndexerPubSequence() {
-            return pubSeq;
-        }
-
-        @Override
-        public RingQueue<ColumnIndexerTask> getIndexerQueue() {
-            return queue;
-        }
-
-        @Override
-        public Sequence getIndexerSubSequence() {
-            return subSeq;
         }
     }
 }

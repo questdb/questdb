@@ -25,16 +25,42 @@
 package io.questdb.network;
 
 public class EpollAccessor {
-    public static final short SIZEOF_EVENT;
     public static final int EPOLLIN;
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
-    public static final int EPOLL_CTL_MOD;
     public static final int EPOLL_CTL_DEL;
+    public static final int EPOLL_CTL_MOD;
+    public static final short SIZEOF_EVENT;
     static final short DATA_OFFSET;
-    static final short EVENTS_OFFSET;
-    static final int EPOLLONESHOT;
     static final int EPOLLET;
+    static final int EPOLLONESHOT;
+    static final short EVENTS_OFFSET;
+
+    static native long epollCreate();
+
+    static native int epollCtl(long epfd, int op, long fd, long eventPtr);
+
+    static native int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
+
+    static native int getCtlAdd();
+
+    static native int getCtlDel();
+
+    static native int getCtlMod();
+
+    static native short getDataOffset();
+
+    static native int getEPOLLET();
+
+    static native int getEPOLLIN();
+
+    static native int getEPOLLONESHOT();
+
+    static native int getEPOLLOUT();
+
+    static native short getEventSize();
+
+    static native short getEventsOffset();
 
     static {
         DATA_OFFSET = getDataOffset();
@@ -48,30 +74,4 @@ public class EpollAccessor {
         EPOLL_CTL_MOD = getCtlMod();
         EPOLL_CTL_DEL = getCtlDel();
     }
-
-    static native long epollCreate();
-
-    static native int epollCtl(long epfd, int op, long fd, long eventPtr);
-
-    static native int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
-
-    static native short getDataOffset();
-
-    static native short getEventsOffset();
-
-    static native short getEventSize();
-
-    static native int getEPOLLIN();
-
-    static native int getEPOLLET();
-
-    static native int getEPOLLOUT();
-
-    static native int getEPOLLONESHOT();
-
-    static native int getCtlAdd();
-
-    static native int getCtlMod();
-
-    static native int getCtlDel();
 }

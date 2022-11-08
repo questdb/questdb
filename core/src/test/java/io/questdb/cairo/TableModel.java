@@ -34,13 +34,13 @@ import java.io.Closeable;
 public class TableModel implements TableStructure, Closeable {
     private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
+    private final LongList columnBits = new LongList();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CairoConfiguration configuration;
+    private final MemoryMARW mem = Vm.getMARWInstance();
     private final String name;
     private final int partitionBy;
-    private final MemoryMARW mem = Vm.getMARWInstance();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final LongList columnBits = new LongList();
     private final Path path = new Path();
-    private final CairoConfiguration configuration;
     private int timestampIndex = -1;
     private int walEnabled = -1;
 
@@ -53,7 +53,7 @@ public class TableModel implements TableStructure, Closeable {
     public TableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert (ColumnType.isSymbol((int)columnBits.getQuick(last - 1)));
+        assert (ColumnType.isSymbol((int) columnBits.getQuick(last - 1)));
         long bits = columnBits.getQuick(last);
         if (cached) {
             columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
@@ -77,20 +77,6 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean getSymbolCacheFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
-    }
-
-    public CairoConfiguration getConfiguration() {
-        return configuration;
-    }
-
-    @Override
     public int getColumnCount() {
         return columnNames.size();
     }
@@ -106,13 +92,22 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
+    public long getCommitLag() {
+        return configuration.getCommitLag();
+    }
+
+    public CairoConfiguration getConfiguration() {
+        return configuration;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    public int getMaxUncommittedRows() {
+        return configuration.getMaxUncommittedRows();
     }
 
     public MemoryMARW getMem() {
@@ -133,13 +128,18 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public CharSequence getTableName() {
-        return name;
+    public boolean getSymbolCacheFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
 
     @Override
     public int getSymbolCapacity(int index) {
         return (int) (columnBits.getQuick(index * 2) >> 32);
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return name;
     }
 
     @Override
@@ -157,6 +157,28 @@ public class TableModel implements TableStructure, Closeable {
         } else {
             columnBits.setQuick(pos, bits & ~COLUMN_FLAG_INDEXED);
         }
+        return this;
+    }
+
+    @Override
+    public boolean isIndexed(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return false;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
+        return walEnabled == -1
+                ? configuration.getWalEnabledDefault()
+                : walEnabled == 1;
+    }
+
+    public TableModel noWal() {
+        walEnabled = 0;
         return this;
     }
 
@@ -178,28 +200,6 @@ public class TableModel implements TableStructure, Closeable {
         assert timestampIndex == -1;
         timestampIndex = columnNames.size();
         col(name, ColumnType.TIMESTAMP);
-        return this;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return configuration.getMaxUncommittedRows();
-    }
-
-    @Override
-    public long getCommitLag() {
-        return configuration.getCommitLag();
-    }
-
-    @Override
-    public boolean isWalEnabled() {
-        return walEnabled == -1
-                ? configuration.getWalEnabledDefault()
-                : walEnabled == 1;
-    }
-
-    public TableModel noWal() {
-        walEnabled = 0;
         return this;
     }
 

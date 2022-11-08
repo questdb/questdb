@@ -35,11 +35,11 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryKey = new Object();
-    private final double loadFactor;
     private final ObjList<T> list;
-    private T[] keys;
-    private int free;
+    private final double loadFactor;
     private int capacity;
+    private int free;
+    private T[] keys;
     private int mask;
 
     public ObjHashSet() {
@@ -64,6 +64,10 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         clear();
     }
 
+    public boolean add(T key) {
+        return addAt(keyIndex(key), key);
+    }
+
     public void addAll(ObjHashSet<? extends T> that) {
         for (int i = 0, n = that.size(); i < n; i++) {
             this.add(that.get(i));
@@ -78,18 +82,10 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return false;
     }
 
-    public T get(int index) {
-        return list.getQuick(index);
-    }
-
-    @Override
-    @NotNull
-    public Iterator<T> iterator() {
-        throw new UnsupportedOperationException();
-    }
-
-    public int size() {
-        return capacity - free;
+    public final void clear() {
+        free = capacity;
+        Arrays.fill(keys, noEntryKey);
+        list.clear();
     }
 
     @SuppressWarnings("unchecked")
@@ -98,8 +94,14 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return keyIndex((T) o) < 0;
     }
 
-    public boolean add(T key) {
-        return addAt(keyIndex(key), key);
+    public T get(int index) {
+        return list.getQuick(index);
+    }
+
+    @Override
+    @NotNull
+    public Iterator<T> iterator() {
+        throw new UnsupportedOperationException();
     }
 
     public int keyIndex(T key) {
@@ -129,10 +131,8 @@ public class ObjHashSet<T> extends AbstractSet<T> implements Mutable {
         return false;
     }
 
-    public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, noEntryKey);
-        list.clear();
+    public int size() {
+        return capacity - free;
     }
 
     @Override

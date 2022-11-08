@@ -37,11 +37,6 @@ public class RecoverVarIndex extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(RecoverVarIndex.class);
 
     @Override
-    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
-        return metadata.getColumnType(columnIndex) == ColumnType.STRING;
-    }
-
-    @Override
     protected void doReindex(
             ColumnVersionReader columnVersionReader, int columnWriterIndex, CharSequence columnName,
             CharSequence partitionName,
@@ -115,5 +110,10 @@ public class RecoverVarIndex extends RebuildColumnBase {
                 LOG.info().$("write complete. Index file length: ").$(rwMem.getAppendOffset()).$();
             }
         }
+    }
+
+    @Override
+    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
+        return metadata.getColumnType(columnIndex) == ColumnType.STRING;
     }
 }

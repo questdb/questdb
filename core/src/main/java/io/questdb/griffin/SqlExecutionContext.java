@@ -72,23 +72,34 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean getCloneSymbolTables();
 
-    void setCloneSymbolTables(boolean cloneSymbolTables);
-
     int getJitMode();
-
-    void setJitMode(int jitMode);
-
-    long getNow();
-
-    QueryFutureUpdateListener getQueryFutureUpdateListener();
 
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
     }
 
-    Rnd getRandom();
+    default TableRecordMetadata getMetadata(CharSequence tableName) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
+                getCairoSecurityContext(),
+                engine.getSystemTableName(tableName)
+        );
+    }
 
-    void setRandom(Rnd rnd);
+    default TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
+                getCairoSecurityContext(),
+                engine.getSystemTableName(tableName),
+                structureVersion
+        );
+    }
+
+    long getNow();
+
+    QueryFutureUpdateListener getQueryFutureUpdateListener();
+
+    Rnd getRandom();
 
     default TableReader getReader(CharSequence tableName, int tableId, long version) {
         return getCairoEngine().getReader(getCairoSecurityContext(), tableName, tableId, version);
@@ -112,24 +123,6 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
     }
 
-    default TableRecordMetadata getMetadata(CharSequence tableName) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                engine.getSystemTableName(tableName)
-        );
-    }
-
-    default TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                engine.getSystemTableName(tableName),
-                structureVersion
-        );
-    }
-
-
     int getWorkerCount();
 
     void initNow();
@@ -141,6 +134,12 @@ public interface SqlExecutionContext extends Closeable {
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    void setJitMode(int jitMode);
+
+    void setRandom(Rnd rnd);
 
     void storeTelemetry(short event, short origin);
 }

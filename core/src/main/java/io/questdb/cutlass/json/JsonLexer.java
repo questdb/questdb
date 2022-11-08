@@ -30,61 +30,39 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class JsonLexer implements Mutable, Closeable {
-    public static final int EVT_OBJ_START = 1;
-    public static final int EVT_OBJ_END = 2;
-    public static final int EVT_ARRAY_START = 3;
     public static final int EVT_ARRAY_END = 4;
-    public static final int EVT_NAME = 5;
-    public static final int EVT_VALUE = 6;
+    public static final int EVT_ARRAY_START = 3;
     public static final int EVT_ARRAY_VALUE = 7;
-
-    private static final int S_START = 0;
-    private static final int S_EXPECT_NAME = 1;
-    private static final int S_EXPECT_FIRST_NAME = 5;
-    private static final int S_EXPECT_VALUE = 2;
-    private static final int S_EXPECT_COMMA = 3;
+    public static final int EVT_NAME = 5;
+    public static final int EVT_OBJ_END = 2;
+    public static final int EVT_OBJ_START = 1;
+    public static final int EVT_VALUE = 6;
     private static final int S_EXPECT_COLON = 4;
+    private static final int S_EXPECT_COMMA = 3;
+    private static final int S_EXPECT_FIRST_NAME = 5;
+    private static final int S_EXPECT_NAME = 1;
+    private static final int S_EXPECT_VALUE = 2;
+    private static final int S_START = 0;
     private static final IntHashSet unquotedTerminators = new IntHashSet(256);
-
-    static {
-        unquotedTerminators.add(' ');
-        unquotedTerminators.add('\t');
-        unquotedTerminators.add('\n');
-        unquotedTerminators.add('\r');
-        unquotedTerminators.add(',');
-        unquotedTerminators.add('}');
-        unquotedTerminators.add(']');
-        unquotedTerminators.add('{');
-        unquotedTerminators.add('[');
-    }
-
-    private final IntStack objDepthStack = new IntStack(64);
     private final IntStack arrayDepthStack = new IntStack(64);
-    private final StringSink sink = new StringSink();
     private final int cacheSizeLimit;
-    private int state = S_START;
-    private int objDepth = 0;
+    private final IntStack objDepthStack = new IntStack(64);
+    private final StringSink sink = new StringSink();
     private int arrayDepth = 0;
-    private boolean ignoreNext = false;
-    private boolean quoted = false;
     private long cache;
     private int cacheCapacity;
     private int cacheSize = 0;
-    private boolean useCache = false;
+    private boolean ignoreNext = false;
+    private int objDepth = 0;
     private int position = 0;
+    private boolean quoted = false;
+    private int state = S_START;
+    private boolean useCache = false;
 
     public JsonLexer(int cacheSize, int cacheSizeLimit) {
         this.cacheCapacity = cacheSize;
         this.cache = Unsafe.malloc(cacheSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         this.cacheSizeLimit = cacheSizeLimit;
-    }
-
-    private static boolean isNotATerminator(char c) {
-        return unquotedTerminators.excludes(c);
-    }
-
-    private static JsonException unsupportedEncoding(int position) {
-        return JsonException.$(position, "Unsupported encoding");
     }
 
     @Override
@@ -293,6 +271,14 @@ public class JsonLexer implements Mutable, Closeable {
         }
     }
 
+    private static boolean isNotATerminator(char c) {
+        return unquotedTerminators.excludes(c);
+    }
+
+    private static JsonException unsupportedEncoding(int position) {
+        return JsonException.$(position, "Unsupported encoding");
+    }
+
     private void addToStash(long lo, long hi) throws JsonException {
         final int len = (int) (hi - lo);
         int n = len + cacheSize;
@@ -386,5 +372,17 @@ public class JsonLexer implements Mutable, Closeable {
                 ++p;
             }
         }
+    }
+
+    static {
+        unquotedTerminators.add(' ');
+        unquotedTerminators.add('\t');
+        unquotedTerminators.add('\n');
+        unquotedTerminators.add('\r');
+        unquotedTerminators.add(',');
+        unquotedTerminators.add('}');
+        unquotedTerminators.add(']');
+        unquotedTerminators.add('{');
+        unquotedTerminators.add('[');
     }
 }

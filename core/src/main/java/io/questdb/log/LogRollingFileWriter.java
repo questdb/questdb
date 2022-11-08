@@ -40,32 +40,32 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     public static final long DEFAULT_SPIN_BEFORE_FLUSH = 100_000;
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
-    private final RingQueue<LogRecordSink> ring;
-    private final SCSequence subSeq;
+    private final MicrosecondClock clock;
+    private final FilesFacade ff;
     private final int level;
+    private final TemplateParser locationParser = new TemplateParser();
     private final Path path = new Path();
     private final Path renameToPath = new Path();
-    private final FilesFacade ff;
-    private final MicrosecondClock clock;
-    private long fd = -1;
-    private long lim;
-    private long buf;
+    private final RingQueue<LogRecordSink> ring;
+    private final SCSequence subSeq;
     private long _wptr;
-    private int nBufferSize;
-    private long nRollSize;
-    private final TemplateParser locationParser = new TemplateParser();
+    private long buf;
+    private String bufferSize;
+    private long currentSize;
+    private long fd = -1;
+    private long idleSpinCount = 0;
+    private long lim;
     // can be set via reflection
     private String location;
-    private String bufferSize;
-    private String rollSize;
-    private String spinBeforeFlush;
+    private int nBufferSize;
+    private long nRollSize;
     private long nSpinBeforeFlush;
-    private long currentSize;
-    private String rollEvery;
-    private long idleSpinCount = 0;
     private long rollDeadline;
     private NextDeadline rollDeadlineFunction;
     private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
+    private String rollEvery;
+    private String rollSize;
+    private String spinBeforeFlush;
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);

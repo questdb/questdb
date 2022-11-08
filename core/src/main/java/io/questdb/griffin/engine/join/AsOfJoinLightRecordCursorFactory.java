@@ -43,11 +43,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
 public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
     private final AsOfLightJoinRecordCursor cursor;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterKeySink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public AsOfJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -77,14 +77,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor master = masterFactory.getCursor(executionContext);
         RecordCursor slave = null;
@@ -100,25 +92,33 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+        cursor.close();
     }
 
     private class AsOfLightJoinRecordCursor extends AbstractJoinCursor {
-        private final OuterJoinRecord record;
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
+        private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
-        private Record slaveRecord;
-        private Record masterRecord;
-        private long slaveTimestamp = Long.MIN_VALUE;
-        private long lastSlaveRowID = Long.MIN_VALUE;
         private boolean isOpen;
+        private long lastSlaveRowID = Long.MIN_VALUE;
+        private Record masterRecord;
+        private Record slaveRecord;
+        private long slaveTimestamp = Long.MIN_VALUE;
 
         public AsOfLightJoinRecordCursor(
                 int columnSplit,
@@ -133,6 +133,15 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                super.close();
+            }
         }
 
         @Override
@@ -190,17 +199,17 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
+        public long size() {
+            return masterCursor.size();
+        }
+
+        @Override
         public void toTop() {
             joinKeyMap.clear();
             slaveTimestamp = Long.MIN_VALUE;
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
-        }
-
-        @Override
-        public long size() {
-            return masterCursor.size();
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
@@ -215,15 +224,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterRecord = masterCursor.getRecord();
             this.slaveRecord = slaveCursor.getRecordB();
             record.of(masterRecord, slaveRecord);
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                joinKeyMap.close();
-                super.close();
-            }
         }
     }
 }

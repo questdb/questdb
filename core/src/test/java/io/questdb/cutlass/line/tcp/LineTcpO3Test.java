@@ -60,20 +60,20 @@ import java.util.zip.GZIPInputStream;
 @RunWith(Parameterized.class)
 public class LineTcpO3Test extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(LineTcpO3Test.class);
+    private final boolean walEnabled;
     private LineTcpReceiverConfiguration lineConfiguration;
-    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
     private long resourceAddress;
     private int resourceSize;
-    private final boolean walEnabled;
+    private WorkerPoolConfiguration sharedWorkerPoolConfiguration;
 
     public LineTcpO3Test(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name="{0}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -133,12 +133,6 @@ public class LineTcpO3Test extends AbstractCairoTest {
         TestUtils.removeTestPath(root);
     }
 
-    private void mayDrainWalQueue() {
-        if (walEnabled) {
-            drainWalQueue();
-        }
-    }
-
     @Test
     public void testInOrder() throws Exception {
         test("ilp.inOrder1");
@@ -147,6 +141,12 @@ public class LineTcpO3Test extends AbstractCairoTest {
     @Test
     public void testO3() throws Exception {
         test("ilp.outOfOrder1");
+    }
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private void readGzResource(String rname) {

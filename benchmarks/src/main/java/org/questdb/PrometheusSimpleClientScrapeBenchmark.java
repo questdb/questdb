@@ -67,13 +67,6 @@ public class PrometheusSimpleClientScrapeBenchmark {
 
     @Benchmark
     @Group
-    @GroupThreads(1)
-    public void testScrape() throws IOException {
-        TextFormat.write004(writer, CollectorRegistry.defaultRegistry.metricFamilySamples());
-    }
-
-    @Benchmark
-    @Group
     @GroupThreads(4)
     public void testCounter() {
         counter.inc();
@@ -84,6 +77,13 @@ public class PrometheusSimpleClientScrapeBenchmark {
     @GroupThreads(4)
     public void testGauge() {
         gauge.inc();
+    }
+
+    @Benchmark
+    @Group
+    @GroupThreads(1)
+    public void testScrape() throws IOException {
+        TextFormat.write004(writer, CollectorRegistry.defaultRegistry.metricFamilySamples());
     }
 
     private static class NullWriter extends Writer {
@@ -104,11 +104,11 @@ public class PrometheusSimpleClientScrapeBenchmark {
         }
 
         @Override
-        public void write(int c) {
+        public void close() {
         }
 
         @Override
-        public void write(char[] cbuf, int off, int len) {
+        public void flush() {
         }
 
         @Override
@@ -120,11 +120,11 @@ public class PrometheusSimpleClientScrapeBenchmark {
         }
 
         @Override
-        public void flush() {
+        public void write(int c) {
         }
 
         @Override
-        public void close() {
+        public void write(char[] cbuf, int off, int len) {
         }
     }
 }

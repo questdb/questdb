@@ -57,16 +57,6 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void of(String systemTableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
-        this.systemTableName = systemTableName;
-        this.tableId = tableId;
-        this.timestampIndex = compressedTimestampIndex;
-        // todo: suspended
-        this.structureVersion = structureVersion;
-        // todo: maxUncommittedRows where from ?
-    }
-
-    @Override
     public void close() {
     }
 
@@ -89,5 +79,15 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     public boolean isWalEnabled() {
         // this class is only used for WAL-enabled tables
         return true;
+    }
+
+    @Override
+    public void of(String systemTableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+        this.systemTableName = systemTableName;
+        this.tableId = tableId;
+        this.timestampIndex = compressedTimestampIndex;
+        // todo: suspended
+        this.structureVersion = structureVersion;
+        // todo: maxUncommittedRows where from ?
     }
 }

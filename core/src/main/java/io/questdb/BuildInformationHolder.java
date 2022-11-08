@@ -25,7 +25,6 @@
 package io.questdb;
 
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -37,11 +36,10 @@ import java.util.jar.Manifest;
 public class BuildInformationHolder implements BuildInformation, CharSequence {
     public static final BuildInformationHolder INSTANCE = fetchBuildInformation();
     private static final String UNKNOWN = "Unknown Version";
-
-    private final CharSequence questDbVersion;
+    private final String buildKey;
     private final CharSequence commitHash;
     private final CharSequence jdkVersion;
-    private final String buildKey;
+    private final CharSequence questDbVersion;
 
     public BuildInformationHolder() {
         this(UNKNOWN, UNKNOWN, UNKNOWN);
@@ -55,13 +53,8 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public CharSequence getQuestDbVersion() {
-        return questDbVersion;
-    }
-
-    @Override
-    public CharSequence getJdkVersion() {
-        return jdkVersion;
+    public char charAt(int index) {
+        return buildKey.charAt(index);
     }
 
     @Override
@@ -70,8 +63,13 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     @Override
-    public String toString() {
-        return buildKey;
+    public CharSequence getJdkVersion() {
+        return jdkVersion;
+    }
+
+    @Override
+    public CharSequence getQuestDbVersion() {
+        return questDbVersion;
     }
 
     @Override
@@ -79,15 +77,15 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
         return buildKey.length();
     }
 
-    @Override
-    public char charAt(int index) {
-        return buildKey.charAt(index);
-    }
-
     @NotNull
     @Override
     public CharSequence subSequence(int start, int end) {
         return buildKey.subSequence(start, end);
+    }
+
+    @Override
+    public String toString() {
+        return buildKey;
     }
 
     private static BuildInformationHolder fetchBuildInformation() {
@@ -101,6 +99,16 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
         } catch (IOException e) {
             return new BuildInformationHolder();
         }
+    }
+
+    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
+        return version != null ? version : "Unknown Version";
+    }
+
+    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
+        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
+        return version != null ? version : "Unknown Version";
     }
 
     private static Attributes getManifestAttributes() throws IOException {
@@ -121,15 +129,5 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     private static CharSequence getQuestDbVersion(final Attributes manifestAttributes) {
         final CharSequence version = manifestAttributes.getValue("Implementation-Version");
         return version != null ? version : "[DEVELOPMENT]";
-    }
-
-    private static CharSequence getJdkVersion(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Jdk");
-        return version != null ? version : "Unknown Version";
-    }
-
-    private static CharSequence getCommitHash(final Attributes manifestAttributes) {
-        final CharSequence version = manifestAttributes.getValue("Build-Commit-Hash");
-        return version != null ? version : "Unknown Version";
     }
 }

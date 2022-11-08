@@ -1829,6 +1829,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 > t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 >= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
         assertQuery(
                 "nts\tmin\nnts\t\n",
@@ -5136,6 +5161,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLessNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 < t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 <= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
@@ -7419,56 +7469,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
-        );
-    }
-
-    @Test
-    public void testGreaterOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
-                        "42\n",
-                "select t7.c0 from t7 where t7.c0 >= t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testGreaterNoOpFilter() throws Exception {
-        assertQuery("c0\n",
-                "select t7.c0 from t7 where t7.c0 > t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                false,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testLessOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
-                        "42\n",
-                "select t7.c0 from t7 where t7.c0 <= t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testLessNoOpFilter() throws Exception {
-        assertQuery("c0\n",
-                "select t7.c0 from t7 where t7.c0 < t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                false,
-                true,
-                false
         );
     }
 

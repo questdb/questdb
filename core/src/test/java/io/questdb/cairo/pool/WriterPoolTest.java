@@ -212,6 +212,29 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClosedPoolLock() throws Exception {
+        assertWithPool(pool -> {
+            class X implements PoolListener {
+                short ev = -1;
+
+                @Override
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                    this.ev = event;
+                }
+            }
+            X x = new X();
+            pool.setPoolListener(x);
+            pool.close();
+            try {
+                pool.lock("x", "testing");
+                Assert.fail();
+            } catch (PoolClosedException ignored) {
+            }
+            Assert.assertEquals(PoolListener.EV_POOL_CLOSED, x.ev);
+        });
+    }
+
+    @Test
     public void testFactoryCloseBeforeRelease() throws Exception {
         assertWithPool(pool -> {
             TableWriter x;
@@ -232,29 +255,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
-        });
-    }
-
-    @Test
-    public void testClosedPoolLock() throws Exception {
-        assertWithPool(pool -> {
-            class X implements PoolListener {
-                short ev = -1;
-
-                @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
-                    this.ev = event;
-                }
-            }
-            X x = new X();
-            pool.setPoolListener(x);
-            pool.close();
-            try {
-                pool.lock("x", "testing");
-                Assert.fail();
-            } catch (PoolClosedException ignored) {
-            }
-            Assert.assertEquals(PoolListener.EV_POOL_CLOSED, x.ev);
         });
     }
 
@@ -575,6 +575,29 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNThreadsRaceToLockSameTable() throws Exception {
+        assertWithPool(pool -> {
+            int N = 8;
+            final AtomicInteger errors = new AtomicInteger();
+            Thread[] threads = new Thread[N];
+            for (int i = 0; i < N; i++) {
+                threads[i] = new Thread(() -> {
+                    //noinspection EmptyTryBlock
+                    try (TableWriter ignored1 = pool.get("x", "testing")) {
+                    } catch (Throwable ignored) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads[i].start();
+            }
+            //noinspection ForLoopReplaceableByForEach
+            for (int i = 0; i < threads.length; i++) {
+                threads[i].join();
+            }
+        });
+    }
+
+    @Test
     public void testNewLock() throws Exception {
         assertWithPool(pool -> {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableSystemName, "testing"));
@@ -712,29 +735,6 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNThreadsRaceToLockSameTable() throws Exception {
-        assertWithPool(pool -> {
-            int N = 8;
-            final AtomicInteger errors = new AtomicInteger();
-            Thread[] threads = new Thread[N];
-            for (int i = 0; i < N; i++) {
-                threads[i] = new Thread(() -> {
-                    //noinspection EmptyTryBlock
-                    try (TableWriter ignored1 = pool.get("x", "testing")) {
-                    } catch (Throwable ignored) {
-                        errors.incrementAndGet();
-                    }
-                });
-                threads[i].start();
-            }
-            //noinspection ForLoopReplaceableByForEach
-            for (int i = 0; i < threads.length; i++) {
-                threads[i].join();
-            }
-        });
-    }
-
-    @Test
     public void testTwoThreadsRaceToAllocateAndLock() throws Exception {
         assertWithPool(pool -> {
             for (int k = 0; k < 1000; k++) {
@@ -784,19 +784,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, pool.countFreeWriters());
             }
-        });
-    }
-
-    @Test
-    public void testUnlockWriterWhenPoolIsClosed() throws Exception {
-        assertWithPool(pool -> {
-            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableSystemName, "testing"));
-
-            pool.close();
-
-            TableWriter writer = newTableWriter(configuration, "z", metrics);
-            Assert.assertNotNull(writer);
-            writer.close();
         });
     }
 
@@ -851,6 +838,19 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.setPoolListener(x);
             pool.unlock("x");
             Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
+        });
+    }
+
+    @Test
+    public void testUnlockWriterWhenPoolIsClosed() throws Exception {
+        assertWithPool(pool -> {
+            Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableSystemName, "testing"));
+
+            pool.close();
+
+            TableWriter writer = newTableWriter(configuration, "z", metrics);
+            Assert.assertNotNull(writer);
+            writer.close();
         });
     }
 

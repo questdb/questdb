@@ -35,6 +35,56 @@ import org.junit.Test;
 
 public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
     @Test
+    public void testDistinctFailAllocRosti() throws Exception {
+        // fail Rosti instance #3
+        int workerCount = 4;
+        int failInstance = 3;
+        rostiAllocFacade = new RostiAllocFacadeImpl() {
+            int count = 0;
+
+            @Override
+            public long alloc(ColumnTypes types, long capacity) {
+                if (++count == failInstance) {
+                    return 0;
+                }
+                return super.alloc(types, capacity);
+            }
+        };
+
+        // override worker count to allocate multiple Rosti instances
+        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
+
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
+                            "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
+                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
+                    sqlExecutionContext
+            );
+
+            // remove partition
+            final String partition = "2020-02";
+
+            CharSequence systemTableName = engine.getSystemTableName("tab");
+            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(partition).$()) {
+                Assert.assertEquals(0, Files.rmdir(path));
+            }
+
+            try {
+                TestUtils.printSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select DISTINCT sym from tab order by 1 LIMIT 3",
+                        sink
+                );
+                Assert.fail();
+            } catch (OutOfMemoryError e) {
+                // ignore
+            }
+        });
+    }
+
+    @Test
     public void testDistinctInt() throws Exception {
         assertQuery(
                 "sym\n" +
@@ -100,55 +150,6 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
-            }
-        });
-    }
-
-    @Test
-    public void testDistinctFailAllocRosti() throws Exception {
-        // fail Rosti instance #3
-        int workerCount = 4;
-        int failInstance = 3;
-        rostiAllocFacade = new RostiAllocFacadeImpl() {
-            int count = 0;
-            @Override
-            public long alloc(ColumnTypes types, long capacity) {
-                if (++count == failInstance) {
-                    return 0;
-                }
-                return super.alloc(types, capacity);
-            }
-        };
-
-        // override worker count to allocate multiple Rosti instances
-        final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
-
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
-                            "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
-                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
-                    sqlExecutionContext
-            );
-
-            // remove partition
-            final String partition = "2020-02";
-
-            CharSequence systemTableName = engine.getSystemTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(systemTableName).concat(partition).$()) {
-                Assert.assertEquals(0, Files.rmdir(path));
-            }
-
-            try {
-                TestUtils.printSql(
-                        compiler,
-                        sqlExecutionContext,
-                        "select DISTINCT sym from tab order by 1 LIMIT 3",
-                        sink
-                );
-                Assert.fail();
-            } catch (OutOfMemoryError e) {
-                // ignore
             }
         });
     }

@@ -34,12 +34,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
-    public static final int NON_CRITICAL = -1;
-    public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = -101;
-
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    public static final int METADATA_VALIDATION = -100;
+    public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
     private boolean cacheable;
@@ -105,13 +104,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     @Override
-    public int getPosition() {
-        return messagePosition;
+    public String getMessage() {
+        return "[" + errno + "] " + message;
     }
 
     @Override
-    public String getMessage() {
-        return "[" + errno + "] " + message;
+    public int getPosition() {
+        return messagePosition;
     }
 
     @Override
@@ -126,22 +125,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return cacheable;
     }
 
-    public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
-        return this;
-    }
-
     public boolean isCritical() {
         return errno != NON_CRITICAL;
     }
 
     public boolean isInterruption() {
         return interruption;
-    }
-
-    public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
-        return this;
     }
 
     // logged and skipped by WAL applying code
@@ -171,6 +160,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
+        return this;
+    }
+
+    public CairoException setCacheable(boolean cacheable) {
+        this.cacheable = cacheable;
+        return this;
+    }
+
+    public CairoException setInterruption(boolean interruption) {
+        this.interruption = interruption;
         return this;
     }
 

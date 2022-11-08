@@ -58,15 +58,19 @@ public class SendAndReceiveRequestBuilder {
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
     private final int maxWaitTimeoutMs = 2000;
+    private int clientLingerSeconds = -1;
+    private int compareLength = -1;
+    private boolean expectDisconnect;
+    private boolean expectSendDisconnect;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private boolean printOnly;
-    private boolean expectDisconnect;
     private int requestCount = 1;
-    private int compareLength = -1;
-    private boolean expectSendDisconnect;
-    private int clientLingerSeconds = -1;
     private long statementTimeout = -1L;
+
+    public static String responseWithCode(String code) {
+        return ResponseHeaders.replace("200 OK", code);
+    }
 
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
@@ -90,20 +94,6 @@ public class SendAndReceiveRequestBuilder {
 
     public long connectAndSendRequestWithHeaders(String request) {
         return connectAndSendRequest(request + requestHeaders());
-    }
-
-    public void executeWithStandardHeaders(
-            String request,
-            String response
-    ) throws InterruptedException {
-        execute(request + requestHeaders(), ResponseHeaders + response);
-    }
-
-    public void executeWithStandardRequestHeaders(
-            String request,
-            CharSequence response
-    ) throws InterruptedException {
-        execute(request + requestHeaders(), response);
     }
 
     public void execute(
@@ -239,13 +229,13 @@ public class SendAndReceiveRequestBuilder {
             try {
                 RequestExecutor executor = new RequestExecutor() {
                     @Override
-                    public void executeWithStandardHeaders(String request, String response) {
-                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
+                    public void execute(String request, String response) {
+                        executeWithSocket(request, response, fd);
                     }
 
                     @Override
-                    public void execute(String request, String response) {
-                        executeWithSocket(request, response, fd);
+                    public void executeWithStandardHeaders(String request, String response) {
+                        executeWithSocket(request + RequestHeaders, ResponseHeaders + response, fd);
                     }
                 };
 
@@ -319,8 +309,22 @@ public class SendAndReceiveRequestBuilder {
 
     }
 
-    public SendAndReceiveRequestBuilder withStatementTimeout(long statementTimeout) {
-        this.statementTimeout = statementTimeout;
+    public void executeWithStandardHeaders(
+            String request,
+            String response
+    ) throws InterruptedException {
+        execute(request + requestHeaders(), ResponseHeaders + response);
+    }
+
+    public void executeWithStandardRequestHeaders(
+            String request,
+            CharSequence response
+    ) throws InterruptedException {
+        execute(request + requestHeaders(), response);
+    }
+
+    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
+        this.clientLingerSeconds = seconds;
         return this;
     }
 
@@ -354,14 +358,26 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    public SendAndReceiveRequestBuilder withClientLinger(int seconds) {
-        this.clientLingerSeconds = seconds;
-        return this;
-    }
-
     public SendAndReceiveRequestBuilder withRequestCount(int requestCount) {
         this.requestCount = requestCount;
         return this;
+    }
+
+    public SendAndReceiveRequestBuilder withStatementTimeout(long statementTimeout) {
+        this.statementTimeout = statementTimeout;
+        return this;
+    }
+
+    private void executeWithSocket(String request, CharSequence response, long fd) {
+        final int len = Math.max(response.length(), request.length()) * 2;
+        long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int j = 0; j < requestCount; j++) {
+                executeExplicit(request, fd, response, len, ptr, null);
+            }
+        } finally {
+            Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private String requestHeaders() {
@@ -384,18 +400,6 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
-    private void executeWithSocket(String request, CharSequence response, long fd) {
-        final int len = Math.max(response.length(), request.length()) * 2;
-        long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int j = 0; j < requestCount; j++) {
-                executeExplicit(request, fd, response, len, ptr, null);
-            }
-        } finally {
-            Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     @FunctionalInterface
     public interface RequestAction {
         void run(RequestExecutor executor) throws InterruptedException, BrokenBarrierException;
@@ -411,9 +415,5 @@ public class SendAndReceiveRequestBuilder {
                 String request,
                 String response
         ) throws InterruptedException;
-    }
-
-    public static String responseWithCode(String code) {
-        return ResponseHeaders.replace("200 OK", code);
     }
 }

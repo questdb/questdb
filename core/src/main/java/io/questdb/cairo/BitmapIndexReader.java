@@ -31,8 +31,8 @@ import java.io.Closeable;
 
 public interface BitmapIndexReader extends Closeable {
 
-    int DIR_FORWARD = 1;
     int DIR_BACKWARD = 2;
+    int DIR_FORWARD = 1;
 
     @Override
     default void close() {
@@ -51,23 +51,23 @@ public interface BitmapIndexReader extends Closeable {
      */
     RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
 
-    int getKeyCount();
-
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
     }
 
-    boolean isOpen();
-
     long getKeyBaseAddress();
+
+    int getKeyCount();
 
     long getKeyMemorySize();
 
+    long getUnIndexedNullCount();
+
     long getValueBaseAddress();
+
+    int getValueBlockCapacity();
 
     long getValueMemorySize();
 
-    long getUnIndexedNullCount();
-
-    int getValueBlockCapacity();
+    boolean isOpen();
 }
