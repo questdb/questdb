@@ -15,22 +15,19 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md)
-| [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | Українська | [Español](README.es-es.md)
-| [Português](README.pt.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | Українська | [Español](README.es-es.md) | [Português](README.pt.md) | [日本](./README.ja-ja.md)
 # QuestDB
 
 QuestDB — це високопродуктивна база даних SQL з відкритим кодом для застосування у
-сфері фінансових послуг, IoT, машинного навчання, DevOps та моніторінгу.
-База даних підтримує підключення по протоколу PostgreSQL, високопропускний запис даних із використанням
+сфері фінансових послуг, IoT, машинного навчання, DevOps та моніторінгу. 
+База даних підтримує підключення по протоколу PostgreSQL, високопропускний запис даних із використанням 
 протоколу InfluxDB і REST API для імпорту та експорту.
 
 QuestDB реалізує мову ANSI SQL із власними розширеннями для ефективної обробки часових рядів.
 Ці розширення значно спрощують обробку та аналіз декількох часових рядів за допомогою реляційних та часових операцій,
 а також шляхом з'єднання таблиць.
 QuestDB досягає високих результатів завдяки колонко-орієнтованій моделі зберігання даних,
-масивно-паралельним обчисленням з використанням SIMD інструкцій, та застосуванням різноманітних технік низької
-затримки (low-latency).
+масивно-паралельним обчисленням з використанням SIMD інструкцій, та застосуванням різноманітних технік низької затримки (low-latency).
 Вся кодова база була створена з нуля із використанням мов програмування Java та С++,
 не має зовнішніх залежностей, а також повністю незалежна від роботи автоматичного збирача сміття Java (GC-free).
 
@@ -109,10 +106,10 @@ questdb stop  // To stop questdb
 
 ### ❓ Отримайте підтримку
 
-- [Спільнота Slack:](https://slack.questdb.io) приєднуйтесь до технічних дискусій, запитуйте та знайомтесь
+- [Спільнота Slack:](https://slack.questdb.io) приєднуйтесь до технічних дискусій, запитуйте та знайомтесь 
   з іншими користувачами!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) повідомляйте про помилки або проблеми із QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) пропонуйте нові функції або
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) пропонуйте нові функції або 
   демонструйте те, що ви створили.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) шукайте загальні способи усунення несправностей.
 
@@ -126,12 +123,10 @@ questdb stop  // To stop questdb
 
 ## Зробіть свій внесок у розробку
 
-Ми завжди раді будь-якому внеску у проєкт, незалежно від того, чи це програмний код,
+Ми завжди раді будь-якому внеску у проєкт, незалежно від того, чи це програмний код, 
 документація, звіти про помилки, запити щодо функцій або відгуки:
 
-- Ознайомтеся з проблемами на GitHub
-  позначеними "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-  .
+- Ознайомтеся з проблемами на GitHub позначеними "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Прочитайте
   [посібник для співавторів](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
 - Подивіться детальні
@@ -142,8 +137,7 @@ questdb stop  // To stop questdb
 ✨ На знак подяки ми також надсилаємо **QuestDB swag** нашим помічникам.
 [Заявіть про свій тут.](https://questdb.io/community)
 
-Велика подяка цим чудовим людям, які зробили свій внесок у проєкт
-QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+Велика подяка цим чудовим людям, які зробили свій внесок у проєкт QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->

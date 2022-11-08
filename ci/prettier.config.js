@@ -23,12 +23,12 @@
  ******************************************************************************/
 
 module.exports = {
-    overrides: [
-        {
-            files: "*.yml",
-            options: {
-                parser: "yaml",
-            },
-        },
-    ],
+  overrides: [
+    {
+      files: "*.yml",
+      options: {
+        parser: "yaml",
+      },
+    },
+  ],
 }

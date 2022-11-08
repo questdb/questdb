@@ -15,23 +15,21 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md)
-| [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | Español
-| [Português](README.pt.md) | [日本](./README.ja-ja.md)
-
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | Español | [Português](README.pt.md) | [日本](./README.ja-ja.md)
 # QuestDB
 
-QuestDB es una base de datos SQL, de código abierto y alto rendimiento. Es usada por aplicaciones
-en el ámbito de los servicios financieros, IoT, aprendizaje automático, DevOps y observabilidad.
-Es compatible con el protocolo de PostgreSQL, ofrece puntos de conexión de alto
+
+QuestDB es una base de datos SQL, de código abierto y alto rendimiento. Es usada por aplicaciones 
+en el ámbito de los servicios financieros, IoT, aprendizaje automático, DevOps y observabilidad. 
+Es compatible con el protocolo de PostgreSQL, ofrece puntos de conexión de alto 
 rendimiento usando el protocolo InfluxDB, además de un API REST para consultas y la
 importación/exportación masiva de datos.
 
-QuestDB implementa ANSI SQL con extensiones nativas orientadas al manejo de series temporales.
-Estas extensiones simplifican la correlación de datos de múltiples fuentes utilizando uniones y
-relacionales. QuestDB logra un alto rendimiento al usar un modelo de almacenamiento orientado
-a columnas, ejecución vectorial masivamente paralela, instrucciones SIMD y varias técnicas de
-baja latencia, que incluyen un compilador JIT. La totalidad del código ha sido creado desde cero
+QuestDB implementa ANSI SQL con extensiones nativas orientadas al manejo de series temporales. 
+Estas extensiones simplifican la correlación de datos de múltiples fuentes utilizando uniones y 
+relacionales. QuestDB logra un alto rendimiento al usar un modelo de almacenamiento orientado 
+a columnas, ejecución vectorial masivamente paralela, instrucciones SIMD y varias técnicas de 
+baja latencia, que incluyen un compilador JIT. La totalidad del código ha sido creado desde cero 
 en Java y C++, sin dependencias, y es 100% libre de GC (recolección de basura).
 
 <div align="center">
@@ -66,7 +64,7 @@ questdb start // To start questdb
 questdb stop  // To stop questdb
 ```
 
-La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece
+La [página de descargas de QuestDB](https://questdb.io/get-questdb/) proporciona acceso a los binarios y ofrece 
 métodos de instalacion en una variedad de plataformas.
 
 ### Conéctate con QuestDB
@@ -83,7 +81,7 @@ Puedes conectarte con QuestDB utilizando las siguientes interfaces:
 
 ## Cómo se compara QuestDB con otras bases de datos de series temporales de código abierto
 
-En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sola CPU y
+En este link se puede ver los resultados para un caso de uso de alta cardinalidad, con una sola CPU y 
 6 hilos de ejecución en un AMD Ryzen 3970X:
 
 [Suite de referencia de series temporales](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
@@ -107,19 +105,15 @@ de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponib
 
 ### 📚 Lee la documentación
 
-- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr
-  QuestDB.
+- [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr QuestDB.
 - [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
-- [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que
-  vienen.
+- [Product roadmap:](https://github.com/questdb/questdb/projects) echa un vistazo a nuestro plan para las versiones que vienen.
 
 ### ❓ Ayuda!
 
-- [Community Slack:](https://slack.questdb.io) participa en las discusiones técnicas, pregunta, conoce al equipo y a
-  otros usuarios y usuarias.
+- [Community Slack:](https://slack.questdb.io) participa en las discusiones técnicas, pregunta, conoce al equipo y a otros usuarios y usuarias.
 - [GitHub issues:](https://github.com/questdb/questdb/issues) envía informes de error, o de problemas con QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propón nuevas características, o muestra tus
-  contribuciones.
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) propón nuevas características, o muestra tus contribuciones.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) busca soluciones a problemas comunes.
 
 ### 🚢 Despliega QuestDB
@@ -132,7 +126,7 @@ de filas, corriendo en un servidor `c5.metal` usando 16 de los 96 hilos disponib
 
 ## Contribuye
 
-Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación,
+Siempre estamos encantados de aceptar contribuciones al proyecto, ya sea código, documentación, 
 informes de errores, solicitudes de nueva funcionalidad, o comentarios. Para empezar a contribuir:
 
 - Echa un vistazo a GitHub, en particular a los elementos etiquetados
@@ -143,8 +137,7 @@ informes de errores, solicitudes de nueva funcionalidad, o comentarios. Para emp
 - [Crea un fork](https://docs.github.com/en/github/empezando-con-github/fork-a-repo)
   de QuestDB y envía un pull request con los cambios propuestos.
 
-✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**
-. [Reclama tu botín aquí.](https://questdb.io/community)
+✨ Como muestra de nuestra gratitud, te enviaremos **Swag de QuestDB**. [Reclama tu botín aquí.](https://questdb.io/community)
 
 Un gran agradecimiento a las siguientes personas maravillosas que han contribuido a
 QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):
@@ -298,5 +291,5 @@ QuestDB: ([clave emoji](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Este proyecto se adhiere a la especificación [all-contributors](https://github.com/all-contributors/all-contributors).
+Este proyecto se adhiere a la especificación [all-contributors](https://github.com/all-contributors/all-contributors). 
 Las contribuciones de cualquier tipo son bienvenidas y se llevan premio!

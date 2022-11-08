@@ -15,9 +15,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md)
-| [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md)
-| [Português](README.pt.md) | [日本](./README.ja-ja.md)
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | Italiano | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本](./README.ja-ja.md)
 
 # QuestDB
 
@@ -44,7 +42,7 @@ al 100% libero dalla garbage collection.
 
 ## Provare QuestDB
 
-Noi forniamo una [live demo](https://demo.questdb.io/) con all'interno l'ultima
+Noi forniamo una [live demo](https://demo.questdb.io/) con all'interno l'ultima 
 versione QuestDB ed un dataset di esempio:
 
 - 10 anni di viaggi di taxi a NYC taxi con 1.6 miliardi di righe
@@ -82,7 +80,7 @@ Puoi interagire con QuestDB usando le seguenti interfacce:
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol sulla
   porta `8812`
 - [InfluxDB](https://questdb.io/docs/reference/api/ilp/overview/) line protocol per
-  l'ingestione ad alto rendimento sulla porta `9009`
+l'ingestione ad alto rendimento sulla porta `9009`
 
 ## Come è QuestDB in confronto agli altri TSDBs open source
 
@@ -110,19 +108,18 @@ un'istanza `c5.metal` che utilizza 16 dei 96 thread disponibili
 ### 📚 Leggere la documentazione
 
 - [Documentazione QuestDB:](https://questdb.io/docs/introduction/) per capire come
-  eseguire e configurare QuestDB.
+eseguire e configurare QuestDB.
 - [Tutorial:](https://questdb.io/tutorial/) per imparare cosa è possibile fare
-  passo dopo passo grazie a QuestDB.
+passo dopo passo grazie a QuestDB.
 - [Product roadmap:](https://github.com/questdb/questdb/projects) per rimanere aggiornati
-  sulle release future.
+sulle release future.
 
 ### ❓ Ottenere aiuto
 
 - [Community Slack:](https://slack.questdb.io) unisciti a discussioni tecniche,
-  fai domande, incontra altri utenti!
+fai domande, incontra altri utenti!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) segnala bugs o problemi riguardanti QuestDB.
-- [GitHub discussions:](https://github.com/questdb/questdb/discussions) proponi nuove funzionalità o mostra cosa hai
-  fatto!
+- [GitHub discussions:](https://github.com/questdb/questdb/discussions) proponi nuove funzionalità o mostra cosa hai fatto!
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) cerca soluzioni a problemi comuni.
 - Se hai bisogno di aiuto puoi contattarci anche direttamente in italiano!
 
@@ -140,7 +137,7 @@ Siamo sempre felici di vedere nuovi contributi al progetto che sia nel codice,
 nella documentazione, nella segnalazione di bug, richieste di funzionalità o feedback.
 Per iniziare a contribuire:
 
-- Dai un'occhiata alle issue di GitHub
+- Dai un'occhiata alle issue di GitHub 
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)".
 - Leggi
   [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md).
