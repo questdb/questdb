@@ -56,13 +56,13 @@ public class ClockBenchmark {
     }
 
     @Benchmark
-    public long testCurrentTimeNanos() {
-        return Os.currentTimeNanos();
+    public long testCurrentTimeMillis() {
+        return System.currentTimeMillis();
     }
 
     @Benchmark
-    public long testCurrentTimeMillis() {
-        return System.currentTimeMillis();
+    public long testCurrentTimeNanos() {
+        return Os.currentTimeNanos();
     }
 
 }

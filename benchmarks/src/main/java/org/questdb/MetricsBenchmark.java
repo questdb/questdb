@@ -41,7 +41,6 @@ public class MetricsBenchmark {
     private static final short LABEL0 = 0;
     private static final short LABEL1 = 1;
     private static final MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
-    private static final MetricsRegistry nullMetricsRegistry = new NullMetricsRegistry();
     private static final Counter counterWithoutLabels = metricsRegistry.newCounter("counter_without_labels");
     private static final CounterWithOneLabel counterWithOneLabel = metricsRegistry.newCounter("counter_with_one_label",
             "label0", new CharSequence[]{"A", "B", "C"}
@@ -50,8 +49,9 @@ public class MetricsBenchmark {
             "label0", new CharSequence[]{"A", "B", "C"},
             "label1", new CharSequence[]{"X", "Y", "Z"}
     );
-    private static final Counter nullCounter = nullMetricsRegistry.newCounter("null_counter");
     private static final Gauge gauge = metricsRegistry.newGauge("gauge");
+    private static final MetricsRegistry nullMetricsRegistry = new NullMetricsRegistry();
+    private static final Counter nullCounter = nullMetricsRegistry.newCounter("null_counter");
     private static final Gauge nullGauge = nullMetricsRegistry.newGauge("null_gauge");
 
     public static void main(String[] args) throws RunnerException {
@@ -68,11 +68,6 @@ public class MetricsBenchmark {
     }
 
     @Benchmark
-    public void testCounterWithoutLabels() {
-        counterWithoutLabels.inc();
-    }
-
-    @Benchmark
     public void testCounterWithOneLabel() {
         counterWithOneLabel.inc(LABEL0);
     }
@@ -80,6 +75,11 @@ public class MetricsBenchmark {
     @Benchmark
     public void testCounterWithTwoLabels() {
         counterWithTwoLabels.inc(LABEL0, LABEL1);
+    }
+
+    @Benchmark
+    public void testCounterWithoutLabels() {
+        counterWithoutLabels.inc();
     }
 
     @Benchmark
