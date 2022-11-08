@@ -651,11 +651,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private transient volatile int transferIndex;
     private transient ValuesView<V> values;
+
     /**
      * Creates a new, empty map with the default initial table size (16).
      */
     public ConcurrentHashMap() {
     }
+
     /**
      * Creates a new, empty map with an initial table size
      * accommodating the specified number of elements without the need

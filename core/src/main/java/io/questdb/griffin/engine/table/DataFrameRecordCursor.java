@@ -55,20 +55,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final BooleanSupplier nextRow = this::nextRow;
 
-    @Override
-    public boolean isUsingIndex() {
-        return rowCursorFactory.isUsingIndex();
-    }
-
-    @Override
-    public void toTop() {
-        if (filter != null) {
-            filter.toTop();
-        }
-        dataFrameCursor.toTop();
-        next = nextFrame;
-    }
-
     private final BooleanSupplier nextFrame = this::nextFrame;
 
     @Override
@@ -80,17 +66,9 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private boolean nextFrame() {
-        DataFrame dataFrame;
-        while ((dataFrame = dataFrameCursor.next()) != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            if (rowCursor.hasNext()) {
-                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
-                next = nextRow;
-                return true;
-            }
-        }
-        return false;
+    @Override
+    public boolean isUsingIndex() {
+        return rowCursorFactory.isUsingIndex();
     }
 
     @Override
@@ -125,6 +103,28 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
+    @Override
+    public void toTop() {
+        if (filter != null) {
+            filter.toTop();
+        }
+        dataFrameCursor.toTop();
+        next = nextFrame;
+    }
+
+    private boolean nextFrame() {
+        DataFrame dataFrame;
+        while ((dataFrame = dataFrameCursor.next()) != null) {
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            if (rowCursor.hasNext()) {
+                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                next = nextRow;
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean nextRow() {
         if (rowCursor.hasNext()) {
             recordA.setRecordIndex(rowCursor.next());
@@ -132,6 +132,4 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
         return nextFrame();
     }
-
-
 }

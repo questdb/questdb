@@ -312,7 +312,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
     @Test
     public void testDropPartitionsByDayUsingWhereClause() throws Exception {
         assertMemoryLeak(() -> {
-            createX("DAY", 720000000);
+                    createX("DAY", 720000000);
 
                     String expectedBeforeDrop = "count\n" +
                             "120\n";

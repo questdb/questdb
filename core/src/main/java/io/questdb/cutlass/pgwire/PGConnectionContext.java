@@ -163,15 +163,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
-    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
+    private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
-    private long totalReceived = 0;
+    private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
