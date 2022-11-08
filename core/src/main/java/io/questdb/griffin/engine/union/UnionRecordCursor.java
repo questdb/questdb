@@ -33,13 +33,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 
 class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
-    private final AbstractUnionRecord record;
     private final Map map;
-    private final RecordSink recordSink;
     private final NextMethod nextB = this::nextB;
+    private final AbstractUnionRecord record;
+    private final RecordSink recordSink;
+    private boolean isOpen;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
-    private boolean isOpen;
 
     public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         if (castFunctionsA != null && castFunctionsB != null) {
@@ -51,6 +51,15 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         this.map = map;
         this.isOpen = true;
         this.recordSink = recordSink;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            isOpen = false;
+            map.close();
+            super.close();
+        }
     }
 
     @Override
@@ -76,17 +85,17 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         map.clear();
         record.setAb(true);
         nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     private boolean nextA() {
@@ -100,6 +109,12 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         return cursorB.hasNext();
     }
 
+    private boolean switchToCursorB() {
+        record.setAb(false);
+        nextMethod = nextB;
+        return nextMethod.next();
+    }
+
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         if (!isOpen) {
             this.isOpen = true;
@@ -108,21 +123,6 @@ class UnionRecordCursor extends AbstractSetRecordCursor implements NoRandomAcces
         super.of(cursorA, cursorB, circuitBreaker);
         this.record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
-    }
-
-    private boolean switchToCursorB() {
-        record.setAb(false);
-        nextMethod = nextB;
-        return nextMethod.next();
-    }
-
-    @Override
-    public void close() {
-        if (isOpen) {
-            isOpen = false;
-            map.close();
-            super.close();
-        }
     }
 
     interface NextMethod {

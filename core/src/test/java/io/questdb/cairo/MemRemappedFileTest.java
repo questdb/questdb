@@ -41,15 +41,15 @@ import java.io.IOException;
 import java.util.Random;
 
 public class MemRemappedFileTest {
-    private static final int NPAGES = 1000;
-    private static final int NCYCLES = 4;
     private static final Log LOG = LogFactory.getLog(MemRemappedFileTest.class);
+    private static final int NCYCLES = 4;
+    private static final int NPAGES = 1000;
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static final long MAPPING_PAGE_SIZE = ff.getPageSize();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private static CharSequence root;
     private static int nFile = 0;
+    private static CharSequence root;
     private final Path path = new Path(1_000_000);
 
     @AfterClass

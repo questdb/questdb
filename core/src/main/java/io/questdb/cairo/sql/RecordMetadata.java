@@ -32,7 +32,7 @@ import io.questdb.std.str.CharSink;
  * Retrieve metadata of a table record (row) such as the column count, the type of column by numeric index,
  * the name of a column by numeric index, the storage block capacity of
  * indexed symbols, and the numeric index of a designated timestamp column.
- *
+ * <p>
  * Types are defined in {@link io.questdb.cairo.ColumnType}
  */
 public interface RecordMetadata extends ColumnTypes {
@@ -45,13 +45,13 @@ public interface RecordMetadata extends ColumnTypes {
     int getColumnCount();
 
     /**
-     * Return the type of column by index. Returns an integer defined
-     * in {@link io.questdb.cairo.ColumnType}
+     * Retrieves column hash. Hash augments the name to ensure when column is removed and
+     * then added with the same name the clients do not perceive this event as no-change.
      *
-     * @param columnIndex numeric index of a column
-     * @return integer value indicating the type of the column
+     * @param columnIndex numeric index of the column
+     * @return hash value
      */
-    int getColumnType(int columnIndex);
+    long getColumnHash(int columnIndex);
 
     /**
      * Gets the numeric index of a column by name
@@ -83,13 +83,14 @@ public interface RecordMetadata extends ColumnTypes {
      * Will not throw an exception if the column does not exist.
      *
      * @param columnName name of the column
-     * @param lo the low boundary index of the columnName chars, inclusive
-     * @param hi the hi boundary index of the columnName chars, exclusive
+     * @param lo         the low boundary index of the columnName chars, inclusive
+     * @param hi         the hi boundary index of the columnName chars, exclusive
      * @return index of the column
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);
 
-    /** Retrieves column name.
+    /**
+     * Retrieves column name.
      *
      * @param columnIndex numeric index of the column
      * @return name of the column
@@ -97,13 +98,13 @@ public interface RecordMetadata extends ColumnTypes {
     String getColumnName(int columnIndex);
 
     /**
-     * Retrieves column hash. Hash augments the name to ensure when column is removed and
-     * then added with the same name the clients do not perceive this event as no-change.
+     * Return the type of column by index. Returns an integer defined
+     * in {@link io.questdb.cairo.ColumnType}
      *
-     * @param columnIndex numeric index of the column
-     * @return hash value
+     * @param columnIndex numeric index of a column
+     * @return integer value indicating the type of the column
      */
-    long getColumnHash(int columnIndex);
+    int getColumnType(int columnIndex);
 
     /**
      * Return the type of column by name
@@ -136,6 +137,16 @@ public interface RecordMetadata extends ColumnTypes {
     }
 
     /**
+     * Access column metadata, i.e. getMetadata(1).getTimestampIndex()
+     *
+     * @param columnIndex numeric index of the column
+     * @return TableReaderMetadata
+     */
+    default RecordMetadata getMetadata(int columnIndex) {
+        return null;
+    }
+
+    /**
      * @return the numeric index of the designated timestamp column.
      */
     int getTimestampIndex();
@@ -149,28 +160,18 @@ public interface RecordMetadata extends ColumnTypes {
     int getWriterIndex(int columnIndex);
 
     /**
+     * @param columnIndex numeric index of the column
+     * @return true if column is indexed, otherwise false.
+     */
+    boolean isColumnIndexed(int columnIndex);
+
+    /**
      * @param columnName name of the column
      * @return true if symbol table is static, otherwise false.
      */
     default boolean isSymbolTableStatic(CharSequence columnName) {
         return isSymbolTableStatic(getColumnIndex(columnName));
     }
-
-    /**
-     * Access column metadata, i.e. getMetadata(1).getTimestampIndex()
-     *
-     * @param columnIndex numeric index of the column
-     * @return TableReaderMetadata
-     */
-    default RecordMetadata getMetadata(int columnIndex) {
-        return null;
-    }
-
-    /**
-     * @param columnIndex numeric index of the column
-     * @return true if column is indexed, otherwise false.
-     */
-    boolean isColumnIndexed(int columnIndex);
 
     /**
      * @param columnIndex numeric index of the column

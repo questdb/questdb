@@ -58,14 +58,6 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
-        assertFailure(
-                "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
-                "select regexp_replace(regexp_replace(regexp_replace(regexp_replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
-        );
-    }
-
-    @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "regexp_replace\n" +
@@ -84,6 +76,14 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
+        assertFailure(
+                "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
+                "select regexp_replace(regexp_replace(regexp_replace(regexp_replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
+        );
     }
 
     private void assertFailure(CharSequence expectedMsg, CharSequence sql) throws Exception {

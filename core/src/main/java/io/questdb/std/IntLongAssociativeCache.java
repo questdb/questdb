@@ -28,15 +28,15 @@ public class IntLongAssociativeCache {
 
     public static final long NO_VALUE = -1L;
     public static final int UNUSED_KEY = 0;
-    private static final int NOT_FOUND = -1;
     private static final int MIN_BLOCKS = 1;
     private static final int MIN_ROWS = 1;
-    private final int[] keys;
-    private final long[] values;
-    private final int rmask;
-    private final int bmask;
+    private static final int NOT_FOUND = -1;
     private final int blocks;
+    private final int bmask;
     private final int bshift;
+    private final int[] keys;
+    private final int rmask;
+    private final long[] values;
 
     public IntLongAssociativeCache(int blocks, int rows) {
         this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));

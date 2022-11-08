@@ -46,7 +46,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
     @Test
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
         final long longsPerPage = Files.PAGE_SIZE / 8;
-        for(int loop = 0; loop < 10; loop++) {
+        for (int loop = 0; loop < 10; loop++) {
             Random rnd = new Random();
             // increments randomly by [0..512] up to three pages
             for (long longCountIncr = longsPerPage, limit = longsPerPage * 3; longCountIncr < limit; longCountIncr += rnd.nextDouble() * 512) {

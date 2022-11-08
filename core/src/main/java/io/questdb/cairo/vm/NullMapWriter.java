@@ -31,13 +31,18 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
-    public boolean isCached() {
-        return true;
+    public boolean getNullFlag() {
+        return false;
     }
 
     @Override
     public int getSymbolCount() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isCached() {
+        return true;
     }
 
     @Override
@@ -78,10 +83,5 @@ public class NullMapWriter implements MapWriter {
     @Override
     public void updateNullFlag(boolean flag) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean getNullFlag() {
-        return false;
     }
 }

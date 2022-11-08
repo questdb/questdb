@@ -76,6 +76,11 @@ public class PGJobContext implements Closeable {
         Misc.free(typesAndUpdateCache);
     }
 
+    public void flushQueryCache() {
+        typesAndSelectCache.clear();
+        typesAndUpdateCache.clear();
+    }
+
     public void handleClientOperation(PGConnectionContext context, int operation)
             throws PeerIsSlowToWriteException,
             PeerIsSlowToReadException,
@@ -89,10 +94,5 @@ public class PGJobContext implements Closeable {
                 typesAndUpdatePool,
                 operation
         );
-    }
-
-    public void flushQueryCache() {
-        typesAndSelectCache.clear();
-        typesAndUpdateCache.clear();
     }
 }

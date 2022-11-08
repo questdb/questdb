@@ -39,9 +39,9 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
+    private final Function filter;
     private final Map map;
     private final RecordSink recordSink;
-    private final Function filter;
 
     public LatestByAllFilteredRecordCursor(
             @NotNull Map map,

@@ -44,21 +44,21 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private final Function filter;
     private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
-    private PageAddressCacheRecord recordB;
-    private DirectLongList rows;
+    private boolean allFramesActive;
     private long cursor = -1;
-    private long frameRowIndex;
-    private long frameRowCount;
     private int frameIndex;
     private int frameLimit;
+    private long frameRowCount;
+    private long frameRowIndex;
     private PageFrameSequence<?> frameSequence;
+    private boolean isOpen;
+    // the OG rows remaining, used to reset the counter when re-running cursor from top();
+    private long ogRowsRemaining;
+    private PageAddressCacheRecord recordB;
+    private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement
     private long rowsRemaining;
-    // the OG rows remaining, used to reset the counter when re-running cursor from top();
-    private long ogRowsRemaining;
-    private boolean allFramesActive;
-    private boolean isOpen;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -98,13 +98,17 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        if (recordB != null) {
+            return recordB;
+        }
+        recordB = new PageAddressCacheRecord(record);
+        return recordB;
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
     }
 
     @Override
@@ -142,23 +146,20 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return false;
     }
 
-    private long rowIndex() {
-        return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
-    }
-
     @Override
-    public Record getRecordB() {
-        if (recordB != null) {
-            return recordB;
-        }
-        recordB = new PageAddressCacheRecord(record);
-        return recordB;
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
         ((PageAddressCacheRecord) record).setFrameIndex(Rows.toPartitionIndex(atRowId));
         ((PageAddressCacheRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override
@@ -176,17 +177,22 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         allFramesActive = true;
     }
 
-    @Override
-    public long size() {
-        return -1;
-    }
-
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
             frameSequence.cancel();
             return false;
         }
         return true;
+    }
+
+    private void collectCursor(boolean forceCollect) {
+        if (cursor > -1) {
+            frameSequence.collect(cursor, forceCollect);
+            // It is necessary to clear 'cursor' value
+            // because we updated frameIndex and loop can exit due to lack of frames.
+            // Non-update of 'cursor' could cause double-free.
+            cursor = -1;
+        }
     }
 
     private void fetchNextFrame() {
@@ -224,6 +230,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         }
     }
 
+    private long rowIndex() {
+        return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
+    }
+
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
         this.isOpen = true;
         this.frameSequence = frameSequence;
@@ -235,16 +245,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-        }
-    }
-
-    private void collectCursor(boolean forceCollect) {
-        if (cursor > -1) {
-            frameSequence.collect(cursor, forceCollect);
-            // It is necessary to clear 'cursor' value
-            // because we updated frameIndex and loop can exit due to lack of frames.
-            // Non-update of 'cursor' could cause double-free.
-            cursor = -1;
         }
     }
 }

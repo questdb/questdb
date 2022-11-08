@@ -92,14 +92,14 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor {
+        protected long next;
         protected long position;
         protected long valueCount;
-        protected long next;
+        private long maxValue;
+        private long nullCount;
+        private long nullPos;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
-        private long maxValue;
-        private long nullPos;
-        private long nullCount;
 
         @Override
         public boolean hasNext() {
@@ -149,6 +149,15 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             return true;
         }
 
+        private ConcurrentBitmapIndexFwdReader owner() {
+            return ConcurrentBitmapIndexFwdReader.this;
+        }
+
+        private void seekValue(long count, long offset) {
+            this.position = count;
+            this.valueBlockOffset = offset;
+        }
+
         void of(int key, long minValue, long maxValue, long keyCount, long nullPos, long nullCount) {
             this.nullPos = nullPos;
             this.nullCount = nullCount;
@@ -195,15 +204,6 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
                 this.maxValue = maxValue;
             }
-        }
-
-        private void seekValue(long count, long offset) {
-            this.position = count;
-            this.valueBlockOffset = offset;
-        }
-
-        private ConcurrentBitmapIndexFwdReader owner() {
-            return ConcurrentBitmapIndexFwdReader.this;
         }
     }
 }

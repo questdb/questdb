@@ -36,11 +36,6 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return EmptyTableRecordCursor.INSTANCE;
     }
@@ -48,5 +43,10 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeIfCloseable(getMetadata());
     }
 }

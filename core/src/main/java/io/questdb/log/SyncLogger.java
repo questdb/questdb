@@ -37,18 +37,18 @@ import java.io.File;
 
 public class SyncLogger implements LogRecord, Log {
     private final static ThreadLocal<StringSink> line = new ThreadLocal<>(StringSink::new);
-    private final CharSequence name;
-    private final RingQueue<LogRecordSink> debugRing;
-    private final Sequence debugSeq;
-    private final RingQueue<LogRecordSink> infoRing;
-    private final Sequence infoSeq;
-    private final RingQueue<LogRecordSink> errorRing;
-    private final Sequence errorSeq;
-    private final RingQueue<LogRecordSink> criticalRing;
-    private final Sequence criticalSeq;
     private final RingQueue<LogRecordSink> advisoryRing;
     private final Sequence advisorySeq;
     private final MicrosecondClock clock;
+    private final RingQueue<LogRecordSink> criticalRing;
+    private final Sequence criticalSeq;
+    private final RingQueue<LogRecordSink> debugRing;
+    private final Sequence debugSeq;
+    private final RingQueue<LogRecordSink> errorRing;
+    private final Sequence errorSeq;
+    private final RingQueue<LogRecordSink> infoRing;
+    private final Sequence infoSeq;
+    private final CharSequence name;
 
     SyncLogger(
             MicrosecondClock clock,
@@ -98,12 +98,6 @@ public class SyncLogger implements LogRecord, Log {
     @Override
     public LogRecord $(CharSequence sequence, int lo, int hi) {
         sink().put(sequence, lo, hi);
-        return this;
-    }
-
-    @Override
-    public LogRecord $utf8(long lo, long hi) {
-        Chars.utf8Decode(lo, hi, this);
         return this;
     }
 
@@ -168,18 +162,6 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $ip(long ip) {
-        Net.appendIP4(sink(), ip);
-        return this;
-    }
-
-    @Override
-    public LogRecord $ts(long x) {
-        sink().putISODate(x);
-        return this;
-    }
-
-    @Override
     public LogRecord $256(long a, long b, long c, long d) {
         Numbers.appendLong256(a, b, c, d, sink());
         return this;
@@ -198,30 +180,41 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
-    public LogRecord ts() {
-        sink().putISODate(clock.getTicks());
+    public LogRecord $ip(long ip) {
+        Net.appendIP4(sink(), ip);
         return this;
     }
 
     @Override
-    public LogRecord microTime(long x) {
-        TimestampFormatUtils.appendDateTimeUSec(sink(), x);
+    public LogRecord $ts(long x) {
+        sink().putISODate(x);
         return this;
     }
 
     @Override
-    public LogRecord utf8(CharSequence sequence) {
-        if (sequence == null) {
-            sink().put("null");
-        } else {
-            sink().encodeUtf8(sequence);
-        }
+    public LogRecord $utf8(long lo, long hi) {
+        Chars.utf8Decode(lo, hi, this);
         return this;
+    }
+
+    @Override
+    public LogRecord advisory() {
+        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
+    }
+
+    @Override
+    public LogRecord advisoryW() {
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
+    }
+
+    @Override
+    public LogRecord critical() {
+        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+    }
+
+    @Override
+    public LogRecord criticalW() {
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -245,13 +238,8 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord critical() {
-        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
-    }
-
-    @Override
-    public LogRecord criticalW() {
-        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
+    public Sequence getCriticalSequence() {
+        return criticalSeq;
     }
 
     @Override
@@ -265,25 +253,52 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord advisory() {
-        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
+    public boolean isEnabled() {
+        return true;
     }
 
     @Override
-    public LogRecord advisoryW() {
-        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
+    public LogRecord microTime(long x) {
+        TimestampFormatUtils.appendDateTimeUSec(sink(), x);
+        return this;
     }
 
-    public LogRecord xerror() {
-        return next(errorSeq, errorRing, LogLevel.ERROR);
+    @Override
+    public LogRecord put(char c) {
+        sink().put(c);
+        return this;
     }
 
-    public LogRecord xcritical() {
-        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
+    @Override
+    public LogRecord ts() {
+        sink().putISODate(clock.getTicks());
+        return this;
     }
 
-    public LogRecord xinfo() {
-        return next(infoSeq, infoRing, LogLevel.INFO);
+    @Override
+    public LogRecord utf8(CharSequence sequence) {
+        if (sequence == null) {
+            sink().put("null");
+        } else {
+            sink().encodeUtf8(sequence);
+        }
+        return this;
+    }
+
+    public LogRecord xAdvisoryW() {
+        return next(infoSeq, infoRing, LogLevel.ADVISORY);
+    }
+
+    public LogRecord xCriticalW() {
+        return next(infoSeq, infoRing, LogLevel.CRITICAL);
+    }
+
+    public LogRecord xDebugW() {
+        return next(infoSeq, infoRing, LogLevel.DEBUG);
+    }
+
+    public LogRecord xErrorW() {
+        return next(infoSeq, infoRing, LogLevel.ERROR);
     }
 
     /**
@@ -296,40 +311,25 @@ public class SyncLogger implements LogRecord, Log {
         return next(infoSeq, infoRing, LogLevel.INFO);
     }
 
-    public LogRecord xdebug() {
-        return next(debugSeq, debugRing, LogLevel.DEBUG);
-    }
-
-    public LogRecord xDebugW() {
-        return next(infoSeq, infoRing, LogLevel.DEBUG);
-    }
-
     @Override
     public LogRecord xadvisory() {
         return next(advisorySeq, advisoryRing, LogLevel.ADVISORY);
     }
 
-    @Override
-    public LogRecord put(char c) {
-        sink().put(c);
-        return this;
+    public LogRecord xcritical() {
+        return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
-    @Override
-    public Sequence getCriticalSequence() {
-        return criticalSeq;
+    public LogRecord xdebug() {
+        return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
 
-    public LogRecord xAdvisoryW() {
-        return next(infoSeq, infoRing, LogLevel.ADVISORY);
+    public LogRecord xerror() {
+        return next(errorSeq, errorRing, LogLevel.ERROR);
     }
 
-    public LogRecord xCriticalW() {
-        return next(infoSeq, infoRing, LogLevel.CRITICAL);
-    }
-
-    public LogRecord xErrorW() {
-        return next(infoSeq, infoRing, LogLevel.ERROR);
+    public LogRecord xinfo() {
+        return next(infoSeq, infoRing, LogLevel.INFO);
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {

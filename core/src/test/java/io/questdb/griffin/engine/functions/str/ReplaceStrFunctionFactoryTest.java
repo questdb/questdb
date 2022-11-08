@@ -36,51 +36,18 @@ import org.junit.Test;
 public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testNullTerm() throws SqlException {
-        call("abc", null, "x").andAssert(null);
-    }
-
-    @Test
     public void testNullReplacement() throws SqlException {
         call("abbbc", "bbb", null).andAssert(null);
     }
 
     @Test
+    public void testNullTerm() throws SqlException {
+        call("abc", null, "x").andAssert(null);
+    }
+
+    @Test
     public void testNullValue() throws SqlException {
         call(null, "bbb", "x").andAssert(null);
-    }
-
-    @Test
-    public void testReplacementIsSameLength() throws SqlException {
-        call("hello xx ok", "xx", "yy").andAssert("hello yy ok");
-    }
-
-    @Test
-    public void testReplacementIsLonger() throws SqlException {
-        call("hello xx ok", "xx", "ooooo").andAssert("hello ooooo ok");
-    }
-
-    @Test
-    public void testReplacementIsShorter() throws SqlException {
-        call("hello xx ok", "xx", "u").andAssert("hello u ok");
-    }
-
-    @Test
-    public void testReplacementStart() throws SqlException {
-        call("hello xx ok", "hello", "bye").andAssert("bye xx ok");
-    }
-
-    @Test
-    public void testReplacementEnd() throws SqlException {
-        call("hello xx ok", "ok", "better").andAssert("hello xx better");
-    }
-
-    @Test
-    public void testReplaceSingleTermOccurrence() throws SqlException {
-        call("motorhead", "x", "y").andAssert("motorhead");
-        call("motorhead", "head", "bike").andAssert("motorbike");
-        call("motorhead", "head", "h").andAssert("motorh");
-        call("motorhead", "motor", "m").andAssert("mhead");
     }
 
     @Test
@@ -106,6 +73,14 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testReplaceSingleTermOccurrence() throws SqlException {
+        call("motorhead", "x", "y").andAssert("motorhead");
+        call("motorhead", "head", "bike").andAssert("motorbike");
+        call("motorhead", "head", "h").andAssert("motorh");
+        call("motorhead", "motor", "m").andAssert("mhead");
+    }
+
+    @Test
     public void testReplaceWithAnyNullArgReturnsNull() throws SqlException {
         call(null, null, null).andAssert(null);
         call(null, "b", "c").andAssert(null);
@@ -114,6 +89,37 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("a", null, "c").andAssert(null);
         call("a", "b", null).andAssert(null);
         call("a", null, null).andAssert(null);
+    }
+
+    @Test
+    public void testReplacementEnd() throws SqlException {
+        call("hello xx ok", "ok", "better").andAssert("hello xx better");
+    }
+
+    @Test
+    public void testReplacementIsLonger() throws SqlException {
+        call("hello xx ok", "xx", "ooooo").andAssert("hello ooooo ok");
+    }
+
+    @Test
+    public void testReplacementIsSameLength() throws SqlException {
+        call("hello xx ok", "xx", "yy").andAssert("hello yy ok");
+    }
+
+    @Test
+    public void testReplacementIsShorter() throws SqlException {
+        call("hello xx ok", "xx", "u").andAssert("hello u ok");
+    }
+
+    @Test
+    public void testReplacementStart() throws SqlException {
+        call("hello xx ok", "hello", "bye").andAssert("bye xx ok");
+    }
+
+    @Test
+    public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() {
+        assertFailure("[-1] breached memory limit set for replace(SSS) [maxLength=1048576, requiredLength=1048580]",
+                "select replace(replace(replace(replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')");
     }
 
     @Test
@@ -126,10 +132,9 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         }
     }
 
-    @Test
-    public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() {
-        assertFailure("[-1] breached memory limit set for replace(SSS) [maxLength=1048576, requiredLength=1048580]",
-                "select replace(replace(replace(replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')");
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new ReplaceStrFunctionFactory();
     }
 
     StringBuilder multiply(String s, int times) {
@@ -138,11 +143,5 @@ public class ReplaceStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
             sb.append(s);
         }
         return sb;
-    }
-
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new ReplaceStrFunctionFactory();
     }
 }

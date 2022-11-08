@@ -32,8 +32,8 @@ import java.util.Deque;
 
 final class ExpressionTreeBuilder implements ExpressionParserListener {
 
-    private final Deque<ExpressionNode> stack = new ArrayDeque<>();
     private final Deque<QueryModel> modelStack = new ArrayDeque<>();
+    private final Deque<ExpressionNode> stack = new ArrayDeque<>();
     private QueryModel model;
 
     @Override

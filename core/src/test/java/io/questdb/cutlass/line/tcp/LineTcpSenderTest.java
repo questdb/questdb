@@ -26,10 +26,10 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.client.Sender;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -50,25 +50,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private final static String AUTH_KEY_ID1 = "testUser1";
     private final static String AUTH_KEY_ID2_INVALID = "invalid";
+    private final static int HOST = Net.parseIPv4("127.0.0.1");
+    private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(TOKEN);
-    private final static int HOST = Net.parseIPv4("127.0.0.1");
-
-    private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
-
-    @Test
-    public void testMinBufferSizeWhenAuth() throws Exception {
-        authKeyId = AUTH_KEY_ID1;
-        int tinyCapacity = 42;
-        runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, tinyCapacity)) {
-                sender.authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
-                fail();
-            } catch (LineSenderException e) {
-                assertContains(e.getMessage(), "challenge did not fit into buffer");
-            }
-        });
-    }
 
     @Test
     public void testAuthSuccess() throws Exception {
@@ -101,7 +86,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     sender.flush();
                 }
                 fail("Client fail to detected qdb server closed a connection due to wrong credentials");
-            } catch (LineSenderException expected){
+            } catch (LineSenderException expected) {
                 // ignored
             }
         });
@@ -115,6 +100,34 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder()
                     .address(address)
                     .enableAuth(AUTH_KEY_ID1).authToken(TOKEN)
+                    .build()) {
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
+        String address = "localhost:" + bindPort;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address(address)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -138,30 +151,59 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testWriteAllTypes() throws Exception {
+    public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
+        StringChannel channel = new StringChannel();
+        try (Sender sender = new LineTcpSender(channel, 1000)) {
+            sender.table("mytable");
+            try {
+                sender.boolColumn("col\n", true);
+                fail();
+            } catch (LineSenderException e) {
+                assertContains(e.getMessage(), "name contains an illegal char");
+            }
+            try {
+                sender.table("mytable");
+                fail();
+            } catch (LineSenderException e) {
+                assertContains(e.getMessage(), "duplicated table");
+            }
+        }
+        assertFalse(Chars.contains(channel.toString(), "\n"));
+    }
+
+    @Test
+    public void testCloseIdempotent() {
+        DummyLineChannel channel = new DummyLineChannel();
+        LineTcpSender sender = new LineTcpSender(channel, 1000);
+        sender.close();
+        sender.close();
+        assertEquals(1, channel.closeCounter);
+    }
+
+    @Test
+    public void testCloseImpliesFlush() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
-
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
-                sender.table("mytable")
-                        .longColumn("int_field", 42)
-                        .boolColumn("bool_field", true)
-                        .stringColumn("string_field", "foo")
-                        .doubleColumn("double_field", 42.0)
-                        .timestampColumn("ts_field", tsMicros)
-                        .at(tsMicros * 1000);
-                sender.flush();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
             }
-
-            assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
-                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
-                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
-            }
+            assertTableExistsEventually(engine, "mytable");
         });
+    }
+
+    @Test
+    public void testControlCharInColumnName() {
+        assertControlCharacterException(s -> {
+            s.table("mytable");
+            s.boolColumn("col\u0001", true);
+        });
+    }
+
+    @Test
+    public void testControlCharInTableName() {
+        assertControlCharacterException(s -> s.table("mytable\u0001"));
     }
 
     @Test
@@ -192,165 +234,21 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testSymbolsCannotBeWrittenAfterDouble() throws Exception {
-        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.doubleColumn("columnName", 42.0));
-    }
-
-    @Test
-    public void testSymbolsCannotBeWrittenAfterString() throws Exception {
-        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
-    }
-
-    @Test
-    public void testSymbolsCannotBeWrittenAfterBool() throws Exception {
-        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.boolColumn("columnName", false));
-    }
-
-    @Test
-    public void testSymbolsCannotBeWrittenAfterLong() throws Exception {
-        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.longColumn("columnName", 42));
-    }
-
-    private void assertSymbolsCannotBeWrittenAfterOtherType(Consumer<Sender> otherTypeWriter) throws Exception {
+    public void testMinBufferSizeWhenAuth() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        int tinyCapacity = 42;
         runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                sender.table("mytable");
-                otherTypeWriter.accept(sender);
-                try {
-                    sender.symbol("name", "value");
-                    fail("symbols cannot be written after any other column type");
-                } catch (LineSenderException e) {
-                    TestUtils.assertContains(e.getMessage(), "before any other column types");
-                    sender.atNow();
-                }
+            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, tinyCapacity)) {
+                sender.authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
+                fail();
+            } catch (LineSenderException e) {
+                assertContains(e.getMessage(), "challenge did not fit into buffer");
             }
         });
     }
 
     @Test
-    public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
-        String address = "localhost:" + bindPort;
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address(address)
-                    .build()) {
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-                sender.flush();
-            }
-            assertTableExistsEventually(engine, "mytable");
-        });
-    }
-
-    @Test
-    public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-                sender.flush();
-            }
-            assertTableExistsEventually(engine, "mytable");
-        });
-    }
-
-    @Test
-    public void testCloseImpliesFlush() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-            }
-            assertTableExistsEventually(engine, "mytable");
-        });
-    }
-
-    @Test
-    public void testCloseIdempotent() {
-        DummyLineChannel channel = new DummyLineChannel();
-        LineTcpSender sender = new LineTcpSender(channel, 1000);
-        sender.close();
-        sender.close();
-        assertEquals(1, channel.closeCounter);
-    }
-
-    @Test
-    public void testUseAfterClose_table() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION);
-    }
-
-    @Test
-    public void testUseAfterClose_symbol() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.symbol("sym", "val"));
-    }
-
-    @Test
-    public void testUseAfterClose_tsColumn() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.timestampColumn("col", 0));
-    }
-
-    @Test
-    public void testUseAfterClose_stringColumn() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.stringColumn("col", "val"));
-    }
-
-    @Test
-    public void testUseAfterClose_doubleColumn() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.doubleColumn("col", 42.42));
-    }
-
-    @Test
-    public void testUseAfterClose_boolColumn() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.boolColumn("col", true));
-    }
-
-    @Test
-    public void testUseAfterClose_longColumn() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.longColumn("col", 42));
-    }
-
-    @Test
-    public void testUseAfterClose_flush() {
-        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, Sender::flush);
-    }
-
-    @Test
-    public void testUseAfterClose_atNow() {
-        assertExceptionOnClosedSender(s -> {
-            s.table("mytable");
-            s.longColumn("col", 42);
-        }, Sender::atNow);
-    }
-
-    @Test
-    public void testUseAfterClose_atMicros() {
-        assertExceptionOnClosedSender(s -> {
-            s.table("mytable");
-            s.longColumn("col", 42);
-        }, s -> s.at(MicrosecondClockImpl.INSTANCE.getTicks()));
-    }
-
-    @Test
-    public void testControlCharInTableName() {
-        assertControlCharacterException(s -> s.table("mytable\u0001"));
-    }
-
-    @Test
-    public void testControlCharInColumnName() {
-        assertControlCharacterException(s -> {
-            s.table("mytable");
-            s.boolColumn("col\u0001", true);
-        });
-    }
-
-    @Test
-    public void testServerIgnoresUnfinishedRows() throws Exception{
+    public void testServerIgnoresUnfinishedRows() throws Exception {
         String tableName = "myTable";
         runInContext(r -> {
             send(r, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
@@ -380,6 +278,26 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testSymbolsCannotBeWrittenAfterBool() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.boolColumn("columnName", false));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterDouble() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.doubleColumn("columnName", 42.0));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterLong() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.longColumn("columnName", 42));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterString() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
+    }
+
+    @Test
     public void testUnfinishedRowDoesNotContainNewLine() {
         StringChannel channel = new StringChannel();
         try (Sender sender = new LineTcpSender(channel, 1000)) {
@@ -392,24 +310,86 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
-        StringChannel channel = new StringChannel();
-        try (Sender sender = new LineTcpSender(channel, 1000)) {
-            sender.table("mytable");
-            try {
-                sender.boolColumn("col\n", true);
-                fail();
-            }  catch (LineSenderException e) {
-                assertContains(e.getMessage(), "name contains an illegal char");
+    public void testUseAfterClose_atMicros() {
+        assertExceptionOnClosedSender(s -> {
+            s.table("mytable");
+            s.longColumn("col", 42);
+        }, s -> s.at(MicrosecondClockImpl.INSTANCE.getTicks()));
+    }
+
+    @Test
+    public void testUseAfterClose_atNow() {
+        assertExceptionOnClosedSender(s -> {
+            s.table("mytable");
+            s.longColumn("col", 42);
+        }, Sender::atNow);
+    }
+
+    @Test
+    public void testUseAfterClose_boolColumn() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.boolColumn("col", true));
+    }
+
+    @Test
+    public void testUseAfterClose_doubleColumn() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.doubleColumn("col", 42.42));
+    }
+
+    @Test
+    public void testUseAfterClose_flush() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, Sender::flush);
+    }
+
+    @Test
+    public void testUseAfterClose_longColumn() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.longColumn("col", 42));
+    }
+
+    @Test
+    public void testUseAfterClose_stringColumn() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.stringColumn("col", "val"));
+    }
+
+    @Test
+    public void testUseAfterClose_symbol() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.symbol("sym", "val"));
+    }
+
+    @Test
+    public void testUseAfterClose_table() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION);
+    }
+
+    @Test
+    public void testUseAfterClose_tsColumn() {
+        assertExceptionOnClosedSender(SET_TABLE_NAME_ACTION, s -> s.timestampColumn("col", 0));
+    }
+
+    @Test
+    public void testWriteAllTypes() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                sender.table("mytable")
+                        .longColumn("int_field", 42)
+                        .boolColumn("bool_field", true)
+                        .stringColumn("string_field", "foo")
+                        .doubleColumn("double_field", 42.0)
+                        .timestampColumn("ts_field", tsMicros)
+                        .at(tsMicros * 1000);
+                sender.flush();
             }
-            try {
-                sender.table("mytable");
-                fail();
-            } catch (LineSenderException e) {
-                assertContains(e.getMessage(), "duplicated table");
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
+                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
-        }
-        assertFalse(Chars.contains(channel.toString(), "\n"));
+        });
     }
 
     private static void assertControlCharacterException(Consumer<Sender> senderAction) {
@@ -426,9 +406,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static void assertExceptionOnClosedSender(Consumer<Sender> afterCloseAction) {
-        assertExceptionOnClosedSender(s -> {}, afterCloseAction);
+        assertExceptionOnClosedSender(s -> {
+        }, afterCloseAction);
     }
-
 
     private static void assertExceptionOnClosedSender(Consumer<Sender> beforeCloseAction, Consumer<Sender> afterCloseAction) {
         DummyLineChannel channel = new DummyLineChannel();
@@ -449,18 +429,31 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
+    private void assertSymbolsCannotBeWrittenAfterOtherType(Consumer<Sender> otherTypeWriter) throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                sender.table("mytable");
+                otherTypeWriter.accept(sender);
+                try {
+                    sender.symbol("name", "value");
+                    fail("symbols cannot be written after any other column type");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "before any other column types");
+                    sender.atNow();
+                }
+            }
+        });
+    }
 
     private static class DummyLineChannel implements LineChannel {
         private int closeCounter;
 
         @Override
-        public void send(long ptr, int len) {
-
-        }
-
-        @Override
-        public int receive(long ptr, int len) {
-            return 0;
+        public void close() {
+            closeCounter++;
         }
 
         @Override
@@ -469,8 +462,13 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         }
 
         @Override
-        public void close() {
-            closeCounter++;
+        public int receive(long ptr, int len) {
+            return 0;
+        }
+
+        @Override
+        public void send(long ptr, int len) {
+
         }
     }
 }

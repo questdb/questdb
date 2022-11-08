@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.geohash;
 
 public class GeoHashNative {
 
+    public static native long iota(long address, long size, long init);
+
     public static native void latestByAndFilterPrefix(
             long keysMemory,
             long keysMemorySize,
@@ -44,7 +46,5 @@ public class GeoHashNative {
     );
 
     public static native long slideFoundBlocks(long argsAddress, long argsCount);
-
-    public static native long iota(long address, long size, long init);
 
 }

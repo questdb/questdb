@@ -32,37 +32,12 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class AnalyticContextImpl implements AnalyticContext, Mutable {
-    private VirtualRecord partitionByRecord;
-    private RecordSink partitionBySink;
-    private ColumnTypes partitionByKeyTypes;
+    private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private boolean ordered;
-    private boolean baseSupportsRandomAccess;
-
-    @Override
-    public boolean isEmpty() {
-        return empty;
-    }
-
-    @Override
-    public VirtualRecord getPartitionByRecord() {
-        return partitionByRecord;
-    }
-
-    @Override
-    public RecordSink getPartitionBySink() {
-        return partitionBySink;
-    }
-
-    @Override
-    public ColumnTypes getPartitionByKeyTypes() {
-        return partitionByKeyTypes;
-    }
-
-    @Override
-    public boolean isOrdered() {
-        return ordered;
-    }
+    private ColumnTypes partitionByKeyTypes;
+    private VirtualRecord partitionByRecord;
+    private RecordSink partitionBySink;
 
     @Override
     public boolean baseSupportsRandomAccess() {
@@ -77,6 +52,31 @@ public class AnalyticContextImpl implements AnalyticContext, Mutable {
         this.partitionByKeyTypes = null;
         this.ordered = false;
         this.baseSupportsRandomAccess = false;
+    }
+
+    @Override
+    public ColumnTypes getPartitionByKeyTypes() {
+        return partitionByKeyTypes;
+    }
+
+    @Override
+    public VirtualRecord getPartitionByRecord() {
+        return partitionByRecord;
+    }
+
+    @Override
+    public RecordSink getPartitionBySink() {
+        return partitionBySink;
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return empty;
+    }
+
+    @Override
+    public boolean isOrdered() {
+        return ordered;
     }
 
     public void of(

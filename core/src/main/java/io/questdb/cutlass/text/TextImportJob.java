@@ -39,14 +39,14 @@ import java.io.Closeable;
 
 public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
     private static final int INDEX_MERGE_LIST_CAPACITY = 64;
-    private TextLexerWrapper tlw;
-    private CsvFileIndexer indexer;
-    private DirectCharSink utf8Sink;
-    private DirectLongList mergeIndexes;
-    private Path tmpPath1;
-    private Path tmpPath2;
     private final long fileBufAddr;
     private long fileBufSize;
+    private CsvFileIndexer indexer;
+    private DirectLongList mergeIndexes;
+    private TextLexerWrapper tlw;
+    private Path tmpPath1;
+    private Path tmpPath2;
+    private DirectCharSink utf8Sink;
 
     public TextImportJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());

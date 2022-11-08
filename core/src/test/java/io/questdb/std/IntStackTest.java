@@ -29,26 +29,6 @@ import org.junit.Test;
 
 public class IntStackTest {
     @Test
-    public void testStack() {
-
-        int sz = 2050;
-        int[] expected = new int[sz];
-        int l = expected.length - 1;
-
-        IntStack stack = new IntStack();
-        for (int i = expected.length - 1; i > -1; i--) {
-            stack.push(expected[l--] = i);
-        }
-
-        Assert.assertEquals(sz, stack.size());
-
-        int count = 0;
-        while (stack.notEmpty()) {
-            Assert.assertEquals("at " + count, expected[count++], stack.pop());
-        }
-    }
-
-    @Test
     public void testPollLast() {
         int sz = 2050;
         int[] expected = new int[sz];
@@ -68,5 +48,25 @@ public class IntStackTest {
 
         Assert.assertEquals(-1, stack.pollLast());
         Assert.assertFalse(stack.notEmpty());
+    }
+
+    @Test
+    public void testStack() {
+
+        int sz = 2050;
+        int[] expected = new int[sz];
+        int l = expected.length - 1;
+
+        IntStack stack = new IntStack();
+        for (int i = expected.length - 1; i > -1; i--) {
+            stack.push(expected[l--] = i);
+        }
+
+        Assert.assertEquals(sz, stack.size());
+
+        int count = 0;
+        while (stack.notEmpty()) {
+            Assert.assertEquals("at " + count, expected[count++], stack.pop());
+        }
     }
 }

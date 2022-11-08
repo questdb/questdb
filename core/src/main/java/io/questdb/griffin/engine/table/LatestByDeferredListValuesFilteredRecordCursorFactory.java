@@ -41,10 +41,10 @@ import org.jetbrains.annotations.Nullable;
  * and in many cases can stop before scanning all the data when it finds all the expected values
  */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final ObjList<Function> symbolFunctions;
-    private final Function filter;
     private final LatestByValueListRecordCursor cursor;
+    private final Function filter;
     private final int frameSymbolIndex;
+    private final ObjList<Function> symbolFunctions;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -74,25 +74,8 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(filter);
-        this.cursor.destroy();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        lookupDeferredSymbol(dataFrameCursor, executionContext);
-        cursor.of(dataFrameCursor, executionContext);
-        return cursor;
     }
 
     private void lookupDeferredSymbol(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -116,5 +99,22 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
                 }
             }
         }
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+        this.cursor.destroy();
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        lookupDeferredSymbol(dataFrameCursor, executionContext);
+        cursor.of(dataFrameCursor, executionContext);
+        return cursor;
     }
 }

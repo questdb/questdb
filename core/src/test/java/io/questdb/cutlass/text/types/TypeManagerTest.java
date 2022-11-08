@@ -40,8 +40,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 public class TypeManagerTest {
-    private static DirectCharSink utf8Sink;
     private static JsonLexer jsonLexer;
+    private static DirectCharSink utf8Sink;
 
     @BeforeClass
     public static void setUp() {

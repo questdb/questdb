@@ -67,30 +67,23 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     //marks value chain entry as unused (belonging to a node on the freelist)
     //it's meant to avoid unnecessary reallocations when removing nodes and adding nodes  
     private static final long FREE_SLOT = -2L;
-
+    //LIFO list of free blocks to reuse, allocated on the value chain
+    private final LongList chainFreeList;
     private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();
-    private final MemoryARW valueChain;
-
+    //LIFO list of nodes to reuse, instead of releasing and reallocating
+    private final LongList freeList;
     //firstN - keep <first->N> set , otherwise keep <last-N->last> set
     private final boolean isFirstN;
-
     //maximum number of values tree can store (including repeating values)
     private final long maxValues; //-1 means 'almost' unlimited
-
+    private final MemoryARW valueChain;
     //number of all values stored in tree (including repeating ones)
     private long currentValues = 0;
-
-    //for fast filtering out of records in here we store rowId of :
-    // - record with max value for firstN/bottomN query 
-    // - record with min value for lastN/topN query 
-    private long minMaxRowId = -1;
     private long minMaxNode = -1;
-
-    //LIFO list of nodes to reuse, instead of releasing and reallocating 
-    private final LongList freeList;
-
-    //LIFO list of free blocks to reuse, allocated on the value chain 
-    private final LongList chainFreeList;
+    //for fast filtering out of records in here we store rowId of :
+    // - record with max value for firstN/bottomN query
+    // - record with min value for lastN/topN query
+    private long minMaxRowId = -1;
 
     public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isfirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
@@ -121,27 +114,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         Misc.free(valueChain);
     }
 
-    @Override
-    public void reopen() {
-        super.reopen();
-    }
-
-    @Override
-    public long size() {
-        return currentValues;
-    }
-
-    private long appendValue(long value, long prevValueOffset) {
-        final long offset = valueChain.getAppendOffset();
-        valueChain.putLongLong(value, prevValueOffset);
-        return offset;
-    }
-
-    public LimitedSizeLongTreeChain.TreeCursor getCursor() {
-        cursor.toTop();
-        return cursor;
-    }
-
     //returns address of node containing searchRecord; otherwise returns -1
     public long find(Record searchedRecord,
                      RecordCursor sourceCursor,
@@ -170,6 +142,28 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return -1;
     }
 
+    public LimitedSizeLongTreeChain.TreeCursor getCursor() {
+        cursor.toTop();
+        return cursor;
+    }
+
+    @TestOnly
+    public void print(CharSink sink) {
+        print(sink, null);
+    }
+
+    //prints tree in-order, horizontally
+    public void print(CharSink sink, ValuePrinter printer) {
+        if (root == EMPTY) {
+            sink.put("[EMPTY TREE]");
+        } else {
+            if (printer == null) {
+                printer = ValuePrinter::toRowId;
+            }
+            printTree(sink, root, 0, false, printer);
+        }
+    }
+
     public void put(
             Record leftRecord,
             RecordCursor sourceCursor,
@@ -191,7 +185,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                 return;
             } else if (!isFirstN && cmp <= 0) { //smaller than min for lastN/topN
                 return;
-            } else { //record has to be inserted so we've to remove current minMax 
+            } else { //record has to be inserted so we've to remove current minMax
                 removeAndCache(minMaxNode);
             }
         }
@@ -239,6 +233,76 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         currentValues++;
     }
 
+    @Override
+    public void reopen() {
+        super.reopen();
+    }
+
+    @Override
+    public long size() {
+        return currentValues;
+    }
+
+    private long appendValue(long value, long prevValueOffset) {
+        final long offset = valueChain.getAppendOffset();
+        valueChain.putLongLong(value, prevValueOffset);
+        return offset;
+    }
+
+    private void clearBlock(long position) {
+        setParent(position, -1);
+        setLeft(position, -1);
+        setRight(position, -1);
+        setColor(position, BLACK);
+        //assume there's only one value in the chain (otherwise node shouldn't be deleted)
+        long refOffset = refOf(position);
+        assert valueChain.getLong(refOffset + 8) == CHAIN_END;
+        valueChain.putLong(refOffset, FREE_SLOT);
+    }
+
+    private int getChainLength(long chainStart) {
+        int counter = 1;
+        long nextOffset = valueChain.getLong(chainStart + 8);
+
+        while (nextOffset != EMPTY) {
+            nextOffset = valueChain.getLong(nextOffset + 8);
+            counter++;
+        }
+
+        return counter;
+    }
+
+    private boolean hasMoreThanOneValue(long position) {
+        long ref = refOf(position);
+        long previousOffset = valueChain.getLong(ref + 8);
+        return previousOffset != CHAIN_END;
+    }
+
+    private void refreshMinMaxNode() {
+        long p;
+
+        if (isFirstN) {
+            p = findMaxNode();
+        } else {//lastN/topN
+            p = findMinNode();
+        }
+
+        minMaxNode = p;
+        minMaxRowId = valueChain.getLong(refOf(p));
+    }
+
+    private void removeMostRecentChainValue(long node) {
+        long ref = refOf(node);
+        long previousOffset = valueChain.getLong(ref + 8);
+        setRef(node, previousOffset);
+
+        //clear both rowid slot and rext value offset
+        valueChain.putLong(ref, -1L);
+        valueChain.putLong(ref + 8, -1L);
+
+        chainFreeList.add(ref);
+    }
+
     //if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node
     protected long allocateBlock(long parent, long recordRowId) {
         if (freeList.size() > 0) {
@@ -267,141 +331,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             setRef(newNode, chainOffset);
 
             return newNode;
-        }
-    }
-
-    private void refreshMinMaxNode() {
-        long p;
-
-        if (isFirstN) {
-            p = findMaxNode();
-        } else {//lastN/topN
-            p = findMinNode();
-        }
-
-        minMaxNode = p;
-        minMaxRowId = valueChain.getLong(refOf(p));
-    }
-
-    //remove node and put on freelist (if holds only one value in chain)
-    protected void removeAndCache(long node) {
-        if (hasMoreThanOneValue(node)) {
-            removeMostRecentChainValue(node);//don't change minmax   
-        } else {
-            long nodeToRemove = super.remove(node);
-            clearBlock(nodeToRemove);
-            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
-
-            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
-            minMaxNode = -1;
-        }
-
-        currentValues--;
-    }
-
-    private void clearBlock(long position) {
-        setParent(position, -1);
-        setLeft(position, -1);
-        setRight(position, -1);
-        setColor(position, BLACK);
-        //assume there's only one value in the chain (otherwise node shouldn't be deleted)
-        long refOffset = refOf(position);
-        assert valueChain.getLong(refOffset + 8) == CHAIN_END;
-        valueChain.putLong(refOffset, FREE_SLOT);
-    }
-
-    private void removeMostRecentChainValue(long node) {
-        long ref = refOf(node);
-        long previousOffset = valueChain.getLong(ref + 8);
-        setRef(node, previousOffset);
-
-        //clear both rowid slot and rext value offset
-        valueChain.putLong(ref, -1L);
-        valueChain.putLong(ref + 8, -1L);
-
-        chainFreeList.add(ref);
-    }
-
-    private boolean hasMoreThanOneValue(long position) {
-        long ref = refOf(position);
-        long previousOffset = valueChain.getLong(ref + 8);
-        return previousOffset != CHAIN_END;
-    }
-
-    @Override
-    protected void putParent(long value) {
-        root = allocateBlock(-1, value);
-    }
-
-    public class TreeCursor {
-
-        private long treeCurrent;
-        private long chainCurrent;
-
-        public boolean hasNext() {
-            if (chainCurrent != -1) {
-                return true;
-            }
-
-            treeCurrent = successor(treeCurrent);
-            if (treeCurrent == -1) {
-                return false;
-            }
-
-            chainCurrent = refOf(treeCurrent);
-            return true;
-        }
-
-        public long next() {
-            long result = chainCurrent;
-            chainCurrent = valueChain.getLong(chainCurrent + 8);
-            return valueChain.getLong(result);
-        }
-
-        public void toTop() {
-            setup();
-        }
-
-        private void setup() {
-            long p = root;
-            if (p != -1) {
-                while (leftOf(p) != -1) {
-                    p = leftOf(p);
-                }
-            }
-            treeCurrent = p;
-            chainCurrent = refOf(treeCurrent);
-        }
-
-        public void clear() {
-            treeCurrent = 0;
-            chainCurrent = 0;
-        }
-    }
-
-    @FunctionalInterface
-    public interface ValuePrinter {
-        String toString(long rowid);
-
-        static String toRowId(long rowid) {
-            return String.valueOf(rowid);
-        }
-    }
-
-    @TestOnly
-    public void print(CharSink sink) {
-        print(sink, null);
-    }
-
-    //prints tree in-order, horizontally 
-    public void print(CharSink sink, ValuePrinter printer) {
-        if (root == EMPTY) {
-            sink.put("[EMPTY TREE]");
-        } else {
-            if (printer == null) {
-                printer = ValuePrinter::toRowId;
-            }
-            printTree(sink, root, 0, false, printer);
         }
     }
 
@@ -441,15 +370,79 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
-    private int getChainLength(long chainStart) {
-        int counter = 1;
-        long nextOffset = valueChain.getLong(chainStart + 8);
+    @Override
+    protected void putParent(long value) {
+        root = allocateBlock(-1, value);
+    }
 
-        while (nextOffset != EMPTY) {
-            nextOffset = valueChain.getLong(nextOffset + 8);
-            counter++;
+    //remove node and put on freelist (if holds only one value in chain)
+    protected void removeAndCache(long node) {
+        if (hasMoreThanOneValue(node)) {
+            removeMostRecentChainValue(node);//don't change minmax
+        } else {
+            long nodeToRemove = super.remove(node);
+            clearBlock(nodeToRemove);
+            freeList.add(nodeToRemove);//keep node on freelist to minimize allocations
+
+            minMaxRowId = -1;//re-compute after inserting, there's no point doing it now
+            minMaxNode = -1;
         }
 
-        return counter;
+        currentValues--;
+    }
+
+    @FunctionalInterface
+    public interface ValuePrinter {
+        static String toRowId(long rowid) {
+            return String.valueOf(rowid);
+        }
+
+        String toString(long rowid);
+    }
+
+    public class TreeCursor {
+
+        private long chainCurrent;
+        private long treeCurrent;
+
+        public void clear() {
+            treeCurrent = 0;
+            chainCurrent = 0;
+        }
+
+        public boolean hasNext() {
+            if (chainCurrent != -1) {
+                return true;
+            }
+
+            treeCurrent = successor(treeCurrent);
+            if (treeCurrent == -1) {
+                return false;
+            }
+
+            chainCurrent = refOf(treeCurrent);
+            return true;
+        }
+
+        public long next() {
+            long result = chainCurrent;
+            chainCurrent = valueChain.getLong(chainCurrent + 8);
+            return valueChain.getLong(result);
+        }
+
+        public void toTop() {
+            setup();
+        }
+
+        private void setup() {
+            long p = root;
+            if (p != -1) {
+                while (leftOf(p) != -1) {
+                    p = leftOf(p);
+                }
+            }
+            treeCurrent = p;
+            chainCurrent = refOf(treeCurrent);
+        }
     }
 }

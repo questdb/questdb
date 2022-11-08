@@ -30,30 +30,22 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
 
     private final WalEventCursor cursor;
     private final Entry entry = new Entry();
-
-    private int columnIndex = -1;
     private int cleanSymbolCount;
+    private int columnIndex = -1;
     private int size;
 
     SymbolMapDiffImpl(WalEventCursor cursor) {
         this.cursor = cursor;
     }
 
-    void of(int columnIndex, int cleanSymbolCount, int size) {
-        this.columnIndex = columnIndex;
-        this.cleanSymbolCount = cleanSymbolCount;
-        this.size = size;
-        entry.clear();
+    @Override
+    public int getCleanSymbolCount() {
+        return cleanSymbolCount;
     }
 
     @Override
     public int getColumnIndex() {
         return columnIndex;
-    }
-
-    @Override
-    public int getCleanSymbolCount() {
-        return cleanSymbolCount;
     }
 
     @Override
@@ -66,14 +58,16 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         return cursor.readNextSymbolMapDiffEntry(entry);
     }
 
+    void of(int columnIndex, int cleanSymbolCount, int size) {
+        this.columnIndex = columnIndex;
+        this.cleanSymbolCount = cleanSymbolCount;
+        this.size = size;
+        entry.clear();
+    }
+
     public static class Entry implements SymbolMapDiffEntry {
         private int key;
         private CharSequence symbol;
-
-        void of(int key, CharSequence symbol) {
-            this.key = key;
-            this.symbol = symbol;
-        }
 
         @Override
         public int getKey() {
@@ -87,6 +81,11 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
 
         void clear() {
             of(-1, null);
+        }
+
+        void of(int key, CharSequence symbol) {
+            this.key = key;
+            this.symbol = symbol;
         }
     }
 }

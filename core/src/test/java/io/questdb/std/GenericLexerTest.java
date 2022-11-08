@@ -35,6 +35,36 @@ import java.util.Iterator;
 
 public class GenericLexerTest {
 
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot1() throws SqlException {
+        GenericLexer.assertNoDots(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDot2() throws SqlException {
+        GenericLexer.assertNoDots("..", 0);
+    }
+
+    @Test
+    public void testAssertNoDot3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDots(",", 0));
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes1() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes(".", 0);
+    }
+
+    @Test(expected = SqlException.class)
+    public void testAssertNoDotAndSlashes2() throws SqlException {
+        GenericLexer.assertNoDotsAndSlashes("/.", 0);
+    }
+
+    @Test
+    public void testAssertNoDotAndSlashes3() throws SqlException {
+        Assert.assertEquals(",", GenericLexer.assertNoDotsAndSlashes(",", 0));
+    }
+
     @Test
     public void testBlockComments() {
         GenericLexer lex = new GenericLexer(64);
@@ -50,166 +80,6 @@ public class GenericLexerTest {
         CharSequence token;
         while ((token = SqlUtil.fetchNext(lex)) != null) {
             sink.put(token);
-        }
-
-        TestUtils.assertEquals("a+'b'*abc", sink);
-    }
-
-    @Test
-    public void testEscapeQuoteWithinStringLiteral() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.defineSymbol("(");
-        lex.defineSymbol(";");
-        lex.defineSymbol(")");
-        lex.of("INSERT INTO tab VALUES ('o''brian');");
-
-        CharSequence tok;
-        final StringSink sink = new StringSink();
-        while ((tok = SqlUtil.fetchNext(lex)) != null) {
-            sink.put(tok).put('\n');
-        }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "tab\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'o''brian'\n" +
-                        ")\n;\n",
-                sink
-        );
-    }
-
-    @Test
-    public void testEscapeDoubleQuoteWithinQuotedIdentifier() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.defineSymbol("(");
-        lex.defineSymbol(";");
-        lex.defineSymbol(")");
-        lex.of("INSERT INTO \"t\"\"ab\" VALUES ('obrian');");
-
-        CharSequence tok;
-        final StringSink sink = new StringSink();
-        while ((tok = SqlUtil.fetchNext(lex)) != null) {
-            sink.put(tok).put('\n');
-        }
-        TestUtils.assertEquals("INSERT\n" +
-                        "INTO\n" +
-                        "\"t\"\"ab\"\n" +
-                        "VALUES\n" +
-                        "(\n" +
-                        "'obrian'\n" +
-                        ")\n;\n",
-                sink
-        );
-    }
-
-    @Test
-    public void testDoubleEscapedQuote() {
-        GenericLexer lex = new GenericLexer(64);
-
-        lex.defineSymbol("(");
-        lex.defineSymbol(";");
-        lex.defineSymbol(")");
-        lex.defineSymbol(",");
-        lex.defineSymbol("/*");
-        lex.defineSymbol("*/");
-        lex.defineSymbol("--");
-
-        lex.of("insert into data values ('{ title: \\\"Title\\\"}');");
-
-        CharSequence tok;
-        final StringSink sink = new StringSink();
-        while ((tok = SqlUtil.fetchNext(lex)) != null) {
-            sink.put(tok).put('\n');
-        }
-        TestUtils.assertEquals("insert\n" +
-                        "into\n" +
-                        "data\n" +
-                        "values\n" +
-                        "(\n" +
-                        "'{ title: \\\"Title\\\"}'\n" +
-                        ")\n" +
-                        ";\n",
-                sink
-        );
-    }
-
-    @Test
-    public void testEdgeSymbol() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol(" ");
-        ts.defineSymbol("+");
-        ts.defineSymbol("(");
-        ts.defineSymbol(")");
-        ts.defineSymbol(",");
-
-        CharSequence content;
-        ts.of(content = "create journal xyz(a int, b int)");
-        StringSink sink = new StringSink();
-        for (CharSequence cs : ts) {
-            sink.put(cs);
-        }
-        TestUtils.assertEquals(content, sink);
-    }
-
-    @Test
-    public void testLineComment() {
-        GenericLexer lex = new GenericLexer(64);
-        lex.defineSymbol("+");
-        lex.defineSymbol("++");
-        lex.defineSymbol("*");
-        lex.defineSymbol("/*");
-        lex.defineSymbol("*/");
-        lex.defineSymbol("--");
-
-        lex.of("a + -- ok, this is a comment \n 'b' * abc");
-
-        StringSink sink = new StringSink();
-        CharSequence token;
-        while ((token = SqlUtil.fetchNext(lex)) != null) {
-            sink.put(token);
-        }
-
-        TestUtils.assertEquals("a+'b'*abc", sink);
-    }
-
-    @Test
-    public void testNullContent() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol(" ");
-        ts.of(null);
-        Assert.assertFalse(ts.iterator().hasNext());
-    }
-
-    @Test
-    public void testQuotedToken() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol("+");
-        ts.defineSymbol("++");
-        ts.defineSymbol("*");
-
-        ts.of("a+\"b\"*abc");
-
-        StringSink sink = new StringSink();
-        for (CharSequence cs : ts) {
-            sink.put(cs);
-        }
-
-        TestUtils.assertEquals("a+\"b\"*abc", sink);
-    }
-
-    @Test
-    public void testSingleQuotedToken() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol("+");
-        ts.defineSymbol("++");
-        ts.defineSymbol("*");
-
-        ts.of("a+'b'*abc");
-
-        StringSink sink = new StringSink();
-        for (CharSequence cs : ts) {
-            sink.put(cs);
         }
 
         TestUtils.assertEquals("a+'b'*abc", sink);
@@ -280,28 +150,47 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testSingleQuotedToken4() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.of("''");
-        Assert.assertEquals("''", ts.next().toString());
+    public void testDoubleEscapedQuote() {
+        GenericLexer lex = new GenericLexer(64);
 
-        ts.of("\"\"");
-        Assert.assertEquals("\"\"", ts.next().toString());
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.defineSymbol(",");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
 
-        ts.of("``");
-        Assert.assertEquals("``", ts.next().toString());
+        lex.of("insert into data values ('{ title: \\\"Title\\\"}');");
+
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
+        }
+        TestUtils.assertEquals("insert\n" +
+                        "into\n" +
+                        "data\n" +
+                        "values\n" +
+                        "(\n" +
+                        "'{ title: \\\"Title\\\"}'\n" +
+                        ")\n" +
+                        ";\n",
+                sink
+        );
     }
 
     @Test
-    public void testSymbolLookup() {
+    public void testEdgeSymbol() {
         GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol(" ");
         ts.defineSymbol("+");
-        ts.defineSymbol("++");
-        ts.defineSymbol("*");
+        ts.defineSymbol("(");
+        ts.defineSymbol(")");
+        ts.defineSymbol(",");
 
         CharSequence content;
-        ts.of(content = "+*a+b++blah-");
-
+        ts.of(content = "create journal xyz(a int, b int)");
         StringSink sink = new StringSink();
         for (CharSequence cs : ts) {
             sink.put(cs);
@@ -310,57 +199,51 @@ public class GenericLexerTest {
     }
 
     @Test
-    public void testUnparse() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol("+");
-        ts.defineSymbol("++");
-        ts.defineSymbol("*");
-        ts.of("+*a+b++blah-");
+    public void testEscapeDoubleQuoteWithinQuotedIdentifier() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO \"t\"\"ab\" VALUES ('obrian');");
 
-        Iterator<CharSequence> it = ts.iterator();
-
-        while (it.hasNext()) {
-            CharSequence e = it.next();
-            ts.unparseLast();
-            CharSequence a = it.next();
-            TestUtils.assertEquals(e, a);
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
         }
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "\"t\"\"ab\"\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'obrian'\n" +
+                        ")\n;\n",
+                sink
+        );
     }
 
     @Test
-    public void testPeek1() {
-        GenericLexer ts = new GenericLexer(64);
-        ts.defineSymbol(",");
-        ts.of("Day-o, day-o");
+    public void testEscapeQuoteWithinStringLiteral() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("(");
+        lex.defineSymbol(";");
+        lex.defineSymbol(")");
+        lex.of("INSERT INTO tab VALUES ('o''brian');");
 
-        Assert.assertEquals("Day-o", ts.next().toString());
-        Assert.assertEquals(",", ts.peek().toString());
-        Assert.assertEquals(",", ts.next().toString());
-        Assert.assertNull(ts.peek());
-        Assert.assertEquals(" ", ts.next().toString());
-        Assert.assertNull(ts.peek());
-        Assert.assertEquals("day-o", ts.next().toString());
-
-        Assert.assertNull(ts.peek());
-    }
-
-    @Test
-    public void testPeek2() {
-        GenericLexer ts = new GenericLexer(64);
-        String fortune = "Daylight come and we want go home";
-        ts.of(fortune);
-
-        Iterator<CharSequence> it = ts.iterator();
-        String[] parts = fortune.split("[ ]");
-        for (int i = 0; i < parts.length; i++) {
-            CharSequence e = it.next();
-            Assert.assertEquals(parts[i], e.toString());
-            if (i < parts.length - 1) {
-                Assert.assertEquals(" ", ts.peek().toString());
-                it.next();
-            }
+        CharSequence tok;
+        final StringSink sink = new StringSink();
+        while ((tok = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(tok).put('\n');
         }
-        Assert.assertNull(ts.peek());
+        TestUtils.assertEquals("INSERT\n" +
+                        "INTO\n" +
+                        "tab\n" +
+                        "VALUES\n" +
+                        "(\n" +
+                        "'o''brian'\n" +
+                        ")\n;\n",
+                sink
+        );
     }
 
     @Test
@@ -373,41 +256,6 @@ public class GenericLexerTest {
         Assert.assertTrue(GenericLexer.immutableOf(tok) instanceof GenericLexer.FloatingSequence);
     }
 
-    @Test(expected = SqlException.class)
-    public void testAssertNoDot1() throws SqlException {
-        GenericLexer.assertNoDots(".", 0);
-    }
-
-    @Test(expected = SqlException.class)
-    public void testAssertNoDot2() throws SqlException {
-        GenericLexer.assertNoDots("..", 0);
-    }
-
-    @Test
-    public void testAssertNoDot3() throws SqlException {
-        Assert.assertEquals(",", GenericLexer.assertNoDots(",", 0));
-    }
-
-    @Test(expected = SqlException.class)
-    public void testAssertNoDotAndSlashes1() throws SqlException {
-        GenericLexer.assertNoDotsAndSlashes(".", 0);
-    }
-
-    @Test(expected = SqlException.class)
-    public void testAssertNoDotAndSlashes2() throws SqlException {
-        GenericLexer.assertNoDotsAndSlashes("/.", 0);
-    }
-
-    @Test
-    public void testAssertNoDotAndSlashes3() throws SqlException {
-        Assert.assertEquals(",", GenericLexer.assertNoDotsAndSlashes(",", 0));
-    }
-
-    @Test
-    public void testUnquote() {
-        Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
-    }
-
     @Test
     public void testImmutablePairOf1() {
         GenericLexer ts = new GenericLexer(64);
@@ -418,61 +266,6 @@ public class GenericLexerTest {
         Assert.assertFalse(ts.hasUnparsed());
         Assert.assertEquals(6, ts.getPosition());
         Assert.assertEquals(6, ts.getTokenHi());
-    }
-
-    @Test
-    public void testStashUnStash() {
-        GenericLexer lexer = new GenericLexer(64);
-        lexer.of("orange blue yellow green");
-        TestUtils.assertEquals("orange", lexer.next());
-
-        CharSequence blue = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
-        int blueLast = lexer.lastTokenPosition();
-        int bluePos = lexer.getPosition();
-
-        TestUtils.assertEquals("blue", blue);
-        Assert.assertEquals(7, blueLast);
-        Assert.assertEquals(12, bluePos);
-
-        CharSequence yellow = SqlUtil.fetchNext(lexer);
-        int yellowLast = lexer.lastTokenPosition();
-        int yellowPos = lexer.getPosition();
-
-        TestUtils.assertEquals("yellow", yellow);
-        Assert.assertEquals(12, yellowLast);
-        Assert.assertEquals(19, yellowPos);
-
-        lexer.unparse(blue, blueLast, bluePos);
-        lexer.unparseLast();
-
-        lexer.stash();
-
-        CharSequence green = SqlUtil.fetchNext(lexer);
-        TestUtils.assertEquals("green", green);
-
-        Assert.assertNull(SqlUtil.fetchNext(lexer));
-
-        lexer.unstash();
-
-        blue = SqlUtil.fetchNext(lexer);
-        blueLast = lexer.lastTokenPosition();
-        bluePos = lexer.getPosition();
-
-        TestUtils.assertEquals("blue", blue);
-        Assert.assertEquals(7, blueLast);
-        Assert.assertEquals(12, bluePos);
-
-        yellow = SqlUtil.fetchNext(lexer);
-        yellowLast = lexer.lastTokenPosition();
-        yellowPos = lexer.getPosition();
-
-        TestUtils.assertEquals("yellow", yellow);
-        Assert.assertEquals(12, yellowLast);
-        Assert.assertEquals(19, yellowPos);
-
-
-        green = SqlUtil.fetchNext(lexer);
-        TestUtils.assertEquals("green", green);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -552,5 +345,212 @@ public class GenericLexerTest {
         }
         pair.clear();
         Assert.assertEquals(pair.toString(), sink.toString());
+    }
+
+    @Test
+    public void testLineComment() {
+        GenericLexer lex = new GenericLexer(64);
+        lex.defineSymbol("+");
+        lex.defineSymbol("++");
+        lex.defineSymbol("*");
+        lex.defineSymbol("/*");
+        lex.defineSymbol("*/");
+        lex.defineSymbol("--");
+
+        lex.of("a + -- ok, this is a comment \n 'b' * abc");
+
+        StringSink sink = new StringSink();
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
+    public void testNullContent() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol(" ");
+        ts.of(null);
+        Assert.assertFalse(ts.iterator().hasNext());
+    }
+
+    @Test
+    public void testPeek1() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol(",");
+        ts.of("Day-o, day-o");
+
+        Assert.assertEquals("Day-o", ts.next().toString());
+        Assert.assertEquals(",", ts.peek().toString());
+        Assert.assertEquals(",", ts.next().toString());
+        Assert.assertNull(ts.peek());
+        Assert.assertEquals(" ", ts.next().toString());
+        Assert.assertNull(ts.peek());
+        Assert.assertEquals("day-o", ts.next().toString());
+
+        Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testPeek2() {
+        GenericLexer ts = new GenericLexer(64);
+        String fortune = "Daylight come and we want go home";
+        ts.of(fortune);
+
+        Iterator<CharSequence> it = ts.iterator();
+        String[] parts = fortune.split("[ ]");
+        for (int i = 0; i < parts.length; i++) {
+            CharSequence e = it.next();
+            Assert.assertEquals(parts[i], e.toString());
+            if (i < parts.length - 1) {
+                Assert.assertEquals(" ", ts.peek().toString());
+                it.next();
+            }
+        }
+        Assert.assertNull(ts.peek());
+    }
+
+    @Test
+    public void testQuotedToken() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+
+        ts.of("a+\"b\"*abc");
+
+        StringSink sink = new StringSink();
+        for (CharSequence cs : ts) {
+            sink.put(cs);
+        }
+
+        TestUtils.assertEquals("a+\"b\"*abc", sink);
+    }
+
+    @Test
+    public void testSingleQuotedToken() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+
+        ts.of("a+'b'*abc");
+
+        StringSink sink = new StringSink();
+        for (CharSequence cs : ts) {
+            sink.put(cs);
+        }
+
+        TestUtils.assertEquals("a+'b'*abc", sink);
+    }
+
+    @Test
+    public void testSingleQuotedToken4() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.of("''");
+        Assert.assertEquals("''", ts.next().toString());
+
+        ts.of("\"\"");
+        Assert.assertEquals("\"\"", ts.next().toString());
+
+        ts.of("``");
+        Assert.assertEquals("``", ts.next().toString());
+    }
+
+    @Test
+    public void testStashUnStash() {
+        GenericLexer lexer = new GenericLexer(64);
+        lexer.of("orange blue yellow green");
+        TestUtils.assertEquals("orange", lexer.next());
+
+        CharSequence blue = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+        int blueLast = lexer.lastTokenPosition();
+        int bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        CharSequence yellow = SqlUtil.fetchNext(lexer);
+        int yellowLast = lexer.lastTokenPosition();
+        int yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+        lexer.unparse(blue, blueLast, bluePos);
+        lexer.unparseLast();
+
+        lexer.stash();
+
+        CharSequence green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
+
+        Assert.assertNull(SqlUtil.fetchNext(lexer));
+
+        lexer.unstash();
+
+        blue = SqlUtil.fetchNext(lexer);
+        blueLast = lexer.lastTokenPosition();
+        bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        yellow = SqlUtil.fetchNext(lexer);
+        yellowLast = lexer.lastTokenPosition();
+        yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+
+        green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
+    }
+
+    @Test
+    public void testSymbolLookup() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+
+        CharSequence content;
+        ts.of(content = "+*a+b++blah-");
+
+        StringSink sink = new StringSink();
+        for (CharSequence cs : ts) {
+            sink.put(cs);
+        }
+        TestUtils.assertEquals(content, sink);
+    }
+
+    @Test
+    public void testUnparse() {
+        GenericLexer ts = new GenericLexer(64);
+        ts.defineSymbol("+");
+        ts.defineSymbol("++");
+        ts.defineSymbol("*");
+        ts.of("+*a+b++blah-");
+
+        Iterator<CharSequence> it = ts.iterator();
+
+        while (it.hasNext()) {
+            CharSequence e = it.next();
+            ts.unparseLast();
+            CharSequence a = it.next();
+            TestUtils.assertEquals(e, a);
+        }
+    }
+
+    @Test
+    public void testUnquote() {
+        Assert.assertEquals(GenericLexer.unquote("QuestDB"), GenericLexer.unquote("'QuestDB'"));
     }
 }

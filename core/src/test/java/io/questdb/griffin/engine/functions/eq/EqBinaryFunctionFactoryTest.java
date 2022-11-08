@@ -34,8 +34,8 @@ public class EqBinaryFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testAll() throws SqlException {
-        byte [] bin1 = "dabale arroz a la zorra el abad".getBytes(Files.UTF_8);
-        byte [] bin2 = "the lazy fox jumped over the brown dog".getBytes(Files.UTF_8);
+        byte[] bin1 = "dabale arroz a la zorra el abad".getBytes(Files.UTF_8);
+        byte[] bin2 = "the lazy fox jumped over the brown dog".getBytes(Files.UTF_8);
         call(bin1, bin1).andAssert(true);
         call(bin1, bin2).andAssert(false);
         call(null, null).andAssert(true);

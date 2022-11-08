@@ -29,23 +29,18 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.Unsafe;
 
 public final class FastMapCursor implements RecordCursor {
+    private final FastMap map;
     private final FastMapRecord recordA;
     private final MapRecord recordB;
-    private final FastMap map;
-    private int remaining;
     private long address;
-    private long topAddress;
     private int count;
+    private int remaining;
+    private long topAddress;
 
     FastMapCursor(FastMapRecord record, FastMap map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
-    }
-
-    @Override
-    public long size() {
-        return map.size();
     }
 
     @Override
@@ -56,6 +51,11 @@ public final class FastMapCursor implements RecordCursor {
     @Override
     public MapRecord getRecord() {
         return recordA;
+    }
+
+    @Override
+    public MapRecord getRecordB() {
+        return recordB;
     }
 
     @Override
@@ -71,14 +71,14 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
-    public MapRecord getRecordB() {
-        return recordB;
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
         assert record instanceof FastMapRecord;
         ((FastMapRecord) record).of(atRowId);
+    }
+
+    @Override
+    public long size() {
+        return map.size();
     }
 
     @Override

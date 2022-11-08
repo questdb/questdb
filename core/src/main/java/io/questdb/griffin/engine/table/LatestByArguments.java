@@ -29,13 +29,13 @@ import io.questdb.std.Unsafe;
 
 public final class LatestByArguments {
     public static final long MEMORY_SIZE = 7 * 8;
-    private static final long KEY_LO_OFFSET = 0;
+    private static final long FILTERED_SIZE_OFFSET = 6 * 8;
+    private static final long HASHES_ADDRESS_OFFSET = 5 * 8;
     private static final long KEY_HI_OFFSET = 8;
+    private static final long KEY_LO_OFFSET = 0;
     private static final long ROWS_ADDRESS_OFFSET = 2 * 8;
     private static final long ROWS_CAPACITY_OFFSET = 3 * 8;
     private static final long ROWS_SIZE_OFFSET = 4 * 8;
-    private static final long HASHES_ADDRESS_OFFSET = 5 * 8;
-    private static final long FILTERED_SIZE_OFFSET = 6 * 8;
 
     public static long allocateMemory() {
         return Unsafe.calloc(MEMORY_SIZE, MemoryTag.NATIVE_FUNC_RSS);
@@ -47,10 +47,6 @@ public final class LatestByArguments {
 
     public static long getFilteredSize(long address) {
         return Unsafe.getUnsafe().getLong(address + FILTERED_SIZE_OFFSET);
-    }
-
-    public static void setFilteredSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
     }
 
     public static long getHashesAddress(long address) {
@@ -83,6 +79,10 @@ public final class LatestByArguments {
 
     public static void releaseMemoryArray(long address, int elements) {
         Unsafe.free(address, MEMORY_SIZE * elements, MemoryTag.NATIVE_FUNC_RSS);
+    }
+
+    public static void setFilteredSize(long address, long size) {
+        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
     }
 
     public static void setHashesAddress(long address, long addr) {

@@ -36,6 +36,46 @@ import org.junit.Test;
 
 public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
+    public void testEmptyFillText() throws SqlException {
+        call("abc", 4, "").andAssert(null);
+        call("pqrs", 10, "").andAssert(null);
+    }
+
+    @Test
+    public void testFailsOnBufferLengthAboveLimit() throws SqlException {
+        try {
+            call("foo", Integer.MAX_VALUE, "bar").andAssert(null);
+            Assert.fail();
+        } catch (CairoException e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for rpad(SIS)"));
+        }
+    }
+
+    @Test
+    public void testNaNLength() throws SqlException {
+        call("abc", Numbers.INT_NaN, "xyz").andAssert(null);
+        call("pqrs", Numbers.INT_NaN, "xyz").andAssert(null);
+    }
+
+    @Test
+    public void testNegativeLength() throws SqlException {
+        call("abc", -1, "hello").andAssert(null);
+        call("pqrs", -4, "hello").andAssert(null);
+    }
+
+    @Test
+    public void testNullFillText() throws SqlException {
+        call("abc", 4, null).andAssert(null);
+        call("pqrs", 10, null).andAssert(null);
+    }
+
+    @Test
+    public void testNullStr() throws SqlException {
+        call(null, 3, "hello").andAssert(null);
+        call(null, 4, "hello").andAssert(null);
+    }
+
+    @Test
     public void testRPadStr() throws SqlException {
         call("abc", 5, "x").andAssert("abcxx");
         call("xyz", 10, "hello").andAssert("xyzhellohe");
@@ -52,46 +92,6 @@ public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testZeroLength() throws SqlException {
         call("abc", 0, "hello").andAssert("");
         call("pqrs", 0, "hello").andAssert("");
-    }
-
-    @Test
-    public void testNegativeLength() throws SqlException {
-        call("abc", -1, "hello").andAssert(null);
-        call("pqrs", -4, "hello").andAssert(null);
-    }
-
-    @Test
-    public void testNullStr() throws SqlException {
-        call(null, 3, "hello").andAssert(null);
-        call(null, 4, "hello").andAssert(null);
-    }
-
-    @Test
-    public void testNullFillText() throws SqlException {
-        call("abc", 4, null).andAssert(null);
-        call("pqrs", 10, null).andAssert(null);
-    }
-
-    @Test
-    public void testEmptyFillText() throws SqlException {
-        call("abc", 4, "").andAssert(null);
-        call("pqrs", 10, "").andAssert(null);
-    }
-
-    @Test
-    public void testNaNLength() throws SqlException {
-        call("abc", Numbers.INT_NaN, "xyz").andAssert(null);
-        call("pqrs", Numbers.INT_NaN, "xyz").andAssert(null);
-    }
-
-    @Test
-    public void testFailsOnBufferLengthAboveLimit() throws SqlException {
-        try {
-            call("foo", Integer.MAX_VALUE, "bar").andAssert(null);
-            Assert.fail();
-        } catch (CairoException e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for rpad(SIS)"));
-        }
     }
 
     @Override

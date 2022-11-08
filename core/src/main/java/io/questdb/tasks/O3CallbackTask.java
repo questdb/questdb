@@ -29,15 +29,19 @@ import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.AbstractLockable;
 
 public class O3CallbackTask extends AbstractLockable {
-    private CountDownLatchSPI countDownLatchSPI;
     private int columnIndex;
     private int columnType;
+    private CountDownLatchSPI countDownLatchSPI;
     private long mergedTimestampsAddr;
     private long valueCount;
     private TableWriter.O3ColumnUpdateMethod writerCallbackMethod;
 
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    public int getColumnType() {
+        return columnType;
     }
 
     public CountDownLatchSPI getCountDownLatchSPI() {
@@ -48,16 +52,12 @@ public class O3CallbackTask extends AbstractLockable {
         return mergedTimestampsAddr;
     }
 
-    public int getColumnType() {
-        return columnType;
+    public long getValueCount() {
+        return valueCount;
     }
 
     public TableWriter.O3ColumnUpdateMethod getWriterCallbackMethod() {
         return writerCallbackMethod;
-    }
-
-    public long getValueCount() {
-        return valueCount;
     }
 
     public void of(

@@ -29,9 +29,14 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new StartsWithStrFunctionFactory();
+    @Test
+    public void testNullOrEmptyString() throws Exception {
+        call(null, null).andAssert(false);
+        call("test", null).andAssert(false);
+        call(null, "test").andAssert(false);
+        call("", "test").andAssert(false);
+        call("test", "").andAssert(true);
+        call("", "").andAssert(true);
     }
 
     @Test
@@ -54,13 +59,8 @@ public class StartsWithStrFunctionFactoryTest extends AbstractFunctionFactoryTes
         assertQuery("col\ntrue\n", "select starts_with('~!@#$%^&*()_-:<>?,./', '~!@#') col");
     }
 
-    @Test
-    public void testNullOrEmptyString() throws Exception {
-        call(null, null).andAssert(false);
-        call("test", null).andAssert(false);
-        call(null, "test").andAssert(false);
-        call("", "test").andAssert(false);
-        call("test", "").andAssert(true);
-        call("", "").andAssert(true);
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new StartsWithStrFunctionFactory();
     }
 }

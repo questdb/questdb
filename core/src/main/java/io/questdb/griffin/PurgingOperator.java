@@ -36,16 +36,16 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
 public abstract class PurgingOperator {
-    private final Log log;
-    protected final FilesFacade ff;
+    protected final LongList cleanupColumnVersions = new LongList();
     protected final CairoConfiguration configuration;
+    protected final FilesFacade ff;
     protected final MessageBus messageBus;
-    protected final TableWriter tableWriter;
     protected final Path path;
     protected final int rootLen;
+    protected final TableWriter tableWriter;
     protected final IntList updateColumnIndexes = new IntList();
-    protected final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
+    private final Log log;
 
     protected PurgingOperator(
             Log log,

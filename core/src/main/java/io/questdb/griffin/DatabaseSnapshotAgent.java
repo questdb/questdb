@@ -43,9 +43,8 @@ import java.util.concurrent.locks.ReentrantLock;
 public class DatabaseSnapshotAgent implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgent.class);
-
-    private final CairoEngine engine;
     private final CairoConfiguration configuration;
+    private final CairoEngine engine;
     private final FilesFacade ff;
     private final ReentrantLock lock = new ReentrantLock(); // protects below fields
     private final Path path = new Path();
@@ -56,32 +55,6 @@ public class DatabaseSnapshotAgent implements Closeable {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
-    }
-
-    @Override
-    public void close() {
-        lock.lock();
-        try {
-            Misc.free(path);
-            unsafeReleaseReaders();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @TestOnly
-    public void clear() {
-        lock.lock();
-        try {
-            unsafeReleaseReaders();
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private void unsafeReleaseReaders() {
-        Misc.freeObjList(snapshotReaders);
-        snapshotReaders.clear();
     }
 
     public static void recoverSnapshot(CairoEngine engine) {
@@ -212,6 +185,27 @@ public class DatabaseSnapshotAgent implements Closeable {
         }
     }
 
+    @TestOnly
+    public void clear() {
+        lock.lock();
+        try {
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void close() {
+        lock.lock();
+        try {
+            Misc.free(path);
+            unsafeReleaseReaders();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public void completeSnapshot() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another snapshot command in progress");
@@ -332,5 +326,10 @@ public class DatabaseSnapshotAgent implements Closeable {
         } finally {
             lock.unlock();
         }
+    }
+
+    private void unsafeReleaseReaders() {
+        Misc.freeObjList(snapshotReaders);
+        snapshotReaders.clear();
     }
 }

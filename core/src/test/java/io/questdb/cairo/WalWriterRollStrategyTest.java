@@ -52,36 +52,6 @@ public class WalWriterRollStrategyTest {
     }
 
     @Test
-    public void testSetMaxSegmentSize() {
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
-        rollStrategy.setMaxSegmentSize(100L);
-        rollStrategy.setMaxRowCount(Long.MAX_VALUE);
-        rollStrategy.setRollInterval(Long.MAX_VALUE);
-
-        assertTrue(rollStrategy.isMaxSegmentSizeSet());
-        assertFalse(rollStrategy.isMaxRowCountSet());
-        assertFalse(rollStrategy.isRollIntervalSet());
-
-        assertFalse(rollStrategy.shouldRoll(99L, 0L, 0L));
-        assertTrue(rollStrategy.shouldRoll(100L, 0L, 0L));
-        assertTrue(rollStrategy.shouldRoll(101L, 0L, 0L));
-
-        try {
-            rollStrategy.setMaxSegmentSize(0);
-            Assert.fail("Exception expected");
-        } catch(CairoException e) {
-            assertEquals("[-100] Max segment size cannot be less than 1 byte, maxSegmentSize=0", e.getMessage());
-        }
-
-        try {
-            rollStrategy.setMaxSegmentSize(-1);
-            Assert.fail("Exception expected");
-        } catch(CairoException e) {
-            assertEquals("[-100] Max segment size cannot be less than 1 byte, maxSegmentSize=-1", e.getMessage());
-        }
-    }
-
-    @Test
     public void testSetMaxRowCount() {
         final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
         rollStrategy.setMaxSegmentSize(Long.MAX_VALUE);
@@ -99,15 +69,45 @@ public class WalWriterRollStrategyTest {
         try {
             rollStrategy.setMaxRowCount(0);
             Assert.fail("Exception expected");
-        } catch(CairoException e) {
+        } catch (CairoException e) {
             assertEquals("[-100] Max number of rows cannot be less than 1, maxRowCount=0", e.getMessage());
         }
 
         try {
             rollStrategy.setMaxRowCount(-1);
             Assert.fail("Exception expected");
-        } catch(CairoException e) {
+        } catch (CairoException e) {
             assertEquals("[-100] Max number of rows cannot be less than 1, maxRowCount=-1", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetMaxSegmentSize() {
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxSegmentSize(100L);
+        rollStrategy.setMaxRowCount(Long.MAX_VALUE);
+        rollStrategy.setRollInterval(Long.MAX_VALUE);
+
+        assertTrue(rollStrategy.isMaxSegmentSizeSet());
+        assertFalse(rollStrategy.isMaxRowCountSet());
+        assertFalse(rollStrategy.isRollIntervalSet());
+
+        assertFalse(rollStrategy.shouldRoll(99L, 0L, 0L));
+        assertTrue(rollStrategy.shouldRoll(100L, 0L, 0L));
+        assertTrue(rollStrategy.shouldRoll(101L, 0L, 0L));
+
+        try {
+            rollStrategy.setMaxSegmentSize(0);
+            Assert.fail("Exception expected");
+        } catch (CairoException e) {
+            assertEquals("[-100] Max segment size cannot be less than 1 byte, maxSegmentSize=0", e.getMessage());
+        }
+
+        try {
+            rollStrategy.setMaxSegmentSize(-1);
+            Assert.fail("Exception expected");
+        } catch (CairoException e) {
+            assertEquals("[-100] Max segment size cannot be less than 1 byte, maxSegmentSize=-1", e.getMessage());
         }
     }
 
@@ -129,14 +129,14 @@ public class WalWriterRollStrategyTest {
         try {
             rollStrategy.setRollInterval(0);
             Assert.fail("Exception expected");
-        } catch(CairoException e) {
+        } catch (CairoException e) {
             assertEquals("[-100] Roll interval cannot be less than 1 millisecond, rollInterval=0", e.getMessage());
         }
 
         try {
             rollStrategy.setRollInterval(-1);
             Assert.fail("Exception expected");
-        } catch(CairoException e) {
+        } catch (CairoException e) {
             assertEquals("[-100] Roll interval cannot be less than 1 millisecond, rollInterval=-1", e.getMessage());
         }
     }

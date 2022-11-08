@@ -35,61 +35,24 @@ import io.questdb.std.Chars;
 import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private RecordCursorFactory recordCursorFactory;
-    private InsertOperation insertOperation;
-    private UpdateOperation updateOperation;
-    private AlterOperation alterOperation;
-    private TextLoader textLoader;
-    private short type;
-    private SqlExecutionContext sqlExecutionContext;
+    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
-    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
-
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
+    private AlterOperation alterOperation;
+    private InsertOperation insertOperation;
+    private RecordCursorFactory recordCursorFactory;
+    private SqlExecutionContext sqlExecutionContext;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
+    private TextLoader textLoader;
+    private short type;
+    private UpdateOperation updateOperation;
 
     public CompiledQueryImpl(CairoEngine engine) {
         updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
         alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        return recordCursorFactory;
-    }
-
-    @Override
-    public InsertOperation getInsertOperation() {
-        return insertOperation;
-    }
-
-    @Override
-    public TextLoader getTextLoader() {
-        return textLoader;
-    }
-
-    @Override
-    public AlterOperation getAlterOperation() {
-        return alterOperation;
-    }
-
-    @Override
-    public short getType() {
-        return type;
-    }
-
-    @Override
-    public UpdateOperation getUpdateOperation() {
-        return updateOperation;
-    }
-
-    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
-        this.updateOperation = updateOperation;
-        this.type = UPDATE;
-        return this;
     }
 
     @Override
@@ -106,6 +69,16 @@ public class CompiledQueryImpl implements CompiledQuery {
         }
     }
 
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
+
+    @Override
+    public AlterOperation getAlterOperation() {
+        return alterOperation;
+    }
+
     @SuppressWarnings("unchecked")
     @Override
     public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
@@ -117,6 +90,11 @@ public class CompiledQueryImpl implements CompiledQuery {
             default:
                 return null;
         }
+    }
+
+    @Override
+    public InsertOperation getInsertOperation() {
+        return insertOperation;
     }
 
     @SuppressWarnings("unchecked")
@@ -135,13 +113,28 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
+    public RecordCursorFactory getRecordCursorFactory() {
+        return recordCursorFactory;
     }
 
     @Override
     public CharSequence getStatementName() {
         return statementName;
+    }
+
+    @Override
+    public TextLoader getTextLoader() {
+        return textLoader;
+    }
+
+    @Override
+    public short getType() {
+        return type;
+    }
+
+    @Override
+    public UpdateOperation getUpdateOperation() {
+        return updateOperation;
     }
 
     public CompiledQuery of(short type) {
@@ -158,13 +151,15 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
-        this.sqlExecutionContext = sqlExecutionContext;
+    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
+        this.updateOperation = updateOperation;
+        this.type = UPDATE;
         return this;
     }
 
-    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory);
+    public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
+        return this;
     }
 
     private CompiledQuery of(short type, RecordCursorFactory factory) {
@@ -172,6 +167,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
         return this;
+    }
+
+    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
+        return of(SELECT, recordCursorFactory);
     }
 
     CompiledQuery ofAlter(AlterOperation statement) {
@@ -182,6 +181,14 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofBackupTable() {
         return of(BACKUP_TABLE);
+    }
+
+    CompiledQuery ofBegin() {
+        return of(BEGIN);
+    }
+
+    CompiledQuery ofCommit() {
+        return of(COMMIT);
     }
 
     CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
@@ -204,6 +211,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         of(CREATE_TABLE_AS_SELECT);
         this.affectedRowsCount = affectedRowsCount;
         return this;
+    }
+
+    CompiledQuery ofDeallocate(CharSequence statementName) {
+        this.statementName = Chars.toString(statementName);
+        return of(DEALLOCATE);
     }
 
     CompiledQuery ofDrop() {
@@ -229,20 +241,20 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(REPAIR);
     }
 
+    CompiledQuery ofRollback() {
+        return of(ROLLBACK);
+    }
+
     CompiledQuery ofSet() {
         return of(SET);
     }
 
-    CompiledQuery ofBegin() {
-        return of(BEGIN);
+    CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
     }
 
-    CompiledQuery ofCommit() {
-        return of(COMMIT);
-    }
-
-    CompiledQuery ofRollback() {
-        return of(ROLLBACK);
+    CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
     }
 
     CompiledQuery ofTruncate() {
@@ -251,18 +263,5 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofVacuum() {
         return of(VACUUM);
-    }
-
-    CompiledQuery ofSnapshotPrepare() {
-        return of(SNAPSHOT_DB_PREPARE);
-    }
-
-    CompiledQuery ofSnapshotComplete() {
-        return of(SNAPSHOT_DB_COMPLETE);
-    }
-
-    CompiledQuery ofDeallocate(CharSequence statementName) {
-        this.statementName = Chars.toString(statementName);
-        return of(DEALLOCATE);
     }
 }

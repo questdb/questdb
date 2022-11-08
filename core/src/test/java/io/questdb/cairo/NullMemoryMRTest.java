@@ -38,11 +38,6 @@ public class NullMemoryMRTest {
     }
 
     @Test
-    public void isDeleted() {
-        Assert.assertTrue(NullMemoryMR.INSTANCE.isDeleted());
-    }
-
-    @Test
     public void getBin() {
         Assert.assertNull(NullMemoryMR.INSTANCE.getBin(1234));
     }
@@ -60,6 +55,11 @@ public class NullMemoryMRTest {
     @Test
     public void getByte() {
         Assert.assertEquals(0, NullMemoryMR.INSTANCE.getByte(1234));
+    }
+
+    @Test
+    public void getChar() {
+        Assert.assertEquals(0, NullMemoryMR.INSTANCE.getChar(1234));
     }
 
     @Test
@@ -83,13 +83,18 @@ public class NullMemoryMRTest {
     }
 
     @Test
-    public void getChar() {
-        Assert.assertEquals(0, NullMemoryMR.INSTANCE.getChar(1234));
+    public void getLong() {
+        Assert.assertEquals(Numbers.LONG_NaN, NullMemoryMR.INSTANCE.getLong(1234));
     }
 
     @Test
-    public void getLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, NullMemoryMR.INSTANCE.getLong(1234));
+    public void getLong256A() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256A(1234));
+    }
+
+    @Test
+    public void getLong256B() {
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256B(1234));
     }
 
     @Test
@@ -108,25 +113,13 @@ public class NullMemoryMRTest {
     }
 
     @Test
-    public void getLong256A() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256A(1234));
-    }
-
-    @Test
-    public void getLong256B() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256B(1234));
-    }
-
-    @Test
     public void getStrLen() {
         Assert.assertEquals(TableUtils.NULL_LEN, NullMemoryMR.INSTANCE.getStrLen(1234));
     }
 
     @Test
-    public void testGrow() {
-        // this method does nothing. Make sure it doesn't corrupt state of singleton and
-        // doesn't throw exception
-        NullMemoryMR.INSTANCE.extend(100000);
+    public void isDeleted() {
+        Assert.assertTrue(NullMemoryMR.INSTANCE.isDeleted());
     }
 
     @Test
@@ -137,5 +130,12 @@ public class NullMemoryMRTest {
     @Test
     public void testDeleted() {
         Assert.assertTrue(NullMemoryMR.INSTANCE.isDeleted());
+    }
+
+    @Test
+    public void testGrow() {
+        // this method does nothing. Make sure it doesn't corrupt state of singleton and
+        // doesn't throw exception
+        NullMemoryMR.INSTANCE.extend(100000);
     }
 }

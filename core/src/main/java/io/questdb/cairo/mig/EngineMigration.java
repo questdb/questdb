@@ -50,7 +50,7 @@ public class EngineMigration {
     public static void migrateEngineTo(CairoEngine engine, int latestVersion, boolean force) {
         final FilesFacade ff = engine.getConfiguration().getFilesFacade();
         final CairoConfiguration configuration = engine.getConfiguration();
-        int tempMemSize = Long.BYTES;
+        int tempMemSize = 8;
         long mem = Unsafe.malloc(tempMemSize, MemoryTag.NATIVE_MIG);
 
         try (

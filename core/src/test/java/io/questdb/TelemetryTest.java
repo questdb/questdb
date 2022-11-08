@@ -77,6 +77,42 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryConfigUpgrade() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                compiler.compile(
+                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
+                        sqlExecutionContext);
+                InsertOperation ist = compiler.compile(
+                        "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
+                        sqlExecutionContext).getInsertOperation();
+                InsertMethod im = ist.createMethod(sqlExecutionContext);
+                im.execute();
+                im.commit();
+                im.close();
+                TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+                String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
+                        "id	LONG256	false	0	false	0	false\n" +
+                        "enabled	BOOLEAN	false	0	false	0	false\n" +
+                        "version	SYMBOL	false	256	true	128	false\n" +
+                        "os	SYMBOL	false	256	true	128	false\n" +
+                        "package	SYMBOL	false	256	true	128	false\n";
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryJob.configTableName, sink, expectedSql);
+                expectedSql = "id\tversion\n" +
+                        "0x01\t\n" +
+                        "0x01\tUnknown Version\n";
+                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryJob.configTableName, sink,
+                        expectedSql);
+                Misc.free(telemetryJob);
+            }
+
+        });
+    }
+
+    @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -120,48 +156,12 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTelemetryConfigUpgrade() throws Exception {
-       TestUtils.assertMemoryLeak(() -> {
-           try (
-                   CairoEngine engine = new CairoEngine(configuration);
-                   SqlCompiler compiler = new SqlCompiler(engine);
-                   SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-               compiler.compile(
-                       "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
-                       sqlExecutionContext);
-               InsertOperation ist = compiler.compile(
-                       "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
-                       sqlExecutionContext).getInsertOperation();
-               InsertMethod im = ist.createMethod(sqlExecutionContext);
-               im.execute();
-               im.commit();
-               im.close();
-               TelemetryJob telemetryJob = new TelemetryJob(engine, null);
-               String expectedSql = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated\n" +
-                       "id	LONG256	false	0	false	0	false\n" +
-                       "enabled	BOOLEAN	false	0	false	0	false\n" +
-                       "version	SYMBOL	false	256	true	128	false\n" +
-                       "os	SYMBOL	false	256	true	128	false\n" +
-                       "package	SYMBOL	false	256	true	128	false\n";
-               TestUtils.assertSql(compiler, sqlExecutionContext, "SHOW COLUMNS FROM " + TelemetryJob.configTableName, sink, expectedSql);
-               expectedSql = "id\tversion\n" +
-                       "0x01\t\n" +
-                       "0x01\tUnknown Version\n";
-               TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT id, version FROM " + TelemetryJob.configTableName, sink,
-                       expectedSql);
-               Misc.free(telemetryJob);
-           }
-
-       });
-    }
-
-    @Test
     public void testTelemetryUpdatesVersion() throws Exception {
         final AtomicReference<String> refVersion = new AtomicReference<>();
         BuildInformation buildInformation = new BuildInformation() {
             @Override
-            public CharSequence getQuestDbVersion() {
-                return refVersion.get();
+            public CharSequence getCommitHash() {
+                return null;
             }
 
             @Override
@@ -170,8 +170,8 @@ public class TelemetryTest extends AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getCommitHash() {
-                return null;
+            public CharSequence getQuestDbVersion() {
+                return refVersion.get();
             }
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {

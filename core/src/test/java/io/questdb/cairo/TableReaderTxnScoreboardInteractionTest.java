@@ -148,6 +148,14 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
         });
     }
 
+    private static void addRow(TableWriter w) {
+        TableWriter.Row r = w.newRow();
+        r.putByte(0, (byte) 9);
+        r.putShort(1, (short) 89);
+        r.append();
+        w.commit();
+    }
+
     private static void createTable() {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             model
@@ -155,13 +163,5 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     .col("b", ColumnType.SHORT);
             CairoTestUtils.create(model);
         }
-    }
-
-    private static void addRow(TableWriter w) {
-        TableWriter.Row r = w.newRow();
-        r.putByte(0, (byte) 9);
-        r.putShort(1, (short) 89);
-        r.append();
-        w.commit();
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

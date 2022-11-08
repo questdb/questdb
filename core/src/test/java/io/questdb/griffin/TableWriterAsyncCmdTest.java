@@ -45,9 +45,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cairo.sql.OperationFuture.QUERY_NO_RESPONSE;
+import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 
 public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
 
@@ -408,26 +408,6 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCommandQueueReused() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table product (timestamp timestamp)", sqlExecutionContext);
-
-            // Block event queue with stale sequence
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
-                for (int i = 0; i < 2 * engineEventQueue; i++) {
-                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
-                    try (OperationFuture fut = cc.execute(commandReplySequence)) {
-                        writer.tick();
-                        fut.await();
-                    }
-                }
-
-                Assert.assertEquals(2L * engineEventQueue + 1, writer.getMetadata().getColumnCount());
-            }
-        });
-    }
-
-    @Test
     public void testCommandQueueBufferOverflow() throws Exception {
         long tmpWriterCommandQueueSlotSize = writerCommandQueueSlotSize;
         writerCommandQueueSlotSize = 4L;
@@ -446,6 +426,26 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
             }
         });
         writerCommandQueueSlotSize = tmpWriterCommandQueueSlotSize;
+    }
+
+    @Test
+    public void testCommandQueueReused() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table product (timestamp timestamp)", sqlExecutionContext);
+
+            // Block event queue with stale sequence
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
+                for (int i = 0; i < 2 * engineEventQueue; i++) {
+                    CompiledQuery cc = compiler.compile("ALTER TABLE product add column column" + i + " int", sqlExecutionContext);
+                    try (OperationFuture fut = cc.execute(commandReplySequence)) {
+                        writer.tick();
+                        fut.await();
+                    }
+                }
+
+                Assert.assertEquals(2L * engineEventQueue + 1, writer.getMetadata().getColumnCount());
+            }
+        });
     }
 
     @Test

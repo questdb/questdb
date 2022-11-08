@@ -83,17 +83,6 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    protected void _close() {
-        cursor.close();
-        super._close();
-    }
-
-    @Override
-    public AbstractNoRecordSampleByCursor getRawCursor() {
-        return cursor;
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -108,5 +97,16 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Misc.free(cursor);
             throw ex;
         }
+    }
+
+    @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
+    }
+
+    @Override
+    protected void _close() {
+        cursor.close();
+        super._close();
     }
 }

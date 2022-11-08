@@ -25,36 +25,27 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final RecordMetadata METADATA;
-    private static final int TOTAL_COMMITS_COLUMN_INDEX = 0;
-    private static final int O3_COMMITS_COLUMN_INDEX = 1;
-    private static final int ROLLBACKS_COLUMN_INDEX = 2;
     private static final int COMMITTED_ROWS_COLUMN_INDEX = 3;
-    private static final int PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX = 4;
-    private static final int TOTAL_NUMBER_OF_METRIC = PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX + 1;
+    private static final RecordMetadata METADATA;
     private static final long METRICS_DISABLED_VALUE = -1;
+    private static final int O3_COMMITS_COLUMN_INDEX = 1;
+    private static final int PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX = 4;
+    private static final int ROLLBACKS_COLUMN_INDEX = 2;
+    private static final int TOTAL_COMMITS_COLUMN_INDEX = 0;
+    private static final int TOTAL_NUMBER_OF_METRIC = PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX + 1;
     private static final String[] KEYS = new String[TOTAL_NUMBER_OF_METRIC];
     private final StringLongTuplesRecordCursor cursor = new StringLongTuplesRecordCursor();
     private final long[] values = new long[TOTAL_NUMBER_OF_METRIC];
 
     public TableWriterMetricsRecordCursorFactory() {
         super(METADATA);
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
     }
 
     @Override
@@ -76,6 +67,11 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
         }
         cursor.of(KEYS, values);
         return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     static {
