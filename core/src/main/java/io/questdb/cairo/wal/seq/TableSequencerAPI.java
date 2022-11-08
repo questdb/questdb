@@ -303,6 +303,11 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @TestOnly
+    public void resetNameRegistry() {
+        tableNameRegistry.reset(configuration);
+    }
+
+    @TestOnly
     public void setDistressed(String systemTableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
             try {

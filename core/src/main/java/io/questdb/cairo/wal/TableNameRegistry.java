@@ -31,11 +31,9 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -65,7 +63,7 @@ public class TableNameRegistry implements Closeable {
         reverseWalTableNameRegistry.clear();
         nonWalSystemTableNames.clear();
         reverseNonWalTableNameRegistry.clear();
-        tableNameMemory.close(true);
+        Misc.free(tableNameMemory);
     }
 
     public String getDefaultSystemTableName(CharSequence tableName) {
@@ -213,6 +211,17 @@ public class TableNameRegistry implements Closeable {
             return newTableNameStr;
         } else {
             throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");
+        }
+    }
+
+    @TestOnly
+    public void reset(CairoConfiguration configuration) {
+        walSystemTableNameRegistry.clear();
+        reverseWalTableNameRegistry.clear();
+        tableNameMemory.jumpTo(0L);
+        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$()) {
+            tableNameMemory.close();
+            tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_TABLE_WAL_WRITER);
         }
     }
 
