@@ -95,7 +95,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
     private MemoryCARW memory;
-    private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private RecordMetadata metadata;
     private PageFrameCursor pageFrameCursor;
 

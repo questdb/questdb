@@ -1731,11 +1731,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMetadataPoolCapacity() {
-            return sqlModelPoolCapacity;
-        }
-
-        @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
         }
@@ -2332,9 +2327,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getBindIPv4Address() {
             return httpNetBindIPv4Address;
         }
-    }
 
-    private class PropHttpIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getBindPort() {
             return httpNetBindPort;

@@ -166,18 +166,6 @@ public class WorkerPool implements Closeable {
         workers.clear();
     }
 
-    @TestOnly
-    public void pause() {
-        if (running.compareAndSet(true, false)) {
-            started.await();
-            for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
-            }
-            halted.await();
-        }
-        workers.clear();
-    }
-
     public void start() {
         start(null);
     }

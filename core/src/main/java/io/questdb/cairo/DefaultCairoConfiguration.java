@@ -328,11 +328,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMetadataPoolCapacity() {
-        return getSqlModelPoolCapacity();
-    }
-
-    @Override
     public long getMiscAppendPageSize() {
         return getFilesFacade().getPageSize();
     }
