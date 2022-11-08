@@ -93,7 +93,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
             if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
                 return Numbers.INT_NaN;
-            } else if (!(count > 0))) {
+            } else if (!(count > 0)) {
 				throw new SqlException("count must be greater than 0");
 			} else if (low == high) {
 				throw new SqlException("low must not be equal to high");
