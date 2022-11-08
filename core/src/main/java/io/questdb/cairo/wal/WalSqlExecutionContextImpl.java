@@ -40,6 +40,24 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     }
 
     @Override
+    public TableRecordMetadata getMetadata(CharSequence tableName) {
+        return getCairoEngine().getMetadata(
+                getCairoSecurityContext(),
+                systemTableName
+        );
+    }
+
+    @Override
+    public TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
+        final CairoEngine engine = getCairoEngine();
+        return engine.getMetadata(
+                getCairoSecurityContext(),
+                systemTableName,
+                structureVersion
+        );
+    }
+
+    @Override
     public TableReader getReader(CharSequence tableName, int tableId, long version) {
         return getCairoEngine().getReaderBySystemName(
                 getCairoSecurityContext(),
@@ -63,24 +81,6 @@ public class WalSqlExecutionContextImpl extends SqlExecutionContextImpl {
     @Override
     public int getStatus(Path path, CharSequence tableName) {
         return TABLE_EXISTS;
-    }
-
-    @Override
-    public TableRecordMetadata getMetadata(CharSequence tableName) {
-        return getCairoEngine().getMetadata(
-                getCairoSecurityContext(),
-                systemTableName
-        );
-    }
-
-    @Override
-    public TableRecordMetadata getMetadata(CharSequence tableName, long structureVersion) {
-        final CairoEngine engine = getCairoEngine();
-        return engine.getMetadata(
-                getCairoSecurityContext(),
-                systemTableName,
-                structureVersion
-        );
     }
 
     @Override

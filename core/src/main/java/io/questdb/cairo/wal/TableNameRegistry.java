@@ -47,12 +47,12 @@ public class TableNameRegistry implements Closeable {
     private static final int OPERATION_REMOVE = -1;
     private static final String TABLE_DROPPED_MARKER = "TABLE_DROPPED_MARKER:..";
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
-    private final ConcurrentHashMap<String> reverseWalTableNameRegistry = new ConcurrentHashMap<>();
+    private final boolean mangleDefaultTableNames;
+    private final ConcurrentHashMap<String> nonWalSystemTableNames = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String> reverseNonWalTableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String> reverseWalTableNameRegistry = new ConcurrentHashMap<>();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final ConcurrentHashMap<String> walSystemTableNameRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String> nonWalSystemTableNames = new ConcurrentHashMap<>();
-    private final boolean mangleDefaultTableNames;
 
     public TableNameRegistry(boolean mangleDefaultTableNames) {
 
