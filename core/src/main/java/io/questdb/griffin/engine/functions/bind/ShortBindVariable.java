@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.CharSink;
 
 class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable {
     short value;

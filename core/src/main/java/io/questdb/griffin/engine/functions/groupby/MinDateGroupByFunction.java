@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
@@ -69,6 +68,11 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
+    public String getSymbol() {
+        return "min";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);
@@ -77,10 +81,5 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDate(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "min";
     }
 }

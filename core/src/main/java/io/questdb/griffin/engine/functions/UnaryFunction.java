@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.PlanSink;
 
 public interface UnaryFunction extends Function {
     @Override
@@ -59,16 +58,16 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void toTop() {
-        getArg().toTop();
-    }
-
-    @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
             sink.put(getSymbol()).put(getArg());
         } else {
             sink.put(getSymbol()).put('(').put(getArg()).put(')');
         }
+    }
+
+    @Override
+    default void toTop() {
+        getArg().toTop();
     }
 }

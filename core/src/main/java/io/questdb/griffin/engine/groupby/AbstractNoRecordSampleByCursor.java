@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {

@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 

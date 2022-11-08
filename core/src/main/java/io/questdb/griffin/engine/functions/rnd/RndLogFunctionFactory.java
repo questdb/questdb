@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -38,7 +39,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.griffin.PlanSink;
 
 public class RndLogFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(RndLogFunctionFactory.class);

@@ -31,7 +31,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Rnd;
-import io.questdb.griffin.PlanSink;
 
 class RndStrFunction extends StrFunction implements Function {
     private final int lo;

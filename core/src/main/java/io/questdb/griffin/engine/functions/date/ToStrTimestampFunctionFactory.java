@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -39,7 +40,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -135,6 +135,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             return sink1.length();
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("to_str(").put(arg).put(')');
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getTimestamp(rec);
@@ -148,11 +153,6 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
         private void toSink(long value, CharSink sink) {
             format.format(value, locale, "Z", sink);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("to_str(").put(arg).put(')');
         }
     }
 }

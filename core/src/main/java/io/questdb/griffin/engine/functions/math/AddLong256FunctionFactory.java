@@ -35,7 +35,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class AddLong256FunctionFactory implements FunctionFactory {

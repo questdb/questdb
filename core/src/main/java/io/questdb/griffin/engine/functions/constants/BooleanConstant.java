@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
