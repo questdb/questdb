@@ -58,16 +58,6 @@ public class SqlUtilTest {
         testImplicitCastCharAsGeoHashInvalidChar0('-');
     }
 
-    private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {
-        int bits = 5;
-        try {
-            SqlUtil.implicitCastCharAsGeoHash(c, ColumnType.getGeoHashTypeWithBits(bits));
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
-        }
-    }
-
     @Test
     public void testImplicitCastCharAsGeoHashNarrowing() {
         int bits = 6;
@@ -86,6 +76,25 @@ public class SqlUtilTest {
         StringSink sink = new StringSink();
         GeoHashes.appendBinary(hash, bits, sink);
         TestUtils.assertEquals("0101", sink);
+    }
+
+    @Test
+    public void testNaNCast() {
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsByte(Numbers.INT_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastIntAsShort(Numbers.INT_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NaN));
+        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NaN));
+        Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NaN));
+    }
+
+    @Test
+    public void testParseMicrosSansQualifier() {
+        try {
+            SqlUtil.expectMicros("125", 12);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "expected interval qualifier");
+        }
     }
 
     @Test
@@ -270,22 +279,13 @@ public class SqlUtilTest {
         }
     }
 
-    @Test
-    public void testNaNCast() {
-        Assert.assertEquals(0, SqlUtil.implicitCastIntAsByte(Numbers.INT_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastIntAsShort(Numbers.INT_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastLongAsByte(Numbers.LONG_NaN));
-        Assert.assertEquals(Numbers.INT_NaN, SqlUtil.implicitCastLongAsInt(Numbers.LONG_NaN));
-        Assert.assertEquals(0, SqlUtil.implicitCastLongAsShort(Numbers.LONG_NaN));
-    }
-
-    @Test
-    public void testParseMicrosSansQualifier() {
+    private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {
+        int bits = 5;
         try {
-            SqlUtil.expectMicros("125", 12);
+            SqlUtil.implicitCastCharAsGeoHash(c, ColumnType.getGeoHashTypeWithBits(bits));
             Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "expected interval qualifier");
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
         }
     }
 }

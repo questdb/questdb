@@ -781,8 +781,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
 
             class Listener implements PoolListener {
-                private final ObjList<CharSequence> names = new ObjList<>();
                 private final IntList events = new IntList();
+                private final ObjList<CharSequence> names = new ObjList<>();
 
                 @Override
                 public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {

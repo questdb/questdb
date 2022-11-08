@@ -47,38 +47,36 @@ import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 public class TextImportTask {
 
     public static final byte NO_PHASE = -1;
-    public static final byte PHASE_SETUP = 0;
+    public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
+    public static final byte PHASE_ATTACH_PARTITIONS = 8;
     public static final byte PHASE_BOUNDARY_CHECK = 1;
+    public static final byte PHASE_BUILD_SYMBOL_INDEX = 6;
+    public static final byte PHASE_CLEANUP = 10;
     public static final byte PHASE_INDEXING = 2;
+    public static final byte PHASE_MOVE_PARTITIONS = 7;
     public static final byte PHASE_PARTITION_IMPORT = 3;
+    public static final byte PHASE_SETUP = 0;
     public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
-    public static final byte PHASE_BUILD_SYMBOL_INDEX = 6;
-    public static final byte PHASE_MOVE_PARTITIONS = 7;
-    public static final byte PHASE_ATTACH_PARTITIONS = 8;
-    public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
-    public static final byte PHASE_CLEANUP = 10;
-
-    public static final byte STATUS_STARTED = 0;
-    public static final byte STATUS_FINISHED = 1;
-    public static final byte STATUS_FAILED = 2;
     public static final byte STATUS_CANCELLED = 3;
-
+    public static final byte STATUS_FAILED = 2;
+    public static final byte STATUS_FINISHED = 1;
+    public static final byte STATUS_STARTED = 0;
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
 
     private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
+    private final PhaseBuildSymbolIndex phaseBuildSymbolIndex = new PhaseBuildSymbolIndex();
     private final PhaseIndexing phaseIndexing = new PhaseIndexing();
     private final PhasePartitionImport phasePartitionImport = new PhasePartitionImport();
     private final PhaseSymbolTableMerge phaseSymbolTableMerge = new PhaseSymbolTableMerge();
     private final PhaseUpdateSymbolKeys phaseUpdateSymbolKeys = new PhaseUpdateSymbolKeys();
-    private final PhaseBuildSymbolIndex phaseBuildSymbolIndex = new PhaseBuildSymbolIndex();
-    private byte phase;
     private int chunkIndex;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
-    private byte status;
     private @Nullable CharSequence errorMessage;
+    private byte phase;
+    private byte status;
 
     public static String getPhaseName(byte phase) {
         return PHASE_NAME_MAP.get(phase);
@@ -112,10 +110,6 @@ public class TextImportTask {
 
     public int getChunkIndex() {
         return chunkIndex;
-    }
-
-    public void setChunkIndex(int chunkIndex) {
-        this.chunkIndex = chunkIndex;
     }
 
     public PhaseBoundaryCheck getCountQuotesPhase() {
@@ -294,6 +288,10 @@ public class TextImportTask {
         return true;
     }
 
+    public void setChunkIndex(int chunkIndex) {
+        this.chunkIndex = chunkIndex;
+    }
+
     public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
     }
@@ -302,6 +300,12 @@ public class TextImportTask {
         TextImportException ex = TextImportException.instance(this.phase, "Cancelled");
         ex.setCancelled(true);
         return ex;
+    }
+
+    private void throwIfCancelled() throws TextImportException {
+        if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+            throw getCancelException();
+        }
     }
 
     void ofPhasePartitionImport(
@@ -333,23 +337,16 @@ public class TextImportTask {
         );
     }
 
-    private void throwIfCancelled() throws TextImportException {
-        if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
-            throw getCancelException();
-        }
-    }
-
     public static class PhaseBoundaryCheck {
-        private long quoteCount;
+        private long chunkEnd;
+        private long chunkStart;
+        private FilesFacade ff;
         private long newLineCountEven;
         private long newLineCountOdd;
         private long newLineOffsetEven;
         private long newLineOffsetOdd;
-
-        private long chunkStart;
-        private long chunkEnd;
         private Path path;
-        private FilesFacade ff;
+        private long quoteCount;
 
         public void clear() {
             this.ff = null;
@@ -448,16 +445,66 @@ public class TextImportTask {
         }
     }
 
+    public static class PhaseBuildSymbolIndex {
+        private final StringSink tableNameSink = new StringSink();
+        private CairoEngine cairoEngine;
+        private int index;
+        private RecordMetadata metadata;
+        private CharSequence root;
+        private TableStructure tableStructure;
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.tableStructure = null;
+            this.root = null;
+            this.index = -1;
+            this.metadata = null;
+        }
+
+        public void of(
+                CairoEngine cairoEngine,
+                TableStructure tableStructure,
+                CharSequence root,
+                int index, RecordMetadata metadata) {
+            this.cairoEngine = cairoEngine;
+            this.tableStructure = tableStructure;
+            this.root = root;
+            this.index = index;
+            this.metadata = metadata;
+        }
+
+        public void run() {
+            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            tableNameSink.clear();
+            tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
+            final int columnCount = metadata.getColumnCount();
+            try (TableWriter w = new TableWriter(configuration,
+                    tableNameSink,
+                    cairoEngine.getMessageBus(),
+                    null,
+                    true,
+                    DefaultLifecycleManager.INSTANCE,
+                    root,
+                    cairoEngine.getMetrics())) {
+                for (int i = 0; i < columnCount; i++) {
+                    if (metadata.isColumnIndexed(i)) {
+                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
+                    }
+                }
+            }
+        }
+    }
+
     public static class PhaseSymbolTableMerge {
         private CairoConfiguration cfg;
-        private CharSequence importRoot;
-        private TableWriter writer;
-        private CharSequence table;
         private CharSequence column;
         private int columnIndex;
-        private int symbolColumnIndex;
-        private int tmpTableCount;
+        private CharSequence importRoot;
         private int partitionBy;
+        private int symbolColumnIndex;
+        private CharSequence table;
+        private int tmpTableCount;
+        private TableWriter writer;
 
         public void clear() {
             this.cfg = null;
@@ -529,11 +576,11 @@ public class TextImportTask {
     }
 
     public static class PhaseUpdateSymbolKeys {
+        CharSequence columnName;
         int index;
         long partitionSize;
         long partitionTimestamp;
         CharSequence root;
-        CharSequence columnName;
         int symbolCount;
         private CairoEngine cairoEngine;
         private TableStructure tableStructure;
@@ -614,73 +661,23 @@ public class TextImportTask {
         }
     }
 
-    public static class PhaseBuildSymbolIndex {
-        private final StringSink tableNameSink = new StringSink();
-        private CairoEngine cairoEngine;
-        private TableStructure tableStructure;
-        private CharSequence root;
-        private int index;
-        private RecordMetadata metadata;
-
-        public void clear() {
-            this.cairoEngine = null;
-            this.tableStructure = null;
-            this.root = null;
-            this.index = -1;
-            this.metadata = null;
-        }
-
-        public void of(
-                CairoEngine cairoEngine,
-                TableStructure tableStructure,
-                CharSequence root,
-                int index, RecordMetadata metadata) {
-            this.cairoEngine = cairoEngine;
-            this.tableStructure = tableStructure;
-            this.root = root;
-            this.index = index;
-            this.metadata = metadata;
-        }
-
-        public void run() {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
-            tableNameSink.clear();
-            tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
-            final int columnCount = metadata.getColumnCount();
-            try (TableWriter w = new TableWriter(configuration,
-                    tableNameSink,
-                    cairoEngine.getMessageBus(),
-                    null,
-                    true,
-                    DefaultLifecycleManager.INSTANCE,
-                    root,
-                    cairoEngine.getMetrics())) {
-                for (int i = 0; i < columnCount; i++) {
-                    if (metadata.isColumnIndexed(i)) {
-                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
-                    }
-                }
-            }
-        }
-    }
-
     public class PhaseIndexing {
         //stores partition key and size for all indexed partitions
         private final LongList partitionKeysAndSizes = new LongList();
-        private long chunkStart;
+        private TimestampAdapter adapter;
+        private int atomicity;
         private long chunkEnd;
-        private long lineNumber;
-        private long lineCount;
+        private long chunkStart;
+        private byte columnDelimiter;
         private long errorCount;
-        private CharSequence inputFileName;
+        private boolean ignoreHeader;
         private CharSequence importRoot;
         private int index;
+        private CharSequence inputFileName;
+        private long lineCount;
+        private long lineNumber;
         private int partitionBy;
-        private byte columnDelimiter;
         private int timestampIndex;
-        private TimestampAdapter adapter;
-        private boolean ignoreHeader;
-        private int atomicity;
 
         public void clear() {
             this.chunkStart = -1;
@@ -773,27 +770,27 @@ public class TextImportTask {
     }
 
     public class PhasePartitionImport {
-        private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private final LongList offsets = new LongList();
+        private final StringSink tableNameSink = new StringSink();
+        private int atomicity;
+        private CairoEngine cairoEngine;
+        private byte columnDelimiter;
+        private long errors;
+        private int hi;
+        private CharSequence importRoot;
+        private int index;
+        private CharSequence inputFileName;
+        private int lo;
+        private long offset;
+        private ObjList<ParallelCsvFileImporter.PartitionInfo> partitions;
         private long rowsHandled;
         private long rowsImported;
-        private long errors;
-        private CairoEngine cairoEngine;
-        private TableStructure targetTableStructure;
-        private ObjList<TypeAdapter> types;
-        private int atomicity;
-        private byte columnDelimiter;
-        private CharSequence importRoot;
-        private CharSequence inputFileName;
-        private int index;
-        private int lo;
-        private int hi;
-        private ObjList<ParallelCsvFileImporter.PartitionInfo> partitions;
         private TableWriter tableWriterRef;
-        private int timestampIndex;
+        private TableStructure targetTableStructure;
         private TimestampAdapter timestampAdapter;
-        private long offset;
+        private int timestampIndex;
+        private ObjList<TypeAdapter> types;
         private DirectCharSink utf8Sink;
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
@@ -1286,36 +1283,6 @@ public class TextImportTask {
             }
         }
 
-        void of(
-                CairoEngine cairoEngine,
-                TableStructure targetTableStructure,
-                ObjList<TypeAdapter> types,
-                int atomicity,
-                byte columnDelimiter,
-                CharSequence importRoot,
-                CharSequence inputFileName,
-                int index,
-                int lo,
-                int hi,
-                final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
-        ) {
-            this.cairoEngine = cairoEngine;
-            this.targetTableStructure = targetTableStructure;
-            this.types = types;
-            this.atomicity = atomicity;
-            this.columnDelimiter = columnDelimiter;
-            this.importRoot = importRoot;
-            this.inputFileName = inputFileName;
-            this.index = index;
-            this.lo = lo;
-            this.hi = hi;
-            this.partitions = partitions;
-            this.timestampIndex = targetTableStructure.getTimestampIndex();
-            this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
-            this.errors = 0;
-            this.importedRows.clear();
-        }
-
         private boolean onField(
                 long offset,
                 final DirectByteCharSequence dbcs,
@@ -1417,6 +1384,36 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_IMPORT);
             }
             mergeIndexes.clear();
+        }
+
+        void of(
+                CairoEngine cairoEngine,
+                TableStructure targetTableStructure,
+                ObjList<TypeAdapter> types,
+                int atomicity,
+                byte columnDelimiter,
+                CharSequence importRoot,
+                CharSequence inputFileName,
+                int index,
+                int lo,
+                int hi,
+                final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
+        ) {
+            this.cairoEngine = cairoEngine;
+            this.targetTableStructure = targetTableStructure;
+            this.types = types;
+            this.atomicity = atomicity;
+            this.columnDelimiter = columnDelimiter;
+            this.importRoot = importRoot;
+            this.inputFileName = inputFileName;
+            this.index = index;
+            this.lo = lo;
+            this.hi = hi;
+            this.partitions = partitions;
+            this.timestampIndex = targetTableStructure.getTimestampIndex();
+            this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
+            this.errors = 0;
+            this.importedRows.clear();
         }
     }
 

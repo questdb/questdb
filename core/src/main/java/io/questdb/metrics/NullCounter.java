@@ -33,16 +33,16 @@ class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels 
     }
 
     @Override
-    public void inc() {
-    }
-
-    @Override
     public void add(long value) {
     }
 
     @Override
     public long getValue() {
         return 0;
+    }
+
+    @Override
+    public void inc() {
     }
 
     @Override

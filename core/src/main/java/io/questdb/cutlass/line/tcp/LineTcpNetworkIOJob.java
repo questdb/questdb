@@ -39,12 +39,12 @@ import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATIO
 class LineTcpNetworkIOJob implements NetworkIOJob {
     private final static Log LOG = LogFactory.getLog(LineTcpNetworkIOJob.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final int workerId;
+    private final long maintenanceInterval;
+    private final MillisecondClock millisecondClock;
+    private final LineTcpMeasurementScheduler scheduler;
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new CharSequenceObjHashMap<>();
     private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-    private final MillisecondClock millisecondClock;
-    private final long maintenanceInterval;
-    private final LineTcpMeasurementScheduler scheduler;
+    private final int workerId;
     // Context blocked on LineTcpMeasurementScheduler queue
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;

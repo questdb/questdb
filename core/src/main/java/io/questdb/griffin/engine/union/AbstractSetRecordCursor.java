@@ -30,9 +30,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 
 public abstract class AbstractSetRecordCursor implements RecordCursor {
+    protected SqlExecutionCircuitBreaker circuitBreaker;
     protected RecordCursor cursorA;
     protected RecordCursor cursorB;
-    protected SqlExecutionCircuitBreaker circuitBreaker;
 
     @Override
     public void close() {

@@ -57,20 +57,20 @@ final public class EmptyTableRandomRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
     public boolean hasNext() {
         return false;
     }
 
     @Override
-    public void toTop() {
+    public void recordAt(Record record, long atRowId) {
     }
 
     @Override
     public long size() {
         return 0;
+    }
+
+    @Override
+    public void toTop() {
     }
 }

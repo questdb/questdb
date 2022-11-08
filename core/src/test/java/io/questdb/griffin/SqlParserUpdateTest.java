@@ -281,6 +281,28 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testUpdateWithCrossJoinAndSemicolon() throws Exception {
+        String expected = "update tblx set tt = 1 from (select-virtual 1 tt from (tblx timestamp (timestamp) cross join tbly y))";
+        assertUpdate(expected,
+                "update tblx set tt = 1 from tbly y",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+
+        assertUpdate(expected,
+                "update tblx set tt = 1 from tbly y;",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+    }
+
+    @Test
     public void testUpdateWithInvalidColumnInSetLeftFails() throws Exception {
         assertSyntaxError(
                 "update tblx as xx set invalidcol = t where x > 10",
@@ -335,25 +357,18 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUpdateWithCrossJoinAndSemicolon() throws Exception {
-        String expected = "update tblx set tt = 1 from (select-virtual 1 tt from (tblx timestamp (timestamp) cross join tbly y))";
-        assertUpdate(expected,
-                "update tblx set tt = 1 from tbly y",
+    public void testUpdateWithJoinKeywordFails() throws Exception {
+        assertSyntaxError(
+                "update tblx set tt = 1 from tblx join tbly where x = y and x > 10",
+                "update tblx set tt = 1 from tblx ".length(),
+                "JOIN is not supported on UPDATE statement",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
                         .col("tt", ColumnType.INT)
                         .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-
-        assertUpdate(expected,
-                "update tblx set tt = 1 from tbly y;",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
+                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
+        );
     }
 
     @Test
@@ -400,21 +415,6 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
                 "unexpected token: SAMPLE",
                 partitionedModelOf("tblx").col("t", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
                 partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT));
-    }
-
-    @Test
-    public void testUpdateWithJoinKeywordFails() throws Exception {
-        assertSyntaxError(
-                "update tblx set tt = 1 from tblx join tbly where x = y and x > 10",
-                "update tblx set tt = 1 from tblx ".length(),
-                "JOIN is not supported on UPDATE statement",
-                partitionedModelOf("tblx")
-                        .col("t", ColumnType.TIMESTAMP)
-                        .col("x", ColumnType.INT)
-                        .col("tt", ColumnType.INT)
-                        .timestamp(),
-                partitionedModelOf("tbly").col("t", ColumnType.TIMESTAMP).col("y", ColumnType.INT)
-        );
     }
 
     @Test

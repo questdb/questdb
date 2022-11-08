@@ -31,56 +31,56 @@ import io.questdb.std.AbstractLockable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3CopyTask extends AbstractLockable {
-    private AtomicInteger columnCounter;
-    private AtomicInteger partCounter;
-    private int columnType;
     private int blockType;
-    private long timestampMergeIndexAddr;
-    private long timestampMergeIndexSize;
-    private long srcDataFixFd;
-    private long srcDataFixAddr;
-    private long srcDataFixOffset;
-    private long srcDataFixSize;
-    private long srcDataVarFd;
-    private long srcDataVarAddr;
-    private long srcDataVarOffset;
-    private long srcDataVarSize;
-    private long srcDataLo;
-    private long srcDataHi;
-    private long srcDataTop;
-    private long srcDataMax;
-    private long srcOooFixAddr;
-    private long srcOooVarAddr;
-    private long srcOooLo;
-    private long srcOooHi;
-    private long srcOooMax;
-    private long srcOooPartitionLo;
-    private long srcOooPartitionHi;
-    private long timestampMin;
-    private long timestampMax;
-    private long partitionTimestamp;
-    private long dstFixFd;
+    private AtomicInteger columnCounter;
+    private int columnType;
     private long dstFixAddr;
-    private long dstFixOffset;
+    private long dstFixFd;
     private long dstFixFileOffset;
+    private long dstFixOffset;
     private long dstFixSize;
-    private long dstVarFd;
-    private long dstVarAddr;
-    private long dstVarOffset;
-    private long dstVarOffsetEnd;
-    private long dstVarAdjust;
-    private long dstVarSize;
+    private long dstIndexAdjust;
+    private long dstIndexOffset;
     private long dstKFd;
     private long dstVFd;
-    private long dstIndexOffset;
-    private long dstIndexAdjust;
+    private long dstVarAddr;
+    private long dstVarAdjust;
+    private long dstVarFd;
+    private long dstVarOffset;
+    private long dstVarOffsetEnd;
+    private long dstVarSize;
     private int indexBlockCapacity;
-    private long srcTimestampFd;
-    private long srcTimestampAddr;
-    private long srcTimestampSize;
-    private boolean partitionMutates;
-    private TableWriter tableWriter;
     private BitmapIndexWriter indexWriter;
+    private AtomicInteger partCounter;
+    private boolean partitionMutates;
+    private long partitionTimestamp;
+    private long srcDataFixAddr;
+    private long srcDataFixFd;
+    private long srcDataFixOffset;
+    private long srcDataFixSize;
+    private long srcDataHi;
+    private long srcDataLo;
+    private long srcDataMax;
+    private long srcDataTop;
+    private long srcDataVarAddr;
+    private long srcDataVarFd;
+    private long srcDataVarOffset;
+    private long srcDataVarSize;
+    private long srcOooFixAddr;
+    private long srcOooHi;
+    private long srcOooLo;
+    private long srcOooMax;
+    private long srcOooPartitionHi;
+    private long srcOooPartitionLo;
+    private long srcOooVarAddr;
+    private long srcTimestampAddr;
+    private long srcTimestampFd;
+    private long srcTimestampSize;
+    private TableWriter tableWriter;
+    private long timestampMax;
+    private long timestampMergeIndexAddr;
+    private long timestampMergeIndexSize;
+    private long timestampMin;
 
     public int getBlockType() {
         return blockType;
@@ -102,12 +102,12 @@ public class O3CopyTask extends AbstractLockable {
         return dstFixFd;
     }
 
-    public long getDstFixOffset() {
-        return dstFixOffset;
-    }
-
     public long getDstFixFileOffset() {
         return dstFixFileOffset;
+    }
+
+    public long getDstFixOffset() {
+        return dstFixOffset;
     }
 
     public long getDstFixSize() {
@@ -152,6 +152,10 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getDstVarSize() {
         return dstVarSize;
+    }
+
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
     }
 
     public BitmapIndexWriter getIndexWriter() {
@@ -272,10 +276,6 @@ public class O3CopyTask extends AbstractLockable {
 
     public long getTimestampMin() {
         return timestampMin;
-    }
-
-    public int getIndexBlockCapacity() {
-        return indexBlockCapacity;
     }
 
     public boolean isPartitionMutates() {

@@ -73,9 +73,11 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
+
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
     }
+
     private LogFactory(MicrosecondClock clock) {
         this.clock = clock;
         workerPool = new WorkerPool(new WorkerPoolConfiguration() {

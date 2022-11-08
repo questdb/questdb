@@ -57,39 +57,19 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testGetInstanceDefaultPool() {
-        final int workerCount = 2;
-        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
-        WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return 0; // No workers, will result in returning the shared pool
-            }
-
-            @Override
-            public String getPoolName() {
-                return "pool";
-            }
-        }, METRICS, WorkerPoolManager.Requester.OTHER);
-        Assert.assertSame(workerPoolManager.getSharedPool(), workerPool);
-        Assert.assertEquals(workerCount, workerPool.getWorkerCount());
-        Assert.assertEquals("worker", workerPool.getPoolName());
-    }
-
-    @Test
     public void testGetInstanceDedicatedPool() {
         final int workerCount = 2;
         final String poolName = "pool";
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
             @Override
-            public int getWorkerCount() {
-                return workerCount;
+            public String getPoolName() {
+                return poolName;
             }
 
             @Override
-            public String getPoolName() {
-                return poolName;
+            public int getWorkerCount() {
+                return workerCount;
             }
         }, METRICS, WorkerPoolManager.Requester.OTHER);
         Assert.assertNotSame(workerPoolManager.getSharedPool(), workerPool);
@@ -104,13 +84,13 @@ public class WorkerPoolManagerTest {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
         final WorkerPoolConfiguration workerPoolConfiguration = new WorkerPoolConfiguration() {
             @Override
-            public int getWorkerCount() {
-                return workerCount;
+            public String getPoolName() {
+                return poolName;
             }
 
             @Override
-            public String getPoolName() {
-                return poolName;
+            public int getWorkerCount() {
+                return workerCount;
             }
         };
         WorkerPool workerPool0 = workerPoolManager.getInstance(workerPoolConfiguration, METRICS, WorkerPoolManager.Requester.OTHER);
@@ -124,19 +104,39 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testGetInstanceDefaultPool() {
+        final int workerCount = 2;
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount);
+        WorkerPool workerPool = workerPoolManager.getInstance(new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return "pool";
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 0; // No workers, will result in returning the shared pool
+            }
+        }, METRICS, WorkerPoolManager.Requester.OTHER);
+        Assert.assertSame(workerPoolManager.getSharedPool(), workerPool);
+        Assert.assertEquals(workerCount, workerPool.getWorkerCount());
+        Assert.assertEquals("worker", workerPool.getPoolName());
+    }
+
+    @Test
     public void testGetInstanceFailsAsStartAllWasCalled() {
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1);
         workerPoolManager.start(null);
         try {
             workerPoolManager.getInstance(new WorkerPoolConfiguration() {
                 @Override
-                public int getWorkerCount() {
-                    return 0;
+                public String getPoolName() {
+                    return null;
                 }
 
                 @Override
-                public String getPoolName() {
-                    return null;
+                public int getWorkerCount() {
+                    return 0;
                 }
             }, METRICS, WorkerPoolManager.Requester.OTHER);
             Assert.fail();
@@ -156,8 +156,48 @@ public class WorkerPoolManagerTest {
         workerPoolManager.halt();
     }
 
-    private static WorkerPoolManager createWorkerPoolManager(int workerCount) {
-        return createWorkerPoolManager(workerCount, null);
+    private static ServerConfiguration createServerConfig(int workerCount) {
+        return new ServerConfiguration() {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                return null;
+            }
+
+            @Override
+            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+                return null;
+            }
+
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return null;
+            }
+
+            @Override
+            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+                return null;
+            }
+
+            @Override
+            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+                return null;
+            }
+
+            @Override
+            public MetricsConfiguration getMetricsConfiguration() {
+                return null;
+            }
+
+            @Override
+            public PGWireConfiguration getPGWireConfiguration() {
+                return null;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+                return () -> workerCount;
+            }
+        };
     }
 
     private static WorkerPoolManager createWorkerPoolManager(int workerCount, Consumer<WorkerPool> call) {
@@ -171,47 +211,7 @@ public class WorkerPoolManagerTest {
         };
     }
 
-    private static ServerConfiguration createServerConfig(int workerCount) {
-        return new ServerConfiguration() {
-            @Override
-            public CairoConfiguration getCairoConfiguration() {
-                return null;
-            }
-
-            @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
-                return null;
-            }
-
-            @Override
-            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-                return null;
-            }
-
-            @Override
-            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-                return null;
-            }
-
-            @Override
-            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-                return null;
-            }
-
-            @Override
-            public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-                return () -> workerCount;
-            }
-
-            @Override
-            public PGWireConfiguration getPGWireConfiguration() {
-                return null;
-            }
-
-            @Override
-            public MetricsConfiguration getMetricsConfiguration() {
-                return null;
-            }
-        };
+    private static WorkerPoolManager createWorkerPoolManager(int workerCount) {
+        return createWorkerPoolManager(workerCount, null);
     }
 }

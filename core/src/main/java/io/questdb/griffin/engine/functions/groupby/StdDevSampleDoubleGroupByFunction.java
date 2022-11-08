@@ -37,6 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Standard deviation is calculated using an algorithm first proposed by B. P. Welford.
+ *
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm">Welford's algorithm</a>
  */
 public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -55,10 +56,10 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
             double sum = 0;
             long count = 1;
             double oldMean = mean;
-            mean += (d-mean)/count;
-            sum += (d-mean)*(d-oldMean);
+            mean += (d - mean) / count;
+            sum += (d - mean) * (d - oldMean);
             mapValue.putDouble(valueIndex, mean);
-            mapValue.putDouble(valueIndex + 1 , sum);
+            mapValue.putDouble(valueIndex + 1, sum);
             mapValue.putLong(valueIndex + 2, 1L);
         } else {
             mapValue.putDouble(valueIndex, 0);
@@ -75,33 +76,12 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
             double sum = mapValue.getDouble(valueIndex + 1);
             long count = mapValue.getLong(valueIndex + 2) + 1;
             double oldMean = mean;
-            mean += (d-mean)/count;
-            sum += (d-mean)*(d-oldMean);
+            mean += (d - mean) / count;
+            sum += (d - mean) * (d - oldMean);
             mapValue.putDouble(valueIndex, mean);
             mapValue.putDouble(valueIndex + 1, sum);
             mapValue.addLong(valueIndex + 2, 1L);
         }
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void setDouble(MapValue mapValue, double value) {
-        mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 2, 1L);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putDouble(valueIndex, Double.NaN);
-        mapValue.putDouble(valueIndex + 1, Double.NaN);
-        mapValue.putLong(valueIndex + 2, 0);
     }
 
     @Override
@@ -123,5 +103,26 @@ public class StdDevSampleDoubleGroupByFunction extends DoubleFunction implements
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setDouble(MapValue mapValue, double value) {
+        mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex + 2, 1L);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putDouble(valueIndex + 1, Double.NaN);
+        mapValue.putLong(valueIndex + 2, 0);
     }
 }

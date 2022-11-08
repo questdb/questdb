@@ -31,26 +31,6 @@ import org.junit.Test;
 public class HideTelemetryTablesTest extends AbstractGriffinTest {
 
     @Test
-    public void testShow() throws Exception {
-
-        assertMemoryLeak(() -> {
-            compiler.compile("create table test(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
-            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by 2",
-                    sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                            "2\ttelemetry\t\tNONE\t1000\t0\n" +
-                            "3\ttelemetry_config\t\tNONE\t1000\t0\n" +
-                            "1\ttest\t\tNONE\t1000\t0\n"
-            );
-        });
-    }
-
-    @Test
     public void testHide() throws Exception {
 
         hideTelemetryTable = true;
@@ -65,6 +45,26 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
                     "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                     sink,
                     "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                            "1\ttest\t\tNONE\t1000\t0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testShow() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile("create table test(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryJob.tableName + "(a int)", sqlExecutionContext);
+            compiler.compile("create table " + TelemetryJob.configTableName + "(a int)", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by 2",
+                    sink,
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                            "2\ttelemetry\t\tNONE\t1000\t0\n" +
+                            "3\ttelemetry_config\t\tNONE\t1000\t0\n" +
                             "1\ttest\t\tNONE\t1000\t0\n"
             );
         });

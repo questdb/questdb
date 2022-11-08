@@ -37,6 +37,36 @@ public class SimpleReadWriteLockTest {
     protected static final int WRITER_ACTIVITY_NUM = 100_000;
 
     @Test
+    public void testHammerLockMultipleReaderMultipleWriter() throws Exception {
+        testHammerLock(4, 4, 1000);
+    }
+
+    @Test
+    public void testHammerLockMultipleReaderSingleWriter() throws Exception {
+        testHammerLock(4, 1, 1000);
+    }
+
+    @Test
+    public void testHammerLockSingleReaderSingleWriter() throws Exception {
+        testHammerLock(1, 1, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockMultipleReaderMultipleWriter() throws Exception {
+        testHammerTryLock(4, 4, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockMultipleReaderSingleWriter() throws Exception {
+        testHammerTryLock(4, 1, 1000);
+    }
+
+    @Test
+    public void testHammerTryLockSingleReaderSingleWriter() throws Exception {
+        testHammerTryLock(1, 1, 1000);
+    }
+
+    @Test
     public void testSerialReadLock() {
         final SimpleReadWriteLock lock = new SimpleReadWriteLock();
         for (int i = 0; i < 32; i++) {
@@ -61,36 +91,6 @@ public class SimpleReadWriteLockTest {
             Assert.assertTrue(lock.writeLock().tryLock());
             lock.writeLock().unlock();
         }
-    }
-
-    @Test
-    public void testHammerLockSingleReaderSingleWriter() throws Exception {
-        testHammerLock(1, 1, 1000);
-    }
-
-    @Test
-    public void testHammerLockMultipleReaderSingleWriter() throws Exception {
-        testHammerLock(4, 1, 1000);
-    }
-
-    @Test
-    public void testHammerLockMultipleReaderMultipleWriter() throws Exception {
-        testHammerLock(4, 4, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockSingleReaderSingleWriter() throws Exception {
-        testHammerTryLock(1, 1, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockMultipleReaderSingleWriter() throws Exception {
-        testHammerTryLock(4, 1, 1000);
-    }
-
-    @Test
-    public void testHammerTryLockMultipleReaderMultipleWriter() throws Exception {
-        testHammerTryLock(4, 4, 1000);
     }
 
     private void testHammerLock(int readers, int writers, int iterations) throws Exception {
@@ -137,11 +137,11 @@ public class SimpleReadWriteLockTest {
 
     private static class Reader extends Thread {
 
-        private final ReadWriteLock lock;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger activity;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
+        private final ReadWriteLock lock;
 
         private Reader(ReadWriteLock lock, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger activity, int iterations) {
             this.lock = lock;
@@ -176,54 +176,13 @@ public class SimpleReadWriteLockTest {
         }
     }
 
-    private static class Writer extends Thread {
-
-        private final ReadWriteLock lock;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final AtomicInteger activity;
-        private final int iterations;
-
-        private Writer(ReadWriteLock lock, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger activity, int iterations) {
-            this.lock = lock;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.activity = activity;
-            this.iterations = iterations;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                for (int i = 0; i < iterations; i++) {
-                    lock.writeLock().lock();
-                    try {
-                        int n = activity.addAndGet(WRITER_ACTIVITY_NUM);
-                        if (n != WRITER_ACTIVITY_NUM) {
-                            throw new IllegalStateException("writer lock: " + n);
-                        }
-                        Os.pause();
-                        activity.addAndGet(-WRITER_ACTIVITY_NUM);
-                    } finally {
-                        lock.writeLock().unlock();
-                    }
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                latch.countDown();
-            }
-        }
-    }
-
     private static class TryWriter extends Thread {
 
-        private final ReadWriteLock lock;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger activity;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
+        private final ReadWriteLock lock;
 
         private TryWriter(ReadWriteLock lock, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger activity, int iterations) {
             this.lock = lock;
@@ -249,6 +208,47 @@ public class SimpleReadWriteLockTest {
                         } finally {
                             lock.writeLock().unlock();
                         }
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                latch.countDown();
+            }
+        }
+    }
+
+    private static class Writer extends Thread {
+
+        private final AtomicInteger activity;
+        private final CyclicBarrier barrier;
+        private final int iterations;
+        private final CountDownLatch latch;
+        private final ReadWriteLock lock;
+
+        private Writer(ReadWriteLock lock, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger activity, int iterations) {
+            this.lock = lock;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.activity = activity;
+            this.iterations = iterations;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                for (int i = 0; i < iterations; i++) {
+                    lock.writeLock().lock();
+                    try {
+                        int n = activity.addAndGet(WRITER_ACTIVITY_NUM);
+                        if (n != WRITER_ACTIVITY_NUM) {
+                            throw new IllegalStateException("writer lock: " + n);
+                        }
+                        Os.pause();
+                        activity.addAndGet(-WRITER_ACTIVITY_NUM);
+                    } finally {
+                        lock.writeLock().unlock();
                     }
                 }
             } catch (Exception e) {

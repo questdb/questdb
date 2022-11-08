@@ -32,8 +32,6 @@ public interface IODispatcherConfiguration {
     int BIAS_READ = 1;
     int BIAS_WRITE = 2;
 
-    int getLimit();
-
     int getBindIPv4Address();
 
     int getBindPort();
@@ -50,11 +48,13 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
+    default boolean getHint() {
+        return false;
+    }
+
     default int getIOQueueCapacity() {
         return Numbers.ceilPow2(getLimit());
     }
-
-    long getTimeout();
 
     int getInitialBias();
 
@@ -62,9 +62,7 @@ public interface IODispatcherConfiguration {
         return Numbers.ceilPow2(getLimit());
     }
 
-    default boolean getHint() {
-        return false;
-    }
+    int getLimit();
 
     default int getListenBacklog() {
         if (Os.type == Os.WINDOWS && getHint()) {
@@ -83,11 +81,13 @@ public interface IODispatcherConfiguration {
         return false;
     }
 
+    long getQueueTimeout();
+
     int getRcvBufSize();
 
     SelectFacade getSelectFacade();
 
     int getSndBufSize();
 
-    long getQueueTimeout();
+    long getTimeout();
 }

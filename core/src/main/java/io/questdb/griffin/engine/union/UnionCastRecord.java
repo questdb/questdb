@@ -72,6 +72,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
         return castFunctionsB.getQuick(col).getByte(recordB);
     }
 
+    public ObjList<Function> getCastFunctionsA() {
+        return castFunctionsA;
+    }
+
+    public ObjList<Function> getCastFunctionsB() {
+        return castFunctionsB;
+    }
+
     @Override
     public char getChar(int col) {
         if (useA) {
@@ -103,6 +111,40 @@ public class UnionCastRecord extends AbstractUnionRecord {
         }
         return castFunctionsB.getQuick(col).getFloat(recordB);
     }
+
+    @Override
+    public byte getGeoByte(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getGeoByte(recordA);
+        }
+        return castFunctionsB.getQuick(col).getGeoByte(recordB);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getGeoInt(recordA);
+        }
+        return castFunctionsB.getQuick(col).getGeoInt(recordB);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getGeoLong(recordA);
+        }
+        return castFunctionsB.getQuick(col).getGeoLong(recordB);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getGeoShort(recordA);
+        }
+        return castFunctionsB.getQuick(col).getGeoShort(recordB);
+    }
+
+    // symbol is not supported by set functions
 
     @Override
     public int getInt(int col) {
@@ -151,8 +193,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
         return recordA.getRowId();
     }
 
-    // symbol is not supported by set functions
-
     @Override
     public short getShort(int col) {
         if (useA) {
@@ -200,45 +240,5 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getTimestamp(recordA);
         }
         return castFunctionsB.getQuick(col).getTimestamp(recordB);
-    }
-
-    @Override
-    public byte getGeoByte(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getGeoByte(recordA);
-        }
-        return castFunctionsB.getQuick(col).getGeoByte(recordB);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getGeoShort(recordA);
-        }
-        return castFunctionsB.getQuick(col).getGeoShort(recordB);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getGeoInt(recordA);
-        }
-        return castFunctionsB.getQuick(col).getGeoInt(recordB);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getGeoLong(recordA);
-        }
-        return castFunctionsB.getQuick(col).getGeoLong(recordB);
-    }
-
-    public ObjList<Function> getCastFunctionsA() {
-        return castFunctionsA;
-    }
-
-    public ObjList<Function> getCastFunctionsB() {
-        return castFunctionsB;
     }
 }

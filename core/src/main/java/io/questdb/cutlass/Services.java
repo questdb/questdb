@@ -25,6 +25,8 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
+import io.questdb.WorkerPoolManager;
+import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
@@ -43,12 +45,14 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.WorkerPoolManager;
-import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
 public final class Services {
+
+    private Services() {
+        throw new UnsupportedOperationException("not instantiatable");
+    }
 
     @Nullable
     public static HttpServer createHttpServer(
@@ -116,107 +120,6 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            Metrics metrics
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        // The pool is:
-        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
-        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
-        // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
-                configuration,
-                metrics.health(),
-                Requester.HTTP_MIN_SERVER
-        );
-        return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
-    }
-
-    @Nullable
-    public static HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new HealthCheckProcessor();
-            }
-
-            @Override
-            public String getUrl() {
-                return metrics.isEnabled() ? "/status" : "*";
-            }
-        }, true);
-        if (metrics.isEnabled()) {
-            server.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics);
-                }
-
-                @Override
-                public String getUrl() {
-                    return "/metrics";
-                }
-            });
-        }
-        return server;
-    }
-
-    @Nullable
-    public static PGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
-    ) {
-        if (!configuration.isEnabled()) {
-            return null;
-        }
-
-        // The pool is:
-        // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
-        // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
-                configuration,
-                metrics.health(),
-                Requester.PG_WIRE_SERVER
-        );
-        return new PGWireServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                functionFactoryCache,
-                snapshotAgent,
-                new PGWireServer.PGConnectionContextFactory(
-                        cairoEngine,
-                        configuration,
-                        () -> new SqlExecutionContextImpl(
-                                cairoEngine,
-                                workerPool.getWorkerCount(),
-                                workerPoolManager.getSharedWorkerCount()
-                        )
-                )
-        );
-    }
-
-    @Nullable
     public static LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
@@ -268,7 +171,104 @@ public final class Services {
         return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
     }
 
-    private Services() {
-        throw new UnsupportedOperationException("not instantiatable");
+    @Nullable
+    public static HttpServer createMinHttpServer(
+            HttpMinServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            Metrics metrics
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        // The pool is:
+        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
+        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
+        // - SHARED otherwise
+        final WorkerPool workerPool = workerPoolManager.getInstance(
+                configuration,
+                metrics.health(),
+                Requester.HTTP_MIN_SERVER
+        );
+        return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
+    }
+
+    @Nullable
+    public static HttpServer createMinHttpServer(
+            HttpMinServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return metrics.isEnabled() ? "/status" : "*";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new HealthCheckProcessor();
+            }
+        }, true);
+        if (metrics.isEnabled()) {
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/metrics";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new PrometheusMetricsProcessor(metrics);
+                }
+            });
+        }
+        return server;
+    }
+
+    @Nullable
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPoolManager workerPoolManager,
+            FunctionFactoryCache functionFactoryCache,
+            DatabaseSnapshotAgent snapshotAgent,
+            Metrics metrics
+    ) {
+        if (!configuration.isEnabled()) {
+            return null;
+        }
+
+        // The pool is:
+        // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
+        // - SHARED otherwise
+        final WorkerPool workerPool = workerPoolManager.getInstance(
+                configuration,
+                metrics.health(),
+                Requester.PG_WIRE_SERVER
+        );
+        return new PGWireServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                functionFactoryCache,
+                snapshotAgent,
+                new PGWireServer.PGConnectionContextFactory(
+                        cairoEngine,
+                        configuration,
+                        () -> new SqlExecutionContextImpl(
+                                cairoEngine,
+                                workerPool.getWorkerCount(),
+                                workerPoolManager.getSharedWorkerCount()
+                        )
+                )
+        );
     }
 }

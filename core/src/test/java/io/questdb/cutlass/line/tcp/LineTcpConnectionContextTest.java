@@ -105,6 +105,42 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testAddFloatColumnAsDouble() throws Exception {
+        floatDefaultColumnType = ColumnType.DOUBLE;
+        testDefaultColumnType(ColumnType.DOUBLE, "24.3", "24.3", "NaN");
+    }
+
+    @Test
+    public void testAddFloatColumnAsFloat() throws Exception {
+        floatDefaultColumnType = ColumnType.FLOAT;
+        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "NaN");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsByte() throws Exception {
+        integerDefaultColumnType = ColumnType.BYTE;
+        testDefaultColumnType(ColumnType.BYTE, "21i", "21", "0");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsInt() throws Exception {
+        integerDefaultColumnType = ColumnType.INT;
+        testDefaultColumnType(ColumnType.INT, "21i", "21", "NaN");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsLong() throws Exception {
+        integerDefaultColumnType = ColumnType.LONG;
+        testDefaultColumnType(ColumnType.LONG, "21i", "21", "NaN");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsShort() throws Exception {
+        integerDefaultColumnType = ColumnType.SHORT;
+        testDefaultColumnType(ColumnType.SHORT, "21i", "21", "0");
+    }
+
+    @Test
     public void testAddTagColumn() throws Exception {
         String table = "addTag";
         runInContext(() -> {
@@ -802,138 +838,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testNewColumnsNotAllowed() throws Exception {
-        String table = "testNewColumnsNotAllowed";
-        autoCreateNewColumns = false;
-        disconnectOnError = true;
-        runInContext(() -> {
-            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
-                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-            Assert.assertTrue(disconnected);
-        });
-
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
-        }
-    }
-
-    @Test
-    public void testNewColumnsNotAllowedExistingTable() throws Exception {
-        String table = "testNewColumnsNotAllowed";
-        autoCreateNewColumns = false;
-        disconnectOnError = true;
-        try (
-                SqlCompiler compiler = new SqlCompiler(engine);
-                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-            compiler.compile(
-                    "create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);",
-                    sqlExecutionContext);
-        } catch (SqlException ex) {
-            throw new RuntimeException(ex);
-        }
-
-        engine.releaseInactive();
-        runInContext(() -> {
-            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
-                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-            Assert.assertTrue(disconnected);
-        });
-        assertTable("location\ttimestamp\n", table);
-    }
-
-    @Test
-    public void testNewTableNotAllowed() throws Exception {
-        String table = "testNewTableNotAllowed";
-        autoCreateNewTables = false;
-        disconnectOnError = true;
-        runInContext(() -> {
-            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
-                    table + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-            Assert.assertTrue(disconnected);
-        });
-
-        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
-                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
-        );
-
-        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
-            Assert.fail();
-        } catch (CairoException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
-        }
-    }
-
-    @Test
-    public void testInvalidTableName() throws Exception {
-        String table = "testInvalidEmptyTableName";
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.META_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-
-        runInContext(() -> {
-            recvBuffer =
-                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
-                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
-                            table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
-                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
-                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
-                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-        });
-
-        engine.releaseInactive();
-
-        runInContext(() -> {
-            recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-            recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-            recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
-            do {
-                handleContextIO();
-            } while (recvBuffer.length() > 0);
-
-
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n";
-            assertTable(expected, table);
-        });
-    }
-
-    @Test
     public void testDuplicateField() throws Exception {
         String table = "dupField";
         runInContext(() -> {
@@ -1213,64 +1117,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testAddIntegerColumnAsByte() throws Exception {
-        integerDefaultColumnType = ColumnType.BYTE;
-        testDefaultColumnType(ColumnType.BYTE, "21i", "21", "0");
-    }
-
-    @Test
-    public void testAddIntegerColumnAsShort() throws Exception {
-        integerDefaultColumnType = ColumnType.SHORT;
-        testDefaultColumnType(ColumnType.SHORT, "21i", "21", "0");
-    }
-
-    @Test
-    public void testAddIntegerColumnAsInt() throws Exception {
-        integerDefaultColumnType = ColumnType.INT;
-        testDefaultColumnType(ColumnType.INT, "21i", "21", "NaN");
-    }
-
-    @Test
-    public void testAddIntegerColumnAsLong() throws Exception {
-        integerDefaultColumnType = ColumnType.LONG;
-        testDefaultColumnType(ColumnType.LONG, "21i", "21", "NaN");
-    }
-
-    @Test
-    public void testAddFloatColumnAsDouble() throws Exception {
-        floatDefaultColumnType = ColumnType.DOUBLE;
-        testDefaultColumnType(ColumnType.DOUBLE, "24.3", "24.3", "NaN");
-    }
-
-    @Test
-    public void testAddFloatColumnAsFloat() throws Exception {
-        floatDefaultColumnType = ColumnType.FLOAT;
-        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "NaN");
-    }
-
-    private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
-        String table = "addDefColType";
-        addTable(table);
-        runInContext(() -> {
-            recvBuffer =
-                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
-            do {
-                handleContextIO();
-                Assert.assertFalse(disconnected);
-            } while (recvBuffer.length() > 0);
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
-            try (TableReader reader = new TableReader(configuration, table)) {
-                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
-                Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
-            }
-        });
-    }
-
-    @Test
     public void testDuplicateNewFieldAlternating() throws Exception {
         String table = "dupField";
         runInContext(() -> {
@@ -1535,6 +1381,57 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testInvalidTableName() throws Exception {
+        String table = "testInvalidEmptyTableName";
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.META_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+        });
+
+        engine.releaseInactive();
+
+        runInContext(() -> {
+            recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
     public void testMaxSizes() throws Exception {
         String table = "maxSize";
         runInContext(() -> {
@@ -1720,6 +1617,87 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         int nTables = 3;
         int nIterations = 20_000;
         testThreading(nTables, nIterations);
+    }
+
+    @Test
+    public void testNewColumnsNotAllowed() throws Exception {
+        String table = "testNewColumnsNotAllowed";
+        autoCreateNewColumns = false;
+        disconnectOnError = true;
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+
+        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
+                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
+        );
+
+        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
+        }
+    }
+
+    @Test
+    public void testNewColumnsNotAllowedExistingTable() throws Exception {
+        String table = "testNewColumnsNotAllowed";
+        autoCreateNewColumns = false;
+        disconnectOnError = true;
+        try (
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            compiler.compile(
+                    "create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);",
+                    sqlExecutionContext);
+        } catch (SqlException ex) {
+            throw new RuntimeException(ex);
+        }
+
+        engine.releaseInactive();
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+        assertTable("location\ttimestamp\n", table);
+    }
+
+    @Test
+    public void testNewTableNotAllowed() throws Exception {
+        String table = "testNewTableNotAllowed";
+        autoCreateNewTables = false;
+        disconnectOnError = true;
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+
+        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
+                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
+        );
+
+        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
+        }
     }
 
     @Test
@@ -2073,6 +2051,28 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
                 table + ",location=us-eastcoast temperature=80 1465839830102400200\n" +
                 table + ",location=us-westcost temperature=82 1465839830102500200\n";
+    }
+
+    private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
+        String table = "addDefColType";
+        addTable(table);
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
+            try (TableReader reader = new TableReader(configuration, table)) {
+                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+                Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
+            }
+        });
     }
 
     private void testFragmentation(int breakPos, String table) throws Exception {

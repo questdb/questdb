@@ -62,8 +62,8 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
 
     private static class Func extends LongFunction implements Function {
         private final long lo;
-        private final long range;
         private final int nanRate;
+        private final long range;
         private Rnd rnd;
 
         public Func(long lo, long hi, int nanRate) {

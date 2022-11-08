@@ -70,13 +70,13 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

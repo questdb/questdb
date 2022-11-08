@@ -32,8 +32,8 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 
 public final class TelemetryTask {
     public long created;
-    public CharSequence id;
     public short event;
+    public CharSequence id;
     public short origin;
 
     public static void doStoreTelemetry(CairoEngine engine, short event, short origin) {

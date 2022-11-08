@@ -28,7 +28,6 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -100,7 +99,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
         TimestampFormatCompiler tsc = new TimestampFormatCompiler();
         DateFormatCompiler dsc = new DateFormatCompiler();
         DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
-        for(String op: opList) {
+        for (String op : opList) {
             DateFormat fmt = tsc.compile(op, true);
             DateFormat fmt2 = dsc.compile(op, true);
             for (String s : inputs) {

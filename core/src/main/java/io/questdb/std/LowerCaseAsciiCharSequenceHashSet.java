@@ -72,17 +72,6 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
         return keys[-index - 1];
     }
 
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
-    }
-
     private void rehash() {
         int newCapacity = capacity * 2;
         final int size = size();
@@ -99,5 +88,16 @@ public class LowerCaseAsciiCharSequenceHashSet extends AbstractLowerCaseAsciiCha
                 keys[keyIndex(key)] = key;
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

@@ -33,16 +33,14 @@ import io.questdb.std.str.StringSink;
 import java.util.List;
 
 public class LineData {
-    private final long timestampNanos;
-
+    private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
     // column/tag name and value pairs for each line
     // column/tag name can be different to real name (dupes, uppercase...)
     private final ObjList<CharSequence> names = new ObjList<>();
-    private final ObjList<CharSequence> values = new ObjList<>();
     private final BoolList tagFlags = new BoolList();
+    private final long timestampNanos;
     private final LowerCaseCharSequenceHashSet updated = new LowerCaseCharSequenceHashSet();
-
-    private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
+    private final ObjList<CharSequence> values = new ObjList<>();
     private int tagsCount;
 
     public LineData(long timestampMicros) {
@@ -131,6 +129,13 @@ public class LineData {
         nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
+    private CharSequence getValue(CharSequence original) {
+        if (original.charAt(0) != '"') {
+            return original;
+        }
+        return original.toString().substring(1, original.length() - 1);
+    }
+
     CharSequence getRow(ObjList<CharSequence> columns, ObjList<CharSequence> defaults) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -139,13 +144,6 @@ public class LineData {
             sb.append(index < 0 ? defaults.get(i) : getValue(values.get(index))).append(i == n - 1 ? "\n" : "\t");
         }
         return sb.toString();
-    }
-
-    private CharSequence getValue(CharSequence original) {
-        if (original.charAt(0) != '"') {
-            return original;
-        }
-        return original.toString().substring(1, original.length() - 1);
     }
 
     boolean isValid() {

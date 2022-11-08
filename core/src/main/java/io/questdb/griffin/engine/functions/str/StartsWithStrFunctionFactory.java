@@ -51,8 +51,8 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
     }
 
     private static class StartsWithStrFunction extends BooleanFunction implements BinaryFunction {
-        private final Function strFunc;
         private final Function prefixFunc;
+        private final Function strFunc;
 
         public StartsWithStrFunction(Function strFunc, Function prefixFunc) {
             this.strFunc = strFunc;

@@ -42,9 +42,21 @@ public interface LineTcpReceiverConfiguration {
 
     CairoSecurityContext getCairoSecurityContext();
 
+    long getCommitIntervalDefault();
+
+    double getCommitIntervalFraction();
+
     int getConnectionPoolInitialCapacity();
 
+    short getDefaultColumnTypeForFloat();
+
+    short getDefaultColumnTypeForInteger();
+
     int getDefaultPartitionBy();
+
+    boolean getDisconnectOnError();
+
+    IODispatcherConfiguration getDispatcherConfiguration();
 
     WorkerPoolConfiguration getIOWorkerPoolConfiguration();
 
@@ -56,10 +68,6 @@ public interface LineTcpReceiverConfiguration {
      */
     long getMaintenanceInterval();
 
-    double getCommitIntervalFraction();
-
-    long getCommitIntervalDefault();
-
     int getMaxFileNameLength();
 
     int getMaxMeasurementSize();
@@ -68,15 +76,15 @@ public interface LineTcpReceiverConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    long getWriterIdleTimeout();
-
-    IODispatcherConfiguration getDispatcherConfiguration();
-
     int getNetMsgBufferSize();
 
     NetworkFacade getNetworkFacade();
 
+    long getSymbolCacheWaitUsBeforeReload();
+
     LineProtoTimestampAdapter getTimestampAdapter();
+
+    long getWriterIdleTimeout();
 
     int getWriterQueueCapacity();
 
@@ -84,17 +92,9 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    boolean getDisconnectOnError();
-
-    long getSymbolCacheWaitUsBeforeReload();
+    boolean isStringAsTagSupported();
 
     boolean isStringToCharCastAllowed();
 
     boolean isSymbolAsFieldSupported();
-
-    boolean isStringAsTagSupported();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
 }

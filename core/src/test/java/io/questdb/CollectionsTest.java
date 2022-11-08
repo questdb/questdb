@@ -103,20 +103,6 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testLongSearch2() {
-        LongList list = new LongList();
-        Rnd rnd = new Rnd();
-
-        for (int i = 7; i < 2000; i += 10) {
-            list.add(i + (rnd.nextPositiveInt() & 9));
-        }
-        Assert.assertEquals(18, list.binarySearch(188, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-1, list.binarySearch(6, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-25, list.binarySearch(240, BinarySearch.SCAN_UP));
-        Assert.assertEquals(-201, list.binarySearch(2010, BinarySearch.SCAN_UP));
-    }
-
-    @Test
     public void testLongBinaryBlockSearch() {
         LongList list = new LongList();
 
@@ -128,15 +114,15 @@ public class CollectionsTest {
                 list.add(i + (rnd.nextPositiveInt() & 9));
                 int blockFullLen = 1 << blockSizeHint;
 
-                for(int j = 1; j < blockFullLen; j++) {
+                for (int j = 1; j < blockFullLen; j++) {
                     list.add(0L);
                 }
             }
 
             // Assert.assertEquals("Block hint " + blockSizeHint, 18 << blockSizeHint, list.binarySearchBlock(0, list.size(), blockSizeHint, 188));
-            Assert.assertEquals("Block hint " + blockSizeHint,-1, list.binarySearchBlock(blockSizeHint, 6, BinarySearch.SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -1, list.binarySearchBlock(blockSizeHint, 6, BinarySearch.SCAN_UP));
             Assert.assertEquals("Block hint " + blockSizeHint, -((24 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 240, BinarySearch.SCAN_UP));
-            Assert.assertEquals("Block hint " + blockSizeHint,-((200 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 2010, BinarySearch.SCAN_UP));
+            Assert.assertEquals("Block hint " + blockSizeHint, -((200 << blockSizeHint) + 1), list.binarySearchBlock(blockSizeHint, 2010, BinarySearch.SCAN_UP));
         }
     }
 
@@ -151,7 +137,21 @@ public class CollectionsTest {
         list.add(0);
         list.add(0);
         list.add(0);
-        Assert.assertEquals(-5, list.binarySearchBlock( 2, 20, BinarySearch.SCAN_DOWN));
+        Assert.assertEquals(-5, list.binarySearchBlock(2, 20, BinarySearch.SCAN_DOWN));
+    }
+
+    @Test
+    public void testLongSearch2() {
+        LongList list = new LongList();
+        Rnd rnd = new Rnd();
+
+        for (int i = 7; i < 2000; i += 10) {
+            list.add(i + (rnd.nextPositiveInt() & 9));
+        }
+        Assert.assertEquals(18, list.binarySearch(188, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-1, list.binarySearch(6, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-25, list.binarySearch(240, BinarySearch.SCAN_UP));
+        Assert.assertEquals(-201, list.binarySearch(2010, BinarySearch.SCAN_UP));
     }
 
     @Test

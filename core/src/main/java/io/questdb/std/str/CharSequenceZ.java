@@ -31,9 +31,9 @@ import io.questdb.std.Unsafe;
 import java.io.Closeable;
 
 public final class CharSequenceZ extends AbstractCharSequence implements Closeable, LPSZ {
-    private long ptr = 0;
     private int capacity;
     private int len;
+    private long ptr = 0;
 
     public CharSequenceZ(CharSequence str) {
         int l = str.length();
@@ -52,6 +52,11 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     }
 
     @Override
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(ptr + index);
+    }
+
+    @Override
     public void close() {
         if (ptr != 0) {
             Unsafe.free(ptr, capacity + 1, MemoryTag.NATIVE_DEFAULT);
@@ -62,11 +67,6 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
     @Override
     public int length() {
         return len;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
     }
 
     private void alloc(int len) {

@@ -58,6 +58,11 @@ public final class QueryCache implements Closeable {
         return TL_QUERY_CACHE.get();
     }
 
+    public void clear() {
+        cache.clear();
+        LOG.info().$("cleared").$();
+    }
+
     @Override
     public void close() {
         cache.close();
@@ -75,11 +80,6 @@ public final class QueryCache implements Closeable {
             cache.put(sql, factory);
             log("push", sql);
         }
-    }
-
-    public void clear() {
-        cache.clear();
-        LOG.info().$("cleared").$();
     }
 
     private void log(CharSequence action, CharSequence sql) {

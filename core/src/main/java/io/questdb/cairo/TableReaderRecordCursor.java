@@ -34,13 +34,13 @@ public class TableReaderRecordCursor implements RecordCursor {
     protected final TableReaderRecord recordA = new TableReaderRecord();
     private final TableReaderRecord recordB = new TableReaderRecord();
     protected TableReader reader;
+    private long maxRecordIndex = -1;
+    private int partitionHi;
     private int partitionIndex = 0;
     private int partitionLimit;
-    private long maxRecordIndex = -1;
     private int partitionLo;
-    private long recordLo;
-    private int partitionHi;
     private long recordHi;
+    private long recordLo;
 
     @Override
     public void close() {
@@ -56,13 +56,13 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return reader.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
     }
 
     @Override
@@ -75,8 +75,31 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndex);
+    }
+
+    public void of(TableReader reader) {
+        this.partitionLo = 0;
+        this.recordLo = 0;
+        this.partitionHi = reader.getPartitionCount();
+        // because we set partitionHi to partition count
+        // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
+        this.recordHi = -1;
+        of0(reader);
+    }
+
+    public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
+        this.partitionLo = partitionLo;
+        this.partitionHi = partitionHi;
+        this.recordLo = recordLo;
+        this.recordHi = recordHi;
+        of0(reader);
+    }
+
+    @Override
+    public void recordAt(Record record, long rowId) {
+        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
@@ -84,9 +107,13 @@ public class TableReaderRecordCursor implements RecordCursor {
         return reader.size();
     }
 
-    @Override
-    public void recordAt(Record record, long rowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+    public void startFrom(long rowid) {
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        long recordIndex = Rows.toLocalRowID(rowid);
+        recordA.jumpTo(this.partitionIndex, recordIndex);
+        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
+        partitionIndex++;
+        this.partitionLimit = reader.getPartitionCount();
     }
 
     @Override
@@ -101,39 +128,12 @@ public class TableReaderRecordCursor implements RecordCursor {
         recordA.jumpTo(0, maxRecordIndex);
     }
 
-    public void of(TableReader reader) {
-        this.partitionLo = 0;
-        this.recordLo = 0;
-        this.partitionHi = reader.getPartitionCount();
-        // because we set partitionHi to partition count
-        // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
-        this.recordHi = -1;
-        of0(reader);
-    }
-
     private void of0(TableReader reader) {
         close();
         this.reader = reader;
         this.recordA.of(reader);
         this.recordB.of(reader);
         toTop();
-    }
-
-    public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
-        this.partitionLo = partitionLo;
-        this.partitionHi = partitionHi;
-        this.recordLo = recordLo;
-        this.recordHi = recordHi;
-        of0(reader);
-    }
-
-    public void startFrom(long rowid) {
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        long recordIndex = Rows.toLocalRowID(rowid);
-        recordA.jumpTo(this.partitionIndex, recordIndex);
-        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
-        partitionIndex++;
-        this.partitionLimit = reader.getPartitionCount();
     }
 
     private boolean switchPartition() {

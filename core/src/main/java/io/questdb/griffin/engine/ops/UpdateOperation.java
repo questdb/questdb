@@ -40,14 +40,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class UpdateOperation extends AbstractOperation {
 
     public final static String CMD_NAME = "UPDATE";
-    public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int SENDER_CLOSED_INCREMENT = 7;
+    public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
     private final AtomicInteger closeState = new AtomicInteger();
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private boolean executingAsync;
     private RecordCursorFactory factory;
     private volatile boolean requesterTimeout;
-    private boolean executingAsync;
-    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
     public UpdateOperation(
             String tableName,
@@ -66,11 +66,6 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public AsyncWriterCommand deserialize(TableWriterTask task) {
-        return task.getAsyncWriterCommand();
-    }
-
-    @Override
     public void close() {
         requesterTimeout = true;
         if (!executingAsync || closeState.addAndGet(SENDER_CLOSED_INCREMENT) == FULLY_CLOSED_STATE) {
@@ -84,8 +79,33 @@ public class UpdateOperation extends AbstractOperation {
         }
     }
 
+    @Override
+    public AsyncWriterCommand deserialize(TableWriterTask task) {
+        return task.getAsyncWriterCommand();
+    }
+
+    public void forceTestTimeout() {
+        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
+            throw CairoException.nonCritical()
+                    .put("timeout, query aborted [fd=")
+                    .put(circuitBreaker.getFd())
+                    .put(']')
+                    .setInterruption(true);
+        }
+    }
+
+    public RecordCursorFactory getFactory() {
+        return factory;
+    }
+
     public boolean isWriterClosePending() {
         return executingAsync && closeState.get() != WRITER_CLOSED_INCREMENT;
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+        super.serialize(task);
+        task.setAsyncWriterCommand(this);
     }
 
     public void start() {
@@ -100,16 +120,6 @@ public class UpdateOperation extends AbstractOperation {
         executingAsync = true;
     }
 
-    public void forceTestTimeout() {
-        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.nonCritical()
-                    .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker.getFd())
-                    .put(']')
-                    .setInterruption(true);
-        }
-    }
-
     public void testTimeout() {
         if (requesterTimeout) {
             throw CairoException.nonCritical()
@@ -120,16 +130,6 @@ public class UpdateOperation extends AbstractOperation {
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();
-    }
-
-    public RecordCursorFactory getFactory() {
-        return factory;
-    }
-
-    @Override
-    public void serialize(TableWriterTask task) {
-        super.serialize(task);
-        task.setAsyncWriterCommand(this);
     }
 
     @Override

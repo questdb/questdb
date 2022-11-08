@@ -27,12 +27,12 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public class ObjStack<T> implements Mutable {
-    private static final int MIN_INITIAL_CAPACITY = 8;
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 8;
     private T[] elements;
     private int head;
-    private int tail;
     private int mask;
+    private int tail;
 
     public ObjStack() {
         this(DEFAULT_INITIAL_CAPACITY);

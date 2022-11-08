@@ -32,8 +32,13 @@ import org.junit.Test;
 public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testSignature() throws Exception {
-        Assert.assertEquals("cast(oV)", new CastNullTypeFunctionFactory().getSignature());
+    public void testCastNullToNonCastFriendlyTypeShouldFail() {
+        try {
+            assertQuery(null, "cast(null as CURSOR)", null, null);
+            Assert.fail();
+        } catch (Exception expected) {
+            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
+        }
     }
 
     @Test
@@ -47,12 +52,7 @@ public class CastNullTypeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastNullToNonCastFriendlyTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as CURSOR)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
-        }
+    public void testSignature() throws Exception {
+        Assert.assertEquals("cast(oV)", new CastNullTypeFunctionFactory().getSignature());
     }
 }

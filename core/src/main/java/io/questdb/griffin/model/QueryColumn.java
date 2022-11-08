@@ -45,12 +45,16 @@ public class QueryColumn implements Mutable {
         includeIntoWildcard = true;
     }
 
-    public CharSequence getAlias() {
-        return alias;
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryColumn that = (QueryColumn) o;
+        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
     }
 
-    public void setAlias(CharSequence alias) {
-        this.alias = alias;
+    public CharSequence getAlias() {
+        return alias;
     }
 
     public ExpressionNode getAst() {
@@ -59,6 +63,11 @@ public class QueryColumn implements Mutable {
 
     public CharSequence getName() {
         return alias != null ? alias : ast.token;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(alias, ast, includeIntoWildcard);
     }
 
     public boolean isIncludeIntoWildcard() {
@@ -76,16 +85,7 @@ public class QueryColumn implements Mutable {
         return this;
     }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryColumn that = (QueryColumn) o;
-        return includeIntoWildcard == that.includeIntoWildcard && Objects.equals(alias, that.alias) && Objects.equals(ast, that.ast);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(alias, ast, includeIntoWildcard);
+    public void setAlias(CharSequence alias) {
+        this.alias = alias;
     }
 }

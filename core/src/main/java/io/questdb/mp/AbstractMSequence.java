@@ -57,14 +57,14 @@ abstract class AbstractMSequence extends AbstractSSequence {
     }
 
     @Override
-    public void setCurrent(long value) {
-        this.value = value;
-    }
-
-    @Override
     public void done(long cursor) {
         Unsafe.getUnsafe().putOrderedInt(flags, ((cursor & mask) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
         barrier.getWaitStrategy().signal();
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        this.value = value;
     }
 
     private boolean available0(long lo) {

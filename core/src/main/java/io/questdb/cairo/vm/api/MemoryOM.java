@@ -32,18 +32,7 @@ import io.questdb.std.str.LPSZ;
  * Mapped memory with Offset
  */
 public interface MemoryOM extends MemoryM {
-    /**
-     * Maps file to memory
-     *
-     * @param ff                the files facade - an abstraction used to simulate failures
-     * @param name              the name of the file
-     *                          should use this parameter as the increment size
-     * @param lo                mapped memory low limit (inclusive)
-     * @param hi                mapped memory high limit (exclusive)
-     * @param memoryTag         memory tag for diagnostics
-     *
-     */
-    void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts);
+    long getOffset();
 
     default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
@@ -53,5 +42,15 @@ public interface MemoryOM extends MemoryM {
         ofOffset(ff, name, lo, hi, memoryTag, CairoConfiguration.O_NONE);
     }
 
-    long getOffset();
+    /**
+     * Maps file to memory
+     *
+     * @param ff        the files facade - an abstraction used to simulate failures
+     * @param name      the name of the file
+     *                  should use this parameter as the increment size
+     * @param lo        mapped memory low limit (inclusive)
+     * @param hi        mapped memory high limit (exclusive)
+     * @param memoryTag memory tag for diagnostics
+     */
+    void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts);
 }

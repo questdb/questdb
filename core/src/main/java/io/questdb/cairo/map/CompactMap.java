@@ -97,6 +97,7 @@ public class CompactMap implements Map, Reopenable {
     public static final byte BITS_DISTANCE = 0b01111111;
     public static final int jumpDistancesLen = 126;
     static final int ENTRY_HEADER_SIZE = 9;
+    private static final HashFunctionFactory DEFAULT_HASH_FACTORY = CompactMap::defaultHashFunction;
     private static final long[] jumpDistances =
             {
                     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
@@ -116,26 +117,24 @@ public class CompactMap implements Map, Reopenable {
                     203280588949935750L, 457381324898247375L, 1029107980662394500L, 2315492957028380766L,
                     5209859150892887590L
             };
-
-    private static final HashFunctionFactory DEFAULT_HASH_FACTORY = CompactMap::defaultHashFunction;
-    private final MemoryARW entries;
-    private final MemoryARW entrySlots;
-    private final Key key = new Key();
-    private final CompactMapValue value;
-    private final double loadFactor;
-    private final long entryFixedSize;
-    private final HashFunction hashFunction;
-    private final CompactMapCursor cursor;
     private final long[] columnOffsets;
+    private final CompactMapCursor cursor;
+    private final MemoryARW entries;
+    private final long entryFixedSize;
     private final long entryKeyOffset;
-    private final int valueColumnCount;
-    private final CompactMapRecord record;
-    private int nResizes;
+    private final MemoryARW entrySlots;
+    private final HashFunction hashFunction;
+    private final Key key = new Key();
+    private final double loadFactor;
     private final int maxResizes;
+    private final CompactMapRecord record;
+    private final CompactMapValue value;
+    private final int valueColumnCount;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
     private long keyCapacity;
     private long mask;
+    private int nResizes;
     private long size;
 
     public CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {
@@ -189,14 +188,27 @@ public class CompactMap implements Map, Reopenable {
         return cursor;
     }
 
+    public long getKeyCapacity() {
+        return keyCapacity;
+    }
+
     @Override
     public MapRecord getRecord() {
         return record;
     }
 
+    public int getValueColumnCount() {
+        return valueColumnCount;
+    }
+
     @Override
     public void reopen() {
         clear();
+    }
+
+    @Override
+    public void restoreInitialCapacity() {
+        // no op
     }
 
     @Override
@@ -228,17 +240,24 @@ public class CompactMap implements Map, Reopenable {
         return key;
     }
 
-    @Override
-    public void restoreInitialCapacity() {
-        // no op
-    }
+    private static HashFunction defaultHashFunction(MemoryR memory) {
+        final Hash.MemoryAccessor memoryAccessor = new Hash.MemoryAccessor() {
+            @Override
+            public byte getByte(long offset) {
+                return memory.getByte(offset);
+            }
 
-    public long getKeyCapacity() {
-        return keyCapacity;
-    }
+            @Override
+            public int getInt(long offset) {
+                return memory.getInt(offset);
+            }
 
-    public int getValueColumnCount() {
-        return valueColumnCount;
+            @Override
+            public long getLong(long offset) {
+                return memory.getLong(offset);
+            }
+        };
+        return (offset, size) -> Hash.xxHash64(offset, size, 0, memoryAccessor);
     }
 
     private long calcColumnOffsets(ColumnTypes valueTypes, long startOffset, int startPosition) {
@@ -308,26 +327,6 @@ public class CompactMap implements Map, Reopenable {
     @FunctionalInterface
     public interface HashFunctionFactory {
         HashFunction create(MemoryR memory);
-    }
-
-    private static HashFunction defaultHashFunction(MemoryR memory) {
-        final Hash.MemoryAccessor memoryAccessor = new Hash.MemoryAccessor() {
-            @Override
-            public long getLong(long offset) {
-                return memory.getLong(offset);
-            }
-
-            @Override
-            public int getInt(long offset) {
-                return memory.getInt(offset);
-            }
-
-            @Override
-            public byte getByte(long offset) {
-                return memory.getByte(offset);
-            }
-        };
-        return (offset, size) -> Hash.xxHash64(offset, size, 0, memoryAccessor);
     }
 
     public class Key implements MapKey {
@@ -453,6 +452,11 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
+        public void putChar(char value) {
+            entries.putChar(value);
+        }
+
+        @Override
         public void putDate(long value) {
             putLong(value);
         }
@@ -478,23 +482,23 @@ public class CompactMap implements Map, Reopenable {
         }
 
         @Override
-        public void putLong256(Long256 value) {
-            entries.putLong256(value);
-        }
-
-        @Override
         public void putLong128LittleEndian(long hi, long lo) {
             entries.putLong128LittleEndian(hi, lo);
         }
 
         @Override
-        public void putShort(short value) {
-            entries.putShort(value);
+        public void putLong256(Long256 value) {
+            entries.putLong256(value);
         }
 
         @Override
-        public void putChar(char value) {
-            entries.putChar(value);
+        public void putRecord(Record value) {
+            // noop
+        }
+
+        @Override
+        public void putShort(short value) {
+            entries.putShort(value);
         }
 
         @Override
@@ -517,11 +521,6 @@ public class CompactMap implements Map, Reopenable {
             int len = hi - lo;
             entries.putStr(currentEntryOffset + currentEntrySize, value, lo, len);
             currentEntrySize += Vm.getStorageLength(len);
-        }
-
-        @Override
-        public void putRecord(Record value) {
-            // noop
         }
 
         @Override

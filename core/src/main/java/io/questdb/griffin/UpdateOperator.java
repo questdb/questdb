@@ -44,11 +44,10 @@ import static io.questdb.cairo.TableUtils.iFile;
 
 public class UpdateOperator extends PurgingOperator implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
-
-    private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
-    private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final long dataAppendPageSize;
+    private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final long fileOpenOpts;
+    private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private IndexBuilder indexBuilder;
 
     public UpdateOperator(
@@ -246,37 +245,11 @@ public class UpdateOperator extends PurgingOperator implements QuietCloseable {
         }
     }
 
-    private static void updateEffectiveColumnTops(
-            TableWriter tableWriter,
-            int partitionIndex,
-            IntList updateColumnIndexes,
-            int columnCount,
-            long firstUpdatedPartitionRowId
-    ) {
-        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
-            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
-            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);
-            if (effectiveColumnTop > -1L) {
-                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);
-            }
-        }
-    }
-
     private static long calculatedEffectiveColumnTop(long firstUpdatedPartitionRowId, long columnTop) {
         if (columnTop > -1L) {
             return Math.min(firstUpdatedPartitionRowId, columnTop);
         }
         return firstUpdatedPartitionRowId;
-    }
-
-    private static int getFixedColumnSize(int columnType) {
-        if (isVariableLength(columnType)) {
-            return 3;
-        }
-        return ColumnType.pow2SizeOf(columnType);
     }
 
     private static void fillUpdatesGapWithNull(
@@ -307,6 +280,32 @@ public class UpdateOperator extends PurgingOperator implements QuietCloseable {
                         rowCount
                 );
                 break;
+        }
+    }
+
+    private static int getFixedColumnSize(int columnType) {
+        if (isVariableLength(columnType)) {
+            return 3;
+        }
+        return ColumnType.pow2SizeOf(columnType);
+    }
+
+    private static void updateEffectiveColumnTops(
+            TableWriter tableWriter,
+            int partitionIndex,
+            IntList updateColumnIndexes,
+            int columnCount,
+            long firstUpdatedPartitionRowId
+    ) {
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
+            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);
+            if (effectiveColumnTop > -1L) {
+                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);
+            }
         }
     }
 

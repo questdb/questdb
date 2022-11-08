@@ -34,12 +34,12 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class MapSymbolColumn extends SymbolFunction {
-    private final int mapColumnIndex;
     private final int cursorColumnIndex;
+    private final int mapColumnIndex;
     private final boolean symbolTableStatic;
+    private boolean ownSymbolTable;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
-    private boolean ownSymbolTable;
 
     public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
         this.mapColumnIndex = mapColumnIndex;
@@ -48,18 +48,15 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
+    public void close() {
+        if (ownSymbolTable) {
+            symbolTable = Misc.freeIfCloseable(symbolTable);
+        }
+    }
+
+    @Override
     public int getInt(Record rec) {
         return rec.getInt(mapColumnIndex);
-    }
-
-    @Override
-    public CharSequence getSymbol(Record rec) {
-        return symbolTable.valueOf(getInt(rec));
-    }
-
-    @Override
-    public CharSequence getSymbolB(Record rec) {
-        return symbolTable.valueBOf(getInt(rec));
     }
 
     @Override
@@ -74,13 +71,13 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public @Nullable SymbolTable newSymbolTable() {
-        return symbolTableSource.newSymbolTable(cursorColumnIndex);
+    public CharSequence getSymbol(Record rec) {
+        return symbolTable.valueOf(getInt(rec));
     }
 
     @Override
-    public boolean isSymbolTableStatic() {
-        return symbolTableStatic;
+    public CharSequence getSymbolB(Record rec) {
+        return symbolTable.valueBOf(getInt(rec));
     }
 
     @Override
@@ -104,8 +101,13 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbolTable.valueOf(symbolKey);
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        return symbolTableSource.newSymbolTable(cursorColumnIndex);
     }
 
     @Override
@@ -114,9 +116,7 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public void close() {
-        if (ownSymbolTable) {
-            symbolTable = Misc.freeIfCloseable(symbolTable);
-        }
+    public CharSequence valueOf(int symbolKey) {
+        return symbolTable.valueOf(symbolKey);
     }
 }

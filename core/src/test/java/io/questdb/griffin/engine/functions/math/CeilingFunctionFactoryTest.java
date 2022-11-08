@@ -31,25 +31,12 @@ import org.junit.Test;
 public class CeilingFunctionFactoryTest extends AbstractGriffinTest {
 
 
-
     @Test
-    public void testFloatPositive() throws SqlException {
+    public void testDoubleNegative() throws SqlException {
         assertQuery(
                 "ceiling\n" +
-                        "14.0000\n",
-                "select ceiling(13.1f)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatNegative() throws SqlException {
-        assertQuery(
-                "ceiling\n" +
-                        "-13.0000\n",
-                "select ceiling(-13.1f)",
+                        "-13.0\n",
+                "select ceiling(-13.1)",
                 null,
                 true,
                 true
@@ -69,11 +56,23 @@ public class CeilingFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDoubleNegative() throws SqlException {
+    public void testFloatNegative() throws SqlException {
         assertQuery(
                 "ceiling\n" +
-                        "-13.0\n",
-                "select ceiling(-13.1)",
+                        "-13.0000\n",
+                "select ceiling(-13.1f)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatPositive() throws SqlException {
+        assertQuery(
+                "ceiling\n" +
+                        "14.0000\n",
+                "select ceiling(13.1f)",
                 null,
                 true,
                 true

@@ -32,14 +32,28 @@ import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    private final String tableName;
     private final int tableId;
+    private final String tableName;
     private final long tableVersion;
 
     public AbstractDataFrameCursorFactory(String tableName, int tableId, long tableVersion) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public boolean supportTableRowId(CharSequence tableName) {
+        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.attr("tableName").val(tableName);
     }
 
     @Override
@@ -55,19 +69,5 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
                         tableId,
                         tableVersion
                 );
-    }
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public boolean supportTableRowId(CharSequence tableName) {
-        return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.attr("tableName").val(tableName);
     }
 }
