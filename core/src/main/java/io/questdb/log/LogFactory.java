@@ -531,12 +531,11 @@ public class LogFactory implements Closeable {
 
         boolean initialized = false;
         // prevent creating blank log dir from unit tests
-        String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toString();
-            File logDirFile = new File(logDir);
+            LOG_DIR = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(LOG_DIR);
             if (!logDirFile.exists() && logDirFile.mkdir()) {
-                System.err.printf("Created log directory: %s%n", logDir);
+                System.err.printf("Created log directory: %s%n", LOG_DIR);
             }
 
             String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
@@ -546,7 +545,7 @@ public class LogFactory implements Closeable {
                 try (FileInputStream fis = new FileInputStream(logPath)) {
                     Properties properties = new Properties();
                     properties.load(fis);
-                    logFactory.configureFromProperties(properties, logDir);
+                    logFactory.configureFromProperties(properties, LOG_DIR);
                     initialized = true;
                 } catch (IOException e) {
                     throw new LogError("Cannot read " + logPath, e);
@@ -560,7 +559,7 @@ public class LogFactory implements Closeable {
                 if (is != null) {
                     Properties properties = new Properties();
                     properties.load(is);
-                    logFactory.configureFromProperties(properties, logDir);
+                    logFactory.configureFromProperties(properties, LOG_DIR);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
                     File f = new File(conf);
@@ -568,7 +567,7 @@ public class LogFactory implements Closeable {
                         try (FileInputStream fis = new FileInputStream(f)) {
                             Properties properties = new Properties();
                             properties.load(fis);
-                            logFactory.configureFromProperties(properties, logDir);
+                            logFactory.configureFromProperties(properties, LOG_DIR);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
                     } else {
