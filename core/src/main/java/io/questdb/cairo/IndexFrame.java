@@ -29,17 +29,17 @@ public class IndexFrame {
     private long address;
     private long size;
 
+    public long getAddress() {
+        return address;
+    }
+
+    public long getSize() {
+        return size;
+    }
+
     IndexFrame of(long address, long size) {
         this.address = address;
         this.size = size;
         return this;
-    }
-    
-    public long getAddress() {
-        return address;
-    }
-    
-    public long getSize() {
-        return size;    
     }
 }

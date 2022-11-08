@@ -29,15 +29,56 @@ import io.questdb.std.Long256;
 
 public class CompactMapValue implements MapValue {
 
-    private final MemoryARW entries;
     private final long[] columnOffsets;
-    private long currentValueOffset;
+    private final MemoryARW entries;
     private boolean _new;
+    private long currentValueOffset;
     private CompactMapRecord record;
 
     CompactMapValue(MemoryARW entries, long[] columnOffsets) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
+    }
+
+    @Override
+    public void addByte(int index, byte value) {
+        final long o = getValueColumnOffset(index);
+        entries.putByte(o, (byte) (entries.getByte(o) + value));
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long o = getValueColumnOffset(index);
+        entries.putDouble(o, entries.getDouble(o) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long o = getValueColumnOffset(index);
+        entries.putFloat(o, entries.getFloat(o) + value);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long o = getValueColumnOffset(index);
+        entries.putInt(o, entries.getInt(o) + value);
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        final long o = getValueColumnOffset(index);
+        entries.putLong(o, entries.getLong(o) + value);
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long o = getValueColumnOffset(index);
+        entries.putShort(o, (short) (entries.getShort(o) + value));
     }
 
     @Override
@@ -56,6 +97,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int columnIndex) {
+        return entries.getChar(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
     public long getDate(int index) {
         return getLong(index);
     }
@@ -71,74 +117,8 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public int getInt(int columnIndex) {
-        return entries.getInt(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public long getLong(int columnIndex) {
-        return entries.getLong(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public void addLong(int index, long value) {
-        final long o = getValueColumnOffset(index);
-        entries.putLong(o, entries.getLong(o) + value);
-    }
-
-    @Override
-    public void addByte(int index, byte value) {
-        final long o = getValueColumnOffset(index);
-        entries.putByte(o, (byte) (entries.getByte(o) + value));
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        final long o = getValueColumnOffset(index);
-        entries.putShort(o, (short) (entries.getShort(o) + value));
-    }
-
-    @Override
-    public void addInt(int index, int value) {
-        final long o = getValueColumnOffset(index);
-        entries.putInt(o, entries.getInt(o) + value);
-    }
-
-    @Override
-    public void addDouble(int index, double value) {
-        final long o = getValueColumnOffset(index);
-        entries.putDouble(o, entries.getDouble(o) + value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final long o = getValueColumnOffset(index);
-        entries.putFloat(o, entries.getFloat(o) + value);
-    }
-
-    @Override
-    public short getShort(int columnIndex) {
-        return entries.getShort(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public char getChar(int columnIndex) {
-        return entries.getChar(getValueColumnOffset(columnIndex));
-    }
-
-    @Override
-    public long getTimestamp(int index) {
-        return getLong(index);
-    }
-
-    @Override
     public byte getGeoByte(int col) {
         return getByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
     }
 
     @Override
@@ -149,6 +129,31 @@ public class CompactMapValue implements MapValue {
     @Override
     public long getGeoLong(int col) {
         return getLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getShort(col);
+    }
+
+    @Override
+    public int getInt(int columnIndex) {
+        return entries.getInt(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getLong(int columnIndex) {
+        return entries.getLong(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public short getShort(int columnIndex) {
+        return entries.getShort(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getTimestamp(int index) {
+        return getLong(index);
     }
 
     @Override
@@ -164,6 +169,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public void putByte(int columnIndex, byte value) {
         entries.putByte(getValueColumnOffset(columnIndex), value);
+    }
+
+    @Override
+    public void putChar(int columnIndex, char value) {
+        entries.putChar(getValueColumnOffset(columnIndex), value);
     }
 
     @Override
@@ -192,13 +202,13 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public void putShort(int columnIndex, short value) {
-        entries.putShort(getValueColumnOffset(columnIndex), value);
+    public void putLong256(int index, Long256 value) {
+
     }
 
     @Override
-    public void putChar(int columnIndex, char value) {
-        entries.putChar(getValueColumnOffset(columnIndex), value);
+    public void putShort(int columnIndex, short value) {
+        entries.putShort(getValueColumnOffset(columnIndex), value);
     }
 
     @Override
@@ -209,16 +219,6 @@ public class CompactMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         record.of(currentValueOffset);
-    }
-
-    @Override
-    public void addLong256(int index, Long256 value) {
-
-    }
-
-    @Override
-    public void putLong256(int index, Long256 value) {
-
     }
 
     private long getValueColumnOffset(int columnIndex) {

@@ -42,17 +42,12 @@ import org.jetbrains.annotations.NotNull;
 
 public class MaxStrGroupByFunction extends StrFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
-    private int sinkIndex;
     private final ObjList<StringSink> sinks = new ObjList<>();
+    private int sinkIndex;
+    private int valueIndex;
 
     public MaxStrGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override
@@ -93,26 +88,9 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
         }
     }
 
-    private StringSink nextSink() {
-        final StringSink sink;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new StringSink());
-        } else {
-            sink = sinks.getQuick(sinkIndex);
-        }
-        sink.clear();
-        return sink;
-    }
-
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+    public Function getArg() {
+        return arg;
     }
 
     @Override
@@ -127,11 +105,6 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isScalar() {
-        return false;
-    }
-
-    @Override
     public boolean isConstant() {
         return false;
     }
@@ -142,13 +115,40 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        sinkIndex = 0;
+    public boolean isScalar() {
+        return false;
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.INT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putInt(valueIndex, Numbers.INT_NaN);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.put("max(").put(arg).put(')');
+    }
+
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+        sinkIndex = 0;
+    }
+
+    private StringSink nextSink() {
+        final StringSink sink;
+        if (sinks.size() <= sinkIndex) {
+            sinks.extendAndSet(sinkIndex, sink = new StringSink());
+        } else {
+            sink = sinks.getQuick(sinkIndex);
+        }
+        sink.clear();
+        return sink;
     }
 }

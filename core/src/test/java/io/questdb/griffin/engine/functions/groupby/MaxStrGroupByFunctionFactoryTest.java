@@ -34,6 +34,38 @@ import org.junit.Test;
 public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tmax\n" +
+                        "a\t42\n" +
+                        "b\t42\n" +
+                        "c\t42\n",
+                "select a, max('42') from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExpression() throws Exception {
+        assertQuery(
+                "a\tmax\n" +
+                        "a\tcccccc\n" +
+                        "b\tcccccc\n" +
+                        "c\tcccccc\n",
+                "select a, max(concat(s, s)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tmax\n" +
@@ -99,45 +131,13 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConstant() throws Exception {
-        assertQuery(
-                "a\tmax\n" +
-                        "a\t42\n" +
-                        "b\t42\n" +
-                        "c\t42\n",
-                "select a, max('42') from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testExpression() throws Exception {
-        assertQuery(
-                "a\tmax\n" +
-                        "a\tcccccc\n" +
-                        "b\tcccccc\n" +
-                        "c\tcccccc\n",
-                "select a, max(concat(s, s)) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
             try (
                     final RecordCursorFactory factory = compiler.compile("select ts, avg(i), max(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                    ) {
+            ) {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {

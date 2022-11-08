@@ -58,18 +58,13 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public void of(int symbolKey) {
-        cursor.of(symbolKey);
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         return cursor.of(dataFrame);
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        this.cursor.prepare(tableReader);
+    public Function getFunction() {
+        return symbolFunction;
     }
 
     @Override
@@ -83,8 +78,13 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public Function getFunction() {
-        return symbolFunction;
+    public void of(int symbolKey) {
+        cursor.of(symbolKey);
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        this.cursor.prepare(tableReader);
     }
 
     @Override

@@ -40,19 +40,14 @@ import io.questdb.std.ObjList;
  * until all cursors are exhausted .
  */
 public class HeapRowCursorFactory implements RowCursorFactory {
+    private final HeapRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
-    private final HeapRowCursor cursor;
 
     public HeapRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new HeapRowCursor();
-    }
-
-    @Override
-    public boolean isEntity() {
-        return false;
     }
 
     @Override
@@ -62,6 +57,11 @@ public class HeapRowCursorFactory implements RowCursorFactory {
         }
         cursor.of(cursors);
         return cursor;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
     }
 
     @Override

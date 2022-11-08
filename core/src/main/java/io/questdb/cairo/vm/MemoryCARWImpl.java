@@ -32,18 +32,18 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages. 
+ * A version of {@link MemoryPARWImpl} that uses a single contiguous memory region instead of pages.
  * Note that it still has the concept of a page such that the contiguous memory region will extend in page sizes.
  *
  * @author Patrick Mackinlay
  */
 public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
-    private final int maxPages;
     private final Long256Acceptor long256Acceptor = this::putLong256;
-    private long sizeMsb;
-    private long appendAddress = 0;
+    private final int maxPages;
     private final int memoryTag;
+    private long appendAddress = 0;
+    private long sizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -57,64 +57,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long result = appendAddress;
         appendAddress += bytes;
         return result;
-    }
-
-    @Override
-    public long getPageSize() {
-        return getExtendSegmentSize();
-    }
-
-    @Override
-    public void zero() {
-        long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
-    }
-
-    /**
-     * Updates append pointer with address for the given offset. All put* functions will be
-     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
-     * unaffected until the moment memory has to be extended.
-     *
-     * @param offset position from 0 in virtual memory.
-     */
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
-    }
-
-    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        putLong256(hexString, start, end, long256Acceptor);
-    }
-
-    /**
-     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
-     * no memory write takes place.
-     *
-     * @param bytes number of bytes to skip
-     */
-    @Override
-    public void skip(long bytes) {
-        checkAndExtend(appendAddress + bytes);
-        appendAddress += bytes;
-    }
-
-    @Override
-    public final long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
-    public void truncate() {
-        // our internal "extend" implementation will reduce size
-        // as well as extend it
-        extend0(0);
-        // reset append offset
-        appendAddress = pageAddress;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        return 1L << sizeMsb;
     }
 
     @Override
@@ -146,8 +88,66 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
+    public final long getAppendOffset() {
+        return appendAddress - pageAddress;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        return 1L << sizeMsb;
+    }
+
+    @Override
+    public long getPageSize() {
+        return getExtendSegmentSize();
+    }
+
+    /**
+     * Updates append pointer with address for the given offset. All put* functions will be
+     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
+     * unaffected until the moment memory has to be extended.
+     *
+     * @param offset position from 0 in virtual memory.
+     */
+    public void jumpTo(long offset) {
+        checkAndExtend(pageAddress + offset);
+        appendAddress = pageAddress + offset;
+    }
+
+    public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        putLong256(hexString, start, end, long256Acceptor);
+    }
+
+    @Override
     public long size() {
         return size;
+    }
+
+    /**
+     * Skips given number of bytes. Same as logically appending 0-bytes. Advantage of this method is that
+     * no memory write takes place.
+     *
+     * @param bytes number of bytes to skip
+     */
+    @Override
+    public void skip(long bytes) {
+        checkAndExtend(appendAddress + bytes);
+        appendAddress += bytes;
+    }
+
+    @Override
+    public void truncate() {
+        // our internal "extend" implementation will reduce size
+        // as well as extend it
+        extend0(0);
+        // reset append offset
+        appendAddress = pageAddress;
+    }
+
+    @Override
+    public void zero() {
+        long baseLength = lim - pageAddress;
+        Vect.memset(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {

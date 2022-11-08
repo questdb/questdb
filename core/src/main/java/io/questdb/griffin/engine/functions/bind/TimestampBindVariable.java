@@ -46,12 +46,12 @@ class TimestampBindVariable extends TimestampFunction implements ScalarFunction,
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 

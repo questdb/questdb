@@ -65,8 +65,8 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
 
     private static class RndFunction extends IntFunction implements Function {
         private final int lo;
-        private final int range;
         private final int nanRate;
+        private final int range;
         private Rnd rnd;
 
         public RndFunction(int lo, int hi, int nanRate) {
@@ -85,13 +85,13 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override

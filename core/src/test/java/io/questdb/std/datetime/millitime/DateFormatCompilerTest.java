@@ -50,10 +50,6 @@ public class DateFormatCompilerTest {
         DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 
-    private static DateFormat get(CharSequence pattern) {
-        return compiler.compile(pattern, true);
-    }
-
     @Test(expected = NumericException.class)
     public void testBadAmPm() throws Exception {
         assertThat("KaMMy", "", "11 0910 am");
@@ -103,35 +99,19 @@ public class DateFormatCompilerTest {
     }
 
     @Test
-    public void testDayOneDigit() throws Exception {
-        assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
-    }
-
-    @Test
     public void testDayOfYear() throws Exception {
         assertThat("D, MM-yyyy", "2010-11-01T00:00:00.000Z", "25, 11-2010");
     }
 
     @Test
-    public void testWeekOfYear() throws Exception {
-        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
+    public void testDayOneDigit() throws Exception {
+        assertThat("dyyyy", "2014-01-03T00:00:00.000Z", "32014");
     }
-
-    @Test
-    public void testWeekOfMonth() throws Exception {
-        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
-    }
-
 
     @Test
     public void testEra() throws Exception {
         assertThat("E, dd-MM-yyyy G", "2014-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 AD");
         assertThat("E, dd-MM-yyyy G", "-2013-04-03T00:00:00.000Z", "Tuesday, 03-04-2014 BC");
-    }
-
-    @Test
-    public void testGreedyMillis() throws NumericException {
-        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
 
     @Test
@@ -164,20 +144,6 @@ public class DateFormatCompilerTest {
         assertFormat("1", "D", "2010-01-01T00:00:00.000Z");
         assertFormat("69", "D", "2010-03-10T00:00:00.000Z");
         assertFormat("70", "D", "2020-03-10T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatWeekOfYear() throws Exception {
-        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
-        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
-        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
-    }
-
-    @Test
-    public void testFormatWeekOfMonth() throws Exception {
-        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
-        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
-        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
     }
 
     @Test
@@ -392,6 +358,20 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testFormatWeekOfMonth() throws Exception {
+        assertFormat("1", "W", "2010-01-01T00:00:00.000Z");
+        assertFormat("2", "W", "2010-03-10T00:00:00.000Z");
+        assertFormat("2", "W", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatWeekOfYear() throws Exception {
+        assertFormat("1", "w", "2010-01-01T00:00:00.000Z");
+        assertFormat("10", "w", "2010-03-10T00:00:00.000Z");
+        assertFormat("11", "w", "2020-03-10T00:00:00.000Z");
+    }
+
+    @Test
     public void testFormatWeekday() throws Exception {
         assertFormat("09, Sunday", "dd, EE", "2017-04-09T00:00:00.000Z");
         assertFormat("10, Monday", "dd, EE", "2017-04-10T00:00:00.000Z");
@@ -438,6 +418,11 @@ public class DateFormatCompilerTest {
 
         assertFormat("09, 07", "dd, yy", "0007-04-09T00:00:00.000Z");
         assertFormat("07", "yy", "0007-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testGreedyMillis() throws NumericException {
+        assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
 
     @Test
@@ -673,6 +658,12 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testThreeDigitYear() throws Exception {
+        assertThat("MMyyy", "2010-11-01T00:00:00.000Z", "11010");
+        assertThat("MM, yyy", "2010-11-01T00:00:00.000Z", "11, 010");
+    }
+
+    @Test
     public void testTimeZone1() throws Exception {
         assertThat("dd-MM-yy HH:m z", "2010-09-03T11:54:00.000Z", "03-09-10 14:54 EAT");
     }
@@ -724,9 +715,13 @@ public class DateFormatCompilerTest {
     }
 
     @Test
-    public void testThreeDigitYear() throws Exception {
-        assertThat("MMyyy", "2010-11-01T00:00:00.000Z", "11010");
-        assertThat("MM, yyy", "2010-11-01T00:00:00.000Z", "11, 010");
+    public void testWeekOfMonth() throws Exception {
+        assertThat("W, MM-yyyy", "2010-11-01T00:00:00.000Z", "5, 11-2010");
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        assertThat("w, MM-yyyy", "2010-11-01T00:00:00.000Z", "6, 11-2010");
     }
 
     @Test
@@ -754,6 +749,10 @@ public class DateFormatCompilerTest {
     public void testWeekdayShort() throws Exception {
         assertThat("E, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
         assertThat("EE, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "Fri, 03-04-2014");
+    }
+
+    private static DateFormat get(CharSequence pattern) {
+        return compiler.compile(pattern, true);
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {

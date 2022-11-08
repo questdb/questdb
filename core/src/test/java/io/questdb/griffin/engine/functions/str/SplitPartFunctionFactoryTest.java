@@ -34,25 +34,20 @@ import org.junit.Test;
 
 public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new SplitPartFunctionFactory();
+    @Test
+    public void testDynamicIndex() {
+        try {
+            call("abc~@~def~@~ghi", "~@~", 2);
+            Assert.fail("Should fail for dynamic index param");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "index must be a constant or runtime-constant");
+        }
     }
 
     @Test
-    public void testPositiveIndex() throws SqlException {
-        assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi', '~@~', 2)",
-                null,
-                true,
-                true);
-        assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc,def,ghi,jkl', cast(',' as string), 2)",
-                null,
-                true,
-                true);
+    public void testNaNIndex() throws SqlException {
+        callCustomised(true, true, "abc~@~def~@~ghi", "~@~", Numbers.INT_NaN).andAssert(null);
+        callCustomised(true, true, "abc,def,ghi,jkl", ",", Numbers.INT_NaN).andAssert(null);
     }
 
     @Test
@@ -72,31 +67,31 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNullOrEmptyStr() throws SqlException {
-        callCustomised(true, true, null, "~@~", 2).andAssert(null);
-        callCustomised(true, true, "", ",", 2).andAssert("");
-    }
-
-    @Test
     public void testNullOrEmptyDelimiter() throws SqlException {
         callCustomised(true, true, "abc~@~def~@~ghi", null, 2).andAssert(null);
         callCustomised(true, true, "abc,def,ghi,jkl", "", 2).andAssert("");
     }
 
     @Test
-    public void testNaNIndex() throws SqlException {
-        callCustomised(true, true, "abc~@~def~@~ghi", "~@~", Numbers.INT_NaN).andAssert(null);
-        callCustomised(true, true, "abc,def,ghi,jkl", ",", Numbers.INT_NaN).andAssert(null);
+    public void testNullOrEmptyStr() throws SqlException {
+        callCustomised(true, true, null, "~@~", 2).andAssert(null);
+        callCustomised(true, true, "", ",", 2).andAssert("");
     }
 
     @Test
-    public void testDynamicIndex() {
-        try {
-            call("abc~@~def~@~ghi", "~@~", 2);
-            Assert.fail("Should fail for dynamic index param");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "index must be a constant or runtime-constant");
-        }
+    public void testPositiveIndex() throws SqlException {
+        assertQuery(
+                "split_part\n" + "def\n",
+                "select split_part('abc~@~def~@~ghi', '~@~', 2)",
+                null,
+                true,
+                true);
+        assertQuery(
+                "split_part\n" + "def\n",
+                "select split_part('abc,def,ghi,jkl', cast(',' as string), 2)",
+                null,
+                true,
+                true);
     }
 
     @Test
@@ -107,5 +102,10 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "field position must not be zero");
         }
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new SplitPartFunctionFactory();
     }
 }

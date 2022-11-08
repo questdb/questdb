@@ -36,6 +36,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     public static final NullMemory INSTANCE = new NullMemory();
 
     @Override
+    public long addressOf(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long appendAddressFor(long bytes) {
         throw new UnsupportedOperationException();
     }
@@ -46,23 +51,24 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void zero() {
-    }
-
-    @Override
     public void close(boolean truncate) {
     }
 
     @Override
-    public void sync(boolean async) {
+    public void close() {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    public void extend(long size) {
     }
 
     @Override
     public long getAppendOffset() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public BinarySequence getBin(long offset) {
         throw new UnsupportedOperationException();
     }
 
@@ -72,125 +78,22 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void jumpTo(long offset) {
+    public long getFd() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long putBin(BinarySequence value) {
+    public FilesFacade getFilesFacade() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long putBin(long from, long len) {
+    public Long256 getLong256A(long offset) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void putBlockOfBytes(long from, long len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBool(boolean value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putByte(byte value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putChar(char value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putDouble(double value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putFloat(float value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putInt(int value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong(long value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLongLong(long l0, long l1) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(long l0, long l1, long l2, long l3) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(Long256 value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(CharSequence hexString) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullBin() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putShort(short value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(char value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value, int pos, int len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void skip(long bytes) {
-    }
-
-    @Override
-    public void truncate() {
-    }
-
-    @Override
-    public BinarySequence getBin(long offset) {
+    public Long256 getLong256B(long offset) {
         throw new UnsupportedOperationException();
     }
 
@@ -215,26 +118,26 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public Long256 getLong256A(long offset) {
+    public boolean isMapped(long offset, long len) {
+        return false;
+    }
+
+    @Override
+    public void jumpTo(long offset) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Long256 getLong256B(long offset) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, int memoryTag, long opts) {
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void extend(long size) {
-    }
-
-    @Override
-    public long size() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long addressOf(long offset) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
         throw new UnsupportedOperationException();
     }
 
@@ -249,31 +152,22 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public FilesFacade getFilesFacade() {
+    public long putBin(BinarySequence value) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void close() {
-    }
-
-    @Override
-    public long getFd() {
+    public long putBin(long from, long len) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean isMapped(long offset, long len) {
-        return false;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void putBlockOfBytes(long from, long len) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag) {
+    public void putBool(boolean value) {
         throw new UnsupportedOperationException();
     }
 
@@ -282,7 +176,17 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void putByte(byte value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putByte(long offset, byte value) {
+    }
+
+    @Override
+    public void putChar(char value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -290,7 +194,17 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void putDouble(double value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putDouble(long offset, double value) {
+    }
+
+    @Override
+    public void putFloat(float value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -298,11 +212,41 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void putInt(int value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putInt(long offset, int value) {
     }
 
     @Override
+    public void putLong(long value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putLong(long offset, long value) {
+    }
+
+    @Override
+    public void putLong256(long l0, long l1, long l2, long l3) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(Long256 value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(CharSequence hexString) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -314,11 +258,54 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
+    public void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
+    }
+
+    @Override
+    public void putLong256Null() {
+    }
+
+    @Override
+    public void putLongLong(long l0, long l1) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putNullBin() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putNullStr() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putNullStr(long offset) {
     }
 
     @Override
+    public void putShort(short value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putShort(long offset, short value) {
+    }
+
+    @Override
+    public long putStr(CharSequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStr(char value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStr(CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -330,14 +317,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
-    }
-
-    @Override
-    public void putLong256Null() {
-    }
-
-    @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
         throw new UnsupportedOperationException();
     }
@@ -345,5 +324,26 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     @Override
     public long resize(long size) {
         return 0;
+    }
+
+    @Override
+    public long size() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void skip(long bytes) {
+    }
+
+    @Override
+    public void sync(boolean async) {
+    }
+
+    @Override
+    public void truncate() {
+    }
+
+    @Override
+    public void zero() {
     }
 }

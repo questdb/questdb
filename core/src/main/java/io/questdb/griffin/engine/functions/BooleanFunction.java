@@ -71,6 +71,26 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBool(rec) ? 1 : 0;
     }
@@ -138,26 +158,6 @@ public abstract class BooleanFunction implements ScalarFunction {
     @Override
     public long getTimestamp(Record rec) {
         return getBool(rec) ? 1 : 0;
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

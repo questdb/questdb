@@ -26,31 +26,28 @@ package io.questdb.std;
 
 public class LongSort {
     /**
+     * The maximum number of runs in merge sort.
+     */
+    public static final int MAX_RUN_COUNT = 67;
+    /**
      * If the length of an array to be sorted is less than this
      * constant, Quicksort is used in preference to merge sort.
      */
     public static final int QUICKSORT_THRESHOLD = 286;
-
+    /**
+     * If the length of an array to be sorted is less than this
+     * constant, insertion sort is used in preference to Quicksort.
+     */
+    private static final int INSERTION_SORT_THRESHOLD = 47;
     /**
      * The maximum length of run in merge sort.
      */
     private static final int MAX_RUN_LENGTH = 33;
 
     /**
-     * The maximum number of runs in merge sort.
-     */
-    public static final int MAX_RUN_COUNT = 67;
-
-    /**
-     * If the length of an array to be sorted is less than this
-     * constant, insertion sort is used in preference to Quicksort.
-     */
-    private static final int INSERTION_SORT_THRESHOLD = 47;
-
-    /**
      * Sorts the specified range of the array.
      *
-     * @param vec vector of long values
+     * @param vec   vector of long values
      * @param left  the index of the first element, inclusive, to be sorted
      * @param right the index of the last element, inclusive, to be sorted
      */
@@ -151,6 +148,10 @@ public class LongSort {
             a = b;
             b = t;
         }
+    }
+
+    private static void let(LongVec vec, int a, int b) {
+        vec.setQuick(a, vec.getQuick(b));
     }
 
     /**
@@ -525,9 +526,5 @@ public class LongSort {
         long tmp = vec.getQuick(a);
         vec.setQuick(a, vec.getQuick(b));
         vec.setQuick(b, tmp);
-    }
-
-    private static void let(LongVec vec, int a, int b) {
-        vec.setQuick(a, vec.getQuick(b));
     }
 }

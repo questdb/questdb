@@ -16,7 +16,7 @@ public class VirtualGauge implements Gauge {
     }
 
     @Override
-    public void inc() {
+    public void add(long value) {
         // do nothing as this gauge is RO view of some stat
     }
 
@@ -26,17 +26,13 @@ public class VirtualGauge implements Gauge {
     }
 
     @Override
-    public void add(long value) {
-        // do nothing as this gauge is RO view of some stat
-    }
-
-    @Override
     public long getValue() {
         return provider.getValue();
     }
 
-    private CharSequence getName() {
-        return this.name;
+    @Override
+    public void inc() {
+        // do nothing as this gauge is RO view of some stat
     }
 
     @Override
@@ -47,15 +43,19 @@ public class VirtualGauge implements Gauge {
         PrometheusFormatUtils.appendNewLine(sink);
     }
 
+    private void appendMetricName(CharSink sink) {
+        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+        sink.put(getName());
+    }
+
     private void appendType(CharSink sink) {
         sink.put(PrometheusFormatUtils.TYPE_PREFIX);
         sink.put(getName());
         sink.put(" gauge\n");
     }
 
-    private void appendMetricName(CharSink sink) {
-        sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-        sink.put(getName());
+    private CharSequence getName() {
+        return this.name;
     }
 
     @FunctionalInterface

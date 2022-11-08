@@ -26,10 +26,6 @@ package io.questdb.std;
 
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.test.tools.TestUtils;
-
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -37,6 +33,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
 
 public class OsTest {
     @Test
@@ -77,6 +77,11 @@ public class OsTest {
     }
 
     @Test
+    public void testGetRss() {
+        assertThat(Os.getRss(), not(equalTo(0)));
+    }
+
+    @Test
     public void testSleepEnds() {
         SOCountDownLatch doneLatch = new SOCountDownLatch(1);
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -93,10 +98,5 @@ public class OsTest {
         t.interrupt();
         Assert.assertTrue(doneLatch.await(10_000_000_000L));
         Assert.assertTrue(System.currentTimeMillis() - time >= 1000);
-    }
-
-    @Test
-    public void testGetRss() {
-        assertThat(Os.getRss(), not(equalTo(0)));
     }
 }

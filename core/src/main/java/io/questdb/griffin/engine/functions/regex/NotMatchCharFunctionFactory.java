@@ -51,8 +51,8 @@ public class NotMatchCharFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
         private final char expected;
+        private final Function value;
 
         public MatchFunction(Function value, char expected) {
             this.value = value;
@@ -60,14 +60,14 @@ public class NotMatchCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && Chars.indexOf(cs, expected) == -1;
+        public Function getArg() {
+            return value;
         }
 
         @Override
-        public Function getArg() {
-            return value;
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && Chars.indexOf(cs, expected) == -1;
         }
 
         @Override

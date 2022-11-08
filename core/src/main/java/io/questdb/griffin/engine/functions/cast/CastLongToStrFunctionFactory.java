@@ -79,6 +79,16 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+
+            sink.put(value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final long value = arg.getLong(rec);
             if (value == Numbers.LONG_NaN) {
@@ -87,16 +97,6 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-
-            sink.put(value);
         }
     }
 }

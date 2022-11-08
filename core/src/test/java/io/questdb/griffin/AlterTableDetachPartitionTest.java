@@ -51,9 +51,9 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
-    private static O3PartitionPurgeJob purgeJob;
-    private static final Path path = new Path();
     private static final Path other = new Path();
+    private static final Path path = new Path();
+    private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
     public static void setUpStatic() {

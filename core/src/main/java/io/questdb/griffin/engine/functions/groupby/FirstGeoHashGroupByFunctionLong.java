@@ -59,6 +59,26 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return rec.getGeoLong(this.valueIndex);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -72,26 +92,6 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         setLong(mapValue, GeoHashes.NULL);
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return rec.getGeoLong(this.valueIndex);
     }
 
     @Override

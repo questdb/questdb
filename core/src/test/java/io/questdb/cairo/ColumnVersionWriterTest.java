@@ -252,6 +252,175 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         testFuzzConcurrent(5_000);
     }
 
+    @Test
+    public void testRemovePartitionColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
+            ) {
+                CVStringTable.setupColumnVersionWriter(w, "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n"
+                );
+
+                w.commit();
+                w.removePartition(0);
+                w.commit();
+
+                String expected = "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n";
+
+                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedList()));
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedList()));
+            }
+        });
+    }
+
+    @Test
+    public void testUpsertPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       1       2      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0      -1      10\n" +
+                        "       4       7      -1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       1       0      -1      10\n" +
+                        "       2       2       1     111\n" +
+                        "       2      11       2       1\n" +
+                        "       2      15       2    1001\n" +
+                        "       3       0       3     110\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2      -1      10\n" +
+                        "       0       3      -1      10\n" +
+                        "       0       5      -1      10\n" +
+                        "       1       0      -1      10\n" +
+                        "       2       2      -1      10\n" +
+                        "       2      11      -1      10\n" +
+                        "       2      15      -1      10\n" +
+                        "       3       0       3     110\n" +
+                        "       4       7      -1      10\n",
+                0, 2, 4
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionDstContainsPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n" +
+                        "       3      11       1       8\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       5      12\n" +
+                        "       2      12       5      12\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       0      99\n" +
+                        "       2      12       1      17\n",
+                2
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n" +
+                        "       2      11       1      10\n", // Gets added
+                2
+        );
+    }
+
+    @Test
+    public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
+        assertUpsertPartitionFromSourceCV(
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       2      11       1      10\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" +
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                "" +
+                        "     pts  colIdx  colTxn  colTop\n" + // No changes
+                        "       0       2       3       1\n" +
+                        "       0       3       1     101\n",
+                0
+        );
+    }
+
+    private static void assertUpsertPartitionFromSourceCV(
+            String srcExpected,
+            String dstExpected,
+            String dstUpsertFromSrcExpected,
+            long... partitionTimestamp
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w1 = new ColumnVersionWriter(ff, path.of(root).concat("_cv1").$(), 0);
+                    ColumnVersionWriter w2 = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
+            ) {
+                CVStringTable.setupColumnVersionWriter(w1, srcExpected);
+                CVStringTable.setupColumnVersionWriter(w2, dstExpected);
+                for (long p : partitionTimestamp) {
+                    w2.copyPartition(p, w1);
+                }
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
+                w2.commit();
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedList()));
+            }
+        });
+    }
+
     private void testFuzzConcurrent(int spinLockTimeout) throws Exception {
         assertMemoryLeak(() -> {
             final int N = 10_000;
@@ -349,177 +518,22 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
-        assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" + // No changes
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n",
-                0
-        );
-    }
-
-    @Test
-    public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
-        assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       1      10\n", // Gets added
-                2
-        );
-    }
-
-    @Test
-    public void testUpsertPartition() throws Exception {
-        assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n" +
-                        "       4       7      -1      10\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       1       0      -1      10\n" +
-                        "       2       2       1     111\n" +
-                        "       2      11       2       1\n" +
-                        "       2      15       2    1001\n" +
-                        "       3       0       3     110\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0       3     110\n" +
-                        "       4       7      -1      10\n",
-                0, 2, 4
-        );
-    }
-
-    @Test
-    public void testUpsertPartitionDstContainsPartition() throws Exception {
-        assertUpsertPartitionFromSourceCV(
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       0      99\n" +
-                        "       2      12       1      17\n" +
-                        "       3      11       1       8\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       5      12\n" +
-                        "       2      12       5      12\n",
-                "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       0      99\n" +
-                        "       2      12       1      17\n",
-                2
-        );
-    }
-
-    @Test
-    public void testRemovePartitionColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            try (
-                    Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
-                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
-            ) {
-                CVStringTable.setupColumnVersionWriter(w, "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n"
-                );
-
-                w.commit();
-                w.removePartition(0);
-                w.commit();
-
-                String expected = "" +
-                        "     pts  colIdx  colTxn  colTop\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n";
-
-                TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedList()));
-                r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedList()));
-            }
-        });
-    }
-
-    private static void assertUpsertPartitionFromSourceCV(
-            String srcExpected,
-            String dstExpected,
-            String dstUpsertFromSrcExpected,
-            long... partitionTimestamp
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
-            try (
-                    Path path = new Path();
-                    ColumnVersionWriter w1 = new ColumnVersionWriter(ff, path.of(root).concat("_cv1").$(), 0);
-                    ColumnVersionWriter w2 = new ColumnVersionWriter(ff, path.of(root).concat("_cv").$(), 0);
-                    ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path)
-            ) {
-                CVStringTable.setupColumnVersionWriter(w1, srcExpected);
-                CVStringTable.setupColumnVersionWriter(w2, dstExpected);
-                for (long p : partitionTimestamp) {
-                    w2.copyPartition(p, w1);
-                }
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(w2.getCachedList()));
-                w2.commit();
-                r.readSafe(configuration.getMillisecondClock(), 1);
-                TestUtils.assertEquals(dstUpsertFromSrcExpected, CVStringTable.asTable(r.getCachedList()));
-            }
-        });
-    }
-
     private static abstract class CVStringTable {
         private static final Formatter strF = new Formatter(new SinkFormatterAdapter());
+
+        private static long[] parseColumnVersionTable(String table) {
+            String[] rows = table.split("\n");
+            long[] values = new long[(rows.length - 1) * ColumnVersionWriter.BLOCK_SIZE]; // minus header
+            for (int i = 1, k = 0; i < rows.length; i++) {
+                String[] columns = rows[i].split("\\s+");
+                assert columns.length == 5;
+                for (int j = 1; j < columns.length; j++) {
+                    values[k++] = Long.parseLong(columns[j]);
+                }
+            }
+            assert values.length > 0 && values.length % ColumnVersionWriter.BLOCK_SIZE == 0;
+            return values;
+        }
 
         static String asTable(LongList cachedList) {
             sink.clear();
@@ -543,20 +557,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         values[i + ColumnVersionWriter.COLUMN_TOP_OFFSET]);
             }
             TestUtils.assertEquals(expectedTable, asTable(w.getCachedList()));
-        }
-
-        private static long[] parseColumnVersionTable(String table) {
-            String[] rows = table.split("\n");
-            long[] values = new long[(rows.length - 1) * ColumnVersionWriter.BLOCK_SIZE]; // minus header
-            for (int i = 1, k = 0; i < rows.length; i++) {
-                String[] columns = rows[i].split("\\s+");
-                assert columns.length == 5;
-                for (int j = 1; j < columns.length; j++) {
-                    values[k++] = Long.parseLong(columns[j]);
-                }
-            }
-            assert values.length > 0 && values.length % ColumnVersionWriter.BLOCK_SIZE == 0;
-            return values;
         }
 
         private static final class SinkFormatterAdapter extends StringSink implements Appendable {

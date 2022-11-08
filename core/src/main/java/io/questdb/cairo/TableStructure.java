@@ -49,9 +49,9 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
-    boolean isWallEnabled();
-
     boolean isIndexed(int columnIndex);
 
     boolean isSequential(int columnIndex);
+
+    boolean isWallEnabled();
 }

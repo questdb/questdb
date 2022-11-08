@@ -25,11 +25,11 @@
 package io.questdb.griffin.model;
 
 public interface ExecutionModel {
-    int QUERY = 1;
-    int CREATE_TABLE = 2;
-    int RENAME_TABLE = 3;
-    int INSERT = 4;
     int COPY = 5;
+    int CREATE_TABLE = 2;
+    int INSERT = 4;
+    int QUERY = 1;
+    int RENAME_TABLE = 3;
     int UPDATE = 6;
     int EXPLAIN = 7;
     int MAX = EXPLAIN + 1;

@@ -75,6 +75,16 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
             final long value = arg.getTimestamp(rec);
@@ -83,16 +93,6 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             }
             TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return;
-            }
-
-            TimestampFormatUtils.appendDateTimeUSec(sink, value);
         }
     }
 }

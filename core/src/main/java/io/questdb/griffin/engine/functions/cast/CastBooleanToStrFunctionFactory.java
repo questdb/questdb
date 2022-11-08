@@ -63,13 +63,13 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return arg.getStrB(rec);
+        public void getStr(Record rec, CharSink sink) {
+            arg.getStr(rec, sink);
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            arg.getStr(rec, sink);
+        public CharSequence getStrB(Record rec) {
+            return arg.getStrB(rec);
         }
     }
 }

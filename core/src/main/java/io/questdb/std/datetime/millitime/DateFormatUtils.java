@@ -30,28 +30,35 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatUtils {
     public static final int HOUR_24 = 2;
-    public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
+    public static final int HOUR_PM = 1;
+    public static final DateFormat PG_DATE_FORMAT;
+    public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
+    public static final DateFormat PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
+    public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final DateFormat PG_DATE_FORMAT;
-    public static final DateFormat PG_DATE_Z_FORMAT;
-    public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
-    public static final DateFormat PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
     private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
+
+    public static int adjustYear(int year) {
+        return thisCenturyLow + year;
+    }
+
+    public static int adjustYearMillenium(int year) {
+        return thisCenturyLow - thisCenturyLow % 1000 + year;
+    }
 
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
@@ -70,74 +77,20 @@ public class DateFormatUtils {
         Numbers.append(sink, val);
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmmZ
-    public static void appendDateTime(CharSink sink, long millis) {
-        if (millis == Long.MIN_VALUE) {
-            return;
-        }
-        UTC_FORMAT.format(millis, enLocale, "Z", sink);
-    }
-
-    // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
-        int m = Dates.getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-        append0(sink.put('-'), Dates.getDayOfMonth(millis, y, m, l));
-    }
-
-    public static void formatHTTP(CharSink sink, long millis) {
-        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
-    }
-
-    // YYYY-MM
-    public static void formatYYYYMM(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        int m = Dates.getMonthOfYear(millis, y, Dates.isLeapYear(y));
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-    }
-
-    public static long getReferenceYear() {
-        return referenceYear;
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseUTCDate(CharSequence value) throws NumericException {
-        return UTC_FORMAT.parse(value, 0, value.length(), enLocale);
-    }
-
-    public static void updateReferenceYear(long millis) {
-        referenceYear = millis;
-
-        int referenceYear = Dates.getYear(millis);
-        int centuryOffset = referenceYear % 100;
-        thisCenturyLimit = centuryOffset + 20;
-        if (thisCenturyLimit > 100) {
-            thisCenturyLimit = thisCenturyLimit % 100;
-            thisCenturyLow = referenceYear - centuryOffset + 100;
-        } else {
-            thisCenturyLow = referenceYear - centuryOffset;
-        }
-        newYear = Dates.endOfYear(referenceYear);
-    }
-
-    public static int adjustYear(int year) {
-        return thisCenturyLow + year;
-    }
-
-    public static int adjustYearMillenium(int year) {
-        return thisCenturyLow - thisCenturyLow % 1000 + year;
-    }
-
     public static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
         if (hour < 12) {
             sink.put(locale.getAMPM(0));
         } else {
             sink.put(locale.getAMPM(1));
         }
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    public static void appendDateTime(CharSink sink, long millis) {
+        if (millis == Long.MIN_VALUE) {
+            return;
+        }
+        UTC_FORMAT.format(millis, enLocale, "Z", sink);
     }
 
     public static void appendEra(CharSink sink, int year, DateLocale locale) {
@@ -288,6 +241,37 @@ public class DateFormatUtils {
         return datetime;
     }
 
+    // YYYY-MM-DD
+    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
+        int y = Dates.getYear(millis);
+        boolean l = Dates.isLeapYear(y);
+        int m = Dates.getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+        append0(sink.put('-'), Dates.getDayOfMonth(millis, y, m, l));
+    }
+
+    public static void formatHTTP(CharSink sink, long millis) {
+        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
+    }
+
+    // YYYY-MM
+    public static void formatYYYYMM(CharSink sink, long millis) {
+        int y = Dates.getYear(millis);
+        int m = Dates.getMonthOfYear(millis, y, Dates.isLeapYear(y));
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+    }
+
+    public static long getReferenceYear() {
+        return referenceYear;
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseUTCDate(CharSequence value) throws NumericException {
+        return UTC_FORMAT.parse(value, 0, value.length(), enLocale);
+    }
+
     public static long parseYearGreedy(CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
         int len = Numbers.decodeHighInt(l);
@@ -299,6 +283,21 @@ public class DateFormatUtils {
         }
 
         return Numbers.encodeLowHighInts(year, len);
+    }
+
+    public static void updateReferenceYear(long millis) {
+        referenceYear = millis;
+
+        int referenceYear = Dates.getYear(millis);
+        int centuryOffset = referenceYear % 100;
+        thisCenturyLimit = centuryOffset + 20;
+        if (thisCenturyLimit > 100) {
+            thisCenturyLimit = thisCenturyLimit % 100;
+            thisCenturyLow = referenceYear - centuryOffset + 100;
+        } else {
+            thisCenturyLow = referenceYear - centuryOffset;
+        }
+        newYear = Dates.endOfYear(referenceYear);
     }
 
     static {

@@ -79,24 +79,6 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
-        // fix page frame size, because it affects AVG accuracy
-
-        pageFrameMaxRows = 10_000;
-
-        assertQuery(
-                "avg\n" +
-                        "4289.100917431191\n",
-                "select avg(f) from tab",
-                "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testAvgLongOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));", sqlExecutionContext);
@@ -119,5 +101,23 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
             assertSql("with a as (select sym, avg(x) from test), b as (select sym, avg(x) from test where x > 0) " +
                     "select a.sym, b.avg-a.avg < 6000 from a join b on(sym) order by sym", diffExpected);
         });
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+
+        pageFrameMaxRows = 10_000;
+
+        assertQuery(
+                "avg\n" +
+                        "4289.100917431191\n",
+                "select avg(f) from tab",
+                "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                false,
+                true,
+                true
+        );
     }
 }

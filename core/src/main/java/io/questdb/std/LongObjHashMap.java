@@ -44,6 +44,21 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
         clear();
     }
 
+    @Override
+    public void clear() {
+        super.clear();
+        Arrays.fill(values, null);
+    }
+
+    public void forEach(LongObjConsumer<V> action) {
+        for (int i = 0, n = values.length; i < n; i++) {
+            if (keys[i] == noEntryKeyValue) {
+                continue;
+            }
+            action.accept(keys[i], values[i]);
+        }
+    }
+
     public V get(long key) {
         return valueAt(keyIndex(key));
     }
@@ -72,32 +87,6 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
         return values[-index - 1];
     }
 
-    public void forEach(LongObjConsumer<V> action) {
-        for (int i = 0, n = values.length; i < n; i++) {
-            if (keys[i] == noEntryKeyValue) {
-                continue;
-            }
-            action.accept(keys[i], values[i]);
-        }
-    }
-
-    @FunctionalInterface
-    public interface LongObjConsumer<V> {
-        void accept(long key, V value);
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = this.noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
-    }
-
     @SuppressWarnings("unchecked")
     private void rehash() {
         int size = size();
@@ -124,8 +113,19 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
     }
 
     @Override
-    public void clear() {
-        super.clear();
-        Arrays.fill(values, null);
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
+    }
+
+    @FunctionalInterface
+    public interface LongObjConsumer<V> {
+        void accept(long key, V value);
     }
 }

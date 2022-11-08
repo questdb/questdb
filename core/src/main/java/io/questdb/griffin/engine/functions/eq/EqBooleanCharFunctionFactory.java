@@ -58,7 +58,7 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         return new EqBooleanCharFunctionFactory.Func(
                 args.getQuick(0),
                 (args.getQuick(1).getChar(null) | 32) == 't'
-                );
+        );
     }
 
     private static class Func extends NegatableBooleanFunction implements UnaryFunction {
@@ -71,13 +71,13 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (left.getBool(rec) == right);
+        public Function getArg() {
+            return left;
         }
 
         @Override
-        public Function getArg() {
-            return left;
+        public boolean getBool(Record rec) {
+            return negated != (left.getBool(rec) == right);
         }
 
         @Override

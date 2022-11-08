@@ -29,13 +29,22 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
-
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testFailsOnBufferLengthAboveLimit() throws SqlException {
+        try {
+            call("foo", Integer.MAX_VALUE).andAssert(null);
+            Assert.fail();
+        } catch (CairoException e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for lpad(SI)"));
+        }
+    }
+
     @Test
     public void testLPad() throws SqlException {
         call("abc", 6).andAssert("   abc");
@@ -44,15 +53,9 @@ public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testTrimRight() throws SqlException {
-        call("abcdefgh", 5).andAssert("abcde");
-        call("photosynthesis", 10).andAssert("photosynth");
-    }
-
-    @Test
-    public void testZeroLength() throws SqlException {
-        call("abc", 0).andAssert("");
-        call("pqrs", 0).andAssert("");
+    public void testNaNLength() throws SqlException {
+        call("abc", Numbers.INT_NaN).andAssert(null);
+        call("pqrs", Numbers.INT_NaN).andAssert(null);
     }
 
     @Test
@@ -68,19 +71,15 @@ public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNaNLength() throws SqlException {
-        call("abc", Numbers.INT_NaN).andAssert(null);
-        call("pqrs", Numbers.INT_NaN).andAssert(null);
+    public void testTrimRight() throws SqlException {
+        call("abcdefgh", 5).andAssert("abcde");
+        call("photosynthesis", 10).andAssert("photosynth");
     }
 
     @Test
-    public void testFailsOnBufferLengthAboveLimit() throws SqlException {
-        try {
-            call("foo", Integer.MAX_VALUE).andAssert(null);
-            Assert.fail();
-        } catch (CairoException e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for lpad(SI)"));
-        }
+    public void testZeroLength() throws SqlException {
+        call("abc", 0).andAssert("");
+        call("pqrs", 0).andAssert("");
     }
 
     @Override

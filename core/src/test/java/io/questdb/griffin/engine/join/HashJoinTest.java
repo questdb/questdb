@@ -30,12 +30,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import org.junit.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-
-import static org.hamcrest.Matchers.*;
-
-import org.junit.Test;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 
 /**
  * Check that hash join factory doesn't allocate substantial amounts of memory prior to- and after cursor execution.

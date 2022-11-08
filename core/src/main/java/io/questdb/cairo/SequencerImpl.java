@@ -36,14 +36,13 @@ import static io.questdb.cairo.TableUtils.WAL_INDEX_FILE_NAME;
 
 public class SequencerImpl implements Sequencer {
 
-    private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
-
+    private final TxnCatalog catalog;
     private final CairoEngine engine;
-    private final String tableName;
+    private final SequencerMetadata metadata;
     private final Path path;
     private final int rootLen;
-    private final SequencerMetadata metadata;
-    private final TxnCatalog catalog;
+    private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
+    private final String tableName;
     private final IDGenerator txnGenerator;
     private final IDGenerator walIdGenerator;
 
@@ -72,32 +71,34 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
-        }
-        path.trimTo(rootLen);
-    }
-
     @Override
-    public void open() {
-        metadata.open(path, rootLen);
-    }
-
-    void of(TableStructure model) {
+    public long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId) {
         schemaLock.writeLock().lock();
         try {
-            metadata.init(model, path, rootLen);
+            metadata.addColumn(columnIndex, columnName, columnType, path, rootLen);
+            return nextTxn(walId, segmentId);
         } finally {
             schemaLock.writeLock().unlock();
         }
     }
 
     @Override
-    public long nextTxn(int walId, long segmentId) {
-        final long txn = txnGenerator.getNextId();
-        catalog.setEntry(txn, walId, segmentId);
-        return txn;
+    public void close() {
+        schemaLock.writeLock().lock();
+        try {
+            Misc.free(metadata);
+            Misc.free(catalog);
+            Misc.free(walIdGenerator);
+            Misc.free(txnGenerator);
+            Misc.free(path);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public WalWriter createWal() {
+        return new WalWriter(engine, tableName, (int) walIdGenerator.getNextId(), this);
     }
 
     @Override
@@ -111,23 +112,24 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
+    public long nextTxn(int walId, long segmentId) {
+        final long txn = txnGenerator.getNextId();
+        catalog.setEntry(txn, walId, segmentId);
+        return txn;
+    }
+
+    @Override
+    public void open() {
+        metadata.open(path, rootLen);
+    }
+
+    @Override
     public void populateDescriptor(TableDescriptor descriptor) {
         schemaLock.readLock().lock();
         try {
             descriptor.of(metadata);
         } finally {
             schemaLock.readLock().unlock();
-        }
-    }
-
-    @Override
-    public long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId) {
-        schemaLock.writeLock().lock();
-        try {
-            metadata.addColumn(columnIndex, columnName, columnType, path, rootLen);
-            return nextTxn(walId, segmentId);
-        } finally {
-            schemaLock.writeLock().unlock();
         }
     }
 
@@ -142,20 +144,17 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    @Override
-    public WalWriter createWal() {
-        return new WalWriter(engine, tableName, (int) walIdGenerator.getNextId(), this);
+    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+        }
+        path.trimTo(rootLen);
     }
 
-    @Override
-    public void close() {
+    void of(TableStructure model) {
         schemaLock.writeLock().lock();
         try {
-            Misc.free(metadata);
-            Misc.free(catalog);
-            Misc.free(walIdGenerator);
-            Misc.free(txnGenerator);
-            Misc.free(path);
+            metadata.init(model, path, rootLen);
         } finally {
             schemaLock.writeLock().unlock();
         }

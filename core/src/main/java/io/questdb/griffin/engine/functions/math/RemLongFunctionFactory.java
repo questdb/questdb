@@ -61,11 +61,6 @@ public class RemLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public long getLong(Record rec) {
             final long r = right.getLong(rec);
             if (r == 0 || r == Numbers.LONG_NaN) {
@@ -78,6 +73,11 @@ public class RemLongFunctionFactory implements FunctionFactory {
             }
 
             return l % r;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

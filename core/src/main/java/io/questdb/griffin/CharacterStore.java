@@ -38,8 +38,8 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     private final ObjectPool<NameAssemblerCharSequence> csPool;
     private int capacity;
     private char[] chars;
-    private int size = 0;
     private NameAssemblerCharSequence next = null;
+    private int size = 0;
 
     public CharacterStore(int capacity, int poolCapacity) {
         this.capacity = capacity;
@@ -48,30 +48,21 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
     }
 
     @Override
-    public int length() {
-        return size;
+    public void clear() {
+        csPool.clear();
+        size = 0;
+        next = null;
     }
 
     @Override
-    public CharSequence toImmutable() {
-        next.hi = size;
-        return next;
-    }
-
-    public void trimTo(int size) {
-        this.size = size;
+    public int length() {
+        return size;
     }
 
     public CharacterStoreEntry newEntry() {
         this.next = csPool.next();
         this.next.lo = size;
         return this;
-    }
-
-    @Override
-    public CharSink put(CharSequence cs) {
-        assert cs != null;
-        return put(cs, 0, cs.length());
     }
 
     @Override
@@ -92,6 +83,22 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         return this;
     }
 
+    @Override
+    public CharSink put(CharSequence cs) {
+        assert cs != null;
+        return put(cs, 0, cs.length());
+    }
+
+    @Override
+    public CharSequence toImmutable() {
+        next.hi = size;
+        return next;
+    }
+
+    public void trimTo(int size) {
+        this.size = size;
+    }
+
     private void resizeAndPut(char c) {
         char[] next = new char[capacity * 2];
         System.arraycopy(chars, 0, next, 0, capacity);
@@ -101,16 +108,14 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         LOG.info().$("resize [capacity=").$(capacity).$(']').$();
     }
 
-    @Override
-    public void clear() {
-        csPool.clear();
-        size = 0;
-        next = null;
-    }
-
     public class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {
-        int lo;
         int hi;
+        int lo;
+
+        @Override
+        public char charAt(int index) {
+            return chars[lo + index];
+        }
 
         @Override
         public void clear() {
@@ -119,11 +124,6 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         @Override
         public int length() {
             return hi - lo;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return chars[lo + index];
         }
 
         @Override

@@ -40,19 +40,14 @@ import io.questdb.std.ObjList;
  * until all cursors are exhausted .
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {
+    private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
-    private final SequentialRowCursor cursor;
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories) {
         this.cursorFactories = cursorFactories;
         this.cursors = new ObjList<>();
         this.cursor = new SequentialRowCursor();
-    }
-
-    @Override
-    public boolean isEntity() {
-        return false;
     }
 
     @Override
@@ -62,6 +57,11 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         }
         cursor.init();
         return cursor;
+    }
+
+    @Override
+    public boolean isEntity() {
+        return false;
     }
 
     @Override
@@ -78,8 +78,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     private class SequentialRowCursor implements RowCursor {
-        private int cursorIndex = 0;
         private RowCursor currentCursor;
+        private int cursorIndex = 0;
 
         @Override
         public boolean hasNext() {
@@ -98,16 +98,16 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
+        @Override
+        public long next() {
+            return currentCursor.next();
+        }
+
         private void init() {
             this.cursorIndex = 0;
             if (cursorIndex < cursorFactories.size()) {
                 currentCursor = cursors.getQuick(cursorIndex);
             }
-        }
-
-        @Override
-        public long next() {
-            return currentCursor.next();
         }
     }
 }

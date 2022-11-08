@@ -25,14 +25,11 @@
 package io.questdb.griffin.model;
 
 public final class IntervalOperation {
-    public static final short NONE = 0;
-
     public static final short INTERSECT = 1;
     public static final short INTERSECT_BETWEEN = 3;
     public static final short INTERSECT_INTERVALS = 4;
-
     public static final short NEGATED_BORDERLINE = 4;
-
+    public static final short NONE = 0;
     public static final short SUBTRACT = 5;
     public static final short SUBTRACT_BETWEEN = 6;
     public static final short SUBTRACT_INTERVALS = 7;

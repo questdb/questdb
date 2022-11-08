@@ -65,11 +65,10 @@ public class Base64FunctionFactory implements FunctionFactory {
     }
 
     private static class Base64Func extends StrFunction implements UnaryFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
         private final Function data;
         private final int maxLength;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
 
         public Base64Func(final Function data, final int maxLength) {
             this.data = data;
@@ -90,17 +89,17 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final BinarySequence sequence = getArg().getBin(rec);
+            Chars.base64Encode(sequence, this.maxLength, sink);
+        }
+
+        @Override
         public CharSequence getStrB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             sinkB.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkB);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final BinarySequence sequence = getArg().getBin(rec);
-            Chars.base64Encode(sequence, this.maxLength, sink);
         }
 
         @Override

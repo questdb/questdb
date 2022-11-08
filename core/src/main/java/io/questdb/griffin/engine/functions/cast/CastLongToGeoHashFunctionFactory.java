@@ -118,31 +118,6 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastGeoShortFunc extends GeoShortFunction implements UnaryFunction {
-        private final Function value;
-
-        public CastGeoShortFunc(int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            final long value = this.value.getLong(rec);
-            return value != Numbers.LONG_NaN ? (short) value : GeoHashes.SHORT_NULL;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(value).put("::geoshort");
-        }
-    }
-
     private static class CastGeoLongFunc extends GeoLongFunction implements UnaryFunction {
         private final Function value;
 
@@ -160,6 +135,31 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             final long value = this.value.getLong(rec);
             return value != Numbers.LONG_NaN ? value : GeoHashes.NULL;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(value).put("::geoshort");
+        }
+    }
+
+    private static class CastGeoShortFunc extends GeoShortFunction implements UnaryFunction {
+        private final Function value;
+
+        public CastGeoShortFunc(int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            final long value = this.value.getLong(rec);
+            return value != Numbers.LONG_NaN ? (short) value : GeoHashes.SHORT_NULL;
         }
 
         @Override

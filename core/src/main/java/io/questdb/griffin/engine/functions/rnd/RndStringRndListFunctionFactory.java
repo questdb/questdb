@@ -74,8 +74,8 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
     private static final class Func extends StrFunction implements Function {
         private final int count;
-        private final RndStringMemory strMem;
         private final int nullRate;
+        private final RndStringMemory strMem;
         private Rnd rnd;
 
         public Func(RndStringMemory strMem, int count, int nullRate) {

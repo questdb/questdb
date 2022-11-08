@@ -30,8 +30,8 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
 
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
-    private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
     protected final StringSink message = new StringSink();
 
     public static ImplicitCastException inconvertibleValue(double value, int fromType, int toType) {

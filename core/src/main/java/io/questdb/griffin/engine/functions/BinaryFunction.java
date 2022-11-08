@@ -39,6 +39,10 @@ public interface BinaryFunction extends Function {
         getRight().close();
     }
 
+    Function getLeft();
+
+    Function getRight();
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
@@ -51,14 +55,9 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void toTop() {
-        getLeft().toTop();
-        getRight().toTop();
+    default boolean isReadThreadSafe() {
+        return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
-
-    Function getLeft();
-
-    Function getRight();
 
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
@@ -67,8 +66,9 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
+    default void toTop() {
+        getLeft().toTop();
+        getRight().toTop();
     }
 
     //used in generic toSink implementation

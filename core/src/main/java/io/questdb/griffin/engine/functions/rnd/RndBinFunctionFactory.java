@@ -66,13 +66,13 @@ public class RndBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.sequence.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -82,8 +82,8 @@ public class RndBinFunctionFactory implements FunctionFactory {
     }
 
     private static class Sequence implements BinarySequence {
-        private Rnd rnd;
         private long len;
+        private Rnd rnd;
 
         @Override
         public byte byteAt(long index) {

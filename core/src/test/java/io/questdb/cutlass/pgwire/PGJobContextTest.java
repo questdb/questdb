@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
@@ -81,6 +80,7 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
@@ -89,14 +89,14 @@ import static org.junit.Assert.*;
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
     public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
     public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
+    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
+    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
     public static final int CONN_AWARE_ALL =
             CONN_AWARE_SIMPLE_BINARY
                     | CONN_AWARE_SIMPLE_TEXT
@@ -106,9 +106,8 @@ public class PGJobContextTest extends BasePGTest {
                     | CONN_AWARE_EXTENDED_PREPARED_TEXT
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
-
-    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
     private static List<Object[]> datesArr;
@@ -1938,6 +1937,19 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCreateTableAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try {
@@ -2172,6 +2184,19 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testExtendedQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
             }
         });
     }
@@ -2671,6 +2696,20 @@ if __name__ == "__main__":
     @Test
     public void testInsertAllTypesText() throws Exception {
         testInsertAllTypes(false);
+    }
+
+    @Test
+    public void testInsertAsSelectTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            compiler.compile("create table tab (d double)", sqlExecutionContext);
+            try (final PreparedStatement statement = connection.prepareStatement(
+                    "insert into tab select rnd_double() from long_sequence(1000);")) {
+                statement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
     }
 
     @Test
@@ -4977,114 +5016,6 @@ nodejs code:
     }
 
     @Test
-    public void testInsertAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
-            compiler.compile("create table tab (d double)", sqlExecutionContext);
-            try (final PreparedStatement statement = connection.prepareStatement(
-                    "insert into tab select rnd_double() from long_sequence(1000);")) {
-                statement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-            }
-        });
-    }
-
-    @Test
-    public void testCreateTableAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
-            try (final PreparedStatement statement = connection.prepareStatement(
-                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
-                statement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-            }
-        });
-    }
-
-    @Test
-    public void testSqlBatchTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
-            try (final Statement statement = connection.createStatement()) {
-                statement.execute("create table tab (d double);" +
-                        "select count(*) from tab;" +
-                        "insert into tab select count(*) from tab;");
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-            }
-        });
-    }
-
-    @Test
-    public void testSimpleGroupByQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
-            try (final Statement statement = conn.createStatement()) {
-                statement.execute("select s, count(*) from t1 group by s ");
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-            }
-        });
-    }
-
-    @Test
-    public void testSimpleCountQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
-            try (final Statement statement = conn.createStatement()) {
-                statement.execute("select count(*) from t1 where s = 's10'");
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-            }
-        });
-    }
-
-    @Test
-    public void testExtendedQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
-            try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
-                statement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-            }
-        });
-    }
-
-    @Test
-    public void testTimeoutIsPerPreparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
-            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
-                statement.execute();
-            }
-            Os.sleep(1000);
-            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
-                statement.execute();
-            }
-        });
-    }
-
-    @Test
-    public void testTimeoutIsPerSimpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 1000, (conn, binary) -> {
-            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
-            try (final Statement statement = conn.createStatement()) {
-                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
-            }
-            Os.sleep(1000);
-            try (final Statement statement = conn.createStatement()) {
-                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
-            }
-        });
-    }
-
-    @Test
     public void testRegProcedure() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -5901,6 +5832,32 @@ create table tab as (
     }
 
     @Test
+    public void testSimpleCountQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select count(*) from t1 where s = 's10'");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleGroupByQueryTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("select s, count(*) from t1 group by s ");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+            }
+        });
+    }
+
+    @Test
     public void testSimpleModeNoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -6401,6 +6358,20 @@ create table tab as (
     }
 
     @Test
+    public void testSqlBatchTimeout() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary) -> {
+            try (final Statement statement = connection.createStatement()) {
+                statement.execute("create table tab (d double);" +
+                        "select count(*) from tab;" +
+                        "insert into tab select count(*) from tab;");
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            }
+        });
+    }
+
+    @Test
     public void testStaleQueryCacheOnTableDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
@@ -6525,6 +6496,34 @@ create table tab as (
                 }
             }
 
+        });
+    }
+
+    @Test
+    public void testTimeoutIsPerPreparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+            Os.sleep(1000);
+            try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
+                statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testTimeoutIsPerSimpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 1000, (conn, binary) -> {
+            compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+            }
+            Os.sleep(1000);
+            try (final Statement statement = conn.createStatement()) {
+                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+            }
         });
     }
 
@@ -8541,18 +8540,18 @@ create table tab as (
     }
 
     @FunctionalInterface
-    interface OnTickAction {
-        void run(TableWriter writer);
-    }
-
-    @FunctionalInterface
     interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary) throws Exception;
     }
 
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
+    }
+
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
-        private final AtomicBoolean delaying = new AtomicBoolean(false);
         private final AtomicInteger delayedAttemptsCounter = new AtomicInteger(0);
+        private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
         public int send(long fd, long buffer, int bufferLen) {

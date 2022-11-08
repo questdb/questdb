@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
-    private final Map map;
     private final RecordSink keyMapSink;
+    private final Map map;
     private final RecordCursor mapCursor;
     private boolean isOpen;
 
@@ -73,11 +73,11 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
-        super.of(base, executionContext);
-        if (!isOpen) {
-            this.map.reopen();
-            this.isOpen = true;
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
         }
     }
 
@@ -131,19 +131,21 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
+    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+        super.of(base, executionContext);
+        if (!isOpen) {
+            this.map.reopen();
+            this.isOpen = true;
+        }
+    }
+
+    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
             baseRecord = base.getRecord();
             map.clear();
         }
-    }
-
-    @Override
-    protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue());
     }
 
     private boolean createMapCursor() {
@@ -158,11 +160,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     }
 
     @Override
-    public void close() {
-        if (isOpen) {
-            map.close();
-            super.close();
-            isOpen = false;
-        }
+    protected void updateValueWhenClockMovesBack(MapValue value) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue());
     }
 }

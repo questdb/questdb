@@ -28,11 +28,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.std.Unsafe;
+import org.junit.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-
-import org.junit.Test;
 
 public class RecordCursorMemoryUsageTest extends AbstractGriffinTest {
 

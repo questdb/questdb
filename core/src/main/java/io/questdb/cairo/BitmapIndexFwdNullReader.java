@@ -42,13 +42,8 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public int getKeyCount() {
-        return 1;
-    }
-
-    @Override
-    public boolean isOpen() {
-        return true;
+    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
+        return NullIndexFrameCursor.INSTANCE;
     }
 
     @Override
@@ -57,17 +52,12 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
+    public int getKeyCount() {
+        return 1;
+    }
+
+    @Override
     public long getKeyMemorySize() {
-        return 0;
-    }
-
-    @Override
-    public long getValueBaseAddress() {
-        return 0;
-    }
-
-    @Override
-    public long getValueMemorySize() {
         return 0;
     }
 
@@ -77,17 +67,27 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
+    public long getValueBaseAddress() {
+        return 0;
+    }
+
+    @Override
     public int getValueBlockCapacity() {
         return 0;
     }
 
-    private NullCursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new NullCursor();
+    @Override
+    public long getValueMemorySize() {
+        return 0;
     }
 
     @Override
-    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
-        return NullIndexFrameCursor.INSTANCE;
+    public boolean isOpen() {
+        return true;
+    }
+
+    private NullCursor getCursor(boolean cachedInstance) {
+        return cachedInstance ? cursor : new NullCursor();
     }
 
     private static class NullCursor implements RowCursor {

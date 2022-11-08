@@ -31,16 +31,15 @@ import io.questdb.std.str.CharSink;
 
 public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
-    private ExpressionNode target; // holds table name (new import) or import id (cancel model)
+    private int atomicity;
+    private boolean cancel;
+    private byte delimiter;
     private ExpressionNode fileName;
     private boolean header;
-
-    private boolean cancel;
-    private CharSequence timestampFormat;
-    private CharSequence timestampColumnName;
     private int partitionBy;
-    private byte delimiter;
-    private int atomicity;
+    private ExpressionNode target; // holds table name (new import) or import id (cancel model)
+    private CharSequence timestampColumnName;
+    private CharSequence timestampFormat;
 
     public CopyModel() {
     }
@@ -70,8 +69,17 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return fileName;
     }
 
+    @Override
+    public int getModelType() {
+        return ExecutionModel.COPY;
+    }
+
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public ExpressionNode getTarget() {
+        return target;
     }
 
     public CharSequence getTimestampColumnName() {
@@ -82,8 +90,20 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return timestampFormat;
     }
 
+    public boolean isCancel() {
+        return cancel;
+    }
+
+    public boolean isHeader() {
+        return header;
+    }
+
     public void setAtomicity(int atomicity) {
         this.atomicity = atomicity;
+    }
+
+    public void setCancel(boolean cancel) {
+        this.cancel = cancel;
     }
 
     public void setDelimiter(byte delimiter) {
@@ -94,13 +114,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.fileName = fileName;
     }
 
-    @Override
-    public int getModelType() {
-        return ExecutionModel.COPY;
-    }
-
-    public ExpressionNode getTarget() {
-        return target;
+    public void setHeader(boolean header) {
+        this.header = header;
     }
 
     public void setPartitionBy(int partitionBy) {
@@ -109,18 +124,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setTarget(ExpressionNode tableName) {
         this.target = tableName;
-    }
-
-    public boolean isHeader() {
-        return header;
-    }
-
-    public void setHeader(boolean header) {
-        this.header = header;
-    }
-
-    public void setCancel(boolean cancel) {
-        this.cancel = cancel;
     }
 
     public void setTimestampColumnName(CharSequence timestampColumn) {
@@ -133,9 +136,5 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-    }
-
-    public boolean isCancel() {
-        return cancel;
     }
 }
