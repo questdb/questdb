@@ -50,10 +50,9 @@ public class AddLong256FunctionFactory implements FunctionFactory {
     }
 
     private static class AddLong256Func extends Long256Function implements BinaryFunction {
+        final Function left;
         final Long256Impl long256A = new Long256Impl();
         final Long256Impl long256B = new Long256Impl();
-
-        final Function left;
         final Function right;
 
         public AddLong256Func(Function left, Function right) {
@@ -64,11 +63,6 @@ public class AddLong256FunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
         }
 
         @Override
@@ -85,6 +79,11 @@ public class AddLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256B(Record rec) {
             return Long256Impl.add(long256B, left.getLong256B(rec), right.getLong256B(rec));
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

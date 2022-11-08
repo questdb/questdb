@@ -107,6 +107,14 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof ObjList && equals((ObjList<?>) that);
+    }
+
     public void extendAndSet(int index, T value) {
         ensureCapacity(index + 1);
         if (index >= pos) {
@@ -193,33 +201,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             hashCode = 31 * hashCode + (o == null ? 0 : o.hashCode());
         }
         return hashCode;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof ObjList && equals((ObjList<?>) that);
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        StringBuilder b = new StringBuilder();
-
-        b.setLength(0);
-        b.append('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                b.append(',');
-            }
-            b.append(getQuick(i));
-        }
-        b.append(']');
-        return b.toString();
     }
 
     /**
@@ -346,6 +327,25 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             }
         }
         sink.put(']');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        StringBuilder b = new StringBuilder();
+
+        b.setLength(0);
+        b.append('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append(getQuick(i));
+        }
+        b.append(']');
+        return b.toString();
     }
 
     private boolean equals(ObjList<?> that) {

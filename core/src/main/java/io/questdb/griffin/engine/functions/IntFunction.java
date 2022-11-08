@@ -77,6 +77,26 @@ public abstract class IntFunction implements ScalarFunction {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getLong(Record rec) {
         return Numbers.intToLong(getInt(rec));
     }
@@ -139,26 +159,6 @@ public abstract class IntFunction implements ScalarFunction {
     @Override
     public long getTimestamp(Record rec) {
         return Numbers.intToLong(getInt(rec));
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

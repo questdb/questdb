@@ -32,9 +32,9 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.griffin.PlanSink;
 
 class OffsetTimestampFunctionFromRules extends TimestampFunction implements UnaryFunction {
-    private final Function timestamp;
-    private final TimeZoneRules rules;
     private final int multiplier;
+    private final TimeZoneRules rules;
+    private final Function timestamp;
 
     public OffsetTimestampFunctionFromRules(Function timestamp, TimeZoneRules rules, int multiplier) {
         this.timestamp = timestamp;

@@ -35,9 +35,9 @@ import java.io.Closeable;
 public class TxnScoreboard implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
+    private final FilesFacade ff;
     private final int pow2EntryCount;
     private final long size;
-    private final FilesFacade ff;
     private long fd = -1;
     private long mem;
 
@@ -150,14 +150,13 @@ public class TxnScoreboard implements Closeable, Mutable {
         return released;
     }
 
-    /**
-     * Table readers use 0 txn as the empty table transaction number.
-     * The scoreboard only supports txn > 0, so we have to patch the value
-     * to avoid races in the scoreboard initialization.
-     */
-    private static long toInternalTxn(long txn) {
-        return txn + 1;
+    private static long acquireTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
+        return acquireTxn0(pTxnScoreboard, txn);
     }
+
+    private native static long acquireTxn0(long pTxnScoreboard, long txn);
 
     /**
      * Reverts toInternalTxn() value.
@@ -166,11 +165,13 @@ public class TxnScoreboard implements Closeable, Mutable {
         return txn - 1;
     }
 
-    private static long acquireTxn(long pTxnScoreboard, long txn) {
-        assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
-        return acquireTxn0(pTxnScoreboard, txn);
-    }
+    private static native long getCount(long pTxnScoreboard, long txn);
+
+    private static native long getMin(long pTxnScoreboard);
+
+    private static native void init(long pTxnScoreboard, int entryCount);
+
+    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
 
     private static long releaseTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
@@ -179,17 +180,16 @@ public class TxnScoreboard implements Closeable, Mutable {
         return releaseTxn0(pTxnScoreboard, internalTxn);
     }
 
-    private native static long acquireTxn0(long pTxnScoreboard, long txn);
-
     private native static long releaseTxn0(long pTxnScoreboard, long txn);
 
-    private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
-
-    private static native long getCount(long pTxnScoreboard, long txn);
-
-    private static native long getMin(long pTxnScoreboard);
-
-    private static native void init(long pTxnScoreboard, int entryCount);
+    /**
+     * Table readers use 0 txn as the empty table transaction number.
+     * The scoreboard only supports txn > 0, so we have to patch the value
+     * to avoid races in the scoreboard initialization.
+     */
+    private static long toInternalTxn(long txn) {
+        return txn + 1;
+    }
 
     static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
         final long fd = ff.openCleanRW(path, size);

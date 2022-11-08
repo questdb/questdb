@@ -111,17 +111,17 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return toSink(rec, sink2);
-        }
-
-        @Override
         public void getStr(Record rec, CharSink sink) {
             long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return;
             }
             toSink(value, sink);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return toSink(rec, sink2);
         }
 
         @Override

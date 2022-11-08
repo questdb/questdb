@@ -32,6 +32,25 @@ import org.junit.Test;
 public class AlterTableWalEnabledTest extends AbstractGriffinTest {
 
     @Test
+    public void tesInvalidWalWord() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                createTableWrite("my_table_wal", "BYPASS WALL", "DAY");
+                Assert.fail("Exception expected");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "invalid syntax, should be BYPASS WAL but was BYPASS WALL"
+                );
+                Assert.assertEquals(
+                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS ".length(),
+                        ex.getPosition()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDefaultWalEnabledMode() throws Exception {
         assertMemoryLeak(() -> {
             defaultTableWriteMode = 1;
@@ -73,6 +92,25 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testWalEnabledMissingWalKeyword() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                createTableWrite("my_table_wal", "BYPASS", "DAY");
+                Assert.fail("Exception expected");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "invalid syntax, should be BYPASS WAL but was BYPASS"
+                );
+                Assert.assertEquals(
+                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS".length(),
+                        ex.getPosition()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testWalEnabledNameInCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table wm as (" +
@@ -93,44 +131,6 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
                     ") timestamp(ts) partition by DAY Bypass WaL");
 
             assertWalEnabled("wm", false);
-        });
-    }
-
-    @Test
-    public void tesInvalidWalWord() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                createTableWrite("my_table_wal", "BYPASS WALL", "DAY");
-                Assert.fail("Exception expected");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(
-                        ex.getFlyweightMessage(),
-                        "invalid syntax, should be BYPASS WAL but was BYPASS WALL"
-                );
-                Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS ".length(),
-                        ex.getPosition()
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testWalEnabledMissingWalKeyword() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                createTableWrite("my_table_wal", "BYPASS", "DAY");
-                Assert.fail("Exception expected");
-            } catch (SqlException ex) {
-                TestUtils.assertContains(
-                        ex.getFlyweightMessage(),
-                        "invalid syntax, should be BYPASS WAL but was BYPASS"
-                );
-                Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS".length(),
-                        ex.getPosition()
-                );
-            }
         });
     }
 

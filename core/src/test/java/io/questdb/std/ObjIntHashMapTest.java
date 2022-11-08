@@ -54,6 +54,12 @@ public class ObjIntHashMapTest {
     }
 
     @Test
+    public void testClassBehaviour() {
+        ObjIntHashMap<Class<?>> map = new ObjIntHashMap<>();
+        Assert.assertEquals(-1, map.get(Object.class));
+    }
+
+    @Test
     public void testReset() {
         ObjIntHashMap<Integer> map = new ObjIntHashMap<>();
 
@@ -73,11 +79,5 @@ public class ObjIntHashMapTest {
 
         Assert.assertEquals(0, map.size());
         Assert.assertEquals(initialCapacity, map.capacity());
-    }
-
-    @Test
-    public void testClassBehaviour() {
-        ObjIntHashMap<Class<?>> map = new ObjIntHashMap<>();
-        Assert.assertEquals(-1, map.get(Object.class));
     }
 }

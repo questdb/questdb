@@ -41,97 +41,18 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+    private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
+        @Override
+        public String getPoolName() {
+            return "ilptcp";
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+    };
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
-
-    @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean getDisconnectOnError() {
-        return true;
-    }
-
-    @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
-    }
-
-    @Override
-    public LineProtoTimestampAdapter getTimestampAdapter() {
-        return LineProtoNanoTimestampAdapter.INSTANCE;
-    }
-
-    @Override
-    public int getConnectionPoolInitialCapacity() {
-        return 64;
-    }
-
-    @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
-    }
-
-    @Override
-    public int getNetMsgBufferSize() {
-        return 2048;
-    }
-
-    @Override
-    public int getMaxMeasurementSize() {
-        return 512;
-    }
-
-    @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getWriterQueueCapacity() {
-        return 64;
-    }
-
-    @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getMillisecondClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
-        return SHARED_CONFIGURATION;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
-        return SHARED_CONFIGURATION;
-    }
-
-    @Override
-    public long getMaintenanceInterval() {
-        return 100;
-    }
-
-    @Override
-    public double getCommitIntervalFraction() {
-        return 0.5;
-    }
-
-    @Override
-    public long getCommitIntervalDefault() {
-        return 2000;
-    }
-
-    @Override
-    public int getMaxFileNameLength() {
-        return 127;
-    }
 
     @Override
     public String getAuthDbPath() {
@@ -149,33 +70,23 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getDefaultPartitionBy() {
-        return PartitionBy.DAY;
+    public CairoSecurityContext getCairoSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
     }
 
     @Override
-    public long getWriterIdleTimeout() {
-        return 30_000;
+    public long getCommitIntervalDefault() {
+        return 2000;
     }
 
     @Override
-    public long getSymbolCacheWaitUsBeforeReload() {
-        return 500_000;
+    public double getCommitIntervalFraction() {
+        return 0.5;
     }
 
     @Override
-    public boolean isStringToCharCastAllowed() {
-        return false;
-    }
-
-    @Override
-    public boolean isSymbolAsFieldSupported() {
-        return false;
-    }
-
-    @Override
-    public boolean isStringAsTagSupported() {
-        return false;
+    public int getConnectionPoolInitialCapacity() {
+        return 64;
     }
 
     @Override
@@ -188,15 +99,103 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
         return ColumnType.LONG;
     }
 
-    private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
-        @Override
-        public int getWorkerCount() {
-            return 0;
-        }
+    @Override
+    public int getDefaultPartitionBy() {
+        return PartitionBy.DAY;
+    }
 
-        @Override
-        public String getPoolName() {
-            return "ilptcp";
-        }
-    };
+    @Override
+    public boolean getDisconnectOnError() {
+        return true;
+    }
+
+    @Override
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+        return ioDispatcherConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
+    }
+
+    @Override
+    public long getMaintenanceInterval() {
+        return 100;
+    }
+
+    @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
+    public int getMaxMeasurementSize() {
+        return 512;
+    }
+
+    @Override
+    public MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public int getNetMsgBufferSize() {
+        return 2048;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public long getSymbolCacheWaitUsBeforeReload() {
+        return 500_000;
+    }
+
+    @Override
+    public LineProtoTimestampAdapter getTimestampAdapter() {
+        return LineProtoNanoTimestampAdapter.INSTANCE;
+    }
+
+    @Override
+    public long getWriterIdleTimeout() {
+        return 30_000;
+    }
+
+    @Override
+    public int getWriterQueueCapacity() {
+        return 64;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getWriterWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isStringAsTagSupported() {
+        return false;
+    }
+
+    @Override
+    public boolean isStringToCharCastAllowed() {
+        return false;
+    }
+
+    @Override
+    public boolean isSymbolAsFieldSupported() {
+        return false;
+    }
 }

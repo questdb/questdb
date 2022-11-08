@@ -30,9 +30,8 @@ import io.questdb.griffin.PlanSink;
 
 public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
-    public static final BooleanConstant TRUE = new BooleanConstant(true);
     public static final BooleanConstant FALSE = new BooleanConstant(false);
-
+    public static final BooleanConstant TRUE = new BooleanConstant(true);
     private final boolean value;
 
     private BooleanConstant(boolean value) {
@@ -49,12 +48,17 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     }
 
     @Override
-    public int getInt(Record rec) {
-        return value ? 1 : 0;
+    public byte getByte(Record rec) {
+        return (byte) (value ? 1 : 0);
     }
 
     @Override
-    public float getFloat(Record rec) {
+    public char getChar(Record rec) {
+        return value ? 'T' : 'F';
+    }
+
+    @Override
+    public long getDate(Record rec) {
         return value ? 1 : 0;
     }
 
@@ -64,8 +68,13 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     }
 
     @Override
-    public short getShort(Record rec) {
-        return (short) (value ? 1 : 0);
+    public float getFloat(Record rec) {
+        return value ? 1 : 0;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return value ? 1 : 0;
     }
 
     @Override
@@ -74,23 +83,8 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
     }
 
     @Override
-    public char getChar(Record rec) {
-        return value ? 'T' : 'F';
-    }
-
-    @Override
-    public byte getByte(Record rec) {
-        return (byte)(value ? 1 : 0);
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return value ? 1 : 0;
-    }
-
-    @Override
-    protected String getStr0(Record rec) {
-        return value ? "true" : "false";
+    public short getShort(Record rec) {
+        return (short) (value ? 1 : 0);
     }
 
     @Override
@@ -98,9 +92,13 @@ public class BooleanConstant extends BooleanFunction implements ConstantFunction
         return value ? 1 : 0;
     }
 
-
     @Override
     public void toPlan(PlanSink sink) {
         sink.put(value);
+    }
+
+    @Override
+    protected String getStr0(Record rec) {
+        return value ? "true" : "false";
     }
 }

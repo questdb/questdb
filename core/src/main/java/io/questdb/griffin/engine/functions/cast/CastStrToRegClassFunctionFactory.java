@@ -64,7 +64,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
             }
             throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStr(null)).put(']');
         }
-            return new CastStrToRegClassFunction(arg);
+        return new CastStrToRegClassFunction(arg);
     }
 
     private static class CastStrToRegClassFunction extends IntFunction implements UnaryFunction {

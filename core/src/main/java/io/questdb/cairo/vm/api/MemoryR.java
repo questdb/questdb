@@ -35,8 +35,12 @@ import java.io.Closeable;
 //readable 
 public interface MemoryR extends Closeable {
 
+    long addressOf(long offset);
+
     @Override
     void close();
+
+    void extend(long size);
 
     BinarySequence getBin(long offset);
 
@@ -46,6 +50,8 @@ public interface MemoryR extends Closeable {
 
     byte getByte(long offset);
 
+    char getChar(long offset);
+
     double getDouble(long offset);
 
     float getFloat(long offset);
@@ -53,20 +59,6 @@ public interface MemoryR extends Closeable {
     int getInt(long offset);
 
     long getLong(long offset);
-
-    long getPageAddress(int pageIndex);
-
-    int getPageCount();
-
-    long getPageSize();
-
-    short getShort(long offset);
-
-    CharSequence getStr(long offset);
-
-    CharSequence getStr2(long offset);
-
-    Long256 getLong256A(long offset);
 
     void getLong256(long offset, CharSink sink);
 
@@ -80,19 +72,27 @@ public interface MemoryR extends Closeable {
         );
     }
 
+    Long256 getLong256A(long offset);
+
     Long256 getLong256B(long offset);
 
-    char getChar(long offset);
+    long getPageAddress(int pageIndex);
+
+    int getPageCount();
+
+    long getPageSize();
+
+    short getShort(long offset);
+
+    CharSequence getStr(long offset);
+
+    CharSequence getStr2(long offset);
 
     int getStrLen(long offset);
-
-    void extend(long size);
-
-    long size();
-
-    long addressOf(long offset);
 
     long offsetInPage(long offset);
 
     int pageIndex(long offset);
+
+    long size();
 }

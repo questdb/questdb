@@ -59,6 +59,16 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return rec.getTimestamp(valueIndex);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.TIMESTAMP);
@@ -67,16 +77,6 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(valueIndex);
     }
 
     @Override

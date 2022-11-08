@@ -30,9 +30,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
 
 class SelectedRecordCursor implements RecordCursor {
+    private final IntList columnCrossIndex;
     private final SelectedRecord recordA;
     private final SelectedRecord recordB;
-    private final IntList columnCrossIndex;
     private RecordCursor baseCursor;
 
     public SelectedRecordCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
@@ -56,26 +56,6 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
-    public long size() {
-        return baseCursor.size();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return baseCursor.hasNext();
-    }
-
-    @Override
     public Record getRecordB() {
         if (recordB != null) {
             return recordB;
@@ -84,8 +64,28 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
+    public boolean hasNext() {
+        return baseCursor.hasNext();
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
+    }
+
+    @Override
+    public long size() {
+        return baseCursor.size();
     }
 
     @Override

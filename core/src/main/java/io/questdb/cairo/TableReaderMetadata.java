@@ -33,17 +33,17 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
-    private final Path path;
     private final FilesFacade ff;
+    private final Path path;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private long commitLag;
+    private int maxUncommittedRows;
     private MemoryMR metaMem;
     private int partitionBy;
-    private int version;
-    private int tableId;
-    private int maxUncommittedRows;
-    private long commitLag;
     private long structureVersion;
+    private int tableId;
     private MemoryMR transitionMeta;
+    private int version;
     private boolean walEnabled;
 
     public TableReaderMetadata(FilesFacade ff) {

@@ -31,30 +31,27 @@ import io.questdb.tasks.TableWriterTask;
 
 public class TableSyncModel implements Mutable, Sinkable {
 
-    public static final int TABLE_ACTION_KEEP = 0;
-    public static final int TABLE_ACTION_TRUNCATE = 1;
-    public static final int COLUMN_META_ACTION_REPLACE = 1;
+    public static final int COLUMN_META_ACTION_ADD = 4;
     public static final int COLUMN_META_ACTION_MOVE = 2;
     public static final int COLUMN_META_ACTION_REMOVE = 3;
-    public static final int COLUMN_META_ACTION_ADD = 4;
-    public static final int PARTITION_ACTION_WHOLE = 0;
+    public static final int COLUMN_META_ACTION_REPLACE = 1;
     public static final int PARTITION_ACTION_APPEND = 1;
+    public static final int PARTITION_ACTION_WHOLE = 0;
+    public static final int TABLE_ACTION_KEEP = 0;
+    public static final int TABLE_ACTION_TRUNCATE = 1;
     static final String[] ACTION_NAMES = {
             "whole",
             "append"
     };
-    private static final int SLOTS_PER_PARTITION = 8;
     private static final int SLOTS_PER_COLUMN_META_INDEX = 2;
     private static final int SLOTS_PER_COLUMN_TOP = 4;
+    private static final int SLOTS_PER_PARTITION = 8;
     private static final int SLOTS_PER_VAR_COLUMN_SIZE = 4;
-    // see toSink() method for example of how to unpack this structure
-    private final LongList partitions = new LongList();
+    // this metadata is only for columns that need to added on slave
+    private final ObjList<TableColumnMetadata> addedColumnMetadata = new ObjList<>();
     // Array of (long,long) pairs. First long contains value of COLUMN_META_ACTION_*, second value encodes
     // (int,int) column movement indexes (from,to)
     private final LongList columnMetaIndex = new LongList();
-    // this metadata is only for columns that need to added on slave
-    private final ObjList<TableColumnMetadata> addedColumnMetadata = new ObjList<>();
-
     // this encodes (long,long,long,long) per non-zero column top
     // the idea here is to store tops densely to avoid issues sending a bunch of zeroes
     // across network. Structure is as follows:
@@ -63,7 +60,8 @@ public class TableSyncModel implements Mutable, Sinkable {
     // long2 = column top value
     // long3 = unused
     private final LongList columnTops = new LongList();
-
+    // see toSink() method for example of how to unpack this structure
+    private final LongList partitions = new LongList();
     // This encodes (long,long,long,long) per non-zero variable length column
     // we are not encoding lengths of the fixed-width column because it is enough to send row count.
     // Structure is as follows:
@@ -72,10 +70,9 @@ public class TableSyncModel implements Mutable, Sinkable {
     // long2 = size of column on master
     // long3 = unused
     private final LongList varColumnSizes = new LongList();
-
-    private int tableAction = 0;
     private long dataVersion;
     private long maxTimestamp;
+    private int tableAction = 0;
 
     public void addColumnMetaAction(int action, int from, int to) {
         columnMetaIndex.add((long) action, Numbers.encodeLowHighInts(from, to));
@@ -216,16 +213,16 @@ public class TableSyncModel implements Mutable, Sinkable {
         return tableAction;
     }
 
-    public void setTableAction(int tableAction) {
-        this.tableAction = tableAction;
-    }
-
     public void setDataVersion(long dataVersion) {
         this.dataVersion = dataVersion;
     }
 
     public void setMaxTimestamp(long maxTimestamp) {
         this.maxTimestamp = maxTimestamp;
+    }
+
+    public void setTableAction(int tableAction) {
+        this.tableAction = tableAction;
     }
 
     public void toBinary(TableWriterTask sink) {

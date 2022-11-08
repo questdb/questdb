@@ -38,18 +38,18 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class HttpServerConfigurationBuilder {
-    private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    private String baseDir;
-    private int sendBufferSize = 1024 * 1024;
-    private boolean dumpTraffic;
     private boolean allowDeflateBeforeSend;
-    private boolean serverKeepAlive = true;
-    private String httpProtocolVersion = "HTTP/1.1 ";
+    private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private int rerunProcessingQueueSize = 4096;
-    private int receiveBufferSize = 1024 * 1024;
+    private boolean dumpTraffic;
+    private String httpProtocolVersion = "HTTP/1.1 ";
     private long multipartIdleSpinCount = -1;
+    private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private Runnable onPeerDisconnect = HttpContextConfiguration.NONE;
+    private int receiveBufferSize = 1024 * 1024;
+    private int rerunProcessingQueueSize = 4096;
+    private int sendBufferSize = 1024 * 1024;
+    private boolean serverKeepAlive = true;
 
     public DefaultHttpServerConfiguration build() {
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -60,33 +60,6 @@ public class HttpServerConfigurationBuilder {
         };
 
         return new DefaultHttpServerConfiguration() {
-            private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return FilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public CharSequence getIndexFileName() {
-                    return null;
-                }
-
-                @Override
-                public MimeTypesCache getMimeTypesCache() {
-                    return mimeTypesCache;
-                }
-
-                @Override
-                public CharSequence getPublicDirectory() {
-                    return baseDir;
-                }
-
-                @Override
-                public String getKeepAliveHeader() {
-                    return null;
-                }
-            };
-
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 private final DefaultSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
@@ -101,6 +74,11 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
+                public int getDoubleScale() {
+                    return Numbers.MAX_SCALE;
+                }
+
+                @Override
                 public FilesFacade getFilesFacade() {
                     return FilesFacadeImpl.INSTANCE;
                 }
@@ -111,11 +89,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_SCALE;
-                }
-
-                @Override
                 public CharSequence getKeepAliveHeader() {
                     return "Keep-Alive: timeout=5, max=10000\r\n";
                 }
@@ -123,6 +96,32 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
+                }
+            };
+            private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return FilesFacadeImpl.INSTANCE;
+                }
+
+                @Override
+                public CharSequence getIndexFileName() {
+                    return null;
+                }
+
+                @Override
+                public String getKeepAliveHeader() {
+                    return null;
+                }
+
+                @Override
+                public MimeTypesCache getMimeTypesCache() {
+                    return mimeTypesCache;
+                }
+
+                @Override
+                public CharSequence getPublicDirectory() {
+                    return baseDir;
                 }
             };
 
@@ -193,16 +192,16 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
+                return staticContentProcessorConfiguration;
+            }
+
+            @Override
             public WaitProcessorConfiguration getWaitProcessorConfiguration() {
                 return new WaitProcessorConfiguration() {
                     @Override
                     public MillisecondClock getClock() {
                         return MillisecondClockImpl.INSTANCE;
-                    }
-
-                    @Override
-                    public long getMaxWaitCapMs() {
-                        return 1000;
                     }
 
                     @Override
@@ -219,12 +218,12 @@ public class HttpServerConfigurationBuilder {
                     public int getMaxProcessingQueueSize() {
                         return rerunProcessingQueueSize;
                     }
-                };
-            }
 
-            @Override
-            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-                return staticContentProcessorConfiguration;
+                    @Override
+                    public long getMaxWaitCapMs() {
+                        return 1000;
+                    }
+                };
             }
         };
     }

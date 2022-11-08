@@ -99,21 +99,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLikeStringNoMatch() throws Exception {
-        assertMemoryLeak(() -> {
-                    compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-                    try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            sink.clear();
-                            printer.print(cursor, factory.getMetadata(), true, sink);
-                            Assert.assertEquals(sink.toString().indexOf("XJ"), -1);
-                        }
-                    }
-                }
-        );
-    }
-
-    @Test
     public void testLikeStringCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             String sql = "create table x as (\n" +
@@ -136,6 +121,21 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testLikeStringNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+                    compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+                    try (RecordCursorFactory factory = compiler.compile("select * from x where name ilike 'XJ'", sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            sink.clear();
+                            printer.print(cursor, factory.getMetadata(), true, sink);
+                            Assert.assertEquals(sink.toString().indexOf("XJ"), -1);
+                        }
+                    }
+                }
+        );
     }
 
     @Test
@@ -261,6 +261,20 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonConstantExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
+            try {
+                compiler.compile("select * from x where name ilike rnd_str('foo','bar')", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(33, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
+            }
+        });
+    }
+
+    @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
@@ -286,20 +300,6 @@ public class ILikeFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     Assert.assertNotEquals(sink.toString().indexOf("XJ"), -1);
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testNonConstantExpression() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as (select rnd_str() name from long_sequence(2000))", sqlExecutionContext);
-            try {
-                compiler.compile("select * from x where name ilike rnd_str('foo','bar')", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(33, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "use constant or bind variable");
             }
         });
     }

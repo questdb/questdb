@@ -64,13 +64,6 @@ public class Long256Column extends Long256Function implements ScalarFunction {
         return rec.getLong256B(columnIndex);
     }
 
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new Long256Column(i));
-        }
-    }
-
     @Override
     public boolean isReadThreadSafe() {
         return true;
@@ -79,6 +72,13 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new Long256Column(i));
+        }
     }
 
 }

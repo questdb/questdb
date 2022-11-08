@@ -45,9 +45,9 @@ public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
     private static final DateFormat[] DATE_FORMATS;
-    private static final int DATE_FORMATS_SIZE;
     private static final DateFormat[] DATE_FORMATS_FOR_TIMESTAMP;
     private static final int DATE_FORMATS_FOR_TIMESTAMP_SIZE;
+    private static final int DATE_FORMATS_SIZE;
 
     public static void addSelectStar(
             QueryModel model,
@@ -498,10 +498,6 @@ public class SqlUtil {
         }
     }
 
-    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
-        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
-    }
-
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
@@ -554,15 +550,6 @@ public class SqlUtil {
                 return alias;
             }
         }
-    }
-
-    static QueryColumn nextColumn(
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<ExpressionNode> sqlNodePool,
-            CharSequence alias,
-            CharSequence column
-    ) {
-        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
     }
 
     static long expectMicros(CharSequence tok, int position) throws SqlException {
@@ -633,6 +620,19 @@ public class SqlUtil {
         }
 
         throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
+    static QueryColumn nextColumn(
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> sqlNodePool,
+            CharSequence alias,
+            CharSequence column
+    ) {
+        return queryColumnPool.next().of(alias, nextLiteral(sqlNodePool, column, 0));
+    }
+
+    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }
 
     static {

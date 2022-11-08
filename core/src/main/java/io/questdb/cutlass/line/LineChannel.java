@@ -27,8 +27,11 @@ package io.questdb.cutlass.line;
 import java.io.Closeable;
 
 public interface LineChannel extends Closeable {
-    void send(long ptr, int len);
-    int receive(long ptr, int len);
-    int errno();
     void close();
+
+    int errno();
+
+    int receive(long ptr, int len);
+
+    void send(long ptr, int len);
 }

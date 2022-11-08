@@ -40,16 +40,16 @@ import java.io.Closeable;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
-    private final int workerId;
-    private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final Sequence sequence;
-    private final Path path = new Path();
     private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
-    private final MillisecondClock millisecondClock;
     private final long commitIntervalDefault;
-    private final LineTcpMeasurementScheduler scheduler;
-    private long nextCommitTime;
     private final Metrics metrics;
+    private final MillisecondClock millisecondClock;
+    private final Path path = new Path();
+    private final RingQueue<LineTcpMeasurementEvent> queue;
+    private final LineTcpMeasurementScheduler scheduler;
+    private final Sequence sequence;
+    private final int workerId;
+    private long nextCommitTime;
 
     LineTcpWriterJob(
             int workerId,

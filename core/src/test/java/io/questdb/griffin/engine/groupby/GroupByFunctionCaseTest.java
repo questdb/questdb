@@ -39,8 +39,8 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class GroupByFunctionCaseTest extends AbstractGriffinTest {
 
-    StringSink sqlSink = new StringSink();
     StringSink planSink = new StringSink();
+    StringSink sqlSink = new StringSink();
 
     @Test
     public void testGetPlan() throws SqlException {
@@ -140,14 +140,6 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws SqlException {
-        try {
-            assertPlan(sink, expectedPlan);
-        } catch (AssertionError ae) {
-            throwWithContext(typeName, function, ae);
-        }
-    }
-
     @Test
     public void testAggregatesOnColumnWithSingleKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
@@ -236,14 +228,22 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
         });
     }
 
+    private static String name(String type) {
+        return Character.toUpperCase(type.charAt(0)) + type.substring(1).toLowerCase(Locale.ROOT);
+    }
+
+    private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws SqlException {
+        try {
+            assertPlan(sink, expectedPlan);
+        } catch (AssertionError ae) {
+            throwWithContext(typeName, function, ae);
+        }
+    }
+
     private void throwWithContext(String typeName, String function, Throwable ae) {
         AssertionError newAe = new AssertionError(ae.getMessage().replaceAll(">$", "") + "\n\nfor [columnType=" + typeName + ",function=" + function + "]>");
         newAe.setStackTrace(ae.getStackTrace());
         throw newAe;
-    }
-
-    private static String name(String type) {
-        return Character.toUpperCase(type.charAt(0)) + type.substring(1).toLowerCase(Locale.ROOT);
     }
 
 }

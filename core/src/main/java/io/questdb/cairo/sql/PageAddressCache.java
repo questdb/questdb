@@ -31,32 +31,33 @@ import io.questdb.std.*;
 public class PageAddressCache implements Mutable {
 
     private final long cacheSizeThreshold;
-    private int columnCount;
-    private int varLenColumnCount;
-
     // Index remapping for variable length columns.
     private final IntList varLenColumnIndexes = new IntList();
-
-    private LongList pageAddresses = new LongList();
+    private int columnCount;
     // Index page addresses and page sizes are stored only for variable length columns.
     private LongList indexPageAddresses = new LongList();
-    private LongList pageSizes = new LongList();
+    private LongList pageAddresses = new LongList();
     private LongList pageRowIdOffsets = new LongList();
+    private LongList pageSizes = new LongList();
+    private int varLenColumnCount;
 
     public PageAddressCache(CairoConfiguration configuration) {
         cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
     }
 
-    public void of(@Transient RecordMetadata metadata) {
-        this.columnCount = metadata.getColumnCount();
-        this.varLenColumnIndexes.setAll(columnCount, -1);
-        this.varLenColumnCount = 0;
+    public void add(int frameIndex, @Transient PageFrame frame) {
+        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
+            return; // The page frame is already cached
+        }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            final int columnType = metadata.getColumnType(columnIndex);
-            if (ColumnType.isVariableLength(columnType)) {
-                varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
+            pageAddresses.add(frame.getPageAddress(columnIndex));
+            int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
+            if (varLenColumnIndex > -1) {
+                indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
+                pageSizes.add(frame.getPageSize(columnIndex));
             }
         }
+        pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
     @Override
@@ -75,24 +76,8 @@ public class PageAddressCache implements Mutable {
         }
     }
 
-    public void add(int frameIndex, @Transient PageFrame frame) {
-        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
-            return; // The page frame is already cached
-        }
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            pageAddresses.add(frame.getPageAddress(columnIndex));
-            int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
-            if (varLenColumnIndex > -1) {
-                indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
-                pageSizes.add(frame.getPageSize(columnIndex));
-            }
-        }
-        pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
-    }
-
-    public long getPageAddress(int frameIndex, int columnIndex) {
-        assert pageAddresses.size() >= columnCount * (frameIndex + 1);
-        return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
+    public int getColumnCount() {
+        return columnCount;
     }
 
     public long getIndexPageAddress(int frameIndex, int columnIndex) {
@@ -100,6 +85,11 @@ public class PageAddressCache implements Mutable {
         int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
         assert varLenColumnIndex > -1;
         return indexPageAddresses.getQuick(varLenColumnCount * frameIndex + varLenColumnIndex);
+    }
+
+    public long getPageAddress(int frameIndex, int columnIndex) {
+        assert pageAddresses.size() >= columnCount * (frameIndex + 1);
+        return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {
@@ -119,8 +109,16 @@ public class PageAddressCache implements Mutable {
         return false;
     }
 
-    public int getColumnCount() {
-        return columnCount;
+    public void of(@Transient RecordMetadata metadata) {
+        this.columnCount = metadata.getColumnCount();
+        this.varLenColumnIndexes.setAll(columnCount, -1);
+        this.varLenColumnCount = 0;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (ColumnType.isVariableLength(columnType)) {
+                varLenColumnIndexes.setQuick(columnIndex, varLenColumnCount++);
+            }
+        }
     }
 
     public long toTableRowID(int frameIndex, long index) {

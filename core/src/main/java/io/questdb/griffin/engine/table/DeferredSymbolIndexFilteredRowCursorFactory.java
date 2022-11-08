@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
-    private final SymbolIndexFilteredRowCursor cursor;
     private final int columnIndex;
+    private final SymbolIndexFilteredRowCursor cursor;
     private final Function symbolFunction;
     private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
@@ -64,13 +64,8 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbolFunction.init(tableReader, sqlExecutionContext);
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.cursor.of(symbolKey);
-            this.cursor.prepare(tableReader);
-        }
+    public Function getFunction() {
+        return symbolFunction;
     }
 
     @Override
@@ -84,8 +79,13 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public Function getFunction() {
-        return symbolFunction;
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbolFunction.init(tableReader, sqlExecutionContext);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStr(null));
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            this.cursor.of(symbolKey);
+            this.cursor.prepare(tableReader);
+        }
     }
 
     @Override

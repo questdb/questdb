@@ -39,9 +39,10 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         this.utf8Sink = utf8Sink;
     }
 
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        write(row, column, value, utf8Sink);
+    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
+        this.format = format;
+        this.locale = locale;
+        return this;
     }
 
     @Override
@@ -51,9 +52,8 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
         row.putDate(column, format.parse(utf8Sink, locale));
     }
 
-    public TimestampUtf8Adapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
-        return this;
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        write(row, column, value, utf8Sink);
     }
 }

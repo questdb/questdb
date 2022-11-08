@@ -39,13 +39,7 @@ public class DoneOperationFuture implements OperationFuture {
     }
 
     @Override
-    public long getInstanceId() {
-        return -2L;
-    }
-
-    @Override
-    public int getStatus() {
-        return QUERY_COMPLETE;
+    public void close() {
     }
 
     @Override
@@ -54,7 +48,13 @@ public class DoneOperationFuture implements OperationFuture {
     }
 
     @Override
-    public void close() {
+    public long getInstanceId() {
+        return -2L;
+    }
+
+    @Override
+    public int getStatus() {
+        return QUERY_COMPLETE;
     }
 
     public OperationFuture of(long affectedRowsCount) {

@@ -26,12 +26,15 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.CATALOG_FILE_NAME;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 
 public class TxnCatalog implements Closeable {
     private final FilesFacade ff;
@@ -39,6 +42,15 @@ public class TxnCatalog implements Closeable {
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(metaMem);
+    }
+
+    private long calcOffsetForTxn(long txn) {
+        return Integer.BYTES + (txn - 1) * (Long.BYTES + Integer.BYTES + Long.BYTES);
     }
 
     void open(Path path, int pathLen, long startTxn) {
@@ -50,19 +62,10 @@ public class TxnCatalog implements Closeable {
         }
     }
 
-    private long calcOffsetForTxn(long txn) {
-        return Integer.BYTES + (txn - 1) * (Long.BYTES + Integer.BYTES + Long.BYTES);
-    }
-
     void setEntry(long txn, int walId, long segmentId) {
         metaMem.jumpTo(calcOffsetForTxn(txn));
         metaMem.putLong(txn);
         metaMem.putInt(walId);
         metaMem.putLong(segmentId);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(metaMem);
     }
 }

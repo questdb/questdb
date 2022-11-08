@@ -28,9 +28,9 @@ import io.questdb.cairo.ColumnIndexer;
 import io.questdb.mp.SOCountDownLatch;
 
 public class ColumnIndexerTask {
+    public SOCountDownLatch countDownLatch;
+    public long hi;
     public ColumnIndexer indexer;
     public long lo;
-    public long hi;
-    public SOCountDownLatch countDownLatch;
     public long sequence;
 }

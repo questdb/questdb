@@ -33,10 +33,10 @@ import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 
 public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
-    private final int columnIndex;
-    private final int symbolKey;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
+    private final int symbolKey;
 
     public LatestByValueIndexedRowCursorFactory(int columnIndex, int symbolKey, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;

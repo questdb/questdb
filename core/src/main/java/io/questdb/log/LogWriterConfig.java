@@ -25,9 +25,9 @@
 package io.questdb.log;
 
 public class LogWriterConfig {
-    private final String scope;
-    private final int level;
     private final LogWriterFactory factory;
+    private final int level;
+    private final String scope;
 
     public LogWriterConfig(int level, LogWriterFactory factory) {
         this("", level, factory);

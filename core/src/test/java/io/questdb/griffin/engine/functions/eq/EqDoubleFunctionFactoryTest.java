@@ -51,6 +51,70 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testInfDoubleEqualsInfDouble() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
+        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testInfDoubleEqualsNegInfDouble() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
+        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertFalse(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testInfFloatEqualsInfDouble() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
+        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testInfFloatEqualsInfFloat() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
+        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
     public void testLeftNaN() throws SqlException {
         call(Double.NaN, 77.9).andAssert(false);
     }
@@ -140,6 +204,38 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
         Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
         Assert.assertFalse(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testNegInfDoubleEqualsNegInfDouble() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
+        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testNegInfFloatEqualsNegInfFloat() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
+        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
         Assert.assertTrue(function.isConstant());
     }
 
@@ -254,102 +350,6 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
         Assert.assertTrue(function.getBool(null));
         Assert.assertFalse(function.isConstant());
-    }
-
-    @Test
-    public void testInfDoubleEqualsInfDouble() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
-        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertTrue(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
-    }
-
-    @Test
-    public void testNegInfDoubleEqualsNegInfDouble() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
-        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertTrue(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
-    }
-
-    @Test
-    public void testInfDoubleEqualsNegInfDouble() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
-        args.add(new DoubleConstant(Double.NEGATIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertFalse(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
-    }
-
-    @Test
-    public void testInfFloatEqualsInfDouble() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
-        args.add(new DoubleConstant(Double.POSITIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertTrue(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
-    }
-
-    @Test
-    public void testInfFloatEqualsInfFloat() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
-        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertTrue(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
-    }
-
-    @Test
-    public void testNegInfFloatEqualsNegInfFloat() throws SqlException {
-        FunctionFactory factory = getFunctionFactory();
-        ObjList<Function> args = new ObjList<>();
-        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
-        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
-
-        IntList argPositions = new IntList();
-        argPositions.add(2);
-        argPositions.add(1);
-
-        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
-        Assert.assertTrue(function.getBool(null));
-        Assert.assertTrue(function.isConstant());
     }
 
     @Override

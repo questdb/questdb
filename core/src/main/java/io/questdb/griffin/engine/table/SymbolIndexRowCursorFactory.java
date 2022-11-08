@@ -32,11 +32,11 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.PlanSink;
 
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
-    private final int columnIndex;
-    private int symbolKey;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
     private final int indexDirection;
     private final Function symbolFunction;
+    private int symbolKey;
 
     public SymbolIndexRowCursorFactory(
             int columnIndex,
@@ -53,15 +53,15 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
-    public void of(int symbolKey) {
-        this.symbolKey = TableUtils.toIndexKey(symbolKey);
-    }
-
-    @Override
     public RowCursor getCursor(DataFrame dataFrame) {
         return dataFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    }
+
+    @Override
+    public Function getFunction() {
+        return symbolFunction;
     }
 
     @Override
@@ -75,8 +75,8 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
-    public Function getFunction() {
-        return symbolFunction;
+    public void of(int symbolKey) {
+        this.symbolKey = TableUtils.toIndexKey(symbolKey);
     }
 
     @Override

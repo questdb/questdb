@@ -51,6 +51,64 @@ import io.questdb.std.Unsafe;
  * </p>
  */
 class FastDoubleSwar {
+    static long getChunk(byte[] a, int offset) {
+        return Unsafe.getUnsafe().getLong(a, Unsafe.BYTE_OFFSET + offset);
+    }
+
+    /**
+     * Tries to parse eight decimal digits from a char array using the
+     * 'SIMD within a register technique' (SWAR).
+     *
+     * @param a      contains 8 utf-16 characters starting at offset
+     * @param offset the offset into the array
+     * @return the parsed number,
+     * returns a negative value if {@code value} does not contain 8 hex digits
+     */
+
+    static int tryToParseEightDigitsUtf16(char[] a, int offset) {
+        long first = a[offset]
+                | (long) a[offset + 1] << 16
+                | (long) a[offset + 2] << 32
+                | (long) a[offset + 3] << 48;
+        long second = a[offset + 4]
+                | (long) a[offset + 5] << 16
+                | (long) a[offset + 6] << 32
+                | (long) a[offset + 7] << 48;
+        return FastDoubleSwar.tryToParseEightDigitsUtf16(first, second);
+    }
+
+    /**
+     * Tries to parse eight decimal digits at once using the
+     * 'SIMD within a register technique' (SWAR).
+     *
+     * <pre>{@literal
+     * char[] chars = ...;
+     * long first  = chars[0]|(chars[1]<<16)|(chars[2]<<32)|(chars[3]<<48);
+     * long second = chars[4]|(chars[5]<<16)|(chars[6]<<32)|(chars[7]<<48);
+     * }</pre>
+     *
+     * @param first  the first four characters in big endian order
+     * @param second the second four characters in big endian order
+     * @return the parsed digits or -1
+     */
+    static int tryToParseEightDigitsUtf16(long first, long second) {//since Java 18
+        long fval = first - 0x0030_0030_0030_0030L;
+        long sval = second - 0x0030_0030_0030_0030L;
+
+        // Create a predicate for all bytes which are smaller than '0' (0x0030)
+        // or greater than '9' (0x0039).
+        // We have 0x007f - 0x0039 = 0x0046.
+        // The predicate is true if the hsb of a byte is set: (predicate & 0xff80) != 0.
+        long fpre = first + 0x0046_0046_0046_0046L | fval;
+        long spre = second + 0x0046_0046_0046_0046L | sval;
+        if (((fpre | spre) & 0xff80_ff80_ff80_ff80L) != 0L) {
+            return -1;
+        }
+
+        return (int) (sval * 0x03e8_0064_000a_0001L >>> 48)
+                + (int) (fval * 0x03e8_0064_000a_0001L >>> 48) * 10000;
+    }
+
     /**
      * Tries to parse eight digits from a long using the
      * 'SIMD within a register technique' (SWAR).
@@ -85,6 +143,19 @@ class FastDoubleSwar {
         val = (val & 0xff_000000ffL) * (100 + (100_0000L << 32))
                 + (val >>> 16 & 0xff_000000ffL) * (1 + (1_0000L << 32)) >>> 32;
         return (int) val;
+    }
+
+    /**
+     * Tries to parse eight decimal digits from a byte array using the
+     * 'SIMD within a register technique' (SWAR).
+     *
+     * @param a      contains 8 ascii characters
+     * @param offset the offset of the first character in {@code a}
+     * @return the parsed number,
+     * returns a negative value if {@code value} does not contain 8 digits
+     */
+    static int tryToParseEightDigitsUtf8(byte[] a, int offset) {
+        return tryToParseEightDigitsUtf8(getChunk(a, offset));
     }
 
     /**
@@ -250,76 +321,5 @@ class FastDoubleSwar {
         // Compact all nibbles
         long v2 = v | v >>> 12;
         return (v2 | v2 >>> 24) & 0xffffL;
-    }
-
-    /**
-     * Tries to parse eight decimal digits from a char array using the
-     * 'SIMD within a register technique' (SWAR).
-     *
-     * @param a      contains 8 utf-16 characters starting at offset
-     * @param offset the offset into the array
-     * @return the parsed number,
-     * returns a negative value if {@code value} does not contain 8 hex digits
-     */
-
-    static int tryToParseEightDigitsUtf16(char[] a, int offset) {
-        long first = a[offset]
-                | (long) a[offset + 1] << 16
-                | (long) a[offset + 2] << 32
-                | (long) a[offset + 3] << 48;
-        long second = a[offset + 4]
-                | (long) a[offset + 5] << 16
-                | (long) a[offset + 6] << 32
-                | (long) a[offset + 7] << 48;
-        return FastDoubleSwar.tryToParseEightDigitsUtf16(first, second);
-    }
-
-    /**
-     * Tries to parse eight decimal digits at once using the
-     * 'SIMD within a register technique' (SWAR).
-     *
-     * <pre>{@literal
-     * char[] chars = ...;
-     * long first  = chars[0]|(chars[1]<<16)|(chars[2]<<32)|(chars[3]<<48);
-     * long second = chars[4]|(chars[5]<<16)|(chars[6]<<32)|(chars[7]<<48);
-     * }</pre>
-     *
-     * @param first  the first four characters in big endian order
-     * @param second the second four characters in big endian order
-     * @return the parsed digits or -1
-     */
-    static int tryToParseEightDigitsUtf16(long first, long second) {//since Java 18
-        long fval = first - 0x0030_0030_0030_0030L;
-        long sval = second - 0x0030_0030_0030_0030L;
-
-        // Create a predicate for all bytes which are smaller than '0' (0x0030)
-        // or greater than '9' (0x0039).
-        // We have 0x007f - 0x0039 = 0x0046.
-        // The predicate is true if the hsb of a byte is set: (predicate & 0xff80) != 0.
-        long fpre = first + 0x0046_0046_0046_0046L | fval;
-        long spre = second + 0x0046_0046_0046_0046L | sval;
-        if (((fpre | spre) & 0xff80_ff80_ff80_ff80L) != 0L) {
-            return -1;
-        }
-
-        return (int) (sval * 0x03e8_0064_000a_0001L >>> 48)
-                + (int) (fval * 0x03e8_0064_000a_0001L >>> 48) * 10000;
-    }
-
-    /**
-     * Tries to parse eight decimal digits from a byte array using the
-     * 'SIMD within a register technique' (SWAR).
-     *
-     * @param a      contains 8 ascii characters
-     * @param offset the offset of the first character in {@code a}
-     * @return the parsed number,
-     * returns a negative value if {@code value} does not contain 8 digits
-     */
-    static int tryToParseEightDigitsUtf8(byte[] a, int offset) {
-        return tryToParseEightDigitsUtf8(getChunk(a, offset));
-    }
-
-    static long getChunk(byte[] a, int offset) {
-        return Unsafe.getUnsafe().getLong(a, Unsafe.BYTE_OFFSET + offset);
     }
 }

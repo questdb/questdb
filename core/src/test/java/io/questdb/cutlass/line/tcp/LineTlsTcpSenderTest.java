@@ -24,12 +24,13 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Rule;
 import org.junit.Test;
+
 import java.util.UUID;
 
 import static org.junit.Assert.fail;
@@ -51,6 +52,90 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                    .build()) {
+                sender.table(tableName).longColumn("value", 42).atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testCertValidationDisabled() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        int rows = 5_000;
+        runInContext(c -> {
+            try (Sender sender = Sender.builder()
+                    .enableTls()
+                    .address("127.0.0.1")
+                    .port(tlsProxy.getListeningPort())
+                    .advancedTls().disableCertificateValidation()
+                    .build()) {
+
+                for (int i = 0; i < rows; i++) {
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush();
+                }
+                assertTableSizeEventually(engine, tableName, rows);
+            }
+        });
+    }
+
+    @Test
+    public void testHostnameValidation() throws Exception {
+        runInContext(c -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .enableTls()
+                    .address("127.0.0.1")
+                    .port(tlsProxy.getListeningPort())
+                    .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            try {
+                builder.build();
+                fail("should have failed during handshake, because we are connecting to 127.0.0.1, " +
+                        "but the server certificated was issued for localhost");
+            } catch (LineSenderException expected) {
+                TestUtils.assertContains(expected.getMessage(), "TLS handshake");
+            }
+        });
+    }
+
+    @Test
+    public void testTinyTlsBuffers() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        int rows = 5_000;
+        withCustomProperty(() -> {
+            authKeyId = AUTH_KEY_ID1;
+            runInContext(c -> {
+                try (Sender sender = Sender.builder()
+                        .enableTls()
+                        .address("localhost")
+                        .port(tlsProxy.getListeningPort())
+                        .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
+                        .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                        .build()) {
+
+                    for (int i = 0; i < rows; i++) {
+                        sender.table(tableName).longColumn("value", 42).atNow();
+                        sender.flush();
+                    }
+                    assertTableSizeEventually(engine, tableName, rows);
+                }
+            });
+        }, "questdb.experimental.tls.buffersize", "1");
+    }
+
+    @Test
+    public void testWithCustomTruststoreByFilename() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        String tableName = UUID.randomUUID().toString();
+        String truststore = LineTlsTcpSenderTest.class.getResource(TRUSTSTORE_PATH).getFile();
+        runInContext(c -> {
+            try (Sender sender = Sender.builder()
+                    .enableTls()
+                    .address("localhost")
+                    .port(tlsProxy.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
+                    .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
                 sender.flush();
@@ -85,94 +170,6 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    @Test
-    public void testWithCustomTruststoreByFilename() throws Exception {
-        authKeyId = AUTH_KEY_ID1;
-        String tableName = UUID.randomUUID().toString();
-        String truststore = LineTlsTcpSenderTest.class.getResource(TRUSTSTORE_PATH).getFile();
-        runInContext(c -> {
-            try (Sender sender = Sender.builder()
-                    .enableTls()
-                    .address("localhost")
-                    .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
-                    .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
-                    .build()) {
-                sender.table(tableName).longColumn("value", 42).atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, tableName);
-            }
-        });
-    }
-
-    @Test
-    public void testTinyTlsBuffers() throws Exception {
-        String tableName = UUID.randomUUID().toString();
-        int rows = 5_000;
-        withCustomProperty(() -> {
-            authKeyId = AUTH_KEY_ID1;
-            runInContext(c -> {
-                try (Sender sender = Sender.builder()
-                        .enableTls()
-                        .address("localhost")
-                        .port(tlsProxy.getListeningPort())
-                        .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
-                        .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
-                        .build()) {
-
-                    for (int i = 0; i < rows; i++) {
-                        sender.table(tableName).longColumn("value", 42).atNow();
-                        sender.flush();
-                    }
-                    assertTableSizeEventually(engine, tableName, rows);
-                }
-            });
-        }, "questdb.experimental.tls.buffersize", "1");
-    }
-
-    @Test
-    public void testCertValidationDisabled() throws Exception {
-        String tableName = UUID.randomUUID().toString();
-        int rows = 5_000;
-        runInContext(c -> {
-            try (Sender sender = Sender.builder()
-                    .enableTls()
-                    .address("127.0.0.1")
-                    .port(tlsProxy.getListeningPort())
-                    .advancedTls().disableCertificateValidation()
-                    .build()) {
-
-                for (int i = 0; i < rows; i++) {
-                    sender.table(tableName).longColumn("value", 42).atNow();
-                    sender.flush();
-                }
-                assertTableSizeEventually(engine, tableName, rows);
-            }
-        });
-    }
-
-    @Test
-    public void testHostnameValidation() throws Exception {
-        runInContext(c -> {
-            Sender.LineSenderBuilder builder = Sender.builder()
-                    .enableTls()
-                    .address("127.0.0.1")
-                    .port(tlsProxy.getListeningPort())
-                    .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
-                try {
-                    builder.build();
-                    fail("should have failed during handshake, because we are connecting to 127.0.0.1, " +
-                            "but the server certificated was issued for localhost");
-                } catch (LineSenderException expected) {
-                    TestUtils.assertContains(expected.getMessage(), "TLS handshake");
-                }
-        });
-    }
-
-    private interface RunnableWithException {
-        void run() throws Exception;
-    }
-
     private static void withCustomProperty(RunnableWithException runnable, String key, String value) throws Exception {
         String orig = System.getProperty(key);
         System.setProperty(key, value);
@@ -185,5 +182,9 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                 System.clearProperty(key);
             }
         }
+    }
+
+    private interface RunnableWithException {
+        void run() throws Exception;
     }
 }

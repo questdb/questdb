@@ -186,357 +186,9 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         return null;
     }
 
-    private static class CastLongFunc extends GeoLongFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastLongFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public long getGeoLong(Record rec) {
-            return value.getGeoLong(rec) >> shift;
-        }
-    }
-
-    private static class CastLongToByteFunc extends GeoByteFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastLongToByteFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public byte getGeoByte(Record rec) {
-            return (byte) (value.getGeoLong(rec) >> shift);
-        }
-    }
-
-    public static class CastGeoLongToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastGeoLongToGeoShortFunction(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) (value.getGeoLong(rec) >> shift);
-        }
-    }
-
-    private static class CastLongToIntFunc extends GeoIntFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastLongToIntFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public int getGeoInt(Record rec) {
-            return (int) (value.getGeoLong(rec) >> shift);
-        }
-    }
-
-    private static class CastIntFunc extends GeoIntFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastIntFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-
-        @Override
-        public int getGeoInt(Record rec) {
-            return value.getGeoInt(rec) >> shift;
-        }
-    }
-
-    private static class CastIntToByteFunc extends GeoByteFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastIntToByteFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public byte getGeoByte(Record rec) {
-            return (byte) (value.getGeoInt(rec) >> shift);
-        }
-    }
-
-    public static class CastGeoIntToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastGeoIntToGeoShortFunction(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) (value.getGeoInt(rec) >> shift);
-        }
-    }
-
-    public static class CastGeoShortFunction extends GeoShortFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastGeoShortFunction(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) (value.getGeoShort(rec) >> shift);
-        }
-    }
-
-    private static class CastShortToByteFunc extends GeoByteFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastShortToByteFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public byte getGeoByte(Record rec) {
-            return (byte) (value.getGeoShort(rec) >> shift);
-        }
-    }
-
-    private static class CastByteFunc extends GeoByteFunction implements UnaryFunction {
-        private final Function value;
-        private final int shift;
-
-        public CastByteFunc(int shift, int targetType, Function value) {
-            super(targetType);
-            this.value = value;
-            this.shift = shift;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public byte getGeoByte(Record rec) {
-            return (byte) (value.getGeoByte(rec) >> shift);
-        }
-    }
-
-    private static class CastGeoByteToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoByteToStrCharsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoByte(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendCharsUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoIntToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoIntToStrCharsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoInt(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendCharsUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoLongToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoLongToStrCharsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoLong(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendCharsUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoShortToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoShortToStrCharsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoShort(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendCharsUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoByteToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoByteToStrBitsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoByte(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
-        }
-    }
-
-
-    private static class CastGeoIntToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoIntToStrBitsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoInt(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoLongToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoLongToStrBitsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoLong(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
-        }
-    }
-
-    private static class CastGeoShortToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
-
-        public CastGeoShortToStrBitsFunc(Function value, int bits) {
-            super(value, bits);
-        }
-
-        @Override
-        protected long getValue(Record rec) {
-            return this.value.getGeoShort(rec);
-        }
-
-        @Override
-        protected void print(long value, CharSink sink) {
-            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
-        }
-    }
-
     private static abstract class AbstractCastGeoByteToStrFunction extends StrFunction implements UnaryFunction {
-        protected final Function value;
         protected final int bits;
+        protected final Function value;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
@@ -560,10 +212,6 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             return toSink(getValue(rec), sinkB);
         }
 
-        protected abstract long getValue(Record rec);
-
-        protected abstract void print(long value, CharSink sink);
-
         private StringSink toSink(long value, StringSink sink) {
             sink.clear();
             if (value == GeoHashes.NULL) {
@@ -572,6 +220,357 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
                 print(value, sink);
             }
             return sink;
+        }
+
+        protected abstract long getValue(Record rec);
+
+        protected abstract void print(long value, CharSink sink);
+    }
+
+    private static class CastByteFunc extends GeoByteFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastByteFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoByte(rec) >> shift);
+        }
+    }
+
+    private static class CastGeoByteToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoByteToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoByte(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoByteToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoByteToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoByte(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    public static class CastGeoIntToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastGeoIntToGeoShortFunction(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoInt(rec) >> shift);
+        }
+    }
+
+    private static class CastGeoIntToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoIntToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoInt(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoIntToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoIntToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoInt(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    public static class CastGeoLongToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastGeoLongToGeoShortFunction(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoLong(rec) >> shift);
+        }
+    }
+
+    private static class CastGeoLongToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoLongToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoLong(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoLongToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoLongToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoLong(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    public static class CastGeoShortFunction extends GeoShortFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastGeoShortFunction(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (short) (value.getGeoShort(rec) >> shift);
+        }
+    }
+
+    private static class CastGeoShortToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoShortToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoShort(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoShortToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoShortToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoShort(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastIntFunc extends GeoIntFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastIntFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return value.getGeoInt(rec) >> shift;
+        }
+    }
+
+    private static class CastIntToByteFunc extends GeoByteFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastIntToByteFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoInt(rec) >> shift);
+        }
+    }
+
+    private static class CastLongFunc extends GeoLongFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastLongFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public long getGeoLong(Record rec) {
+            return value.getGeoLong(rec) >> shift;
+        }
+    }
+
+    private static class CastLongToByteFunc extends GeoByteFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastLongToByteFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoLong(rec) >> shift);
+        }
+    }
+
+    private static class CastLongToIntFunc extends GeoIntFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastLongToIntFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public int getGeoInt(Record rec) {
+            return (int) (value.getGeoLong(rec) >> shift);
+        }
+    }
+
+    private static class CastShortToByteFunc extends GeoByteFunction implements UnaryFunction {
+        private final int shift;
+        private final Function value;
+
+        public CastShortToByteFunc(int shift, int targetType, Function value) {
+            super(targetType);
+            this.value = value;
+            this.shift = shift;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public byte getGeoByte(Record rec) {
+            return (byte) (value.getGeoShort(rec) >> shift);
         }
     }
 }

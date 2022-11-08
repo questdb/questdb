@@ -55,6 +55,11 @@ public class CastShortToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Numbers.appendLong256(arg.getShort(rec), 0, 0, 0, sink);
+        }
+
+        @Override
         public Long256 getLong256A(Record rec) {
             long256a.setAll(arg.getShort(rec), 0, 0, 0);
             return long256a;
@@ -64,11 +69,6 @@ public class CastShortToLong256FunctionFactory implements FunctionFactory {
         public Long256 getLong256B(Record rec) {
             long256b.setAll(arg.getShort(rec), 0, 0, 0);
             return long256b;
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            Numbers.appendLong256(arg.getShort(rec), 0, 0, 0, sink);
         }
     }
 }

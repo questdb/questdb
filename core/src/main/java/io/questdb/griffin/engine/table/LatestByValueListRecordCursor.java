@@ -33,14 +33,14 @@ import org.jetbrains.annotations.Nullable;
 
 class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
 
-    private final int shrinkToCapacity;
     private final int columnIndex;
     private final Function filter;
-    private IntHashSet foundKeys;
-    private IntHashSet symbolKeys;
     private final boolean restrictedByValues;
-    private DirectLongList rowIds;
+    private final int shrinkToCapacity;
     private int currentRow;
+    private IntHashSet foundKeys;
+    private DirectLongList rowIds;
+    private IntHashSet symbolKeys;
 
     public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, @NotNull IntList columnIndexes, int shrinkToCapacity, boolean restrictedByValues) {
         super(columnIndexes);
@@ -68,67 +68,10 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        dataFrameCursor.toTop();
-        foundKeys.clear();
-        rowIds.clear();
-
-        // Find all record IDs and save in rowIds in descending order
-        // return then row by row in ascending timestamp order
-        // since most of the time factory is supposed to return in ASC timestamp order
-        // It can be optimised later on to not buffer row IDs and return in desc order.
-        if (restrictedByValues) {
-            if (symbolKeys.size() > 0) {
-                // Find only restricted set of symbol keys
-                rowIds.setCapacity(symbolKeys.size());
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findRestrictedWithFilter(filter, symbolKeys, circuitBreaker);
-                } else {
-                    findRestrictedNoFilter(symbolKeys, circuitBreaker);
-                }
-            }
-        } else {
-            // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
-            }
-
-            rowIds.setCapacity(distinctSymbols);
-            if (distinctSymbols > 0) {
-                if (filter != null) {
-                    filter.init(this, executionContext);
-                    filter.toTop();
-                    findAllWithFilter(filter, distinctSymbols, circuitBreaker);
-                } else {
-                    findAllNoFilter(distinctSymbols, circuitBreaker);
-                }
-            }
-        }
-        toTop();
-    }
-
-    IntHashSet getSymbolKeys() {
-        return symbolKeys;
-    }
-
     public void destroy() {
         // After close() the instance is designed to be re-usable.
         // Destroy makes it non-reusable
         rowIds = Misc.free(rowIds);
-    }
-
-    @Override
-    public long size() {
-        return rowIds.size();
     }
 
     @Override
@@ -139,6 +82,16 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public long size() {
+        return rowIds.size();
+    }
+
+    @Override
+    public void toTop() {
+        currentRow = (int) rowIds.size();
     }
 
     private void findAllNoFilter(int distinctCount, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -235,8 +188,55 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
+    IntHashSet getSymbolKeys() {
+        return symbolKeys;
+    }
+
     @Override
-    public void toTop() {
-        currentRow = (int) rowIds.size();
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        dataFrameCursor.toTop();
+        foundKeys.clear();
+        rowIds.clear();
+
+        // Find all record IDs and save in rowIds in descending order
+        // return then row by row in ascending timestamp order
+        // since most of the time factory is supposed to return in ASC timestamp order
+        // It can be optimised later on to not buffer row IDs and return in desc order.
+        if (restrictedByValues) {
+            if (symbolKeys.size() > 0) {
+                // Find only restricted set of symbol keys
+                rowIds.setCapacity(symbolKeys.size());
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findRestrictedWithFilter(filter, symbolKeys, circuitBreaker);
+                } else {
+                    findRestrictedNoFilter(symbolKeys, circuitBreaker);
+                }
+            }
+        } else {
+            // Find latest by all distinct symbol values
+            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            int distinctSymbols = symbolTable.getSymbolCount();
+            if (symbolTable.containsNullValue()) {
+                distinctSymbols++;
+            }
+
+            rowIds.setCapacity(distinctSymbols);
+            if (distinctSymbols > 0) {
+                if (filter != null) {
+                    filter.init(this, executionContext);
+                    filter.toTop();
+                    findAllWithFilter(filter, distinctSymbols, circuitBreaker);
+                } else {
+                    findAllNoFilter(distinctSymbols, circuitBreaker);
+                }
+            }
+        }
+        toTop();
     }
 }

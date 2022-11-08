@@ -83,6 +83,11 @@ public class ShortFunctionTest {
         function.getByte(null);
     }
 
+    @Test
+    public void testGetChar() {
+        Assert.assertEquals('1', function.getChar(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
@@ -141,10 +146,5 @@ public class ShortFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test
-    public void testGetChar() {
-        Assert.assertEquals('1', function.getChar(null));
     }
 }

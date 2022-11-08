@@ -39,9 +39,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestMatchFunctionFactory implements FunctionFactory {
 
+    private static final AtomicInteger closeCount = new AtomicInteger();
     private static final AtomicInteger openCounter = new AtomicInteger();
     private static final AtomicInteger topCounter = new AtomicInteger();
-    private static final AtomicInteger closeCount = new AtomicInteger();
 
     private static final String SIGNATURE = "test_match()";
 
@@ -84,6 +84,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
+            openCounter.incrementAndGet();
+        }
+
+        @Override
         public boolean isConstant() {
             return false;
         }
@@ -102,11 +107,6 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         public void toTop() {
             assert openCounter.get() > 0;
             topCounter.incrementAndGet();
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
-            openCounter.incrementAndGet();
         }
     }
 }

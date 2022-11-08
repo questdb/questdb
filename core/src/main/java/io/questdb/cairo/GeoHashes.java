@@ -43,10 +43,10 @@ public class GeoHashes {
     //     nullShort == nullLong;
     // in addition, -1 is the first negative non geohash value.
     public static final byte BYTE_NULL = -1;
-    public static final short SHORT_NULL = -1;
     public static final int INT_NULL = -1;
-    public static final long NULL = -1L;
     public static final int MAX_STRING_LENGTH = 12;
+    public static final long NULL = -1L;
+    public static final short SHORT_NULL = -1;
     // we fill this array with BYTE_NULL (-1)
     static final byte[] base32Indexes = {
             0, 1, 2, 3, 4, 5, 6, 7,         // 30-37, '0'..'7'
@@ -274,6 +274,14 @@ public class GeoHashes {
         return hash >> (fromBits - toBits);
     }
 
+    private static long appendChar(long hash, char c) throws NumericException {
+        final byte idx = encodeChar(c);
+        if (idx > -1) {
+            return (hash << 5) | idx;
+        }
+        throw NumericException.INSTANCE;
+    }
+
     private static long fromBitString(CharSequence bits, int start, int limit) throws NumericException {
         long result = 0;
         for (int i = start; i < limit; i++) {
@@ -289,13 +297,5 @@ public class GeoHashes {
             }
         }
         return result;
-    }
-
-    private static long appendChar(long hash, char c) throws NumericException {
-        final byte idx = encodeChar(c);
-        if (idx > -1) {
-            return (hash << 5) | idx;
-        }
-        throw NumericException.INSTANCE;
     }
 }

@@ -526,26 +526,6 @@ public class InsertCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCastFloatShortTab() throws Exception {
-        assertCastFloatTab("short",
-                "a\n" +
-                        "28\n" +
-                        "29\n" +
-                        "8\n" +
-                        "20\n" +
-                        "93\n" +
-                        "0\n" +
-                        "66\n" +
-                        "80\n" +
-                        "22\n" +
-                        "12\n" +
-                        "8\n",
-                -42230f,
-                42230f
-        );
-    }
-
-    @Test
     public void testCastFloatIntTab() throws Exception {
         assertCastFloatTab("int",
                 "a\n" +
@@ -582,7 +562,27 @@ public class InsertCastTest extends AbstractGriffinTest {
                         "8\n",
                 -3.4e35f,
                 3.4e35f
-                );
+        );
+    }
+
+    @Test
+    public void testCastFloatShortTab() throws Exception {
+        assertCastFloatTab("short",
+                "a\n" +
+                        "28\n" +
+                        "29\n" +
+                        "8\n" +
+                        "20\n" +
+                        "93\n" +
+                        "0\n" +
+                        "66\n" +
+                        "80\n" +
+                        "22\n" +
+                        "12\n" +
+                        "8\n",
+                -42230f,
+                42230f
+        );
     }
 
     @Test

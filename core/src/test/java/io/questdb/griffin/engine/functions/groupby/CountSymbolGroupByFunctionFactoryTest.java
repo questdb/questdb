@@ -30,6 +30,22 @@ import org.junit.Test;
 public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t1\n" +
+                        "b\t1\n" +
+                        "c\t1\n",
+                "select a, count_distinct(cast('foobar' as SYMBOL)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
@@ -84,22 +100,6 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "b\t0\n" +
                         "c\t0\n",
                 "select a, count_distinct(cast(null as SYMBOL)) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testConstant() throws Exception {
-        assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t1\n" +
-                        "b\t1\n" +
-                        "c\t1\n",
-                "select a, count_distinct(cast('foobar' as SYMBOL)) from x",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
                 true,

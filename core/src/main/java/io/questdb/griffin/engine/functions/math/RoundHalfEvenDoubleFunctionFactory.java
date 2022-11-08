@@ -101,32 +101,6 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
-        private final Function arg;
-        private final int scale;
-
-        public FuncPosConst(Function arg, int r) {
-            this.arg = arg;
-            this.scale = r;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            final double l = arg.getDouble(rec);
-            if (l != l) {
-                return l;
-            }
-
-            return Numbers.roundHalfEvenPosScale(l, scale);
-        }
-
-    }
-
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
         private final Function arg;
         private final int scale;
@@ -149,6 +123,32 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundHalfEvenNegScale(l, scale);
+        }
+
+    }
+
+    private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
+        private final Function arg;
+        private final int scale;
+
+        public FuncPosConst(Function arg, int r) {
+            this.arg = arg;
+            this.scale = r;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            final double l = arg.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            return Numbers.roundHalfEvenPosScale(l, scale);
         }
 
     }

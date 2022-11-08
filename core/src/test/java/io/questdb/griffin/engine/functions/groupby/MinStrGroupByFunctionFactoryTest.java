@@ -34,6 +34,38 @@ import org.junit.Test;
 public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tmin\n" +
+                        "a\t42\n" +
+                        "b\t42\n" +
+                        "c\t42\n",
+                "select a, min('42') from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExpression() throws Exception {
+        assertQuery(
+                "a\tmin\n" +
+                        "a\taaaaaa\n" +
+                        "b\taaaaaa\n" +
+                        "c\taaaaaa\n",
+                "select a, min(concat(s, s)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tmin\n" +
@@ -99,45 +131,13 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testConstant() throws Exception {
-        assertQuery(
-                "a\tmin\n" +
-                        "a\t42\n" +
-                        "b\t42\n" +
-                        "c\t42\n",
-                "select a, min('42') from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testExpression() throws Exception {
-        assertQuery(
-                "a\tmin\n" +
-                        "a\taaaaaa\n" +
-                        "b\taaaaaa\n" +
-                        "c\taaaaaa\n",
-                "select a, min(concat(s, s)) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testSampleFillLinearNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select * from (select rnd_int() i, rnd_str('a','b','c') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))", sqlExecutionContext);
             try (
                     final RecordCursorFactory factory = compiler.compile("select ts, avg(i), min(s) from x sample by 1s fill(linear)", sqlExecutionContext).getRecordCursorFactory();
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-                    ) {
+            ) {
                 cursor.hasNext();
                 Assert.fail();
             } catch (SqlException e) {

@@ -45,16 +45,9 @@ public class GeoHashFunctionTest {
         }
     };
 
-    @Test
-    public void testGetStrIntoSink1() {
-        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoByte(null));
-        StringSink sink = new StringSink();
-        try {
-            nullFunction.getStr(null, sink);
-            Assert.fail();
-        } catch (UnsupportedOperationException e) {
-            // Good
-        }
+    @Test(expected = UnsupportedOperationException.class)
+    public void testChar() {
+        Assert.assertEquals('a', nullFunction.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -108,11 +101,6 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLen() {
-        nullFunction.getStrLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
         nullFunction.getStr(null);
     }
@@ -120,6 +108,23 @@ public class GeoHashFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         nullFunction.getStrB(null);
+    }
+
+    @Test
+    public void testGetStrIntoSink1() {
+        Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoByte(null));
+        StringSink sink = new StringSink();
+        try {
+            nullFunction.getStr(null, sink);
+            Assert.fail();
+        } catch (UnsupportedOperationException e) {
+            // Good
+        }
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrLen() {
+        nullFunction.getStrLen(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -135,11 +140,6 @@ public class GeoHashFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         nullFunction.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
-        Assert.assertEquals('a', nullFunction.getChar(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -37,16 +37,6 @@ public interface UnaryFunction extends Function {
         getArg().close();
     }
 
-    @Override
-    default boolean isConstant() {
-        return getArg().isConstant();
-    }
-
-    @Override
-    default void toTop() {
-        getArg().toTop();
-    }
-
     Function getArg();
 
     @Override
@@ -54,13 +44,23 @@ public interface UnaryFunction extends Function {
         getArg().init(symbolTableSource, executionContext);
     }
 
-    default boolean isRuntimeConstant() {
-        return getArg().isRuntimeConstant();
+    @Override
+    default boolean isConstant() {
+        return getArg().isConstant();
     }
 
     @Override
     default boolean isReadThreadSafe() {
         return getArg().isReadThreadSafe();
+    }
+
+    default boolean isRuntimeConstant() {
+        return getArg().isRuntimeConstant();
+    }
+
+    @Override
+    default void toTop() {
+        getArg().toTop();
     }
 
     @Override

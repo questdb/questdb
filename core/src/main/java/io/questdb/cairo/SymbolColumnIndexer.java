@@ -36,12 +36,12 @@ import io.questdb.std.str.Path;
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
-    private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private final MemorySRImpl mem = new MemorySRImpl();
+    private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private long columnTop;
+    private volatile boolean distressed = false;
     @SuppressWarnings({"unused", "FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
-    private volatile boolean distressed = false;
 
     @Override
     public void clear() {
@@ -55,45 +55,8 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void distress() {
-        distressed = true;
-    }
-
-    @Override
-    public long getFd() {
-        return mem.getFd();
-    }
-
-    @Override
-    public long getSequence() {
-        return sequence;
-    }
-
-    @Override
-    public void refreshSourceAndIndex(long loRow, long hiRow) {
-        mem.updateSize();
-        index(mem, loRow, hiRow);
-    }
-
-    @Override
-    public void index(MemoryR mem, long loRow, long hiRow) {
-        // while we may have to read column starting with zero offset
-        // index values have to be adjusted to partition-level row id
-        writer.rollbackConditionally(loRow);
-        for (long lo = Math.max(loRow,  columnTop); lo < hiRow; lo++) {
-            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
-        }
-        writer.setMaxValue(hiRow - 1);
-    }
-
-    @Override
-    public BitmapIndexWriter getWriter() {
-        return writer;
-    }
-
-    @Override
-    public boolean isDistressed() {
-        return distressed;
+    public void closeSlider() {
+        mem.close();
     }
 
     @Override
@@ -141,8 +104,45 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void closeSlider() {
-        mem.close();
+    public void distress() {
+        distressed = true;
+    }
+
+    @Override
+    public long getFd() {
+        return mem.getFd();
+    }
+
+    @Override
+    public long getSequence() {
+        return sequence;
+    }
+
+    @Override
+    public BitmapIndexWriter getWriter() {
+        return writer;
+    }
+
+    @Override
+    public void index(MemoryR mem, long loRow, long hiRow) {
+        // while we may have to read column starting with zero offset
+        // index values have to be adjusted to partition-level row id
+        writer.rollbackConditionally(loRow);
+        for (long lo = Math.max(loRow, columnTop); lo < hiRow; lo++) {
+            writer.add(TableUtils.toIndexKey(mem.getInt((lo - columnTop) * Integer.BYTES)), lo);
+        }
+        writer.setMaxValue(hiRow - 1);
+    }
+
+    @Override
+    public boolean isDistressed() {
+        return distressed;
+    }
+
+    @Override
+    public void refreshSourceAndIndex(long loRow, long hiRow) {
+        mem.updateSize();
+        index(mem, loRow, hiRow);
     }
 
     @Override

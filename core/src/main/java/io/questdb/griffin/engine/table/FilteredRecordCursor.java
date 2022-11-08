@@ -52,13 +52,13 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return base.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -73,18 +73,18 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public long size() {
-        return -1;
-    }
-
-    @Override
-    public Record getRecordB() {
-        return base.getRecordB();
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
         base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return -1;
     }
 
     @Override

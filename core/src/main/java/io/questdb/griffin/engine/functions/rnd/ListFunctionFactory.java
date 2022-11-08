@@ -57,13 +57,18 @@ public class ListFunctionFactory implements FunctionFactory {
     }
 
     private static final class Func extends SymbolFunction implements Function {
-        private final ObjList<String> symbols;
         private final int count;
+        private final ObjList<String> symbols;
         private int position = 0;
 
         public Func(ObjList<String> symbols) {
             this.symbols = symbols;
             this.count = symbols.size();
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return next();
         }
 
         @Override
@@ -76,23 +81,9 @@ public class ListFunctionFactory implements FunctionFactory {
             return getSymbol(rec);
         }
 
-        private int next() {
-            return position++ % count;
-        }
-
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return next();
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            position = 0;
         }
 
         @Override
@@ -101,8 +92,17 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            position = 0;
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
+        }
+
+        private int next() {
+            return position++ % count;
         }
 
         @Override

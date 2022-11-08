@@ -27,19 +27,15 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.sql.Record;
 
 public class SimpleMapValuePeeker {
-    private AbstractNoRecordSampleByCursor cursor;
     private final SimpleMapValue currentRecord;
     private final SimpleMapValue nextRecord;
+    private AbstractNoRecordSampleByCursor cursor;
     private boolean nextHasNext = false;
     private long nextLocalEpoch = -1;
 
     SimpleMapValuePeeker(SimpleMapValue currentRecord, SimpleMapValue nextRecord) {
         this.currentRecord = currentRecord;
         this.nextRecord = nextRecord;
-    }
-
-    void setCursor(AbstractNoRecordSampleByCursor cursor) {
-        this.cursor = cursor;
     }
 
     Record peek() {
@@ -54,5 +50,9 @@ public class SimpleMapValuePeeker {
         cursor.localEpoch = nextLocalEpoch;
         currentRecord.copy(nextRecord);
         return nextHasNext;
+    }
+
+    void setCursor(AbstractNoRecordSampleByCursor cursor) {
+        this.cursor = cursor;
     }
 }

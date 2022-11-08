@@ -54,8 +54,8 @@ public class NullIfIFunctionFactory implements FunctionFactory {
     }
 
     private static class NullIfIFunction extends IntFunction implements UnaryFunction {
-        private final Function value;
         private final int replacement;
+        private final Function value;
 
         public NullIfIFunction(Function value, int replacement) {
             super();

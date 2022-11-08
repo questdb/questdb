@@ -36,6 +36,8 @@ public interface AsyncWriterCommand {
 
     String getCommandName();
 
+    long getCorrelationId();
+
     int getTableId();
 
     String getTableName();
@@ -44,19 +46,17 @@ public interface AsyncWriterCommand {
 
     long getTableVersion();
 
-    long getCorrelationId();
-
-    void startAsync();
-
     void serialize(TableWriterTask task);
 
     void setCommandCorrelationId(long correlationId);
 
+    void startAsync();
+
     interface Error {
         int OK = 0;
         int READER_OUT_OF_DATE = -1;
-        int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
         int SQL_OR_CAIRO_ERROR = -3;
+        int STRUCTURE_CHANGE_NOT_ALLOWED = -2;
         int UNEXPECTED_ERROR = -4;
     }
 }

@@ -26,8 +26,8 @@ package io.questdb.cutlass.text;
 
 public final class TextLoadWarning {
     public final static int NONE = 0;
-    public final static int TIMESTAMP_MISMATCH = 0x1;
     public final static int PARTITION_TYPE_MISMATCH = 0x2;
+    public final static int TIMESTAMP_MISMATCH = 0x1;
 
     public static boolean hasFlag(int warnings, int flag) {
         return (warnings & flag) != 0;
