@@ -153,6 +153,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return 0;
             }
@@ -160,12 +166,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
         }, "wrong file size");
 
@@ -177,6 +177,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return -1;
             }
@@ -184,12 +190,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
 
 
@@ -203,6 +203,12 @@ public class MimeTypesCacheTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new FilesFacadeImpl() {
             @Override
+            public boolean close(long fd) {
+                closeCount.incrementAndGet();
+                return true;
+            }
+
+            @Override
             public long length(long fd) {
                 return 1024 * 1024 * 2;
             }
@@ -210,12 +216,6 @@ public class MimeTypesCacheTest {
             @Override
             public long openRO(LPSZ name) {
                 return 123L;
-            }
-
-            @Override
-            public boolean close(long fd) {
-                closeCount.incrementAndGet();
-                return true;
             }
         }, "wrong file size");
 

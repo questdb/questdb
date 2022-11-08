@@ -30,12 +30,18 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     private long rollInterval = Long.MAX_VALUE;     // roll interval in millis
 
     @Override
-    public void setMaxSegmentSize(long maxSegmentSize) {
-        if (maxSegmentSize < 1) {
-            throw CairoException.critical(CairoException.METADATA_VALIDATION)
-                    .put("Max segment size cannot be less than 1 byte, maxSegmentSize=").put(maxSegmentSize);
-        }
-        this.maxSegmentSize = maxSegmentSize;
+    public boolean isMaxRowCountSet() {
+        return maxRowCount != Long.MAX_VALUE;
+    }
+
+    @Override
+    public boolean isMaxSegmentSizeSet() {
+        return maxSegmentSize != Long.MAX_VALUE;
+    }
+
+    @Override
+    public boolean isRollIntervalSet() {
+        return rollInterval != Long.MAX_VALUE;
     }
 
     @Override
@@ -45,6 +51,15 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
                     .put("Max number of rows cannot be less than 1, maxRowCount=").put(maxRowCount);
         }
         this.maxRowCount = maxRowCount;
+    }
+
+    @Override
+    public void setMaxSegmentSize(long maxSegmentSize) {
+        if (maxSegmentSize < 1) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("Max segment size cannot be less than 1 byte, maxSegmentSize=").put(maxSegmentSize);
+        }
+        this.maxSegmentSize = maxSegmentSize;
     }
 
     @Override
@@ -62,20 +77,5 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
         return segmentSize >= maxSegmentSize
                 || rowCount >= maxRowCount
                 || segmentAge >= rollInterval;
-    }
-
-    @Override
-    public boolean isMaxSegmentSizeSet() {
-        return maxSegmentSize != Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isMaxRowCountSet() {
-        return maxRowCount != Long.MAX_VALUE;
-    }
-
-    @Override
-    public boolean isRollIntervalSet() {
-        return rollInterval != Long.MAX_VALUE;
     }
 }

@@ -71,13 +71,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static boolean isNullConstant(Function operand, int operandType) {
-        return operand.isConstant() &&
-                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
-                        ||
-                        operandType == ColumnType.NULL);
-    }
-
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
         switch (ColumnType.tagOf(operandType)) {
             case ColumnType.INT:
@@ -94,6 +87,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
                 // double
                 return new FuncDoubleIsNaN(operand);
         }
+    }
+
+    private static boolean isNullConstant(Function operand, int operandType) {
+        return operand.isConstant() &&
+                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
+                        ||
+                        operandType == ColumnType.NULL);
     }
 
     protected static class Func extends NegatableBooleanFunction implements BinaryFunction {
@@ -129,42 +129,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncIntIsNaN extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncIntIsNaN(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncLongIsNaN extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncLongIsNaN(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
     protected static class FuncDateIsNaN extends NegatableBooleanFunction implements UnaryFunction {
         protected final Function arg;
 
@@ -173,49 +137,13 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
-        }
-
-        @Override
         public Function getArg() {
             return arg;
-        }
-    }
-
-    protected static class FuncTimestampIsNaN extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncTimestampIsNaN(Function arg) {
-            this.arg = arg;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncFloatIsNaN extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncFloatIsNaN(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (Float.isNaN(arg.getFloat(rec)));
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
         }
     }
 
@@ -227,13 +155,85 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             return negated != (Double.isNaN(arg.getDouble(rec)));
+        }
+    }
+
+    protected static class FuncFloatIsNaN extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncFloatIsNaN(Function arg) {
+            this.arg = arg;
         }
 
         @Override
         public Function getArg() {
             return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (Float.isNaN(arg.getFloat(rec)));
+        }
+    }
+
+    protected static class FuncIntIsNaN extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncIntIsNaN(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getInt(rec) == Numbers.INT_NaN);
+        }
+    }
+
+    protected static class FuncLongIsNaN extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncLongIsNaN(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getLong(rec) == Numbers.LONG_NaN);
+        }
+    }
+
+    protected static class FuncTimestampIsNaN extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+
+        public FuncTimestampIsNaN(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
         }
     }
 }

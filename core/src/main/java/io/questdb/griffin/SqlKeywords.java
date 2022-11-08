@@ -28,8 +28,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 
 public class SqlKeywords {
-    public static final String CONCAT_FUNC_NAME = "concat";
     public static final int CASE_KEYWORD_LENGTH = 4;
+    public static final String CONCAT_FUNC_NAME = "concat";
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
     public static int GEOHASH_KEYWORD_LENGTH = 7;
 
@@ -988,6 +988,18 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isLikeKeyword(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'k'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isLimitKeyword(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -1883,18 +1895,6 @@ public class SqlKeywords {
         return (tok.charAt(i++) | 32) == 'z'
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i) | 32) == 'e';
-    }
-
-    public static boolean isLikeKeyword(CharSequence tok) {
-        if (tok.length() != 4) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'k'
                 && (tok.charAt(i) | 32) == 'e';
     }
 

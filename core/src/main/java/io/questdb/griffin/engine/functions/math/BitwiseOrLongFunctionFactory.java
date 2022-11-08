@@ -67,15 +67,15 @@ public class BitwiseOrLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
             return l != Numbers.LONG_NaN && r != Numbers.LONG_NaN ? l | r : Numbers.LONG_NaN;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

@@ -35,29 +35,6 @@ public class WeakSelfReturningObjectPoolTest {
     private static final int initSize = 12;
 
     @Test
-    public void testSelfReturnOnClose() {
-        final int elementCount = 10 * initSize;
-
-        final List<SelfReturningPoolElement> tmp = new ArrayList<>();
-        final WeakSelfReturningObjectPool<SelfReturningPoolElement> pool = new WeakSelfReturningObjectPool<>(SelfReturningPoolElement::new, initSize);
-
-        for (int i = 0; i < elementCount; i++) {
-            SelfReturningPoolElement element = pool.pop();
-            assertFalse(element.closed);
-            tmp.add(element);
-        }
-
-        assertEquals(0, pool.cache.size());
-        for (int i = 0; i < elementCount; i++) {
-            SelfReturningPoolElement element = tmp.get(i);
-            element.close();
-            assertTrue(element.closed);
-        }
-
-        assertEquals(2 * initSize, pool.cache.size());
-    }
-
-    @Test
     public void testPopPush() {
         final int elementCount = 10 * initSize;
 
@@ -79,6 +56,29 @@ public class WeakSelfReturningObjectPoolTest {
             // The pool should not attempt to close objects.
             assertFalse(element.closed);
         }
+        assertEquals(2 * initSize, pool.cache.size());
+    }
+
+    @Test
+    public void testSelfReturnOnClose() {
+        final int elementCount = 10 * initSize;
+
+        final List<SelfReturningPoolElement> tmp = new ArrayList<>();
+        final WeakSelfReturningObjectPool<SelfReturningPoolElement> pool = new WeakSelfReturningObjectPool<>(SelfReturningPoolElement::new, initSize);
+
+        for (int i = 0; i < elementCount; i++) {
+            SelfReturningPoolElement element = pool.pop();
+            assertFalse(element.closed);
+            tmp.add(element);
+        }
+
+        assertEquals(0, pool.cache.size());
+        for (int i = 0; i < elementCount; i++) {
+            SelfReturningPoolElement element = tmp.get(i);
+            element.close();
+            assertTrue(element.closed);
+        }
+
         assertEquals(2 * initSize, pool.cache.size());
     }
 

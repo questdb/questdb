@@ -25,14 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriter;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class O3MetricsTest extends AbstractO3Test {
-    private static final long MICROS_IN_MINUTE = 60000000L;
-    private static final long MICROS_IN_HOUR = 3600000000L;
     private static final long MICROS_IN_DAY = 86400000000L;
+    private static final long MICROS_IN_HOUR = 3600000000L;
+    private static final long MICROS_IN_MINUTE = 60000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     @Test
@@ -43,7 +45,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(13));
                 r.putInt(0, 9);
@@ -78,7 +80,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(2, 0, 0));
                 r.putInt(0, 4);
@@ -104,7 +106,7 @@ public class O3MetricsTest extends AbstractO3Test {
             Assert.assertEquals(initRowCount + 1, metrics.tableWriter().getPhysicallyWrittenRows());
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(1, 0, 0));
                 r.putInt(0, 3);
@@ -139,7 +141,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(4));
                 r.putInt(0, 0);
@@ -177,7 +179,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(8, 30));
                 r.putInt(0, 100);
@@ -214,7 +216,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(23, 30));
                 r.putInt(0, 101);
@@ -228,15 +230,15 @@ public class O3MetricsTest extends AbstractO3Test {
                 r.putInt(0, 103);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 45));
+                r = w.newRow(millenniumTimestamp(1, 4, 45));
                 r.putInt(0, 201);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 30));
+                r = w.newRow(millenniumTimestamp(1, 4, 30));
                 r.putInt(0, 202);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 04, 15));
+                r = w.newRow(millenniumTimestamp(1, 4, 15));
                 r.putInt(0, 203);
                 r.append();
 
@@ -293,7 +295,7 @@ public class O3MetricsTest extends AbstractO3Test {
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
-                TableWriter.Row r = null;
+                TableWriter.Row r;
 
                 r = w.newRow(millenniumTimestamp(-1));
                 r.putInt(0, -1);

@@ -100,11 +100,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
-        private final CharSequenceHashSet set;
-        private final IntHashSet intSet = new IntHashSet();
-        private final ObjList<Function> deferredValues;
         private final CharSequenceHashSet deferredSet;
+        private final ObjList<Function> deferredValues;
+        private final IntHashSet intSet = new IntHashSet();
         private final TestFunc intTest = this::testAsInt;
+        private final CharSequenceHashSet set;
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
 
@@ -159,6 +159,10 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
+        private boolean testAsInt(Record rec) {
+            return intSet.contains(arg.getInt(rec));
+        }
+
         private boolean testAsString(Record rec) {
             final CharSequence symbol = arg.getSymbol(rec);
             if (set.contains(symbol)) {
@@ -168,10 +172,6 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 return deferredSet.contains(symbol);
             }
             return false;
-        }
-
-        private boolean testAsInt(Record rec) {
-            return intSet.contains(arg.getInt(rec));
         }
     }
 }

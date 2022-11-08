@@ -26,17 +26,17 @@ package io.questdb.std;
 
 public interface IOURingFacade {
 
-    boolean isAvailable();
+    void close(long ptr);
 
     long create(int capacity);
 
-    void close(long ptr);
+    int errno();
+
+    boolean isAvailable();
+
+    IOURing newInstance(int capacity);
 
     int submit(long ptr);
 
     int submitAndWait(long ptr, int waitNr);
-
-    int errno();
-
-    IOURing newInstance(int capacity);
 }

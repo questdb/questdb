@@ -59,9 +59,9 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
 
     public static class CastFloatToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
+        private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private final int scale;
 
         public CastFloatToStrFunction(Function arg, int scale) {
             this.arg = arg;
@@ -85,6 +85,15 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final float value = arg.getFloat(rec);
+            if (Float.isNaN(value)) {
+                return;
+            }
+            sink.put(value, scale);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final float value = arg.getFloat(rec);
             if (Float.isNaN(value)) {
@@ -93,15 +102,6 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value, 4);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
-                return;
-            }
-            sink.put(value, scale);
         }
     }
 }

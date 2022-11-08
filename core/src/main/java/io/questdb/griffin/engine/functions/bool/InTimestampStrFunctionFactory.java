@@ -66,9 +66,14 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         return new EqTimestampStrFunction(args.getQuick(0), rightFn);
     }
 
+    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
+        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        applyLastEncodedIntervalEx(out);
+    }
+
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function left;
         private final LongList intervals = new LongList();
+        private final Function left;
 
         public EqTimestampStrConstantFunction(
                 Function left,
@@ -80,20 +85,20 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+        public Function getArg() {
+            return left;
         }
 
         @Override
-        public Function getArg() {
-            return left;
+        public boolean getBool(Record rec) {
+            return negated != isInIntervals(intervals, left.getTimestamp(rec));
         }
     }
 
     public static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final LongList intervals = new LongList();
         private final Function left;
         private final Function right;
-        private final LongList intervals = new LongList();
 
         public EqTimestampStrFunction(Function left, Function right) {
             this.left = left;
@@ -107,7 +112,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
                 return negated;
             }
             CharSequence timestampAsString = right.getStr(rec);
-            if (timestampAsString  == null) {
+            if (timestampAsString == null) {
                 return negated;
             }
             intervals.clear();
@@ -135,10 +140,5 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             return false;
         }
-    }
-
-    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
-        parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
-        applyLastEncodedIntervalEx(out);
     }
 }

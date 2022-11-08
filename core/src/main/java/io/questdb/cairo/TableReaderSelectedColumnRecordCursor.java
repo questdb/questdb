@@ -34,16 +34,16 @@ import io.questdb.std.Rows;
 public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
 
     protected final TableReaderSelectedColumnRecord recordA;
-    private final TableReaderSelectedColumnRecord recordB;
     private final IntList columnIndexes;
+    private final TableReaderSelectedColumnRecord recordB;
     protected TableReader reader;
+    private long maxRecordIndex = -1;
+    private int partitionHi;
     private int partitionIndex = 0;
     private int partitionLimit;
-    private long maxRecordIndex = -1;
     private int partitionLo;
-    private long recordLo;
-    private int partitionHi;
     private long recordHi;
+    private long recordLo;
 
     public TableReaderSelectedColumnRecordCursor(IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
@@ -62,13 +62,13 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+    public Record getRecordB() {
+        return recordB;
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
@@ -81,30 +81,8 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return recordB;
-    }
-
-    @Override
-    public void recordAt(Record record, long rowId) {
-        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
-    }
-
-    @Override
-    public void toTop() {
-        partitionIndex = partitionLo;
-        if (recordHi == -1) {
-            partitionLimit = reader.getPartitionCount();
-        } else {
-            partitionLimit = Math.min(partitionHi + 1, reader.getPartitionCount());
-        }
-        maxRecordIndex = recordLo - 1;
-        recordA.jumpTo(0, maxRecordIndex);
-    }
-
-    @Override
-    public long size() {
-        return reader.size();
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     public void of(TableReader reader) {
@@ -123,6 +101,28 @@ public class TableReaderSelectedColumnRecordCursor implements RecordCursor {
         this.recordLo = recordLo;
         this.recordHi = recordHi;
         of0(reader);
+    }
+
+    @Override
+    public void recordAt(Record record, long rowId) {
+        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+    }
+
+    @Override
+    public long size() {
+        return reader.size();
+    }
+
+    @Override
+    public void toTop() {
+        partitionIndex = partitionLo;
+        if (recordHi == -1) {
+            partitionLimit = reader.getPartitionCount();
+        } else {
+            partitionLimit = Math.min(partitionHi + 1, reader.getPartitionCount());
+        }
+        maxRecordIndex = recordLo - 1;
+        recordA.jumpTo(0, maxRecordIndex);
     }
 
     private void of0(TableReader reader) {

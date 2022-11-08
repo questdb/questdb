@@ -31,8 +31,16 @@ import org.junit.Test;
 public class CreateTableAsSelectTest extends AbstractGriffinTest {
 
     @Test
-    public void testCreatePartitionedTableAsSelectTimestampNoOrder() throws Exception {
-        testCreatePartitionedTableAsSelectWithOrderBy("");
+    public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createSrcTable();
+
+            assertFailure(
+                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
+                    "Could not create table. See log for details.",
+                    13
+            );
+        });
     }
 
     @Test
@@ -46,16 +54,27 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            createSrcTable();
+    public void testCreatePartitionedTableAsSelectTimestampNoOrder() throws Exception {
+        testCreatePartitionedTableAsSelectWithOrderBy("");
+    }
 
-            assertFailure(
-                    "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
-                    "Could not create table. See log for details.",
-                    13
-            );
-        });
+    private void assertFailure(String sql, String message, int position) {
+        try {
+            compiler.compile(sql, sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+            Assert.assertEquals(position, e.getPosition());
+        }
+    }
+
+    private void createSrcTable() throws SqlException {
+        compiler.compile("create table src (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+        executeInsert("insert into src values (0, 0);");
+        executeInsert("insert into src values (10000, 1);");
+        executeInsert("insert into src values (20000, 2);");
+        executeInsert("insert into src values (30000, 3);");
+        executeInsert("insert into src values (40000, 4);");
     }
 
     private void testCreatePartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {
@@ -77,24 +96,5 @@ public class CreateTableAsSelectTest extends AbstractGriffinTest {
                     true
             );
         });
-    }
-
-    private void createSrcTable() throws SqlException {
-        compiler.compile("create table src (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
-        executeInsert("insert into src values (0, 0);");
-        executeInsert("insert into src values (10000, 1);");
-        executeInsert("insert into src values (20000, 2);");
-        executeInsert("insert into src values (30000, 3);");
-        executeInsert("insert into src values (40000, 4);");
-    }
-
-    private void assertFailure(String sql, String message, int position) {
-        try {
-            compiler.compile(sql, sqlExecutionContext);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
-            Assert.assertEquals(position, e.getPosition());
-        }
     }
 }

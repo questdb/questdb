@@ -34,16 +34,68 @@ import org.jetbrains.annotations.Nullable;
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietCloseable {
 
     static final long NO_CORRELATION_ID = -1L;
-
-    private int cmdType;
-    private String cmdName;
-    private int tableId;
-    private long tableVersion;
-    private long correlationId;
-
+    @Nullable SqlExecutionContext sqlExecutionContext;
     String tableName;
     int tableNamePosition;
-    @Nullable SqlExecutionContext sqlExecutionContext;
+    private String cmdName;
+    private int cmdType;
+    private long correlationId;
+    private int tableId;
+    private long tableVersion;
+
+    public void clearCommandCorrelationId() {
+        setCommandCorrelationId(NO_CORRELATION_ID);
+    }
+
+    @Override
+    public void close() {
+        // intentionally left empty
+    }
+
+    @Override
+    public String getCommandName() {
+        return cmdName;
+    }
+
+    @Override
+    public long getCorrelationId() {
+        return correlationId;
+    }
+
+    @Override
+    public int getTableId() {
+        return tableId;
+    }
+
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public int getTableNamePosition() {
+        return tableNamePosition;
+    }
+
+    @Override
+    public long getTableVersion() {
+        return tableVersion;
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+        task.of(cmdType, tableId, tableName);
+        task.setInstance(correlationId);
+    }
+
+    @Override
+    public void setCommandCorrelationId(long correlationId) {
+        this.correlationId = correlationId;
+    }
+
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
+    }
 
     void init(
             int cmdType,
@@ -60,60 +112,5 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
-    }
-
-    @Override
-    public int getTableId() {
-        return tableId;
-    }
-
-    @Override
-    public long getTableVersion() {
-        return tableVersion;
-    }
-
-    @Override
-    public String getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public String getCommandName() {
-        return cmdName;
-    }
-
-    @Override
-    public int getTableNamePosition() {
-        return tableNamePosition;
-    }
-
-    @Override
-    public long getCorrelationId() {
-        return correlationId;
-    }
-
-    @Override
-    public void setCommandCorrelationId(long correlationId) {
-        this.correlationId = correlationId;
-    }
-
-    public void clearCommandCorrelationId() {
-        setCommandCorrelationId(NO_CORRELATION_ID);
-    }
-
-    @Override
-    public void serialize(TableWriterTask task) {
-        task.of(cmdType, tableId, tableName);
-        task.setInstance(correlationId);
-    }
-
-    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
-        assert sqlExecutionContext != null;
-        this.sqlExecutionContext = sqlExecutionContext;
-    }
-
-    @Override
-    public void close() {
-        // intentionally left empty
     }
 }

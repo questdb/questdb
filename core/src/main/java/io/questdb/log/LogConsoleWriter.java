@@ -34,10 +34,10 @@ import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
     private final long fd = Files.getStdOutFd();
-    private final RingQueue<LogRecordSink> ring;
-    private final SCSequence subSeq;
     private final int level;
     private final QueueConsumer<LogRecordSink> myConsumer = this::toStdOut;
+    private final RingQueue<LogRecordSink> ring;
+    private final SCSequence subSeq;
 
     public LogConsoleWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this.ring = ring;

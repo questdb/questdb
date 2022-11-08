@@ -38,11 +38,10 @@ import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
-    long O_NONE = 0;
     long O_ASYNC = 0x40;
-    long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
+    long O_NONE = 0;
+    long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -225,8 +224,6 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
-    int getStrFunctionMaxBufferLength();
-
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -361,6 +358,8 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
+
+    int getStrFunctionMaxBufferLength();
 
     CharSequence getSystemTableNamePrefix();
 

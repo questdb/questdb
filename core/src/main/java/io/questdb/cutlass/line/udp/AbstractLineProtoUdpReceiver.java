@@ -41,17 +41,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
+    protected final int commitMode;
     protected final LineUdpLexer lexer;
-    protected final LineUdpParserImpl parser;
     protected final NetworkFacade nf;
+    protected final LineUdpParserImpl parser;
+    private final LineUdpReceiverConfiguration configuration;
+    private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
-    private final SOCountDownLatch halted = new SOCountDownLatch(1);
-    private final LineUdpReceiverConfiguration configuration;
-    protected long fd;
     protected int commitRate;
+    protected long fd;
     protected long totalCount = 0;
-    protected final int commitMode;
 
     public AbstractLineProtoUdpReceiver(
             LineUdpReceiverConfiguration configuration,

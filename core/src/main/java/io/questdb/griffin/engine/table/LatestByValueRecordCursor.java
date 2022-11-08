@@ -54,6 +54,11 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toTop() {
         hasNext = !empty;
     }
@@ -79,11 +84,6 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

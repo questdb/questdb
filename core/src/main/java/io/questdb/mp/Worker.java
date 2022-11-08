@@ -33,20 +33,20 @@ import io.questdb.std.Unsafe;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Worker extends Thread {
-    private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private final static AtomicInteger COUNTER = new AtomicInteger();
-    private final ObjHashSet<? extends Job> jobs;
-    private final SOCountDownLatch haltLatch;
+    private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private final int affinity;
-    private final Log log;
     private final WorkerCleaner cleaner;
-    private final boolean haltOnError;
-    private final int workerId;
-    private final long sleepMs;
-    private final long yieldThreshold;
-    private final long sleepThreshold;
-    private final HealthMetrics metrics;
     private final String criticalErrorLine;
+    private final SOCountDownLatch haltLatch;
+    private final boolean haltOnError;
+    private final ObjHashSet<? extends Job> jobs;
+    private final Log log;
+    private final HealthMetrics metrics;
+    private final long sleepMs;
+    private final long sleepThreshold;
+    private final int workerId;
+    private final long yieldThreshold;
     private volatile int running = 0;
 
     public Worker(

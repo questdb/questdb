@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 public final class SqlJitMode {
+    public static final int JIT_MODE_DISABLED = 2;
     public static final int JIT_MODE_ENABLED = 0;
     public static final int JIT_MODE_FORCE_SCALAR = 1;
-    public static final int JIT_MODE_DISABLED = 2;
 }

@@ -30,8 +30,8 @@ import io.questdb.std.ObjectFactory;
 public class WithClauseModel implements Mutable {
 
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private int position;
     private QueryModel model;
+    private int position;
 
     private WithClauseModel() {
     }

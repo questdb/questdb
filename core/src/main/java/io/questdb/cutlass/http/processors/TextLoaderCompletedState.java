@@ -30,9 +30,9 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.std.LongList;
 
 public class TextLoaderCompletedState {
-    private long writtenLineCount;
     private RecordMetadata metadata;
     private TextLoader textLoader;
+    private long writtenLineCount;
 
     public void copyState(TextLoader textLoader) {
         // Some values are come from TableWriter and has to be copied
@@ -73,15 +73,15 @@ public class TextLoaderCompletedState {
         return textLoader.getTimestampCol();
     }
 
+    public int getWarnings() {
+        return textLoader.getWarnings();
+    }
+
     public long getWrittenLineCount() {
         return writtenLineCount;
     }
 
     public boolean isForceHeaders() {
         return textLoader.isForceHeaders();
-    }
-
-    public int getWarnings() {
-        return textLoader.getWarnings();
     }
 }

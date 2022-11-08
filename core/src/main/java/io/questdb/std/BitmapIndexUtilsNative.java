@@ -87,11 +87,6 @@ public class BitmapIndexUtilsNative {
                 maxValue, minValue, partitionIndex, blockValueCountMod);
     }
 
-    private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                   long maxValue, long minValue,
-                                                   int partitionIndex, int blockValueCountMod);
-
     private static native int findFirstLastInFrame0(
             int outIndex,
             long rowIdLo,
@@ -118,4 +113,9 @@ public class BitmapIndexUtilsNative {
             long samplePeriodIndexOffset,
             long rowIdOutAddress,
             int outSize);
+
+    private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
+                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
+                                                   long maxValue, long minValue,
+                                                   int partitionIndex, int blockValueCountMod);
 }

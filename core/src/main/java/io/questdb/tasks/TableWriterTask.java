@@ -33,8 +33,8 @@ import io.questdb.std.Vect;
 import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
-    public static final int CMD_SLAVE_SYNC = 1;
     public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_SLAVE_SYNC = 1;
     public static final int CMD_UPDATE_TABLE = 3;
 
     public static final int TSK_BEGIN = 64;
@@ -42,25 +42,20 @@ public class TableWriterTask implements Closeable {
 
     private final long data;
     private final long dataSize;
+    private long appendLim;
+    private long appendPtr;
     private AsyncWriterCommand cmd;
-    private int type;
+    private long instance;
+    private long ip;
+    private long sequence;
     private long tableId;
     private String tableName;
-    private long appendPtr;
-    private long appendLim;
-    private long instance;
-    private long sequence;
-    private long ip;
+    private int type;
 
     public TableWriterTask(long data, long dataSize) {
         this.data = data;
         this.dataSize = dataSize;
         reset();
-    }
-
-    private void reset() {
-        appendPtr = data;
-        appendLim = data + dataSize;
     }
 
     @Override
@@ -92,24 +87,8 @@ public class TableWriterTask implements Closeable {
         this.sequence = sequence;
     }
 
-    public void of(
-            int type,
-            long tableId,
-            String tableName
-    ) {
-        this.tableId = tableId;
-        this.tableName = tableName;
-        this.type = type;
-        this.appendPtr = data;
-        this.ip = 0L;
-    }
-
     public AsyncWriterCommand getAsyncWriterCommand() {
         return cmd;
-    }
-
-    public void setAsyncWriterCommand(AsyncWriterCommand cmd) {
-        this.cmd = cmd;
     }
 
     public long getData() {
@@ -124,16 +103,8 @@ public class TableWriterTask implements Closeable {
         return instance;
     }
 
-    public void setInstance(long instance) {
-        this.instance = instance;
-    }
-
     public long getIp() {
         return ip;
-    }
-
-    public void setIp(long ip) {
-        this.ip = ip;
     }
 
     public long getSequence() {
@@ -144,10 +115,6 @@ public class TableWriterTask implements Closeable {
         return tableId;
     }
 
-    public void setTableId(long tableId) {
-        this.tableId = tableId;
-    }
-
     public String getTableName() {
         return tableName;
     }
@@ -156,13 +123,16 @@ public class TableWriterTask implements Closeable {
         return type;
     }
 
-    public void putStr(CharSequence value) {
-        int len = value.length();
-        final int byteLen = len * 2 + Integer.BYTES;
-        checkCapacity(byteLen);
-        Unsafe.getUnsafe().putInt(appendPtr, len);
-        Chars.copyStrChars(value, 0, len, appendPtr + Integer.BYTES);
-        appendPtr += byteLen;
+    public void of(
+            int type,
+            long tableId,
+            String tableName
+    ) {
+        this.tableId = tableId;
+        this.tableName = tableName;
+        this.type = type;
+        this.appendPtr = data;
+        this.ip = 0L;
     }
 
     public void putByte(byte c) {
@@ -176,21 +146,51 @@ public class TableWriterTask implements Closeable {
         appendPtr += Integer.BYTES;
     }
 
-    public void putShort(short value) {
-        checkCapacity(Short.BYTES);
-        Unsafe.getUnsafe().putShort(appendPtr, value);
-        appendPtr += Short.BYTES;
-    }
-
     public void putLong(long value) {
         checkCapacity(Long.BYTES);
         Unsafe.getUnsafe().putLong(appendPtr, value);
         appendPtr += Long.BYTES;
     }
 
+    public void putShort(short value) {
+        checkCapacity(Short.BYTES);
+        Unsafe.getUnsafe().putShort(appendPtr, value);
+        appendPtr += Short.BYTES;
+    }
+
+    public void putStr(CharSequence value) {
+        int len = value.length();
+        final int byteLen = len * 2 + Integer.BYTES;
+        checkCapacity(byteLen);
+        Unsafe.getUnsafe().putInt(appendPtr, len);
+        Chars.copyStrChars(value, 0, len, appendPtr + Integer.BYTES);
+        appendPtr += byteLen;
+    }
+
+    public void setAsyncWriterCommand(AsyncWriterCommand cmd) {
+        this.cmd = cmd;
+    }
+
+    public void setInstance(long instance) {
+        this.instance = instance;
+    }
+
+    public void setIp(long ip) {
+        this.ip = ip;
+    }
+
+    public void setTableId(long tableId) {
+        this.tableId = tableId;
+    }
+
     private void checkCapacity(long byteCount) {
         if (appendPtr + byteCount > appendLim) {
             throw CairoException.critical(0).put("async command/event queue buffer overflow");
         }
+    }
+
+    private void reset() {
+        appendPtr = data;
+        appendLim = data + dataSize;
     }
 }

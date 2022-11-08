@@ -42,6 +42,33 @@ public class MapFactory {
         return createMap(false, configuration, keyTypes, valueTypes);
     }
 
+    public static Map createMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes) {
+        CharSequence mapType = configuration.getDefaultMapType();
+        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
+            return new FastMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
+        }
+
+        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
+            return new CompactMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    GenericRecordMetadata.EMPTY,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlCompactMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlMapMaxPages()
+            );
+        }
+        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
+    }
+
     public static Map createSmallMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
@@ -74,33 +101,6 @@ public class MapFactory {
                     keyTypes,
                     valueTypes,
                     keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
-        }
-        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
-    }
-
-    public static Map createMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes) {
-        CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
-            return new FastMap(
-                    configuration.getSqlMapPageSize(),
-                    keyTypes,
-                    configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes());
-        }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            return new CompactMap(
-                    configuration.getSqlMapPageSize(),
-                    keyTypes,
-                    GenericRecordMetadata.EMPTY,
-                    configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),
                     configuration.getSqlMapMaxPages()

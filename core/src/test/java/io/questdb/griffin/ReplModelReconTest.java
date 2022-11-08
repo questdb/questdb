@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableSyncModel;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -721,59 +724,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
-        assertMemoryLeak(() -> {
-            compile(
-                    "create table x as  " +
-                            "(select" +
-                            " cast(x + 10 as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " round(rnd_double(0)*100, 3) amt," +
-                            " to_timestamp" +
-                            "('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
-                            " rnd_boolean() b," +
-                            " rnd_str(1,1,2) c," +
-                            " rnd_double(2) d," +
-                            " rnd_float(2) e," +
-                            " rnd_short(10,1024) f," +
-                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                            " rnd_symbol(4,4,4,2) ik," +
-                            " rnd_long() j," +
-                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
-                            " rnd_byte(2,50) l," +
-                            " rnd_bin(10, 20, 2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_long256() o" +
-                            " from long_sequence(100000)" +
-                            ") timestamp(k) partition by DAY",
-                    sqlExecutionContext
-            );
-
-            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
-
-            compile("alter table x drop column n", sqlExecutionContext);
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            compile("alter table x add column n long256", sqlExecutionContext);
-
-            try (
-                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
-                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
-            ) {
-                sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
-            }
-
-            TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
-                    sink
-            );
-        });
-    }
-
-    @Test
     public void testOrderedRemoveAndReAddColumnSameNameLastTableReader() throws Exception {
         // todo: when we remove column X and then add column X to table the current algo is to
         //    attempt to replace the existing file. On windows OS it is only possible to do
@@ -1161,6 +1111,59 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp" +
+                            "('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compile("alter table x drop column n", sqlExecutionContext);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            compile("alter table x add column n long256", sqlExecutionContext);
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
     public void testOrderedRemoveColumn() throws Exception {
         assertMemoryLeak(() -> {
             compile(
@@ -1407,9 +1410,9 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     private static class SimpleLocalClient implements Closeable {
+        private final FanOut evtFanOut;
         private final RingQueue<TableWriterTask> evtQueue;
         private final Sequence evtSubSeq;
-        private final FanOut evtFanOut;
 
         public SimpleLocalClient(CairoEngine engine) {
             this.evtQueue = engine.getMessageBus().getTableWriterEventQueue();
@@ -1449,6 +1452,16 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 }
 
                 @Override
+                public AsyncWriterCommand deserialize(TableWriterTask task) {
+                    return this;
+                }
+
+                @Override
+                public String getCommandName() {
+                    return "SYNC";
+                }
+
+                @Override
                 public void serialize(TableWriterTask task) {
                     task.fromSlaveSyncRequest(
                             // we need to know master table ID from master's writer because
@@ -1463,16 +1476,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             slaveIP,
                             sequence
                     );
-                }
-
-                @Override
-                public AsyncWriterCommand deserialize(TableWriterTask task) {
-                    return this;
-                }
-
-                @Override
-                public String getCommandName() {
-                    return "SYNC";
                 }
 
                 @Override

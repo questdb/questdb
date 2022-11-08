@@ -32,26 +32,25 @@ import java.util.Map;
 import java.util.Set;
 
 public class TableRegistry implements Closeable {
-    private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
-
     private final CairoEngine engine;
+    private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
 
     TableRegistry(CairoEngine engine) {
         this.engine = engine;
     }
 
-    // expected that caller holds the lock on the table
-    void registerTable(TableStructure struct) {
-        final String tableName = Chars.toString(struct.getTableName());
-        final Sequencer other = tableRegistry.remove(tableName);
-        if (other != null) {
-            // could happen if there was a table with the same name before
-            other.close();
-        }
+    @Override
+    public void close() {
+        clear();
+    }
 
-        final SequencerImpl sequencer = new SequencerImpl(engine, tableName);
-        sequencer.of(struct);
-        sequencer.close();
+    void clear() {
+        // create proper clear() and close() methods
+        final Set<Map.Entry<CharSequence, Sequencer>> entries = tableRegistry.entrySet();
+        for (Map.Entry<CharSequence, Sequencer> entry : entries) {
+            entry.getValue().close();
+        }
+        tableRegistry.clear();
     }
 
     Sequencer getSequencer(CharSequence tableName) {
@@ -68,17 +67,17 @@ public class TableRegistry implements Closeable {
         return sequencer;
     }
 
-    void clear() {
-        // create proper clear() and close() methods
-        final Set<Map.Entry<CharSequence, Sequencer>> entries =  tableRegistry.entrySet();
-        for (Map.Entry<CharSequence, Sequencer> entry: entries) {
-            entry.getValue().close();
+    // expected that caller holds the lock on the table
+    void registerTable(TableStructure struct) {
+        final String tableName = Chars.toString(struct.getTableName());
+        final Sequencer other = tableRegistry.remove(tableName);
+        if (other != null) {
+            // could happen if there was a table with the same name before
+            other.close();
         }
-        tableRegistry.clear();
-    }
 
-    @Override
-    public void close() {
-        clear();
+        final SequencerImpl sequencer = new SequencerImpl(engine, tableName);
+        sequencer.of(struct);
+        sequencer.close();
     }
 }

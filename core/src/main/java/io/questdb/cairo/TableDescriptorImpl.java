@@ -36,6 +36,11 @@ class TableDescriptorImpl extends BaseRecordMetadata implements TableDescriptor 
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
+    @Override
+    public int getSchemaVersion() {
+        return schemaVersion;
+    }
+
     public void of(SequencerMetadata source) {
         schemaVersion = source.getSchemaVersion();
         timestampIndex = source.getTimestampIndex();
@@ -47,10 +52,5 @@ class TableDescriptorImpl extends BaseRecordMetadata implements TableDescriptor 
             columnNameIndexMap.put(name, columnNameIndexMap.size());
             columnMetadata.add(new TableColumnMetadata(name, -1L, type, false, 0, false, null, i));
         }
-    }
-
-    @Override
-    public int getSchemaVersion() {
-        return schemaVersion;
     }
 }

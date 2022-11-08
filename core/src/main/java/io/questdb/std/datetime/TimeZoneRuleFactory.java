@@ -39,13 +39,11 @@ import java.util.Map;
 
 public class TimeZoneRuleFactory {
 
-    public static final int RESOLUTION_MILLIS = 0;
-    public static final int RESOLUTION_MICROS = 1;
-
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
-
-    private final CharSequenceIntHashMap ruleMap = new CharSequenceIntHashMap();
+    public static final int RESOLUTION_MICROS = 1;
+    public static final int RESOLUTION_MILLIS = 0;
     private final ObjList<TimeZoneRules> ruleList = new ObjList<>();
+    private final CharSequenceIntHashMap ruleMap = new CharSequenceIntHashMap();
 
     public TimeZoneRuleFactory() {
         int index = 0;

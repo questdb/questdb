@@ -60,6 +60,32 @@ public class TestListener extends RunListener {
         System.out.println(s);
     }
 
+    @Override
+    public void testAssumptionFailure(Failure failure) {
+        Description description = failure.getDescription();
+        LOG.error()
+                .$("***** Test Failed *****")
+                .$(description.getClassName()).$('.')
+                .$(description.getMethodName())
+                .$(" : ")
+                .$(failure.getException()).$();
+    }
+
+    @Override
+    public void testFailure(Failure failure) throws Exception {
+        testAssumptionFailure(failure);
+    }
+
+    @Override
+    public void testFinished(Description description) {
+        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+    }
+
+    @Override
+    public void testStarted(Description description) {
+        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+    }
+
     static {
         Thread monitor = new Thread(() -> {
             try {
@@ -87,32 +113,5 @@ public class TestListener extends RunListener {
 
         monitor.setDaemon(true);
         monitor.start();
-    }
-
-    @Override
-    public void testStarted(Description description) {
-        LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
-    }
-
-    @Override
-    public void testFinished(Description description) {
-        LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
-    }
-
-    @Override
-    public void testFailure(Failure failure) throws Exception {
-        testAssumptionFailure(failure);
-    }
-
-
-    @Override
-    public void testAssumptionFailure(Failure failure) {
-        Description description = failure.getDescription();
-        LOG.error()
-                .$("***** Test Failed *****")
-                .$(description.getClassName()).$('.')
-                .$(description.getMethodName())
-                .$(" : ")
-                .$(failure.getException()).$();
     }
 }

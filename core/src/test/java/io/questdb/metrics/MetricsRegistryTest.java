@@ -32,19 +32,6 @@ import org.junit.Test;
 public class MetricsRegistryTest {
 
     @Test
-    public void testCounterWithoutLabels() {
-        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
-        Counter counter = metricsRegistry.newCounter("counter");
-
-        counter.inc();
-
-        String expected = "# TYPE questdb_counter_total counter\n" +
-                "questdb_counter_total 1\n" +
-                "\n";
-        assertScrapable(counter, expected);
-    }
-
-    @Test
     public void testCounterWithOneLabel() {
         MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
         CounterWithOneLabel counter = metricsRegistry.newCounter("counter", "label0", new CharSequence[]{"A", "B", "C"});
@@ -88,12 +75,16 @@ public class MetricsRegistryTest {
     }
 
     @Test
-    public void testNullCounter() {
-        MetricsRegistry metricsRegistry = new NullMetricsRegistry();
+    public void testCounterWithoutLabels() {
+        MetricsRegistry metricsRegistry = new MetricsRegistryImpl();
         Counter counter = metricsRegistry.newCounter("counter");
 
         counter.inc();
-        assetNull(counter);
+
+        String expected = "# TYPE questdb_counter_total counter\n" +
+                "questdb_counter_total 1\n" +
+                "\n";
+        assertScrapable(counter, expected);
     }
 
     @Test
@@ -115,6 +106,15 @@ public class MetricsRegistryTest {
                 "questdb_gauge 1\n" +
                 "\n";
         assertScrapable(gauge, expected2);
+    }
+
+    @Test
+    public void testNullCounter() {
+        MetricsRegistry metricsRegistry = new NullMetricsRegistry();
+        Counter counter = metricsRegistry.newCounter("counter");
+
+        counter.inc();
+        assetNull(counter);
     }
 
     @Test

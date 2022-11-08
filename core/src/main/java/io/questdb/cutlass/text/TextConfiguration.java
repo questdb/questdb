@@ -31,6 +31,10 @@ public interface TextConfiguration {
 
     int getDateAdapterPoolCapacity();
 
+    DateLocale getDefaultDateLocale();
+
+    InputFormatConfiguration getInputFormatConfiguration();
+
     int getJsonCacheLimit();
 
     int getJsonCacheSize();
@@ -52,8 +56,4 @@ public interface TextConfiguration {
     int getTimestampAdapterPoolCapacity();
 
     int getUtf8SinkSize();
-
-    InputFormatConfiguration getInputFormatConfiguration();
-
-    DateLocale getDefaultDateLocale();
 }

@@ -102,6 +102,206 @@ public class ConcurrentTest {
     }
 
     @Test
+    public void testFanOutDoesNotProcessQueueFromStart() {
+        // Main thread is going to publish K events
+        // and then give green light to the relay thread,
+        // which should not be processing first K-1 events
+        //
+        // There is also a generic consumer thread that's processing
+        // all messages
+
+        final RingQueue<LongMsg> queue = new RingQueue<>(LongMsg::new, 64);
+        final SPSequence pubSeq = new SPSequence(queue.getCycle());
+        final FanOut subFo = new FanOut();
+        pubSeq.then(subFo).then(pubSeq);
+
+        final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
+        int N = 20;
+        int K = 12;
+
+        // The relay sequence is created by publisher to
+        // make test deterministic. To pass this sequence to
+        // the relay thread we use the atomic reference and countdown latch
+        final AtomicReference<SCSequence> relaySubSeq = new AtomicReference<>();
+        final SOCountDownLatch relayLatch = new SOCountDownLatch(1);
+
+        // this barrier is to make sure threads are ready before publisher starts
+        final SOCountDownLatch threadsRunBarrier = new SOCountDownLatch(2);
+
+        new Thread(() -> {
+            final SCSequence subSeq = new SCSequence();
+            subFo.and(subSeq);
+
+            // thread is ready to consume
+            threadsRunBarrier.countDown();
+
+            int count = N;
+            while (count > 0) {
+                long cursor = subSeq.nextBully();
+                subSeq.done(cursor);
+                count--;
+            }
+            subFo.remove(subSeq);
+            haltLatch.countDown();
+        }).start();
+
+        // indicator showing relay thread did not process messages before K
+        final AtomicBoolean relayThreadSuccess = new AtomicBoolean();
+
+        new Thread(() -> {
+
+            // thread is ready to wait :)
+            threadsRunBarrier.countDown();
+
+            relayLatch.await();
+
+            final SCSequence subSeq = relaySubSeq.get();
+            int count = N - K;
+            boolean success = true;
+            while (count > 0) {
+                long cursor = subSeq.nextBully();
+                if (success) {
+                    success = queue.get(cursor).correlationId >= K;
+                }
+                subSeq.done(cursor);
+                count--;
+            }
+            relayThreadSuccess.set(success);
+            subFo.remove(subSeq);
+            haltLatch.countDown();
+        }).start();
+
+        // wait for threads to get ready
+        threadsRunBarrier.await();
+
+        // publish
+        for (int i = 0; i < N; i++) {
+            if (i == K) {
+                final SCSequence sub = new SCSequence();
+                subFo.and(sub);
+                relaySubSeq.set(sub);
+                relayLatch.countDown();
+            }
+
+            long cursor = pubSeq.nextBully();
+            queue.get(cursor).correlationId = i;
+            pubSeq.done(cursor);
+        }
+
+        haltLatch.await();
+        Assert.assertTrue(relayThreadSuccess.get());
+    }
+
+    @Test
+    public void testFanOutPingPong() {
+        final int threads = 2;
+        final int iterations = 30;
+
+        // Requests inbox
+        final RingQueue<LongMsg> pingQueue = new RingQueue<>(LongMsg::new, threads);
+        final MPSequence pingPubSeq = new MPSequence(threads);
+        final FanOut pingSubFo = new FanOut();
+        pingPubSeq.then(pingSubFo).then(pingPubSeq);
+
+        // Request inbox hook for processor
+        final SCSequence pingSubSeq = new SCSequence();
+        pingSubFo.and(pingSubSeq);
+
+        // Response outbox
+        final RingQueue<LongMsg> pongQueue = new RingQueue<>(LongMsg::new, threads);
+        final SPSequence pongPubSeq = new SPSequence(threads);
+        final FanOut pongSubFo = new FanOut();
+        pongPubSeq.then(pongSubFo).then(pongPubSeq);
+
+        CyclicBarrier start = new CyclicBarrier(threads);
+        SOCountDownLatch latch = new SOCountDownLatch(threads + 1);
+        AtomicLong doneCount = new AtomicLong();
+        AtomicLong idGen = new AtomicLong();
+
+        // Processor
+        new Thread(() -> {
+            try {
+                int i = 0;
+                while (i < threads * iterations) {
+                    long seq = pingSubSeq.next();
+                    if (seq > -1) {
+                        // Get next request
+                        LongMsg msg = pingQueue.get(seq);
+                        long requestId = msg.correlationId;
+                        pingSubSeq.done(seq);
+
+                        // Uncomment this and the following lines when in need for debugging
+                        // LOG.info().$("ping received ").$(requestId).$();
+
+                        long resp;
+                        while ((resp = pongPubSeq.next()) < 0) {
+                            Os.pause();
+                        }
+                        pongQueue.get(resp).correlationId = requestId;
+                        pongPubSeq.done(resp);
+
+                        // LOG.info().$("pong sent ").$(requestId).$();
+                        i++;
+                    } else {
+                        Os.pause();
+                    }
+                }
+                doneCount.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }).start();
+
+        // Request threads
+        for (int th = 0; th < threads; th++) {
+            new Thread(() -> {
+                try {
+                    SCSequence pongSubSeq = new SCSequence();
+                    start.await();
+                    for (int i = 0; i < iterations; i++) {
+                        // Put local response sequence into response FanOut
+                        pongSubFo.and(pongSubSeq);
+
+                        // Send next request
+                        long requestId = idGen.incrementAndGet();
+                        long reqSeq;
+                        while ((reqSeq = pingPubSeq.next()) < 0) {
+                            Os.pause();
+                        }
+                        pingQueue.get(reqSeq).correlationId = requestId;
+                        pingPubSeq.done(reqSeq);
+                        // LOG.info().$(threadId).$(", ping sent ").$(requestId).$();
+
+                        // Wait for response
+                        long responseId, respCursor;
+                        do {
+                            while ((respCursor = pongSubSeq.next()) < 0) {
+                                Os.pause();
+                            }
+                            responseId = pongQueue.get(respCursor).correlationId;
+                            pongSubSeq.done(respCursor);
+                        } while (responseId != requestId);
+
+                        // LOG.info().$(threadId).$(", pong received ").$(requestId).$();
+
+                        // Remove local response sequence from response FanOut
+                        pongSubFo.remove(pongSubSeq);
+                        pongSubSeq.clear();
+                    }
+                    doneCount.incrementAndGet();
+                } catch (BrokenBarrierException | InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        latch.await();
+        Assert.assertEquals(threads + 1, doneCount.get());
+    }
+
+    @Test
     public void testFanOutPingPongStableSequences() {
         final int threads = 2;
         final int iterations = 30;
@@ -230,203 +430,76 @@ public class ConcurrentTest {
     }
 
     @Test
-    public void testFanOutPingPong() {
-        final int threads = 2;
-        final int iterations = 30;
+    public void testManyHybrid() throws Exception {
+        LOG.info().$("testManyHybrid").$();
+        int threadCount = 4;
+        int cycle = 4;
+        int size = 1024 * cycle;
+        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
+        MPSequence pubSeq = new MPSequence(cycle);
+        MCSequence subSeq = new MCSequence(cycle);
+        pubSeq.then(subSeq).then(pubSeq);
 
-        // Requests inbox
-        final RingQueue<LongMsg> pingQueue = new RingQueue<>(LongMsg::new, threads);
-        final MPSequence pingPubSeq = new MPSequence(threads);
-        final FanOut pingSubFo = new FanOut();
-        pingPubSeq.then(pingSubFo).then(pingPubSeq);
+        CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
+        CountDownLatch latch = new CountDownLatch(threadCount);
 
-        // Request inbox hook for processor
-        final SCSequence pingSubSeq = new SCSequence();
-        pingSubFo.and(pingSubSeq);
-
-        // Response outbox
-        final RingQueue<LongMsg> pongQueue = new RingQueue<>(LongMsg::new, threads);
-        final SPSequence pongPubSeq = new SPSequence(threads);
-        final FanOut pongSubFo = new FanOut();
-        pongPubSeq.then(pongSubFo).then(pongPubSeq);
-
-        CyclicBarrier start = new CyclicBarrier(threads);
-        SOCountDownLatch latch = new SOCountDownLatch(threads + 1);
-        AtomicLong doneCount = new AtomicLong();
-        AtomicLong idGen = new AtomicLong();
-
-        // Processor
-        new Thread(() -> {
-            try {
-                int i = 0;
-                while(i < threads * iterations) {
-                    long seq = pingSubSeq.next();
-                    if (seq > -1) {
-                        // Get next request
-                        LongMsg msg = pingQueue.get(seq);
-                        long requestId = msg.correlationId;
-                        pingSubSeq.done(seq);
-
-                        // Uncomment this and the following lines when in need for debugging
-                        // LOG.info().$("ping received ").$(requestId).$();
-
-                        long resp;
-                        while ((resp = pongPubSeq.next()) < 0) {
-                            Os.pause();
-                        }
-                        pongQueue.get(resp).correlationId = requestId;
-                        pongPubSeq.done(resp);
-
-                        // LOG.info().$("pong sent ").$(requestId).$();
-                        i++;
-                    } else {
-                        Os.pause();
-                    }
-                }
-                doneCount.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }).start();
-
-        // Request threads
-        for(int th = 0; th < threads; th++) {
-            new Thread(() -> {
-                try {
-                    SCSequence pongSubSeq = new SCSequence();
-                    start.await();
-                    for (int i = 0; i < iterations; i++) {
-                        // Put local response sequence into response FanOut
-                        pongSubFo.and(pongSubSeq);
-
-                        // Send next request
-                        long requestId = idGen.incrementAndGet();
-                        long reqSeq;
-                        while ((reqSeq = pingPubSeq.next()) < 0) {
-                            Os.pause();
-                        }
-                        pingQueue.get(reqSeq).correlationId = requestId;
-                        pingPubSeq.done(reqSeq);
-                        // LOG.info().$(threadId).$(", ping sent ").$(requestId).$();
-
-                        // Wait for response
-                        long responseId, respCursor;
-                        do {
-                            while ((respCursor = pongSubSeq.next()) < 0) {
-                                Os.pause();
-                            }
-                            responseId = pongQueue.get(respCursor).correlationId;
-                            pongSubSeq.done(respCursor);
-                        } while (responseId != requestId);
-
-                        // LOG.info().$(threadId).$(", pong received ").$(requestId).$();
-
-                        // Remove local response sequence from response FanOut
-                        pongSubFo.remove(pongSubSeq);
-                        pongSubSeq.clear();
-                    }
-                    doneCount.incrementAndGet();
-                } catch (BrokenBarrierException | InterruptedException e) {
-                    e.printStackTrace();
-                } finally {
-                    latch.countDown();
-                }
-            }).start();
+        BusyProducerConsumer[] threads = new BusyProducerConsumer[threadCount];
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = new BusyProducerConsumer(size, pubSeq, subSeq, queue, barrier, latch);
+            threads[i].start();
         }
 
+        barrier.await();
         latch.await();
-        Assert.assertEquals(threads + 1, doneCount.get());
+
+        int totalProduced = 0;
+        int totalConsumed = 0;
+        for (int i = 0; i < threadCount; i++) {
+            totalProduced += threads[i].produced;
+            totalConsumed += threads[i].consumed;
+        }
+        Assert.assertEquals(threadCount * size, totalProduced);
+        Assert.assertEquals(threadCount * size, totalConsumed);
     }
 
     @Test
-    public void testFanOutDoesNotProcessQueueFromStart() {
-        // Main thread is going to publish K events
-        // and then give green light to the relay thread,
-        // which should not be processing first K-1 events
-        //
-        // There is also a generic consumer thread that's processing
-        // all messages
+    public void testManyToManyBusy() throws Exception {
+        LOG.info().$("testManyToManyBusy").$();
+        int cycle = 128;
+        int size = 1024 * cycle;
+        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
+        MPSequence pubSeq = new MPSequence(cycle);
+        MCSequence subSeq = new MCSequence(cycle);
+        pubSeq.then(subSeq).then(pubSeq);
 
-        final RingQueue<LongMsg> queue = new RingQueue<>(LongMsg::new, 64);
-        final SPSequence pubSeq = new SPSequence(queue.getCycle());
-        final FanOut subFo = new FanOut();
-        pubSeq.then(subFo).then(pubSeq);
+        CyclicBarrier barrier = new CyclicBarrier(5);
+        CountDownLatch latch = new CountDownLatch(4);
 
-        final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
-        int N = 20;
-        int K = 12;
+        BusyProducer[] producers = new BusyProducer[2];
+        producers[0] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
+        producers[1] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
 
-        // The relay sequence is created by publisher to
-        // make test deterministic. To pass this sequence to
-        // the relay thread we use the atomic reference and countdown latch
-        final AtomicReference<SCSequence> relaySubSeq = new AtomicReference<>();
-        final SOCountDownLatch relayLatch = new SOCountDownLatch(1);
+        producers[0].start();
+        producers[1].start();
 
-        // this barrier is to make sure threads are ready before publisher starts
-        final SOCountDownLatch threadsRunBarrier = new SOCountDownLatch(2);
+        BusyConsumer[] consumers = new BusyConsumer[2];
+        consumers[0] = new BusyConsumer(size, subSeq, queue, barrier, latch);
+        consumers[1] = new BusyConsumer(size, subSeq, queue, barrier, latch);
 
-        new Thread(() -> {
-            final SCSequence subSeq = new SCSequence();
-            subFo.and(subSeq);
+        consumers[0].start();
+        consumers[1].start();
 
-            // thread is ready to consume
-            threadsRunBarrier.countDown();
+        barrier.await();
+        latch.await();
 
-            int count = N;
-            while (count > 0) {
-                long cursor = subSeq.nextBully();
-                subSeq.done(cursor);
-                count--;
-            }
-            subFo.remove(subSeq);
-            haltLatch.countDown();
-        }).start();
-
-        // indicator showing relay thread did not process messages before K
-        final AtomicBoolean relayThreadSuccess = new AtomicBoolean();
-
-        new Thread(() -> {
-
-            // thread is ready to wait :)
-            threadsRunBarrier.countDown();
-
-            relayLatch.await();
-
-            final SCSequence subSeq = relaySubSeq.get();
-            int count = N - K;
-            boolean success = true;
-            while (count > 0) {
-                long cursor = subSeq.nextBully();
-                if (success) {
-                    success = queue.get(cursor).correlationId >= K;
-                }
-                subSeq.done(cursor);
-                count--;
-            }
-            relayThreadSuccess.set(success);
-            subFo.remove(subSeq);
-            haltLatch.countDown();
-        }).start();
-
-        // wait for threads to get ready
-        threadsRunBarrier.await();
-
-        // publish
-        for (int i = 0; i < N; i++) {
-            if (i == K) {
-                final SCSequence sub = new SCSequence();
-                subFo.and(sub);
-                relaySubSeq.set(sub);
-                relayLatch.countDown();
-            }
-
-            long cursor = pubSeq.nextBully();
-            queue.get(cursor).correlationId = i;
-            pubSeq.done(cursor);
+        int[] buf = new int[size];
+        System.arraycopy(consumers[0].buf, 0, buf, 0, consumers[0].finalIndex);
+        System.arraycopy(consumers[1].buf, 0, buf, consumers[0].finalIndex, consumers[1].finalIndex);
+        Arrays.sort(buf);
+        for (int i = 0; i < buf.length / 2; i++) {
+            Assert.assertEquals(i, buf[2 * i]);
+            Assert.assertEquals(i, buf[2 * i + 1]);
         }
-
-        haltLatch.await();
-        Assert.assertTrue(relayThreadSuccess.get());
     }
 
     /**
@@ -486,46 +559,6 @@ public class ConcurrentTest {
         Arrays.sort(buf);
         for (i = 0; i < buf.length; i++) {
             Assert.assertEquals(i, buf[i]);
-        }
-    }
-
-    @Test
-    public void testManyToManyBusy() throws Exception {
-        LOG.info().$("testManyToManyBusy").$();
-        int cycle = 128;
-        int size = 1024 * cycle;
-        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
-        MPSequence pubSeq = new MPSequence(cycle);
-        MCSequence subSeq = new MCSequence(cycle);
-        pubSeq.then(subSeq).then(pubSeq);
-
-        CyclicBarrier barrier = new CyclicBarrier(5);
-        CountDownLatch latch = new CountDownLatch(4);
-
-        BusyProducer[] producers = new BusyProducer[2];
-        producers[0] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
-        producers[1] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
-
-        producers[0].start();
-        producers[1].start();
-
-        BusyConsumer[] consumers = new BusyConsumer[2];
-        consumers[0] = new BusyConsumer(size, subSeq, queue, barrier, latch);
-        consumers[1] = new BusyConsumer(size, subSeq, queue, barrier, latch);
-
-        consumers[0].start();
-        consumers[1].start();
-
-        barrier.await();
-        latch.await();
-
-        int[] buf = new int[size];
-        System.arraycopy(consumers[0].buf, 0, buf, 0, consumers[0].finalIndex);
-        System.arraycopy(consumers[1].buf, 0, buf, consumers[0].finalIndex, consumers[1].finalIndex);
-        Arrays.sort(buf);
-        for (int i = 0; i < buf.length / 2; i++) {
-            Assert.assertEquals(i, buf[2 * i]);
-            Assert.assertEquals(i, buf[2 * i + 1]);
         }
     }
 
@@ -741,58 +774,102 @@ public class ConcurrentTest {
         }
     }
 
-    @Test
-    public void testManyHybrid() throws Exception {
-        LOG.info().$("testManyHybrid").$();
-        int threadCount = 4;
-        int cycle = 4;
-        int size = 1024 * cycle;
-        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
-        MPSequence pubSeq = new MPSequence(cycle);
-        MCSequence subSeq = new MCSequence(cycle);
-        pubSeq.then(subSeq).then(pubSeq);
-
-        CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
-        CountDownLatch latch = new CountDownLatch(threadCount);
-
-        BusyProducerConsumer[] threads = new BusyProducerConsumer[threadCount];
-        for (int i = 0; i < threadCount; i++) {
-            threads[i] = new BusyProducerConsumer(size, pubSeq, subSeq, queue, barrier, latch);
-            threads[i].start();
-        }
-
-        barrier.await();
-        latch.await();
-
-        int totalProduced = 0;
-        int totalConsumed = 0;
-        for (int i = 0; i < threadCount; i++) {
-            totalProduced += threads[i].produced;
-            totalConsumed += threads[i].consumed;
-        }
-        Assert.assertEquals(threadCount * size, totalProduced);
-        Assert.assertEquals(threadCount * size, totalConsumed);
-    }
-
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;
         sequence.done(cursor);
     }
 
-    private static class LongMsg {
-        public long correlationId;
+    private static class BusyConsumer extends Thread {
+        private final CyclicBarrier barrier;
+        private final int[] buf;
+        private final CountDownLatch doneLatch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
+        private volatile int finalIndex = 0;
+
+        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.sequence = sequence;
+            this.buf = new int[cycle];
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                int p = 0;
+                while (true) {
+                    long cursor = sequence.next();
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+                    int v = queue.get(cursor).value;
+                    sequence.done(cursor);
+
+                    if (v == Integer.MIN_VALUE) {
+                        break;
+                    }
+                    buf[p++] = v;
+                }
+
+                finalIndex = p;
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static class BusyProducer extends Thread {
+        private final CyclicBarrier barrier;
+        private final int cycle;
+        private final CountDownLatch doneLatch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
+
+        BusyProducer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.sequence = sequence;
+            this.cycle = cycle;
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                int p = 0;
+                while (p < cycle) {
+                    long cursor = sequence.next();
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+                    queue.get(cursor).value = ++p == cycle ? Integer.MIN_VALUE : p;
+                    sequence.done(cursor);
+                }
+
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private static class BusyProducerConsumer extends Thread {
-        private final Sequence producerSequence;
+        private final CyclicBarrier barrier;
         private final Sequence consumerSequence;
         private final int cycle;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
         private final CountDownLatch doneLatch;
-        private int produced;
+        private final Sequence producerSequence;
+        private final RingQueue<Event> queue;
         private int consumed;
+        private int produced;
 
         BusyProducerConsumer(int cycle, Sequence producerSequence, Sequence consumerSequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
             this.producerSequence = producerSequence;
@@ -847,93 +924,16 @@ public class ConcurrentTest {
         }
     }
 
-    private static class BusyProducer extends Thread {
-        private final Sequence sequence;
-        private final int cycle;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch doneLatch;
-
-        BusyProducer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
-            this.sequence = sequence;
-            this.cycle = cycle;
-            this.queue = queue;
-            this.barrier = barrier;
-            this.doneLatch = doneLatch;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                int p = 0;
-                while (p < cycle) {
-                    long cursor = sequence.next();
-                    if (cursor < 0) {
-                        Os.pause();
-                        continue;
-                    }
-                    queue.get(cursor).value = ++p == cycle ? Integer.MIN_VALUE : p;
-                    sequence.done(cursor);
-                }
-
-                doneLatch.countDown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private static class BusyConsumer extends Thread {
-        private final Sequence sequence;
-        private final int[] buf;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch doneLatch;
-        private volatile int finalIndex = 0;
-
-        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
-            this.sequence = sequence;
-            this.buf = new int[cycle];
-            this.queue = queue;
-            this.barrier = barrier;
-            this.doneLatch = doneLatch;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                int p = 0;
-                while (true) {
-                    long cursor = sequence.next();
-                    if (cursor < 0) {
-                        Os.pause();
-                        continue;
-                    }
-                    int v = queue.get(cursor).value;
-                    sequence.done(cursor);
-
-                    if (v == Integer.MIN_VALUE) {
-                        break;
-                    }
-                    buf[p++] = v;
-                }
-
-                finalIndex = p;
-                doneLatch.countDown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+    private static class LongMsg {
+        public long correlationId;
     }
 
     private static class WaitingConsumer extends Thread {
-        private final Sequence sequence;
-        private final int[] buf;
-        private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
+        private final int[] buf;
         private final SOCountDownLatch latch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
         private volatile int finalIndex = 0;
 
         WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, SOCountDownLatch latch) {

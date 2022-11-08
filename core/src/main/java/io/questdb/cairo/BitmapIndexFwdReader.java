@@ -109,13 +109,13 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
+        private final IndexFrame indexFrame = new IndexFrame();
+        protected long next;
         protected long position;
         protected long valueCount;
-        protected long next;
-        private long valueBlockOffset;
-        private final IndexFrame indexFrame = new IndexFrame();
-        private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
         private long maxValue;
+        private long valueBlockOffset;
+        private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
         public IndexFrame getNext() {
@@ -123,7 +123,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                 long cellIndex = getValueCellIndex(position);
                 long address = valueMem.addressOf(valueBlockOffset + cellIndex * Long.BYTES);
 
-                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1) ;
+                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1);
                 position += pageSize;
                 if (position < valueCount) {
                     // we are at edge of block right now, next value will be in next block
@@ -177,6 +177,11 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             valueBlockOffset = getNextBlock(valueBlockOffset);
         }
 
+        private void seekValue(long count, long offset) {
+            this.position = count;
+            this.valueBlockOffset = offset;
+        }
+
         void of(int key, long minValue, long maxValue, long keyCount) {
             if (keyCount == 0) {
                 valueCount = 0;
@@ -221,11 +226,6 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
                 this.maxValue = maxValue;
             }
-        }
-
-        private void seekValue(long count, long offset) {
-            this.position = count;
-            this.valueBlockOffset = offset;
         }
     }
 

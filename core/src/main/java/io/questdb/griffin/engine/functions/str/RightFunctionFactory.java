@@ -66,12 +66,74 @@ public class RightFunctionFactory implements FunctionFactory {
         return count > -1 ? Math.min(len, Math.max(0, len - count)) : Math.min(len, -count);
     }
 
-    private static class RightStrFunction extends StrFunction implements BinaryFunction {
+    private static class RightStrConstCountFunction extends StrFunction implements UnaryFunction {
 
+        private final int count;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
+
+        public RightStrConstCountFunction(Function strFunc, int count) {
+            this.strFunc = strFunc;
+            this.count = count;
+        }
+
+        @Override
+        public Function getArg() {
+            return strFunc;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return getStr0(rec, sink);
+        }
+
+        @Override
+        public void getStr(Record rec, CharSink sink) {
+            CharSequence str = strFunc.getStr(rec);
+            if (str != null) {
+                final int len = str.length();
+                final int pos = getPos(len);
+                sink.put(str, pos, len);
+            }
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr0(rec, sinkB);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            final int len = strFunc.getStrLen(rec);
+            final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);
+            return len - pos;
+        }
+
+        private int getPos(int len) {
+            return RightFunctionFactory.getPos(len, count);
+        }
+
+        @Nullable
+        private StringSink getStr0(Record rec, StringSink sink) {
+            CharSequence str = strFunc.getStr(rec);
+            if (str != null) {
+                final int len = str.length();
+                final int pos = getPos(len);
+                sink.clear();
+                sink.put(str, pos, len);
+                return sink;
+            }
+            return null;
+        }
+    }
+
+    private static class RightStrFunction extends StrFunction implements BinaryFunction {
+
         private final Function countFunc;
+        private final StringSink sink = new StringSink();
+        private final StringSink sinkB = new StringSink();
+        private final Function strFunc;
 
         public RightStrFunction(Function strFunc, Function countFunc) {
             this.strFunc = strFunc;
@@ -94,11 +156,6 @@ public class RightFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB);
-        }
-
-        @Override
         public void getStr(Record rec, CharSink sink) {
             final CharSequence str = strFunc.getStr(rec);
             final int count = this.countFunc.getInt(rec);
@@ -107,6 +164,11 @@ public class RightFunctionFactory implements FunctionFactory {
                 final int pos = getPos(len, count);
                 sink.put(str, pos, len);
             }
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr0(rec, sinkB);
         }
 
         @Override
@@ -126,68 +188,6 @@ public class RightFunctionFactory implements FunctionFactory {
             if (str != null && count != Numbers.INT_NaN) {
                 final int len = str.length();
                 final int pos = getPos(len, count);
-                sink.clear();
-                sink.put(str, pos, len);
-                return sink;
-            }
-            return null;
-        }
-    }
-
-    private static class RightStrConstCountFunction extends StrFunction implements UnaryFunction {
-
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
-        private final Function strFunc;
-        private final int count;
-
-        public RightStrConstCountFunction(Function strFunc, int count) {
-            this.strFunc = strFunc;
-            this.count = count;
-        }
-
-        @Override
-        public Function getArg() {
-            return strFunc;
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            return getStr0(rec, sink);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB);
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            CharSequence str = strFunc.getStr(rec);
-            if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
-                sink.put(str, pos, len);
-            }
-        }
-
-        @Override
-        public int getStrLen(Record rec) {
-            final int len = strFunc.getStrLen(rec);
-            final int pos = len == TableUtils.NULL_LEN ? 0 : getPos(len);
-            return len - pos;
-        }
-
-        private int getPos(int len) {
-            return RightFunctionFactory.getPos(len, count);
-        }
-
-        @Nullable
-        private StringSink getStr0(Record rec, StringSink sink) {
-            CharSequence str = strFunc.getStr(rec);
-            if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
                 sink.clear();
                 sink.put(str, pos, len);
                 return sink;

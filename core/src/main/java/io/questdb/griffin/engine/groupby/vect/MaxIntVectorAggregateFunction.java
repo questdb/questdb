@@ -41,12 +41,12 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MaxIntVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
-    private final LongAccumulator max = new LongAccumulator(
-            MAX, Integer.MIN_VALUE
-    );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final LongAccumulator max = new LongAccumulator(
+            MAX, Integer.MIN_VALUE
+    );
     private int valueOffset;
 
     public MaxIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -78,8 +78,18 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public void clear() {
+        max.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return max.intValue();
     }
 
     @Override
@@ -90,6 +100,11 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti, valueOffset), Integer.MIN_VALUE);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -104,27 +119,12 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean wrapUp(long pRosti) {
-        return Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
-    }
-
-    @Override
-    public void clear() {
-        max.reset();
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return max.intValue();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
     public void toSink(CharSink sink) {
         sink.put("MaxIntVector(").put(columnIndex).put(')');
+    }
+
+    @Override
+    public boolean wrapUp(long pRosti) {
+        return Rosti.keyedIntMaxIntWrapUp(pRosti, valueOffset, max.intValue());
     }
 }

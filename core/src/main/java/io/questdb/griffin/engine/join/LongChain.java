@@ -34,8 +34,8 @@ import java.io.Closeable;
 
 public class LongChain implements Closeable, Mutable, Reopenable {
 
-    private final MemoryARW valueChain;
     private final TreeCursor cursor;
+    private final MemoryARW valueChain;
 
     public LongChain(long valuePageSize, int valueMaxPages) {
         this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_DEFAULT);
@@ -57,11 +57,6 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         return cursor;
     }
 
-    @Override
-    public void reopen() {
-        //nothing to do here
-    }
-
     public long put(long value, long parentOffset) {
         final long appendOffset = valueChain.getAppendOffset();
         if (parentOffset != -1) {
@@ -69,6 +64,11 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         }
         valueChain.putLongLong(-1, value);
         return appendOffset;
+    }
+
+    @Override
+    public void reopen() {
+        //nothing to do here
     }
 
     public class TreeCursor {

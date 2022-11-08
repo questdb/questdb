@@ -33,8 +33,8 @@ import io.questdb.std.Rnd;
 
 class RndStrFunction extends StrFunction implements Function {
     private final int lo;
-    private final int range;
     private final int nullRate;
+    private final int range;
     private Rnd rnd;
 
     public RndStrFunction(int lo, int hi, int nullRate) {

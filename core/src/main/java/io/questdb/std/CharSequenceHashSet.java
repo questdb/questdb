@@ -104,8 +104,30 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         hasNull = false;
     }
 
+    public boolean contains(CharSequence key) {
+        return key == null ? hasNull : keyIndex(key) < 0;
+    }
+
     public boolean excludes(CharSequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
+    }
+
+    public CharSequence get(int index) {
+        return list.getQuick(index);
+    }
+
+    public CharSequence getLast() {
+        return list.getLast();
+    }
+
+    public int getListIndexAt(int keyIndex) {
+        int index = -keyIndex - 1;
+        return list.indexOf(keys[index]);
+    }
+
+    public CharSequence keyAt(int index) {
+        int index1 = -index - 1;
+        return keys[index1];
     }
 
     public int remove(CharSequence key) {
@@ -121,33 +143,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
         return -1;
     }
 
-    public int getListIndexAt(int keyIndex) {
-        int index = -keyIndex - 1;
-        return list.indexOf(keys[index]);
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-    }
-
-    public CharSequence keyAt(int index) {
-        int index1 = -index - 1;
-        return keys[index1];
-    }
-
-    public boolean contains(CharSequence key) {
-        return key == null ? hasNull : keyIndex(key) < 0;
-    }
-
-    public CharSequence get(int index) {
-        return list.getQuick(index);
-    }
-
-    public CharSequence getLast() {
-        return list.getLast();
-    }
-
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;
@@ -155,12 +150,6 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
             super.removeAt(index);
             list.remove(key);
         }
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
     }
 
     public int removeNull() {
@@ -190,5 +179,16 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
             final CharSequence key = list.getQuick(i);
             keys[keyIndex(key)] = key;
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

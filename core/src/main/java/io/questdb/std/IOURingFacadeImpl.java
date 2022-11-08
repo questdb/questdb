@@ -30,8 +30,8 @@ public class IOURingFacadeImpl implements IOURingFacade {
     private static final boolean available;
 
     @Override
-    public boolean isAvailable() {
-        return available;
+    public void close(long ptr) {
+        IOUringAccessor.close(ptr);
     }
 
     @Override
@@ -40,8 +40,18 @@ public class IOURingFacadeImpl implements IOURingFacade {
     }
 
     @Override
-    public void close(long ptr) {
-        IOUringAccessor.close(ptr);
+    public int errno() {
+        return Os.errno();
+    }
+
+    @Override
+    public boolean isAvailable() {
+        return available;
+    }
+
+    @Override
+    public IOURing newInstance(int capacity) {
+        return new IOURingImpl(this, capacity);
     }
 
     @Override
@@ -52,16 +62,6 @@ public class IOURingFacadeImpl implements IOURingFacade {
     @Override
     public int submitAndWait(long ptr, int waitNr) {
         return IOUringAccessor.submitAndWait(ptr, waitNr);
-    }
-
-    @Override
-    public int errno() {
-        return Os.errno();
-    }
-
-    @Override
-    public IOURing newInstance(int capacity) {
-        return new IOURingImpl(this, capacity);
     }
 
     /**

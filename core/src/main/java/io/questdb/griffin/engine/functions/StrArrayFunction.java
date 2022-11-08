@@ -75,12 +75,42 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public byte getGeoByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -100,22 +130,12 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
+    public Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final RecordCursorFactory getRecordCursorFactory() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -156,26 +176,6 @@ public abstract class StrArrayFunction implements Function {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 

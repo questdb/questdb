@@ -34,23 +34,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 class MockAlertTarget extends Thread {
     static final String ACK = "Ack";
     static final String DEATH_PILL = "]"; // /alert-manager-tpt.json ends with "]\n"
-
-
-    private final int portNumber;
-    private final Runnable onTargetStart;
-    private final Runnable onTargetEnd;
     private final AtomicBoolean isRunning;
+    private final Runnable onTargetEnd;
+    private final Runnable onTargetStart;
+    private final int portNumber;
 
     MockAlertTarget(int portNumber, Runnable onTargetEnd, Runnable onTargetStart) {
         this.portNumber = portNumber;
         this.onTargetStart = onTargetStart;
         this.onTargetEnd = onTargetEnd;
         this.isRunning = new AtomicBoolean();
-    }
-
-
-    boolean isRunning() {
-        return isRunning.get();
     }
 
     @Override
@@ -109,5 +102,9 @@ class MockAlertTarget extends Thread {
                 // ignore
             }
         }
+    }
+
+    boolean isRunning() {
+        return isRunning.get();
     }
 }

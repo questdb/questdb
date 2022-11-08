@@ -38,12 +38,14 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Comparator;
 
 public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
+    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
+    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
-    private final Function filter;
-    private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
-    private final boolean followedOrderByAdvice;
     private final IntList columnIndexes;
+    private final DataFrameRecordCursor cursor;
+    private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
+    private final Function filter;
+    private final boolean followedOrderByAdvice;
     private final int orderDirection;
 
     public FilterOnValuesRecordCursorFactory(
@@ -84,12 +86,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(filter);
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return followedOrderByAdvice;
     }
@@ -97,6 +93,14 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
+        return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
+    }
+
+    private static int compareStrFunctionsDesc(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
+        return Chars.compareDescending(a.getFunction().getStr(null), b.getFunction().getStrB(null));
     }
 
     private void addSymbolKey(int symbolKey, Function symbolFunction, int indexDirection) {
@@ -133,6 +137,12 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+    }
+
+    @Override
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext)
             throws SqlException {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
@@ -150,17 +160,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             filter.init(this.cursor, sqlExecutionContext);
         }
         return this.cursor;
-    }
-
-    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
-    private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
-
-    private static int compareStrFunctions(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compare(a.getFunction().getStr(null), b.getFunction().getStrB(null));
-    }
-
-    private static int compareStrFunctionsDesc(FunctionBasedRowCursorFactory a, FunctionBasedRowCursorFactory b) {
-        return Chars.compareDescending(a.getFunction().getStr(null), b.getFunction().getStrB(null));
     }
 
 }

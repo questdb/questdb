@@ -26,22 +26,25 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.*;
+import io.questdb.std.AbstractLockable;
+import io.questdb.std.Mutable;
+import io.questdb.std.Rosti;
+import io.questdb.std.RostiAllocFacade;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry extends AbstractLockable implements Mutable {
-    private long[] pRosti;
+    private ExecutionCircuitBreaker circuitBreaker;
+    private int columnSizeShr;
+    private CountDownLatchSPI doneLatch;
+    private VectorAggregateFunction func;
     private long keyAddress;
+    private AtomicInteger oomCounter;
+    private long[] pRosti;
+    private RostiAllocFacade raf;
     private long valueAddress;
     private long valueCount;
-    private int columnSizeShr;
-    private VectorAggregateFunction func;
-    private CountDownLatchSPI doneLatch;
-    private AtomicInteger oomCounter;
-    private RostiAllocFacade raf;
-    private ExecutionCircuitBreaker circuitBreaker;
 
     @Override
     public void clear() {

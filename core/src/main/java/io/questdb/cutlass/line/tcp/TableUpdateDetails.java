@@ -46,22 +46,22 @@ public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
     private final DefaultColumnTypes defaultColumnTypes;
-    private final String tableNameUtf16;
-    private final ThreadLocalDetails[] localDetailsArray;
-    private final int timestampIndex;
     private final CairoEngine engine;
+    private final ThreadLocalDetails[] localDetailsArray;
     private final MillisecondClock millisecondClock;
+    private final String tableNameUtf16;
+    private final int timestampIndex;
     private final long writerTickRowsCountMod;
-    private int writerThreadId;
+    private boolean assignedToJob = false;
     // Number of rows processed since the last reshuffle, this is an estimate because it is incremented by
     // multiple threads without synchronisation
     private long eventsProcessedSinceReshuffle = 0;
-    private TableWriter writer;
-    private boolean assignedToJob = false;
     private long lastMeasurementMillis = Long.MAX_VALUE;
-    private long nextCommitTime;
     private int networkIOOwnerCount = 0;
+    private long nextCommitTime;
+    private TableWriter writer;
     private volatile boolean writerInError;
+    private int writerThreadId;
 
     TableUpdateDetails(
             LineTcpReceiverConfiguration configuration,
@@ -99,14 +99,6 @@ public class TableUpdateDetails implements Closeable {
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .$(']').$();
 
-    }
-
-    public boolean isWriterInError() {
-        return writerInError;
-    }
-
-    public void setWriterInError() {
-        writerInError = true;
     }
 
     @Override
@@ -171,8 +163,8 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
-    public void setAssignedToJob(boolean assignedToJob) {
-        this.assignedToJob = assignedToJob;
+    public boolean isWriterInError() {
+        return writerInError;
     }
 
     public void removeReference(int workerId) {
@@ -183,6 +175,14 @@ public class TableUpdateDetails implements Closeable {
                 .$(", tableName=").$(tableNameUtf16)
                 .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
                 .I$();
+    }
+
+    public void setAssignedToJob(boolean assignedToJob) {
+        this.assignedToJob = assignedToJob;
+    }
+
+    public void setWriterInError() {
+        writerInError = true;
     }
 
     public void tick() {
@@ -289,30 +289,30 @@ public class TableUpdateDetails implements Closeable {
     public class ThreadLocalDetails implements Closeable {
         static final int COLUMN_NOT_FOUND = -1;
         static final int DUPLICATED_COLUMN = -2;
-        private final Path path = new Path();
+        // tracking of processed columns by their name, duplicates will be ignored
+        // columns end up in this set only if their index cannot be resolved, i.e. new columns
+        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final DirectByteCharSequenceIntHashMap columnIndexByNameUtf8 = new DirectByteCharSequenceIntHashMap();
         // maps column names to their types
         // will be populated for dynamically added columns only
         private final DirectByteCharSequenceIntHashMap columnTypeByNameUtf8 = new DirectByteCharSequenceIntHashMap();
-        private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
-        private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
-        private final StringSink tempSink = new StringSink();
+        private final LineTcpReceiverConfiguration configuration;
+        private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BoolList processedCols = new BoolList();
-        // tracking of processed columns by their name, duplicates will be ignored
-        // columns end up in this set only if their index cannot be resolved, i.e. new columns
-        private final LowerCaseCharSequenceHashSet addedColsUtf16 = new LowerCaseCharSequenceHashSet();
-        private final LineTcpReceiverConfiguration configuration;
-        private int columnCount;
-        private String colName;
-        private TxReader txReader;
+        private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
+        private final StringSink tempSink = new StringSink();
+        private final ObjList<SymbolCache> unusedSymbolCaches;
         private boolean clean = true;
+        private String colName;
+        private int columnCount;
         private String symbolNameTemp;
+        private TxReader txReader;
 
         ThreadLocalDetails(LineTcpReceiverConfiguration configuration, ObjList<SymbolCache> unusedSymbolCaches, int columnCount) {
             this.configuration = configuration;
@@ -364,6 +364,47 @@ public class TableUpdateDetails implements Closeable {
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
             }
+        }
+
+        private int getColumnWriterIndexFromReader(CharSequence colNameUtf16) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
+                if (colIndex < 0) {
+                    return colIndex;
+                }
+                int writerColIndex = metadata.getWriterIndex(colIndex);
+                updateColumnTypeCache(colIndex, writerColIndex, metadata);
+                return writerColIndex;
+            }
+        }
+
+        private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
+            symbolNameTemp = null;
+            int symIndex = -1;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getWriterIndex(i) == colWriterIndex) {
+                    if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
+                        return -1;
+                    }
+                    symIndex++;
+                    symbolNameTemp = metadata.getColumnName(i);
+                    break;
+                }
+                if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                    symIndex++;
+                }
+            }
+            return symIndex;
+        }
+
+        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableReaderMetadata metadata) {
+            columnCount = metadata.getColumnCount();
+            final int colType = metadata.getColumnType(colIndex);
+            final int geoHashBits = ColumnType.getGeoHashBits(colType);
+            columnTypes.extendAndSet(writerColIndex, colType);
+            columnTypeMeta.extendAndSet(writerColIndex + 1,
+                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
 
         void clear() {
@@ -431,19 +472,6 @@ public class TableUpdateDetails implements Closeable {
             return colWriterIndex;
         }
 
-        private int getColumnWriterIndexFromReader(CharSequence colNameUtf16) {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                int colIndex = metadata.getColumnIndexQuiet(colNameUtf16);
-                if (colIndex < 0) {
-                    return colIndex;
-                }
-                int writerColIndex = metadata.getWriterIndex(colIndex);
-                updateColumnTypeCache(colIndex, writerColIndex, metadata);
-                return writerColIndex;
-            }
-        }
-
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
         }
@@ -455,25 +483,6 @@ public class TableUpdateDetails implements Closeable {
                 columnTypeByNameUtf8.put(colName, colType);
             }
             return colType;
-        }
-
-        private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
-            symbolNameTemp = null;
-            int symIndex = -1;
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                if (metadata.getWriterIndex(i) == colWriterIndex) {
-                    if (!ColumnType.isSymbol(metadata.getColumnType(i))) {
-                        return -1;
-                    }
-                    symIndex++;
-                    symbolNameTemp = metadata.getColumnName(i);
-                    break;
-                }
-                if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                    symIndex++;
-                }
-            }
-            return symIndex;
         }
 
         int getColumnTypeMeta(int colIndex) {
@@ -494,15 +503,6 @@ public class TableUpdateDetails implements Closeable {
         void resetProcessedColumnsTracking() {
             processedCols.setAll(columnCount, false);
             addedColsUtf16.clear();
-        }
-
-        private void updateColumnTypeCache(int colIndex, int writerColIndex, TableReaderMetadata metadata) {
-            columnCount = metadata.getColumnCount();
-            final int colType = metadata.getColumnType(colIndex);
-            final int geoHashBits = ColumnType.getGeoHashBits(colType);
-            columnTypes.extendAndSet(writerColIndex, colType);
-            columnTypeMeta.extendAndSet(writerColIndex + 1,
-                    geoHashBits == 0 ? 0 : Numbers.encodeLowHighShorts((short) geoHashBits, ColumnType.tagOf(colType)));
         }
     }
 }

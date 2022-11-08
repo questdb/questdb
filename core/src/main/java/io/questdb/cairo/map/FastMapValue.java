@@ -29,12 +29,53 @@ import io.questdb.std.Unsafe;
 
 final class FastMapValue implements MapValue {
     private final int[] valueOffsets;
-    private long address;
     private boolean _new;
+    private long address;
     private FastMapRecord record; // double-linked
 
     public FastMapValue(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
+    }
+
+    @Override
+    public void addByte(int index, byte value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
+    }
+
+    @Override
+    public void addDouble(int index, double value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
+    }
+
+    @Override
+    public void addFloat(int index, float value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
+    }
+
+    @Override
+    public void addInt(int index, int value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
+    }
+
+    @Override
+    public void addLong(int index, long value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
+    }
+
+    @Override
+    public void addLong256(int index, Long256 value) {
+
+    }
+
+    @Override
+    public void addShort(int index, short value) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
     }
 
     @Override
@@ -53,6 +94,11 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public char getChar(int index) {
+        return Unsafe.getUnsafe().getChar(address0(index));
+    }
+
+    @Override
     public long getDate(int index) {
         return getLong(index);
     }
@@ -68,8 +114,23 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public char getChar(int index) {
-        return Unsafe.getUnsafe().getChar(address0(index));
+    public byte getGeoByte(int col) {
+        return getByte(col);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getInt(col);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getLong(col);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getShort(col);
     }
 
     @Override
@@ -93,26 +154,6 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return getByte(col);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getShort(col);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getInt(col);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getLong(col);
-    }
-
-    @Override
     public boolean isNew() {
         return _new;
     }
@@ -125,6 +166,11 @@ final class FastMapValue implements MapValue {
     @Override
     public void putByte(int index, byte value) {
         Unsafe.getUnsafe().putByte(address0(index), value);
+    }
+
+    @Override
+    public void putChar(int index, char value) {
+        Unsafe.getUnsafe().putChar(address0(index), value);
     }
 
     @Override
@@ -153,49 +199,13 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
-    public void addLong(int index, long value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
-    }
+    public void putLong256(int index, Long256 value) {
 
-    @Override
-    public void addByte(int index, byte value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
-    }
-
-    @Override
-    public void addShort(int index, short value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
-    }
-
-    @Override
-    public void addInt(int index, int value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
-    }
-
-    @Override
-    public void addDouble(int index, double value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
-    }
-
-    @Override
-    public void addFloat(int index, float value) {
-        final long p = address0(index);
-        Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
     }
 
     @Override
     public void putShort(int index, short value) {
         Unsafe.getUnsafe().putShort(address0(index), value);
-    }
-
-    @Override
-    public void putChar(int index, char value) {
-        Unsafe.getUnsafe().putChar(address0(index), value);
     }
 
     @Override
@@ -206,16 +216,6 @@ final class FastMapValue implements MapValue {
     @Override
     public void setMapRecordHere() {
         this.record.of(address);
-    }
-
-    @Override
-    public void addLong256(int index, Long256 value) {
-
-    }
-
-    @Override
-    public void putLong256(int index, Long256 value) {
-
     }
 
     private long address0(int index) {
