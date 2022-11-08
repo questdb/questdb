@@ -31,11 +31,14 @@ import java.io.Closeable;
 
 public interface BitmapIndexReader extends Closeable {
 
-    int DIR_FORWARD = 1;
     int DIR_BACKWARD = 2;
-
+    int DIR_FORWARD = 1;
     String NAME_BACKWARD = "backward";
     String NAME_FORWARD = "forward";
+
+    static CharSequence nameOf(int direction) {
+        return DIR_FORWARD == direction ? NAME_FORWARD : NAME_BACKWARD;
+    }
 
     @Override
     default void close() {
@@ -54,27 +57,23 @@ public interface BitmapIndexReader extends Closeable {
      */
     RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
 
-    int getKeyCount();
-
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
     }
 
-    boolean isOpen();
-
     long getKeyBaseAddress();
+
+    int getKeyCount();
 
     long getKeyMemorySize();
 
-    long getValueBaseAddress();
-
-    long getValueMemorySize();
-
     long getUnIndexedNullCount();
+
+    long getValueBaseAddress();
 
     int getValueBlockCapacity();
 
-    static CharSequence nameOf(int direction) {
-        return DIR_FORWARD == direction ? NAME_FORWARD : NAME_BACKWARD;
-    }
+    long getValueMemorySize();
+
+    boolean isOpen();
 }

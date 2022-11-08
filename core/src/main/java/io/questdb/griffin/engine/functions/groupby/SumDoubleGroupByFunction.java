@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -66,6 +65,30 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        long valueCount = rec.getLong(valueIndex + 1);
+        if (valueCount > 0) {
+            return rec.getDouble(valueIndex);
+        }
+        return Double.NaN;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sum";
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -82,29 +105,5 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        long valueCount = rec.getLong(valueIndex + 1);
-        if (valueCount > 0) {
-            return rec.getDouble(valueIndex);
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum";
     }
 }

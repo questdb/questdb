@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumTDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -53,11 +52,6 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
@@ -65,6 +59,21 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getDouble(valueIndex);
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sum_t";
     }
 
     @Override
@@ -81,15 +90,5 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum_t";
     }
 }

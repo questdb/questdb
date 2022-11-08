@@ -79,6 +79,11 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -92,10 +97,5 @@ class FirstGeoHashGroupByFunctionLong extends GeoByteFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         setLong(mapValue, GeoHashes.NULL);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

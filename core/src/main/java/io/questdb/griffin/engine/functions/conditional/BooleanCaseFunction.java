@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
 
 class BooleanCaseFunction extends BooleanFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public BooleanCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

@@ -32,13 +32,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class IsLongOrderedGroupByFunction extends BooleanFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private int valueIndex;
     private int flagIndex;
+    private int valueIndex;
 
     public IsLongOrderedGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -64,6 +63,21 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public boolean getBool(Record rec) {
+        return rec.getBool(flagIndex);
+    }
+
+    @Override
+    public String getSymbol() {
+        return "isOrdered";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.flagIndex = columnTypes.getColumnCount();
         this.valueIndex = flagIndex + 1;
@@ -74,20 +88,5 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(flagIndex, true);
-    }
-
-    @Override
-    public boolean getBool(Record rec) {
-        return rec.getBool(flagIndex);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "isOrdered";
     }
 }

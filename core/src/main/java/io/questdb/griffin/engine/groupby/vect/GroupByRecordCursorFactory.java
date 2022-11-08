@@ -51,21 +51,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
     private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
-
-    private final RecordCursorFactory base;
-    private final ObjList<VectorAggregateFunction> vafList;
-    private final ObjectPool<VectorAggregateEntry> entryPool;
     private final ObjList<VectorAggregateEntry> activeEntries;
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-
-    private final long[] pRosti;
-    private final int keyColumnIndex;
-    private final RostiRecordCursor cursor;
-    private final RostiAllocFacade raf;
-    private final AtomicInteger oomCounter = new AtomicInteger();
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
-
+    private final RecordCursorFactory base;
     private final CairoConfiguration configuration;
+    private final RostiRecordCursor cursor;
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final int keyColumnIndex;
+    private final AtomicInteger oomCounter = new AtomicInteger();
+    private final long[] pRosti;
+    private final RostiAllocFacade raf;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;//used to signal cancellation to workers
+    private final ObjList<VectorAggregateFunction> vafList;
     private final int workerCount;
 
     public GroupByRecordCursorFactory(
@@ -157,25 +154,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    private static void addOffsets(
-            IntList columnSkewIndex,
-            @Transient ObjList<VectorAggregateFunction> vafList,
-            int start,
-            int end,
-            long columnOffsets
-    ) {
-        for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
-        }
+    @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
     }
 
     @Override
-    protected void _close() {
-        Misc.free(base);
-        Misc.freeObjList(vafList);
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.free(pRosti[i]);
-        }
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -378,22 +364,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return this.cursor.of(pRostiBig, cursor);
     }
 
-    private void resetRostiMemorySize() {
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
-                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
-            }
-        }
-    }
-
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
     }
 
     @Override
@@ -407,29 +380,53 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return base.getMetadata().getColumnName(idx);
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    private static void addOffsets(
+            IntList columnSkewIndex,
+            @Transient ObjList<VectorAggregateFunction> vafList,
+            int start,
+            int end,
+            long columnOffsets
+    ) {
+        for (int i = start; i < end; i++) {
+            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
+        }
+    }
+
+    private void resetRostiMemorySize() {
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            if (!raf.reset(pRosti[i], ROSTI_MINIMIZED_SIZE)) {
+                LOG.debug().$("Couldn't minimize rosti memory [i=").$(i).$(",current_size=").$(Rosti.getSize(pRosti[i])).I$();
+            }
+        }
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    protected void _close() {
+        Misc.free(base);
+        Misc.freeObjList(vafList);
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            raf.free(pRosti[i]);
+        }
     }
 
     private class RostiRecordCursor implements RecordCursor {
-        private final RostiRecord record;
-        private long pRosti;
-        private final IntList symbolTableSkewIndex;
         private final IntList columnSkewIndex;
-        private RostiRecord recordB;
-        private long ctrlStart;
+        private final int defaultMapSize;
+        private final RostiRecord record;
+        private final IntList symbolTableSkewIndex;
+        private long count;
         private long ctrl;
-        private long slots;
+        private long ctrlStart;
+        private long pRosti;
+        private PageFrameCursor parent;
+        private RostiRecord recordB;
         private long shift;
         private long size;
-        private long count;
-        private PageFrameCursor parent;
-        private final int defaultMapSize;
+        private long slots;
 
         public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex, int defaultMapSize) {
             this.pRosti = pRosti;
@@ -437,13 +434,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
             this.defaultMapSize = defaultMapSize;
-        }
-
-        public RostiRecordCursor of(long pRosti, PageFrameCursor parent) {
-            this.pRosti = pRosti;
-            this.parent = parent;
-            this.toTop();
-            return this;
         }
 
         @Override
@@ -455,6 +445,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public Record getRecord() {
             return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            if (recordB != null) {
+                return recordB;
+            }
+            return (recordB = new RostiRecord());
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -474,16 +477,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            if (recordB != null) {
-                return recordB;
-            }
-            return (recordB = new RostiRecord());
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+        }
+
+        public RostiRecordCursor of(long pRosti, PageFrameCursor parent) {
+            this.pRosti = pRosti;
+            this.parent = parent;
+            this.toTop();
+            return this;
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
             ((RostiRecord) record).of(atRowId);
+        }
+
+        @Override
+        public long size() {
+            return size;
         }
 
         @Override
@@ -496,30 +508,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.count = 0;
         }
 
-        @Override
-        public long size() {
-            return size;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
-        }
-
         private class RostiRecord implements Record {
-            private long pRow;
-
             private final Long256Impl long256A = new Long256Impl();
             private final Long256Impl long256B = new Long256Impl();
-
-            public void of(long pRow) {
-                this.pRow = pRow;
-            }
+            private long pRow;
 
             @Override
             public BinarySequence getBin(int col) {
@@ -551,10 +543,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return getLong(col);
             }
 
-            private long getValueOffset(int column) {
-                return pRow + columnSkewIndex.getQuick(column);
-            }
-
             @Override
             public double getDouble(int col) {
                 return Unsafe.getUnsafe().getDouble(getValueOffset(col));
@@ -563,6 +551,26 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public float getFloat(int col) {
                 return 0;
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return getByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return getInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return getShort(col);
             }
 
             @Override
@@ -646,24 +654,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return getLong(col);
             }
 
-            @Override
-            public byte getGeoByte(int col) {
-                return getByte(col);
+            public void of(long pRow) {
+                this.pRow = pRow;
             }
 
-            @Override
-            public short getGeoShort(int col) {
-                return getShort(col);
-            }
-
-            @Override
-            public int getGeoInt(int col) {
-                return getInt(col);
-            }
-
-            @Override
-            public long getGeoLong(int col) {
-                return getLong(col);
+            private long getValueOffset(int column) {
+                return pRow + columnSkewIndex.getQuick(column);
             }
         }
     }

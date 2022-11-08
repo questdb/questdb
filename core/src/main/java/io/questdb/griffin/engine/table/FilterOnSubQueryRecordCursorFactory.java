@@ -39,16 +39,16 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
     private final int columnIndex;
-    private final Function filter;
+    private final IntList columnIndexes;
+    private final DataFrameRecordCursor cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
     private IntObjHashMap<RowCursorFactory> factories;
-    private final Record.CharSequenceFunction func;
-    private final IntList columnIndexes;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -71,6 +71,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnSubQuery");
         sink.optAttr("filter", filter);
@@ -89,11 +94,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 
     @Override

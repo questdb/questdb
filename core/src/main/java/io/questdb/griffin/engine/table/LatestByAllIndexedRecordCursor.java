@@ -67,12 +67,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor implements
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("parallel").val(true);
-    }
-
-    @Override
     public boolean hasNext() {
         if (aIndex < aLimit) {
             long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
@@ -85,6 +79,12 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor implements
     @Override
     public long size() {
         return aLimit - indexShift;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
+        sink.meta("parallel").val(true);
     }
 
     @Override

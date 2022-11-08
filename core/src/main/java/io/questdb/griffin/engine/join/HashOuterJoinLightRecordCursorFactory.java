@@ -39,11 +39,11 @@ import io.questdb.std.Transient;
 
 public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
     private final HashOuterJoinLightRecordCursor cursor;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterKeySink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public HashOuterJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -70,18 +70,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Hash outer join light");
-        sink.child(masterFactory);
-        sink.child("Hash", slaveFactory);
-    }
-
-    @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -100,8 +90,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException();
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
     }
 
     @Override
@@ -110,18 +100,28 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public void toPlan(PlanSink sink) {
+        sink.type("Hash outer join light");
+        sink.child(masterFactory);
+        sink.child("Hash", slaveFactory);
+    }
+
+    @Override
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+        cursor.close();
     }
 
     private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
+        private final Map joinKeyMap;
         private final OuterJoinRecord record;
         private final LongChain slaveChain;
-        private final Map joinKeyMap;
+        private boolean isOpen;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
         private Record slaveRecord;
-        private boolean isOpen;
 
         public HashOuterJoinLightRecordCursor(
                 int columnSplit,
@@ -138,8 +138,13 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public long size() {
-            return -1L;
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                slaveChain.close();
+                super.close();
+            }
         }
 
         @Override
@@ -176,24 +181,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
+        public long size() {
+            return -1L;
+        }
+
+        @Override
         public void toTop() {
             masterCursor.toTop();
             slaveChainCursor = null;
-        }
-
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            if (!this.isOpen) {
-                this.isOpen = true;
-                this.slaveChain.reopen();
-                this.joinKeyMap.reopen();
-            }
-            buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecordB();
-            this.record.of(masterRecord, slaveRecord);
-            this.slaveChainCursor = null;
         }
 
         private void buildMapOfSlaveRecords(RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -218,14 +213,19 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             }
         }
 
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                joinKeyMap.close();
-                slaveChain.close();
-                super.close();
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            if (!this.isOpen) {
+                this.isOpen = true;
+                this.slaveChain.reopen();
+                this.joinKeyMap.reopen();
             }
+            buildMapOfSlaveRecords(slaveCursor, circuitBreaker);
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            this.masterRecord = masterCursor.getRecord();
+            this.slaveRecord = slaveCursor.getRecordB();
+            this.record.of(masterRecord, slaveRecord);
+            this.slaveChainCursor = null;
         }
     }
 }

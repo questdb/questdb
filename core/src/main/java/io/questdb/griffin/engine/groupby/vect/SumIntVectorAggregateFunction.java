@@ -38,12 +38,11 @@ import java.util.concurrent.atomic.LongAdder;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumIntVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
-    private final LongAdder sum = new LongAdder();
-    private final LongAdder count = new LongAdder();
     private final int columnIndex;
+    private final LongAdder count = new LongAdder();
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
-
+    private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
     public SumIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -78,8 +77,24 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
+    public void clear() {
+        this.sum.reset();
+        this.count.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sum";
     }
 
     @Override
@@ -91,6 +106,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -108,26 +128,5 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
-    }
-
-    @Override
-    public void clear() {
-        this.sum.reset();
-        this.count.reset();
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum";
     }
 }

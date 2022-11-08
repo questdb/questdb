@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.Long256Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
@@ -46,13 +43,33 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
+    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink sink) {
+        if (Numbers.extractLong256(value, value.length(), long256Builder)) {
+            Numbers.appendLong256(
+                    long256Builder.getLong0(),
+                    long256Builder.getLong1(),
+                    long256Builder.getLong2(),
+                    long256Builder.getLong3(),
+                    sink
+            );
+        }
+    }
+
     private static class Func extends AbstractCastToLong256Function {
-        private final Long256Impl long256builder = new Long256Impl();
         private final Long256Impl long256a = new Long256Impl();
         private final Long256Impl long256b = new Long256Impl();
+        private final Long256Impl long256builder = new Long256Impl();
 
         public Func(Function arg) {
             super(arg);
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            final CharSequence value = arg.getSymbol(rec);
+            if (value != null) {
+                appendLong256(value, long256builder, sink);
+            }
         }
 
         @Override
@@ -71,26 +88,6 @@ public class CastSymbolToLong256FunctionFactory implements FunctionFactory {
                 return Long256Impl.NULL_LONG256;
             }
             return Numbers.parseLong256(value, value.length(), long256b);
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            final CharSequence value = arg.getSymbol(rec);
-            if (value != null) {
-                appendLong256(value, long256builder, sink);
-            }
-        }
-    }
-
-    static void appendLong256(CharSequence value, Long256Impl long256Builder, CharSink sink) {
-        if (Numbers.extractLong256(value, value.length(), long256Builder)) {
-            Numbers.appendLong256(
-                    long256Builder.getLong0(),
-                    long256Builder.getLong1(),
-                    long256Builder.getLong2(),
-                    long256Builder.getLong3(),
-                    sink
-            );
         }
     }
 }

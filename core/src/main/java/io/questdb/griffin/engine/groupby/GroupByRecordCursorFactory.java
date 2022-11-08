@@ -45,10 +45,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private final ObjList<Function> recordFunctions;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -77,10 +77,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -105,11 +103,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(false);
@@ -118,8 +111,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -138,6 +138,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(dataMap);
+                Misc.clearObjList(groupByFunctions);
+                super.close();
+            }
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -162,16 +172,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             } catch (Throwable e) {
                 close();
                 throw e;
-            }
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(dataMap);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
             }
         }
     }

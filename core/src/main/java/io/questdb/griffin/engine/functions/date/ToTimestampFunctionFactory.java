@@ -61,6 +61,11 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "to_timestamp";
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final CharSequence value = arg.getStr(rec);
             try {
@@ -68,11 +73,6 @@ public class ToTimestampFunctionFactory implements FunctionFactory {
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "to_timestamp";
         }
     }
 }

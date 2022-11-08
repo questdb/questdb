@@ -88,8 +88,23 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
+    public void clear() {
+        accumulator.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "min";
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return accumulator.longValue();
     }
 
     @Override
@@ -100,6 +115,11 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NaN);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -116,25 +136,5 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
-    }
-
-    @Override
-    public void clear() {
-        accumulator.reset();
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return accumulator.longValue();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "min";
     }
 }

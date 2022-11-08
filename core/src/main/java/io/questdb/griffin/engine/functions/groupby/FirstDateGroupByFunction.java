@@ -64,6 +64,11 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);
@@ -72,10 +77,5 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

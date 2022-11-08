@@ -88,10 +88,10 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
         final Function arg;
         final DateFormat format;
+        final CharSequence formatStr;
         final DateLocale locale;
         final StringSink sink1;
         final StringSink sink2;
-        final CharSequence formatStr;
 
         public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale, CharSequence formatStr) {
             this.arg = arg;

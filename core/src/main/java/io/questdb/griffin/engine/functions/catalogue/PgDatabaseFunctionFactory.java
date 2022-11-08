@@ -67,84 +67,14 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         return new CursorFunction(new PgDatabaseRecordCursorFactory());
     }
 
-    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
-        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
-
-        public PgDatabaseRecordCursorFactory() {
-            super(METADATA);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.type(SIGNATURE);
-        }
-    }
-
-    private static class PgDatabaseRecordCursor implements RecordCursor {
-        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
-        private boolean hasNext = true;
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return RECORD;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (hasNext) {
-                hasNext = false;
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return RECORD;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-        }
-
-        @Override
-        public void toTop() {
-            hasNext = true;
-        }
-
-        @Override
-        public long size() {
-            return 1;
-        }
-    }
-
     private static class PgDatabaseRecord implements Record {
         @Override
         public boolean getBool(int col) {
-            if (col == 6) {
-                // datistemplate
-                // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
-                return false;
-            } else {
-                // datallowconn
-                // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
-                return true;
-            }
+            // datistemplate
+            // If true, then this database can be cloned by any user with CREATEDB privileges; if false, then only superusers or the owner of the database can clone it.
+            // datallowconn
+            // If false then no one can connect to this database. This is used to protect the template0 database from being altered.
+            return col != 6;
         }
 
         @Override
@@ -207,6 +137,72 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(int col) {
             return getStr(col).length();
+        }
+    }
+
+    private static class PgDatabaseRecordCursor implements RecordCursor {
+        private static final PgDatabaseRecord RECORD = new PgDatabaseRecord();
+        private boolean hasNext = true;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return RECORD;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return RECORD;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (hasNext) {
+                hasNext = false;
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            hasNext = true;
+        }
+    }
+
+    private static class PgDatabaseRecordCursorFactory extends AbstractRecordCursorFactory {
+        private final PgDatabaseRecordCursor cursor = new PgDatabaseRecordCursor();
+
+        public PgDatabaseRecordCursorFactory() {
+            super(METADATA);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
         }
     }
 

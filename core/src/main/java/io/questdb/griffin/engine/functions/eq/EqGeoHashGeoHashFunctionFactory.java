@@ -167,8 +167,6 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             return arg;
         }
 
-        protected abstract long getHash();
-
         @Override
         public void toPlan(PlanSink sink) {
             sink.put(arg);
@@ -177,6 +175,8 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
             }
             sink.put('=').put(getHash());
         }
+
+        protected abstract long getHash();
     }
 
     private static class ConstCheckFuncByte extends ConstCheckFunc {
@@ -190,25 +190,6 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (hash == arg.getGeoByte(rec));
-        }
-
-        @Override
-        protected long getHash() {
-            return hash;
-        }
-    }
-
-    private static class ConstCheckFuncShort extends ConstCheckFunc {
-        private final short hash;
-
-        public ConstCheckFuncShort(Function arg, short hash) {
-            super(arg);
-            this.hash = hash;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (hash == arg.getGeoShort(rec));
         }
 
         @Override
@@ -255,6 +236,25 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class ConstCheckFuncShort extends ConstCheckFunc {
+        private final short hash;
+
+        public ConstCheckFuncShort(Function arg, short hash) {
+            super(arg);
+            this.hash = hash;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (hash == arg.getGeoShort(rec));
+        }
+
+        @Override
+        protected long getHash() {
+            return hash;
+        }
+    }
+
     private static abstract class GeoEqFunc extends NegatableBooleanFunction implements BinaryFunction {
         protected final Function left;
         protected final Function right;
@@ -275,16 +275,16 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isOperator() {
-            return true;
-        }
-
-        @Override
         public String getSymbol() {
             if (negated) {
                 return "!=";
             }
             return "=";
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

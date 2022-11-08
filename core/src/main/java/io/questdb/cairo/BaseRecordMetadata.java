@@ -30,10 +30,10 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public abstract class BaseRecordMetadata implements RecordMetadata {
+    protected int columnCount;
     protected ObjList<TableColumnMetadata> columnMetadata;
     protected LowerCaseCharSequenceIntHashMap columnNameIndexMap;
     protected int timestampIndex;
-    protected int columnCount;
 
     public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
         if (metadata instanceof BaseRecordMetadata) {
@@ -56,8 +56,8 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return getColumnQuick(columnIndex).getType();
+    public long getColumnHash(int columnIndex) {
+        return getColumnQuick(columnIndex).getHash();
     }
 
     @Override
@@ -70,13 +70,17 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return getColumnQuick(columnIndex).getHash();
+    public String getColumnName(int columnIndex) {
+        return getColumnQuick(columnIndex).getName();
+    }
+
+    public TableColumnMetadata getColumnQuick(int index) {
+        return columnMetadata.getQuick(index);
     }
 
     @Override
-    public String getColumnName(int columnIndex) {
-        return getColumnQuick(columnIndex).getName();
+    public int getColumnType(int columnIndex) {
+        return getColumnQuick(columnIndex).getType();
     }
 
     @Override
@@ -85,13 +89,13 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getTimestampIndex() {
-        return timestampIndex;
+    public RecordMetadata getMetadata(int columnIndex) {
+        return getColumnQuick(columnIndex).getMetadata();
     }
 
     @Override
-    public RecordMetadata getMetadata(int columnIndex) {
-        return getColumnQuick(columnIndex).getMetadata();
+    public int getTimestampIndex() {
+        return timestampIndex;
     }
 
     public int getWriterIndex(int columnIndex) {
@@ -106,9 +110,5 @@ public abstract class BaseRecordMetadata implements RecordMetadata {
     @Override
     public boolean isSymbolTableStatic(int columnIndex) {
         return columnMetadata.getQuick(columnIndex).isSymbolTableStatic();
-    }
-
-    public TableColumnMetadata getColumnQuick(int index) {
-        return columnMetadata.getQuick(index);
     }
 }

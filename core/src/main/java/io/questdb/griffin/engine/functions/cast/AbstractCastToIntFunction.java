@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToIntFunction extends IntFunction implements UnaryFunction {
     protected final Function arg;

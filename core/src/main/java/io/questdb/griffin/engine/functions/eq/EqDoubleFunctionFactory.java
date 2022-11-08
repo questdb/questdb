@@ -71,13 +71,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static boolean isNullConstant(Function operand, int operandType) {
-        return operand.isConstant() &&
-                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
-                        ||
-                        operandType == ColumnType.NULL);
-    }
-
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
         switch (ColumnType.tagOf(operandType)) {
             case ColumnType.INT:
@@ -96,23 +89,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class Func extends AbstractEqBinaryFunction {
-        // This function class uses both subtraction and equality to judge whether two parameters
-        // are equal because subtraction is to prevent the judging mistakes with different
-        // precision, and equality is for the comparison of Infinity. In java,
-        // Infinity - Infinity = NaN, so it won't satisfy the subtraction situation. But
-        // Infinity = Infinity, so use equality could solve this problem.
-
-        public Func(Function left, Function right) {
-            super(left, right);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            final double l = left.getDouble(rec);
-            final double r = right.getDouble(rec);
-            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001 || l == r);
-        }
+    private static boolean isNullConstant(Function operand, int operandType) {
+        return operand.isConstant() &&
+                (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
+                        ||
+                        operandType == ColumnType.NULL);
     }
 
     protected static abstract class AbstractIsNaNFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -138,6 +119,58 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
+    protected static class Func extends AbstractEqBinaryFunction {
+        // This function class uses both subtraction and equality to judge whether two parameters
+        // are equal because subtraction is to prevent the judging mistakes with different
+        // precision, and equality is for the comparison of Infinity. In java,
+        // Infinity - Infinity = NaN, so it won't satisfy the subtraction situation. But
+        // Infinity = Infinity, so use equality could solve this problem.
+
+        public Func(Function left, Function right) {
+            super(left, right);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final double l = left.getDouble(rec);
+            final double r = right.getDouble(rec);
+            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001 || l == r);
+        }
+    }
+
+    protected static class FuncDateIsNaN extends AbstractIsNaNFunction {
+        public FuncDateIsNaN(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
+        }
+    }
+
+    protected static class FuncDoubleIsNaN extends AbstractIsNaNFunction {
+        public FuncDoubleIsNaN(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (Double.isNaN(arg.getDouble(rec)));
+        }
+    }
+
+    protected static class FuncFloatIsNaN extends AbstractIsNaNFunction {
+        public FuncFloatIsNaN(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (Float.isNaN(arg.getFloat(rec)));
+        }
+    }
+
     protected static class FuncIntIsNaN extends AbstractIsNaNFunction {
         public FuncIntIsNaN(Function arg) {
             super(arg);
@@ -160,17 +193,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class FuncDateIsNaN extends AbstractIsNaNFunction {
-        public FuncDateIsNaN(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getDate(rec) == Numbers.LONG_NaN);
-        }
-    }
-
     protected static class FuncTimestampIsNaN extends AbstractIsNaNFunction {
         public FuncTimestampIsNaN(Function arg) {
             super(arg);
@@ -179,28 +201,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (arg.getTimestamp(rec) == Numbers.LONG_NaN);
-        }
-    }
-
-    protected static class FuncFloatIsNaN extends AbstractIsNaNFunction {
-        public FuncFloatIsNaN(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (Float.isNaN(arg.getFloat(rec)));
-        }
-    }
-
-    protected static class FuncDoubleIsNaN extends AbstractIsNaNFunction {
-        public FuncDoubleIsNaN(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (Double.isNaN(arg.getDouble(rec)));
         }
     }
 }

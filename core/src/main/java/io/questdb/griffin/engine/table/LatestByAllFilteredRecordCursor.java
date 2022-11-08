@@ -41,9 +41,9 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor implements Plannable {
 
+    protected final Function filter;
     private final Map map;
     private final RecordSink recordSink;
-    protected final Function filter;
 
     public LatestByAllFilteredRecordCursor(
             @NotNull Map map,

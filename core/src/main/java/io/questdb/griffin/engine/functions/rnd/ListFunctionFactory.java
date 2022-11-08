@@ -92,6 +92,11 @@ public class ListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("list(").put(symbols).put(')');
+        }
+
+        @Override
         public CharSequence valueBOf(int key) {
             return valueOf(key);
         }
@@ -103,11 +108,6 @@ public class ListFunctionFactory implements FunctionFactory {
 
         private int next() {
             return position++ % count;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("list(").put(symbols).put(')');
         }
     }
 }

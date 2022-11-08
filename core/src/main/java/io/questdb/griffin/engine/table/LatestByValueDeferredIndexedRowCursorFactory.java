@@ -32,10 +32,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
-    private final int columnIndex;
-    private final Function symbolFunc;
     private final boolean cachedIndexReaderCursor;
+    private final int columnIndex;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
+    private final Function symbolFunc;
     private int symbolKey;
 
     public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
@@ -62,15 +62,6 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
-        final CharSequence symbol = symbolFunc.getStr(null);
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolKey++;
-        }
-    }
-
-    @Override
     public boolean isEntity() {
         return false;
     }
@@ -78,6 +69,15 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     @Override
     public boolean isUsingIndex() {
         return true;
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader, SqlExecutionContext sqlExecutionContext) {
+        final CharSequence symbol = symbolFunc.getStr(null);
+        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            symbolKey++;
+        }
     }
 
     @Override

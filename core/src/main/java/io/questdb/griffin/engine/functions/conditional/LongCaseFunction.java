@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.ObjList;
 
 class LongCaseFunction extends LongFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public LongCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

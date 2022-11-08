@@ -57,6 +57,16 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
         sink.child((Plannable) cursor);
@@ -70,21 +80,11 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
-    }
-
-    @Override
     protected RecordCursor getCursorInstance(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         cursor.of(dataFrameCursor, executionContext);
         return cursor;
-    }
-
-    @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return dataFrameCursorFactory.getColumnName(idx, sqlExecutionContext);
     }
 }

@@ -87,44 +87,13 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("rnd_geohash(").put(bits).put(')');
-        }
-    }
-
-    private static class RndShortFunction extends GeoShortFunction implements Function {
-
-        private final int bits;
-        private Rnd rnd;
-
-        public RndShortFunction(int type) {
-            super(type);
-            this.bits = ColumnType.getGeoHashBits(type);
-        }
-
-        @Override
-        public short getGeoShort(Record rec) {
-            return (short) rnd.nextGeoHash(bits);
-        }
-
-        @Override
         public boolean isReadThreadSafe() {
             return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
         }
 
         @Override
@@ -149,11 +118,6 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public short getGeoShort(Record rec) {
             return (byte) rnd.nextGeoHash(bits);
         }
@@ -161,6 +125,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -185,11 +154,6 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
         public short getGeoShort(Record rec) {
             return (byte) rnd.nextGeoHash(bits);
         }
@@ -197,6 +161,42 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("rnd_geohash(").put(bits).put(')');
+        }
+    }
+
+    private static class RndShortFunction extends GeoShortFunction implements Function {
+
+        private final int bits;
+        private Rnd rnd;
+
+        public RndShortFunction(int type) {
+            super(type);
+            this.bits = ColumnType.getGeoHashBits(type);
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            return (short) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override

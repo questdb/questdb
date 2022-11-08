@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToFloatFunction extends FloatFunction implements UnaryFunction {
 

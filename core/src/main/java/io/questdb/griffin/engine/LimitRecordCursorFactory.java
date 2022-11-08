@@ -43,19 +43,36 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean implementsLimit() {
+        return true;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Limit");
+        if (cursor.loFunction != null) {
+            sink.meta("lo").val(cursor.loFunction);
+        }
+        if (cursor.hiFunction != null) {
+            sink.meta("hi").val(cursor.hiFunction);
+        }
+        sink.child(base);
     }
 
     @Override
@@ -68,14 +85,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         base.close();
     }
 
-    @Override
-    public boolean implementsLimit() {
-        return true;
-    }
-
     private static class LimitRecordCursor implements RecordCursor {
-        private final Function loFunction;
         private final Function hiFunction;
+        private final Function loFunction;
         private RecordCursor base;
         private long limit;
         private long size;
@@ -91,31 +103,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            if (size > -1) {
-                return size;
-            }
-            return -1;
-        }
-
-        @Override
         public Record getRecord() {
             return base.getRecord();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndex);
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndex);
-        }
-
-        @Override
-        public boolean hasNext() {
-            return limit-- > 0 && base.hasNext();
         }
 
         @Override
@@ -124,8 +113,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            base.recordAt(record, atRowId);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return limit-- > 0 && base.hasNext();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
         }
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
@@ -135,6 +134,23 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 hiFunction.init(base, executionContext);
             }
             toTop();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            base.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            if (size > -1) {
+                return size;
+            }
+            return -1;
+        }
+
+        public void skipTo(long rowCount) {
+            base.skipTo(Math.max(0, rowCount));
         }
 
         @Override
@@ -227,21 +243,5 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             return count;
         }
-
-        public void skipTo(long rowCount) {
-            base.skipTo(Math.max(0, rowCount));
-        }
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Limit");
-        if (cursor.loFunction != null) {
-            sink.meta("lo").val(cursor.loFunction);
-        }
-        if (cursor.hiFunction != null) {
-            sink.meta("hi").val(cursor.hiFunction);
-        }
-        sink.child(base);
     }
 }

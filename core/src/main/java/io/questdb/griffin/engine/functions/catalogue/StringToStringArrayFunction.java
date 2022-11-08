@@ -32,7 +32,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;

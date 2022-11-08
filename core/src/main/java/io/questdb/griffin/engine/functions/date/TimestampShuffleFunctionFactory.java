@@ -61,8 +61,8 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampShuffleFunction extends TimestampFunction {
-        private final long start;
         private final long end;
+        private final long start;
         private Rnd rnd;
 
         public TimestampShuffleFunction(long start, long end) {
@@ -80,6 +80,11 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            rnd = executionContext.getRandom();
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }
@@ -92,11 +97,6 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             rnd.reset();
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            rnd = executionContext.getRandom();
         }
 
 

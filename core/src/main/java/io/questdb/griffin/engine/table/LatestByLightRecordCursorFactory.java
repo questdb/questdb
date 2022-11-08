@@ -43,10 +43,10 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
     private final RecordCursorFactory base;
-    private final int timestampIndex;
-    private final boolean orderedByTimestampAsc;
     private final LatestByLightRecordCursor cursor;
+    private final boolean orderedByTimestampAsc;
     private final RecordSink recordSink;
+    private final int timestampIndex;
 
     public LatestByLightRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -72,16 +72,8 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("LatestBy light");
-        sink.meta("order_by_timestamp").val(orderedByTimestampAsc);
-        sink.child(base);
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
-        cursor.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -112,8 +104,20 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("LatestBy light");
+        sink.meta("order_by_timestamp").val(orderedByTimestampAsc);
+        sink.child(base);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
     }
 
     private void buildMapForOrderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
@@ -150,36 +154,24 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
+    protected void _close() {
+        base.close();
+        cursor.close();
     }
 
     private static class LatestByLightRecordCursor implements RecordCursor {
 
+        private final Map latestByMap;
         private RecordCursor baseCursor;
         private Record baseRecord;
-        private final Map latestByMap;
-        private RecordCursor mapCursor;
-        private MapRecord mapRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
+        private RecordCursor mapCursor;
+        private MapRecord mapRecord;
 
         public LatestByLightRecordCursor(Map latestByMap) {
             this.latestByMap = latestByMap;
             this.isOpen = true;
-        }
-
-        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.baseCursor = baseCursor;
-            this.baseRecord = baseCursor.getRecord();
-            this.mapCursor = latestByMap.getCursor();
-            this.mapRecord = (MapRecord) mapCursor.getRecord();
-            this.circuitBreaker = circuitBreaker;
         }
 
         @Override
@@ -198,13 +190,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -220,8 +212,16 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.baseCursor = baseCursor;
+            this.baseRecord = baseCursor.getRecord();
+            this.mapCursor = latestByMap.getCursor();
+            this.mapRecord = (MapRecord) mapCursor.getRecord();
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override
@@ -230,13 +230,13 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         @Override
-        public void toTop() {
-            mapCursor.toTop();
+        public long size() {
+            return mapCursor.size();
         }
 
         @Override
-        public long size() {
-            return mapCursor.size();
+        public void toTop() {
+            mapCursor.toTop();
         }
     }
 }

@@ -68,22 +68,6 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         this.record = new TableReaderSelectedColumnRecord(columnIndexes);
     }
 
-    int getIndexDirection() {
-        return indexDirection;
-    }
-
-    int getSymbolKey() {
-        return symbolKey;
-    }
-
-    int getColumnIndex() {
-        return columnIndex;
-    }
-
-    Function getFilter() {
-        return filter;
-    }
-
     @Override
     public boolean hasNext() {
         while (rowCursor.hasNext()) {
@@ -112,6 +96,22 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
         record.jumpTo(dataFrame.getPartitionIndex(), 0);
         return this;
+    }
+
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
+    Function getFilter() {
+        return filter;
+    }
+
+    int getIndexDirection() {
+        return indexDirection;
+    }
+
+    int getSymbolKey() {
+        return symbolKey;
     }
 
     void prepare(TableReader tableReader) {

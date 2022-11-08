@@ -90,8 +90,48 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
         list.clear();
     }
 
+    public boolean contains(int key) {
+        return keyIndex(key) < 0;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        IntHashSet that = (IntHashSet) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (int i = 0, n = list.size(); i < n; i++) {
+            int key = list.getQuick(i);
+            if (key != noEntryKeyValue && that.excludes(key)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean excludes(int key) {
         return keyIndex(key) > -1;
+    }
+
+    public int get(int index) {
+        return list.getQuick(index);
+    }
+
+    public int getLast() {
+        return list.getLast();
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += keys[i];
+            }
+        }
+        return hashCode;
     }
 
     public int remove(int key) {
@@ -118,59 +158,8 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
     }
 
     @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        erase(from);
-    }
-
-    public boolean contains(int key) {
-        return keyIndex(key) < 0;
-    }
-
-    public int get(int index) {
-        return list.getQuick(index);
-    }
-
-    public int getLast() {
-        return list.getLast();
-    }
-
-    @Override
     public String toString() {
         return list.toString();
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        IntHashSet that = (IntHashSet) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (int i = 0, n = list.size(); i < n; i++) {
-            int key = list.getQuick(i);
-            if (key != noEntryKeyValue && that.excludes(key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += keys[i];
-            }
-        }
-        return hashCode;
     }
 
     private void rehash() {
@@ -186,5 +175,16 @@ public class IntHashSet extends AbstractIntHashSet implements Sinkable {
             final int key = list.getQuick(i);
             keys[keyIndex(key)] = key;
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        erase(from);
     }
 }

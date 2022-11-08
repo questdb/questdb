@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -72,6 +71,11 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public String getSymbol() {
+        return "sum";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -90,10 +94,5 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum";
     }
 }

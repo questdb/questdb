@@ -50,6 +50,11 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(cursor.columnIndex);
         sink.optAttr("filter", filter);
@@ -61,11 +66,6 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     protected void _close() {
         super._close();
         filter.close();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 
     @Override

@@ -112,6 +112,11 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "to_utc";
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
@@ -120,11 +125,6 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return timestampValue;
             }
-        }
-
-        @Override
-        public String getSymbol() {
-            return "to_utc";
         }
     }
 }

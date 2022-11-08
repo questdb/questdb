@@ -56,6 +56,11 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
     }
 
     @Override
+    public long size() {
+        return -1;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan");
         sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolKey);
@@ -87,11 +92,6 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor implements
                 }
             }
         }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 
     @Override

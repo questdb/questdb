@@ -51,13 +51,13 @@ public class PrefixedTxIDCurrentFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new LongFunction() {
             @Override
-            public void toPlan(PlanSink sink) {
-                sink.put(SIGNATURE);
+            public long getLong(Record rec) {
+                return PG_TX_ID.incrementAndGet();
             }
 
             @Override
-            public long getLong(Record rec) {
-                return PG_TX_ID.incrementAndGet();
+            public void toPlan(PlanSink sink) {
+                sink.put(SIGNATURE);
             }
         };
     }

@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class LtTimestampFunctionFactory implements FunctionFactory {
 

@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -116,14 +115,14 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            this.sqlExecutionContext = executionContext;
+        public String getSymbol() {
+            return "touch";
         }
 
         @Override
-        public String getSymbol() {
-            return "touch";
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            this.sqlExecutionContext = executionContext;
         }
 
         private void clearCounters() {

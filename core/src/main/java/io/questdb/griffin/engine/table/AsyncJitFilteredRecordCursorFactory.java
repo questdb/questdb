@@ -43,7 +43,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,17 +53,17 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
+    private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
-    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final AsyncJitFilterAtom filterAtom;
     private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
-    private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
     private final int limitLoPos;
     private final int maxNegativeLimit;
-    private DirectLongList negativeLimitRows;
+    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final boolean preTouchColumns;
     private final int workerCount;
+    private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -106,18 +105,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    protected void _close() {
-        Misc.free(base);
-        Misc.free(filterAtom);
-        Misc.free(frameSequence);
-        Misc.free(negativeLimitRows);
-        cursor.freeRecords();
-        negativeLimitCursor.freeRecords();
+    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+        return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
     @Override
     public boolean followedLimitAdvice() {
         return limitLoFunction != null;
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -156,14 +155,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return cursor;
     }
 
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
-    }
-
-    @Override
-    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
     }
 
     @Override
@@ -177,12 +170,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.type("Async JIT Filter");
+        sink.optAttr("limit", limitLoFunction);
+        sink.attr("filter").val(filterAtom);
+        sink.attr("preTouch").val(preTouchColumns);
+        sink.attr("workers").val(workerCount);
+        sink.child(base);
     }
 
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    @Override
+    public boolean usesCompiledFilter() {
+        return true;
     }
 
     private static void filter(
@@ -249,11 +248,21 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         atom.preTouchColumns(record, rows);
     }
 
+    @Override
+    protected void _close() {
+        Misc.free(base);
+        Misc.free(filterAtom);
+        Misc.free(frameSequence);
+        Misc.free(negativeLimitRows);
+        cursor.freeRecords();
+        negativeLimitCursor.freeRecords();
+    }
+
     private static class AsyncJitFilterAtom extends AsyncFilterAtom implements Plannable {
 
-        final CompiledFilter compiledFilter;
-        final MemoryCARW bindVarMemory;
         final ObjList<Function> bindVarFunctions;
+        final MemoryCARW bindVarMemory;
+        final CompiledFilter compiledFilter;
 
         public AsyncJitFilterAtom(
                 Function filter,
@@ -270,18 +279,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
-            prepareBindVarMemory(symbolTableSource, executionContext);
-        }
-
-        @Override
         public void close() {
             super.close();
             Misc.free(compiledFilter);
             Misc.free(bindVarMemory);
             Misc.freeObjList(bindVarFunctions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            prepareBindVarMemory(symbolTableSource, executionContext);
         }
 
         @Override
@@ -361,15 +370,5 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     throw SqlException.position(0).put("unsupported bind variable type: ").put(ColumnType.nameOf(columnTypeTag));
             }
         }
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Async JIT Filter");
-        sink.optAttr("limit", limitLoFunction);
-        sink.attr("filter").val(filterAtom);
-        sink.attr("preTouch").val(preTouchColumns);
-        sink.attr("workers").val(workerCount);
-        sink.child(base);
     }
 }

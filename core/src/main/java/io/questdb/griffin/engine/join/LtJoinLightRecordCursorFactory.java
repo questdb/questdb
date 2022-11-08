@@ -44,11 +44,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
 public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
     private final LtJoinLightRecordCursor cursor;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterKeySink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public LtJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -77,18 +77,8 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Lt join light");
-        sink.child(masterFactory);
-        sink.child(slaveFactory);
-    }
-
-    @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+    public RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -108,8 +98,8 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException();
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
     }
 
     @Override
@@ -118,20 +108,30 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    public void toPlan(PlanSink sink) {
+        sink.type("Lt join light");
+        sink.child(masterFactory);
+        sink.child(slaveFactory);
+    }
+
+    @Override
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+        cursor.close();
     }
 
     private class LtJoinLightRecordCursor extends AbstractJoinCursor {
-        private final OuterJoinRecord record;
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
+        private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
-        private Record slaveRecord;
-        private Record masterRecord;
-        private long slaveTimestamp = Long.MIN_VALUE;
-        private long lastSlaveRowID = Long.MIN_VALUE;
         private boolean isOpen;
+        private long lastSlaveRowID = Long.MIN_VALUE;
+        private Record masterRecord;
+        private Record slaveRecord;
+        private long slaveTimestamp = Long.MIN_VALUE;
 
         public LtJoinLightRecordCursor(
                 int columnSplit,
@@ -149,13 +149,17 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
-        public Record getRecord() {
-            return record;
+        public void close() {
+            if (isOpen) {
+                joinKeyMap.close();
+                super.close();
+                isOpen = false;
+            }
         }
 
         @Override
-        public long size() {
-            return masterCursor.size();
+        public Record getRecord() {
+            return record;
         }
 
         @Override
@@ -209,6 +213,11 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
+        public long size() {
+            return masterCursor.size();
+        }
+
+        @Override
         public void toTop() {
             joinKeyMap.clear();
             slaveTimestamp = Long.MIN_VALUE;
@@ -229,15 +238,6 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
             this.masterRecord = masterCursor.getRecord();
             this.slaveRecord = slaveCursor.getRecordB();
             this.record.of(masterRecord, slaveRecord);
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                joinKeyMap.close();
-                super.close();
-                isOpen = false;
-            }
         }
     }
 }

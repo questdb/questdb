@@ -132,43 +132,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.position(argPositions.getQuick(0)).put("unsupported part '").put(part).put('\'');
     }
 
-    static abstract class IntExtractFunction extends IntFunction implements UnaryFunction {
-        protected final Function arg;
-
-        IntExtractFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "extract";
-        }
-    }
-
-    static abstract class LongExtractFunction extends LongFunction implements UnaryFunction {
-        protected final Function arg;
-
-        LongExtractFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "extract";
-        }
-    }
-
-
     static final class CenturyFunction extends IntExtractFunction {
         public CenturyFunction(Function arg) {
             super(arg);
@@ -229,8 +192,41 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class WeekFunction extends IntExtractFunction {
-        public WeekFunction(Function arg) {
+    static final class EpochFunction extends LongExtractFunction {
+        public EpochFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value / Timestamps.SECOND_MICROS;
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    static abstract class IntExtractFunction extends IntFunction implements UnaryFunction {
+        protected final Function arg;
+
+        IntExtractFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public String getSymbol() {
+            return "extract";
+        }
+    }
+
+    static final class IsoDowFunction extends IntExtractFunction {
+        public IsoDowFunction(Function arg) {
             super(arg);
         }
 
@@ -238,7 +234,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
-                return Timestamps.getWeek(value);
+                return Timestamps.getDayOfWeek(value);
             }
             return Numbers.INT_NaN;
         }
@@ -259,18 +255,21 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class EpochFunction extends LongExtractFunction {
-        public EpochFunction(Function arg) {
-            super(arg);
+    static abstract class LongExtractFunction extends LongFunction implements UnaryFunction {
+        protected final Function arg;
+
+        LongExtractFunction(Function arg) {
+            this.arg = arg;
         }
 
         @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return value / Timestamps.SECOND_MICROS;
-            }
-            return Numbers.LONG_NaN;
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public String getSymbol() {
+            return "extract";
         }
     }
 
@@ -289,36 +288,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class MillisecondsFunction extends LongExtractFunction {
-        public MillisecondsFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMillisOfMinute(value);
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    static final class IsoDowFunction extends IntExtractFunction {
-        public IsoDowFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getDayOfWeek(value);
-            }
-            return Numbers.INT_NaN;
-        }
-    }
-
     static final class MillenniumFunction extends IntExtractFunction {
         public MillenniumFunction(Function arg) {
             super(arg);
@@ -334,6 +303,21 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    static final class MillisecondsFunction extends LongExtractFunction {
+        public MillisecondsFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMillisOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
     static final class QuarterFunction extends IntExtractFunction {
         public QuarterFunction(Function arg) {
             super(arg);
@@ -344,6 +328,21 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
                 return Timestamps.getQuarter(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class WeekFunction extends IntExtractFunction {
+        public WeekFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getWeek(value);
             }
             return Numbers.INT_NaN;
         }

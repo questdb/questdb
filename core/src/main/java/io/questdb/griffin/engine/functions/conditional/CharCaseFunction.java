@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.ObjList;
 
 class CharCaseFunction extends CharFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public CharCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

@@ -40,7 +40,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -90,93 +89,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
-    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-        }
-
-        @Override
-        char getDelimiter(Record rec) {
-            return delimiterFunc.getChar(rec);
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return indexFunc.getInt(rec);
-        }
-    }
-
-    private static class SplitPartConstDelimiterFunction extends AbstractSplitPartFunction {
-        private final char delimiter;
-
-        public SplitPartConstDelimiterFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                               char delimiter) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-            this.delimiter = delimiter;
-        }
-
-        @Override
-        char getDelimiter(Record rec) {
-            return delimiter;
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return indexFunc.getInt(rec);
-        }
-    }
-
-    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
-        private final int index;
-
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-            this.index = index;
-        }
-
-        @Override
-        char getDelimiter(Record rec) {
-            return delimiterFunc.getChar(rec);
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return index;
-        }
-    }
-
-    private static class SplitPartConstDelimiterConstIndexFunction extends AbstractSplitPartFunction {
-        private final char delimiter;
-        private final int index;
-
-        public SplitPartConstDelimiterConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                                         char delimiter, int index) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-            this.delimiter = delimiter;
-            this.index = index;
-        }
-
-        @Override
-        char getDelimiter(Record rec) {
-            return delimiter;
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return index;
-        }
-    }
-
     private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        protected final Function strFunc;
         protected final Function delimiterFunc;
         protected final Function indexFunc;
-
+        protected final Function strFunc;
         private final int indexPosition;
+        private final StringSink sink = new StringSink();
+        private final StringSink sinkB = new StringSink();
 
         public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
             this.strFunc = strFunc;
@@ -185,29 +104,14 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             this.indexPosition = indexPosition;
         }
 
-        abstract char getDelimiter(Record rec);
-
-        abstract int getIndex(Record rec);
-
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (indexFunc.isRuntimeConstant()) {
-                int index = indexFunc.getInt(null);
-                if (index == 0) {
-                    throw SqlException.$(indexPosition, "field position must not be zero");
-                }
-            }
+        public Function getCenter() {
+            return delimiterFunc;
         }
 
         @Override
         public Function getLeft() {
             return strFunc;
-        }
-
-        @Override
-        public Function getCenter() {
-            return delimiterFunc;
         }
 
         @Override
@@ -221,13 +125,24 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            getStr0(rec, sink, false);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             return getStr0(rec, sinkB, true);
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            getStr0(rec, sink, false);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (indexFunc.isRuntimeConstant()) {
+                int index = indexFunc.getInt(null);
+                if (index == 0) {
+                    throw SqlException.$(indexPosition, "field position must not be zero");
+                }
+            }
         }
 
         @Nullable
@@ -282,6 +197,88 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             }
             sink.put(str, start, end);
             return sink;
+        }
+
+        abstract char getDelimiter(Record rec);
+
+        abstract int getIndex(Record rec);
+    }
+
+    private static class SplitPartConstDelimiterConstIndexFunction extends AbstractSplitPartFunction {
+        private final char delimiter;
+        private final int index;
+
+        public SplitPartConstDelimiterConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                                         char delimiter, int index) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+            this.delimiter = delimiter;
+            this.index = index;
+        }
+
+        @Override
+        char getDelimiter(Record rec) {
+            return delimiter;
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return index;
+        }
+    }
+
+    private static class SplitPartConstDelimiterFunction extends AbstractSplitPartFunction {
+        private final char delimiter;
+
+        public SplitPartConstDelimiterFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                               char delimiter) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+            this.delimiter = delimiter;
+        }
+
+        @Override
+        char getDelimiter(Record rec) {
+            return delimiter;
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return indexFunc.getInt(rec);
+        }
+    }
+
+    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
+        private final int index;
+
+        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                           int index) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+            this.index = index;
+        }
+
+        @Override
+        char getDelimiter(Record rec) {
+            return delimiterFunc.getChar(rec);
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return index;
+        }
+    }
+
+    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
+        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+        }
+
+        @Override
+        char getDelimiter(Record rec) {
+            return delimiterFunc.getChar(rec);
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return indexFunc.getInt(rec);
         }
     }
 }

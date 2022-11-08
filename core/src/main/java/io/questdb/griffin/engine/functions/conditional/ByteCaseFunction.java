@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.std.ObjList;
 
 class ByteCaseFunction extends ByteFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public ByteCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

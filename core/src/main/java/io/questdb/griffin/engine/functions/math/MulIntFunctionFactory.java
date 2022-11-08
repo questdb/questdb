@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class MulIntFunctionFactory implements FunctionFactory {
     @Override
@@ -78,13 +77,13 @@ public class MulIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isOperator() {
-            return true;
+        public String getSymbol() {
+            return "*";
         }
 
         @Override
-        public String getSymbol() {
-            return "*";
+        public boolean isOperator() {
+            return true;
         }
     }
 }

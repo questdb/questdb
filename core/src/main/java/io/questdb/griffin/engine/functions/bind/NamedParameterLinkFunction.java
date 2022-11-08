@@ -34,12 +34,11 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
-    private final String variableName;
     private final int type;
+    private final String variableName;
     private Function base;
 
     public NamedParameterLinkFunction(String variableName, int type) {
@@ -90,6 +89,26 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public float getFloat(Record rec) {
         return getBase().getFloat(rec);
+    }
+
+    @Override
+    public byte getGeoByte(Record rec) {
+        return getBase().getGeoByte(rec);
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return getBase().getGeoInt(rec);
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return getBase().getGeoLong(rec);
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return getBase().getGeoShort(rec);
     }
 
     @Override
@@ -163,41 +182,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public byte getGeoByte(Record rec) {
-        return getBase().getGeoByte(rec);
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return getBase().getGeoShort(rec);
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return getBase().getGeoInt(rec);
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return getBase().getGeoLong(rec);
-    }
-
-    @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-            case ColumnType.BINARY:
-                return false;
-            default:
-                return true;
-        }
     }
 
     public String getVariableName() {
@@ -212,6 +198,19 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         }
         assert base.getType() == type;
         base.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        switch (type) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.LONG256:
+            case ColumnType.BINARY:
+                return false;
+            default:
+                return true;
+        }
     }
 
     @Override

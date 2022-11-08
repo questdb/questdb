@@ -30,7 +30,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 
 class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     int value;

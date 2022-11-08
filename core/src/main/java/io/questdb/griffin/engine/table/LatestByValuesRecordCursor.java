@@ -54,6 +54,11 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor impl
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
+    }
+
     private void prepare() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
@@ -66,11 +71,6 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor impl
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
         }
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Row backward scan").meta("on").putColumnName(columnIndex);
     }
 
     @Override

@@ -37,7 +37,6 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
     private final Function filter;
@@ -62,6 +61,11 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
         sink.optAttr("filter", filter);
@@ -82,10 +86,5 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     protected void _close() {
         super._close();
         Misc.free(filter);
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 }

@@ -33,7 +33,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -78,35 +77,6 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         return new Func(symFunc, chrFunc);
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final char constant;
-
-        public ConstCheckFunc(Function arg, char constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(arg);
-            if (negated) {
-                sink.put('!');
-            }
-            sink.put("='").put(constant).put('\'');
-        }
-    }
-
     private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final char constant;
@@ -133,6 +103,35 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
             final StaticSymbolTable symbolTable = arg.getStaticSymbolTable();
             assert symbolTable != null;
             valueIndex = symbolTable.keyOf(SingleCharCharSequence.get(constant));
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
+        }
+    }
+
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final char constant;
+
+        public ConstCheckFunc(Function arg, char constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
         }
 
         @Override

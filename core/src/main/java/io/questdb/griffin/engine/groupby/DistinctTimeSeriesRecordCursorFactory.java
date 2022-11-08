@@ -39,12 +39,12 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final RecordCursorFactory base;
-    private final DistinctTimeSeriesRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
     public static final byte COMPUTE_NEXT = 0;
-    public static final byte REUSE_CURRENT = 1;
     public static final byte NO_ROWS = 2;
+    public static final byte REUSE_CURRENT = 1;
+    protected final RecordCursorFactory base;
+    private final DistinctTimeSeriesRecordCursor cursor;
 
     public DistinctTimeSeriesRecordCursorFactory(
             CairoConfiguration configuration,
@@ -75,6 +75,26 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        return cursor.of(base.getCursor(executionContext), executionContext);
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("DistinctTimeSeries");
         sink.attr("keys").val(getMetadata());
@@ -87,38 +107,18 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         cursor.close();
     }
 
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return cursor.of(base.getCursor(executionContext), executionContext);
-    }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
-    }
-
-    @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
-    }
-
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
         private final Map dataMap;
         private final RecordSink recordSink;
         private final int timestampIndex;
         private RecordCursor baseCursor;
-        private Record record;
-        private Record recordB;
-        private long prevTimestamp;
-        private long prevRowId;
-        private byte state = 0;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
+        private long prevRowId;
+        private long prevTimestamp;
+        private Record record;
+        private Record recordB;
+        private byte state = 0;
 
         public DistinctTimeSeriesRecordCursor(int timestampIndex, Map dataMap, RecordSink recordSink) {
             this.timestampIndex = timestampIndex;
@@ -142,13 +142,13 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -175,24 +175,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            baseCursor.toTop();
-            dataMap.clear();
-        }
-
-        @Override
-        public long size() {
-            return -1;
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
@@ -216,6 +200,22 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                 state = NO_ROWS;
             }
             return this;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            return -1;
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+            dataMap.clear();
         }
 
         private boolean checkIfNotDupe() {

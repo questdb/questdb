@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,19 +67,6 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG256);
-        columnTypes.add(ColumnType.LONG);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
-        mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
     public Function getArg() {
         return arg;
     }
@@ -107,12 +93,25 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
+    public String getSymbol() {
+        return "sum";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public String getSymbol() {
-        return "sum";
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG256);
+        columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 }

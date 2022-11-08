@@ -29,7 +29,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 
 public class IntTypeConstant extends IntFunction implements TypeConstant {
     public static final IntTypeConstant INSTANCE = new IntTypeConstant();

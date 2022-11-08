@@ -66,6 +66,11 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            return arg.getInt(rec);
+        }
+
+        @Override
         public CharSequence getSymbol(Record rec) {
             return arg.getSymbol(rec);
         }
@@ -73,26 +78,6 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbolB(Record rec) {
             return arg.getSymbolB(rec);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(arg).put("::symbol");
-        }
-
-        @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbolKey == 1 ? "true" : "false";
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return arg.getInt(rec);
         }
 
         @Override
@@ -104,6 +89,21 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         public @Nullable SymbolTable newSymbolTable() {
             // this is an entity function
             return this;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg).put("::symbol");
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbolKey == 1 ? "true" : "false";
         }
     }
 }

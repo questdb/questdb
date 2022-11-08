@@ -36,11 +36,11 @@ import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
-    protected final Function filter;
     protected final int columnIndex;
+    protected final IntList columnIndexes;
+    protected final Function filter;
     protected final Function symbolFunc;
     private AbstractDataFrameRecordCursor cursor;
-    protected final IntList columnIndexes;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -55,6 +55,25 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         this.symbolFunc = symbolFunc;
         this.filter = filter;
         this.columnIndexes = columnIndexes;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.optAttr("filter", filter);
+        sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolFunc);
+        sink.child(dataFrameCursorFactory);
+    }
+
+    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
+        final CharSequence symbol = symbolFunc.getStr(null);
+        int symbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            dataFrameCursor.close();
+            return true;
+        }
+
+        this.cursor = createDataFrameCursorFor(symbolKey);
+        return false;
     }
 
     @Override
@@ -80,24 +99,5 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         }
         cursor.of(dataFrameCursor, executionContext);
         return cursor;
-    }
-
-    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStr(null);
-        int symbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            dataFrameCursor.close();
-            return true;
-        }
-
-        this.cursor = createDataFrameCursorFor(symbolKey);
-        return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.optAttr("filter", filter);
-        sink.attr("symbolFilter").putColumnName(columnIndex).put('=').put(symbolFunc);
-        sink.child(dataFrameCursorFactory);
     }
 }

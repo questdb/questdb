@@ -34,14 +34,17 @@ import io.questdb.griffin.PlanSink;
 public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant {
     private final static GeoHashTypeConstant[] INSTANCES = new GeoHashTypeConstant[ColumnType.GEO_HASH_MAX_BITS_LENGTH];
 
-    @Override
-    public byte getGeoByte(Record rec) {
-        return GeoHashes.BYTE_NULL;
+    private GeoHashTypeConstant(int typep) {
+        super(typep);
+    }
+
+    public static GeoHashTypeConstant getInstanceByPrecision(int bitPrecision) {
+        return INSTANCES[bitPrecision - 1];
     }
 
     @Override
-    public short getGeoShort(Record rec) {
-        return GeoHashes.SHORT_NULL;
+    public byte getGeoByte(Record rec) {
+        return GeoHashes.BYTE_NULL;
     }
 
     @Override
@@ -55,6 +58,11 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
     }
 
     @Override
+    public short getGeoShort(Record rec) {
+        return GeoHashes.SHORT_NULL;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.put("GeoHashType");
     }
@@ -63,13 +71,5 @@ public class GeoHashTypeConstant extends GeoByteFunction implements TypeConstant
         for (int i = 0; i < ColumnType.GEO_HASH_MAX_BITS_LENGTH; i++) {
             INSTANCES[i] = new GeoHashTypeConstant(ColumnType.getGeoHashTypeWithBits(i + 1));
         }
-    }
-
-    public static GeoHashTypeConstant getInstanceByPrecision(int bitPrecision) {
-        return INSTANCES[bitPrecision - 1];
-    }
-
-    private GeoHashTypeConstant(int typep) {
-        super(typep);
     }
 }

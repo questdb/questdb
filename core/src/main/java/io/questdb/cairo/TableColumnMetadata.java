@@ -30,15 +30,15 @@ import io.questdb.griffin.Plannable;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata implements Plannable {
-    private final int writerIndex;
     private final long hash;
-    private final boolean symbolTableStatic;
     @Nullable
     private final RecordMetadata metadata;
-    private int type;
-    private String name;
+    private final boolean symbolTableStatic;
+    private final int writerIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
+    private String name;
+    private int type;
 
     public TableColumnMetadata(String name, long hash, int type) {
         this(name, hash, type, null);
@@ -91,8 +91,29 @@ public class TableColumnMetadata implements Plannable {
         return indexValueBlockCapacity;
     }
 
+    @Nullable
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public int getType() {
+        return type;
+    }
+
     public int getWriterIndex() {
         return writerIndex;
+    }
+
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
     }
 
     public void markDeleted() {
@@ -103,33 +124,12 @@ public class TableColumnMetadata implements Plannable {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
 
-    @Nullable
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public int getType() {
-        return type;
-    }
-
-    public boolean isIndexed() {
-        return indexed;
-    }
-
     public void setIndexed(boolean value) {
         indexed = value;
     }
 
-    public boolean isSymbolTableStatic() {
-        return symbolTableStatic;
+    public void setName(String name) {
+        this.name = name;
     }
 
     @Override

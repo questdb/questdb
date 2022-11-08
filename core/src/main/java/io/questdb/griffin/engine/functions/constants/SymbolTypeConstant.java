@@ -35,11 +35,6 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
     public static final SymbolTypeConstant INSTANCE = new SymbolTypeConstant();
 
     @Override
-    public boolean isSymbolTableStatic() {
-        return false;
-    }
-
-    @Override
     public int getInt(Record rec) {
         return SymbolTable.VALUE_IS_NULL;
     }
@@ -55,17 +50,22 @@ public class SymbolTypeConstant extends SymbolFunction implements TypeConstant {
     }
 
     @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.put("SymbolType");
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
+    public CharSequence valueBOf(int key) {
         return null;
     }
 
     @Override
-    public CharSequence valueBOf(int key) {
+    public CharSequence valueOf(int symbolKey) {
         return null;
     }
 }

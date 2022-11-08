@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.ObjList;
 
 class ShortCaseFunction extends ShortFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public ShortCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

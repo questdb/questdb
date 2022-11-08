@@ -44,60 +44,54 @@ import static io.questdb.griffin.SqlKeywords.isAndKeyword;
  */
 public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
-    public static final int ORDER_DIRECTION_ASCENDING = 0;
-    public static final int ORDER_DIRECTION_DESCENDING = 1;
-    public static final String NO_ROWID_MARKER = "*!*";
-
-    public static final int JOIN_INNER = 1;
-    public static final int JOIN_OUTER = 2;
-    public static final int JOIN_CROSS = 3;
     public static final int JOIN_ASOF = 4;
-    public static final int JOIN_SPLICE = 5;
+    public static final int JOIN_CROSS = 3;
+    public static final int JOIN_INNER = 1;
     public static final int JOIN_LT = 6;
     public static final int JOIN_ONE = 7;
     public static final int JOIN_MAX = JOIN_ONE;
-
-    public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
-
-    public static final int SELECT_MODEL_NONE = 0;
-    public static final int SELECT_MODEL_CHOOSE = 1;
-    public static final int SELECT_MODEL_VIRTUAL = 2;
-    public static final int SELECT_MODEL_ANALYTIC = 3;
-    public static final int SELECT_MODEL_GROUP_BY = 4;
-    public static final int SELECT_MODEL_DISTINCT = 5;
-    public static final int SELECT_MODEL_CURSOR = 6;
-
-    //types of set operations between this and union model  
-    public static final int SET_OPERATION_UNION_ALL = 0;
-    public static final int SET_OPERATION_UNION = 1;
-    public static final int SET_OPERATION_EXCEPT = 2;
-    public static final int SET_OPERATION_INTERSECT = 3;
-
-    public static final int LATEST_BY_NONE = 0;
+    public static final int JOIN_OUTER = 2;
+    public static final int JOIN_SPLICE = 5;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
-
+    public static final int LATEST_BY_NONE = 0;
+    public static final String NO_ROWID_MARKER = "*!*";
+    public static final int ORDER_DIRECTION_ASCENDING = 0;
+    public static final int ORDER_DIRECTION_DESCENDING = 1;
+    public static final int SELECT_MODEL_ANALYTIC = 3;
+    public static final int SELECT_MODEL_CHOOSE = 1;
+    public static final int SELECT_MODEL_CURSOR = 6;
+    public static final int SELECT_MODEL_DISTINCT = 5;
+    public static final int SELECT_MODEL_GROUP_BY = 4;
+    public static final int SELECT_MODEL_NONE = 0;
+    public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SET_OPERATION_EXCEPT = 2;
+    public static final int SET_OPERATION_INTERSECT = 3;
+    public static final int SET_OPERATION_UNION = 1;
+    //types of set operations between this and union model
+    public static final int SET_OPERATION_UNION_ALL = 0;
+    public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     private static final ObjList<String> modelTypeName = new ObjList<>();
-    private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
-    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
-    private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
-    private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<CharSequence> bottomUpColumnNames = new ObjList<>();
-    private final ObjList<QueryModel> joinModels = new ObjList<>();
-    private final ObjList<ExpressionNode> orderBy = new ObjList<>();
-    //position of the order by clause token
-    private int orderByPosition;
-    private final ObjList<ExpressionNode> groupBy = new ObjList<>();
-    private final IntList orderByDirection = new IntList();
+    private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
+    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
+    private final ObjList<ExpressionNode> groupBy = new ObjList<>();
+    private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
+    private final ObjList<QueryModel> joinModels = new ObjList<>();
+    private final ObjList<ExpressionNode> latestBy = new ObjList<>();
+    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>();
+    private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
+    private final IntList orderByDirection = new IntList();
+    private final IntList orderByDirectionAdvice = new IntList();
+    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
-    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
-    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
-    private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
-
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
@@ -105,64 +99,63 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConstants = new IntHashSet();
-    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
-    private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
-    private final ObjList<ExpressionNode> latestBy = new ObjList<>();
-    private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
-    private final IntList orderByDirectionAdvice = new IntList();
-    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
+    private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
-    private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
-    private ExpressionNode sampleByTimezoneName = null;
-    private ExpressionNode sampleByOffset = null;
-    private int latestByType = LATEST_BY_NONE;
-    private ExpressionNode whereClause;
+    private final IntList updateTableColumnTypes = new IntList();
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    private ExpressionNode alias;
+    private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
-    private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
-    private QueryModel nestedModel;
-    private ExpressionNode tableName;
-    private long tableVersion = -1;
-    private Function tableNameFunction;
-    private ExpressionNode alias;
-    private ExpressionNode timestamp;
-    private ExpressionNode sampleBy;
-    private ExpressionNode sampleByUnit;
     private JoinContext context;
-    private ExpressionNode joinCriteria;
-    private int joinType = JOIN_INNER;
-    private int joinKeywordPosition;
-    private IntList orderedJoinModels = orderedJoinModels2;
-    private ExpressionNode limitLo;
-    private ExpressionNode limitHi;
-    //position of the limit clause token
-    private int limitPosition;
-    private ExpressionNode limitAdviceLo;
-    private ExpressionNode limitAdviceHi;
+    private boolean distinct = false;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
-    private int selectModelType = SELECT_MODEL_NONE;
-    private boolean nestedModelIsSubQuery = false;
-    private boolean distinct = false;
-    private QueryModel unionModel;
-    private int setOperationType;
-    private int modelPosition = 0;
-    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-    private int tableId = -1;
     private boolean isUpdateModel;
+    private ExpressionNode joinCriteria;
+    private int joinKeywordPosition;
+    private int joinType = JOIN_INNER;
+    private int latestByType = LATEST_BY_NONE;
+    private ExpressionNode limitAdviceHi;
+    private ExpressionNode limitAdviceLo;
+    private ExpressionNode limitHi;
+    private ExpressionNode limitLo;
+    //position of the limit clause token
+    private int limitPosition;
+    private int modelPosition = 0;
     private int modelType = ExecutionModel.QUERY;
+    private QueryModel nestedModel;
+    private boolean nestedModelIsSubQuery = false;
+    private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+    //position of the order by clause token
+    private int orderByPosition;
+    private IntList orderedJoinModels = orderedJoinModels2;
+    private ExpressionNode postJoinWhereClause;
+    private ExpressionNode sampleBy;
+    private ExpressionNode sampleByOffset = null;
+    private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByUnit;
+    private int selectModelType = SELECT_MODEL_NONE;
+    private int setOperationType;
+    private int tableId = -1;
+    private ExpressionNode tableName;
+    private Function tableNameFunction;
+    private long tableVersion = -1;
+    private ExpressionNode timestamp;
+    private QueryModel unionModel;
     private QueryModel updateTableModel;
     private String updateTableName;
-    private boolean artificialStar;
+    private ExpressionNode whereClause;
 
     private QueryModel() {
         joinModels.add(this);
@@ -460,6 +453,104 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableVersion = updateTableModel.tableVersion;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        QueryModel that = (QueryModel) o;
+        // joinModels always contain this as the first element, so we need to compare them manually.
+        if (joinModels.size() != that.joinModels.size()) {
+            return false;
+        }
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {
+                return false;
+            }
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {
+            return false;
+        }
+        Iterator<ExpressionNode> i1 = sqlNodeStack.iterator();
+        Iterator<ExpressionNode> i2 = that.sqlNodeStack.iterator();
+        while (i1.hasNext() && i2.hasNext()) {
+            ExpressionNode n1 = i1.next();
+            ExpressionNode n2 = i2.next();
+            if (!Objects.equals(n1, n2)) {
+                return false;
+            }
+        }
+        return orderByPosition == that.orderByPosition
+                && latestByType == that.latestByType
+                && tableVersion == that.tableVersion
+                && joinType == that.joinType
+                && joinKeywordPosition == that.joinKeywordPosition
+                && limitPosition == that.limitPosition
+                && isLimitImplemented == that.isLimitImplemented
+                && isSelectTranslation == that.isSelectTranslation
+                && selectModelType == that.selectModelType
+                && nestedModelIsSubQuery == that.nestedModelIsSubQuery
+                && distinct == that.distinct
+                && setOperationType == that.setOperationType
+                && modelPosition == that.modelPosition
+                && orderByAdviceMnemonic == that.orderByAdviceMnemonic
+                && tableId == that.tableId
+                && isUpdateModel == that.isUpdateModel
+                && modelType == that.modelType
+                && artificialStar == that.artificialStar
+                && Objects.equals(bottomUpColumns, that.bottomUpColumns)
+                && Objects.equals(topDownNameSet, that.topDownNameSet)
+                && Objects.equals(topDownColumns, that.topDownColumns)
+                && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
+                && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
+                && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
+                && Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)
+                && Objects.equals(orderBy, that.orderBy)
+                && Objects.equals(groupBy, that.groupBy)
+                && Objects.equals(orderByDirection, that.orderByDirection)
+                && Objects.equals(dependencies, that.dependencies)
+                && Objects.equals(orderedJoinModels1, that.orderedJoinModels1)
+                && Objects.equals(orderedJoinModels2, that.orderedJoinModels2)
+                && Objects.equals(columnAliasIndexes, that.columnAliasIndexes)
+                && Objects.equals(modelAliasIndexes, that.modelAliasIndexes)
+                && Objects.equals(expressionModels, that.expressionModels)
+                && Objects.equals(parsedWhere, that.parsedWhere)
+                && Objects.equals(parsedWhereConstants, that.parsedWhereConstants)
+                && Objects.equals(orderHash, that.orderHash)
+                && Objects.equals(joinColumns, that.joinColumns)
+                && Objects.equals(sampleByFill, that.sampleByFill)
+                && Objects.equals(latestBy, that.latestBy)
+                && Objects.equals(orderByAdvice, that.orderByAdvice)
+                && Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)
+                && Objects.equals(withClauseModel, that.withClauseModel)
+                && Objects.equals(updateSetColumns, that.updateSetColumns)
+                && Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)
+                && Objects.equals(updateTableColumnNames, that.updateTableColumnNames)
+                && Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)
+                && Objects.equals(sampleByOffset, that.sampleByOffset)
+                && Objects.equals(whereClause, that.whereClause)
+                && Objects.equals(backupWhereClause, that.backupWhereClause)
+                && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
+                && Objects.equals(constWhereClause, that.constWhereClause)
+                && Objects.equals(nestedModel, that.nestedModel)
+                && Objects.equals(tableName, that.tableName)
+                && Objects.equals(tableNameFunction, that.tableNameFunction)
+                && Objects.equals(alias, that.alias)
+                && Objects.equals(timestamp, that.timestamp)
+                && Objects.equals(sampleBy, that.sampleBy)
+                && Objects.equals(sampleByUnit, that.sampleByUnit)
+                && Objects.equals(context, that.context)
+                && Objects.equals(joinCriteria, that.joinCriteria)
+                && Objects.equals(orderedJoinModels, that.orderedJoinModels)
+                && Objects.equals(limitLo, that.limitLo)
+                && Objects.equals(limitHi, that.limitHi)
+                && Objects.equals(limitAdviceLo, that.limitAdviceLo)
+                && Objects.equals(limitAdviceHi, that.limitAdviceHi)
+                && Objects.equals(unionModel, that.unionModel)
+                && Objects.equals(updateTableModel, that.updateTableModel)
+                && Objects.equals(updateTableName, that.updateTableName);
+    }
+
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -472,23 +563,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getAlias() {
         return alias;
-    }
-
-    public int getLimitPosition() {
-        return limitPosition;
-    }
-
-    public int getOrderByPosition() {
-        return orderByPosition;
-    }
-
-    @Override
-    public QueryModel getQueryModel() {
-        return this;
-    }
-
-    public void setAlias(ExpressionNode alias) {
-        this.alias = alias;
     }
 
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
@@ -523,16 +597,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return constWhereClause;
     }
 
-    public void setConstWhereClause(ExpressionNode constWhereClause) {
-        this.constWhereClause = constWhereClause;
-    }
-
     public JoinContext getContext() {
         return context;
-    }
-
-    public void setContext(JoinContext context) {
-        this.context = context;
     }
 
     public IntHashSet getDependencies() {
@@ -555,16 +621,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return joinCriteria;
     }
 
-    public void setJoinCriteria(ExpressionNode joinCriteria) {
-        this.joinCriteria = joinCriteria;
-    }
-
     public int getJoinKeywordPosition() {
         return joinKeywordPosition;
-    }
-
-    public void setJoinKeywordPosition(int position) {
-        this.joinKeywordPosition = position;
     }
 
     public ObjList<QueryModel> getJoinModels() {
@@ -575,20 +633,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return joinType;
     }
 
-    public void setJoinType(int joinType) {
-        this.joinType = joinType;
-    }
-
     public ObjList<ExpressionNode> getLatestBy() {
         return latestBy;
     }
 
     public int getLatestByType() {
         return latestByType;
-    }
-
-    public void setLatestByType(int latestByType) {
-        this.latestByType = latestByType;
     }
 
     public ExpressionNode getLimitAdviceHi() {
@@ -607,6 +657,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return limitLo;
     }
 
+    public int getLimitPosition() {
+        return limitPosition;
+    }
+
     public int getModelAliasIndex(CharSequence column, int start, int end) {
         int index = modelAliasIndexes.keyIndex(column, start, end);
         if (index < 0) {
@@ -623,21 +677,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return modelPosition;
     }
 
-    public void setLimitPosition(int limitPosition) {
-        this.limitPosition = limitPosition;
-    }
-
-    public void setModelPosition(int modelPosition) {
-        this.modelPosition = modelPosition;
-    }
-
     @Override
     public int getModelType() {
         return modelType;
-    }
-
-    public void setModelType(int modelType) {
-        this.modelType = modelType;
     }
 
     public CharSequence getName() {
@@ -656,10 +698,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return nestedModel;
     }
 
-    public void setNestedModel(QueryModel nestedModel) {
-        this.nestedModel = nestedModel;
-    }
-
     public ObjList<ExpressionNode> getOrderBy() {
         return orderBy;
     }
@@ -672,16 +710,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderByAdviceMnemonic;
     }
 
-    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
-        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
-    }
-
     public IntList getOrderByDirection() {
         return orderByDirection;
     }
 
     public IntList getOrderByDirectionAdvice() {
         return orderByDirectionAdvice;
+    }
+
+    public int getOrderByPosition() {
+        return orderByPosition;
     }
 
     public LowerCaseCharSequenceIntHashMap getOrderHash() {
@@ -692,15 +730,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return orderedJoinModels;
     }
 
-    public void setOrderByPosition(int orderByPosition) {
-        this.orderByPosition = orderByPosition;
-    }
-
-    public void setOrderedJoinModels(IntList that) {
-        assert that == orderedJoinModels1 || that == orderedJoinModels2;
-        this.orderedJoinModels = that;
-    }
-
     public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -709,16 +738,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return postJoinWhereClause;
     }
 
-    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
-        this.postJoinWhereClause = postJoinWhereClause;
+    @Override
+    public QueryModel getQueryModel() {
+        return this;
     }
 
     public ExpressionNode getSampleBy() {
         return sampleBy;
-    }
-
-    public void setSampleBy(ExpressionNode sampleBy) {
-        this.sampleBy = sampleBy;
     }
 
     public ObjList<ExpressionNode> getSampleByFill() {
@@ -729,16 +755,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sampleByOffset;
     }
 
-    public void setSampleByOffset(ExpressionNode sampleByOffset) {
-        this.sampleByOffset = sampleByOffset;
-    }
-
     public ExpressionNode getSampleByTimezoneName() {
         return sampleByTimezoneName;
-    }
-
-    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
-        this.sampleByTimezoneName = sampleByTimezoneName;
     }
 
     public ExpressionNode getSampleByUnit() {
@@ -749,28 +767,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return selectModelType;
     }
 
-    public void setSelectModelType(int selectModelType) {
-        this.selectModelType = selectModelType;
-    }
-
     public int getSetOperationType() {
         return setOperationType;
-    }
-
-    public void setSetOperationType(int setOperationType) {
-        this.setOperationType = setOperationType;
     }
 
     public int getTableId() {
         return tableId;
     }
 
-    public void setTableId(int id) {
-        this.tableId = id;
-    }
-
     public ExpressionNode getTableName() {
         return tableName;
+    }
+
+    public Function getTableNameFunction() {
+        return tableNameFunction;
+    }
+
+    public long getTableVersion() {
+        return tableVersion;
     }
 
     @Override
@@ -778,32 +792,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableName.token;
     }
 
-    public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
-    }
-
-    public Function getTableNameFunction() {
-        return tableNameFunction;
-    }
-
-    public void setTableNameFunction(Function function) {
-        this.tableNameFunction = function;
-    }
-
-    public long getTableVersion() {
-        return tableVersion;
-    }
-
-    public void setTableVersion(long tableVersion) {
-        this.tableVersion = tableVersion;
-    }
-
     public ExpressionNode getTimestamp() {
         return timestamp;
-    }
-
-    public void setTimestamp(ExpressionNode timestamp) {
-        this.timestamp = timestamp;
     }
 
     public ObjList<QueryColumn> getTopDownColumns() {
@@ -812,10 +802,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public QueryModel getUnionModel() {
         return unionModel;
-    }
-
-    public void setUnionModel(QueryModel unionModel) {
-        this.unionModel = unionModel;
     }
 
     public ObjList<ExpressionNode> getUpdateExpressions() {
@@ -834,60 +820,71 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return updateTableName;
     }
 
-    public void setUpdateTableName(String tableName) {
-        this.updateTableName = tableName;
-    }
-
     public ExpressionNode getWhereClause() {
         return whereClause;
-    }
-
-    public void setWhereClause(ExpressionNode whereClause) {
-        this.whereClause = whereClause;
     }
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
     }
 
-    public boolean isArtificialStar() {
-        return artificialStar;
+    @Override
+    public int hashCode() {
+        int hash = super.hashCode();
+        // joinModels always contain this as the first element, so we need to hash them manually.
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));
+        }
+        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
+        for (ExpressionNode node : sqlNodeStack) {
+            hash = 31 * hash + Objects.hash(node);
+        }
+        return 31 * hash + Objects.hash(
+                bottomUpColumns, topDownNameSet, topDownColumns,
+                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
+                bottomUpColumnNames, orderBy,
+                orderByPosition, groupBy, orderByDirection,
+                dependencies, orderedJoinModels1, orderedJoinModels2,
+                columnAliasIndexes, modelAliasIndexes, expressionModels,
+                parsedWhere, parsedWhereConstants,
+                orderHash, joinColumns, sampleByFill,
+                latestBy, orderByAdvice, orderByDirectionAdvice,
+                withClauseModel, updateSetColumns, updateTableColumnTypes,
+                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
+                latestByType, whereClause, backupWhereClause,
+                postJoinWhereClause, constWhereClause, nestedModel,
+                tableName, tableVersion, tableNameFunction,
+                alias, timestamp, sampleBy,
+                sampleByUnit, context, joinCriteria,
+                joinType, joinKeywordPosition, orderedJoinModels,
+                limitLo, limitHi, limitPosition,
+                limitAdviceLo, limitAdviceHi, isLimitImplemented,
+                isSelectTranslation, selectModelType, nestedModelIsSubQuery,
+                distinct, unionModel, setOperationType,
+                modelPosition, orderByAdviceMnemonic, tableId,
+                isUpdateModel, modelType, updateTableModel,
+                updateTableName, artificialStar
+        );
     }
 
-    public void setArtificialStar(boolean artificialStar) {
-        this.artificialStar = artificialStar;
+    public boolean isArtificialStar() {
+        return artificialStar;
     }
 
     public boolean isDistinct() {
         return distinct;
     }
 
-    public void setDistinct(boolean distinct) {
-        this.distinct = distinct;
-    }
-
     public boolean isLimitImplemented() {
         return isLimitImplemented;
-    }
-
-    public void setLimitImplemented(boolean limitImplemented) {
-        isLimitImplemented = limitImplemented;
     }
 
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
 
-    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
-        this.nestedModelIsSubQuery = nestedModelIsSubQuery;
-    }
-
     public boolean isSelectTranslation() {
         return isSelectTranslation;
-    }
-
-    public void setSelectTranslation(boolean isSelectTranslation) {
-        this.isSelectTranslation = isSelectTranslation;
     }
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
@@ -980,8 +977,44 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
+    public void setAlias(ExpressionNode alias) {
+        this.alias = alias;
+    }
+
+    public void setArtificialStar(boolean artificialStar) {
+        this.artificialStar = artificialStar;
+    }
+
+    public void setConstWhereClause(ExpressionNode constWhereClause) {
+        this.constWhereClause = constWhereClause;
+    }
+
+    public void setContext(JoinContext context) {
+        this.context = context;
+    }
+
+    public void setDistinct(boolean distinct) {
+        this.distinct = distinct;
+    }
+
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
+    }
+
+    public void setJoinCriteria(ExpressionNode joinCriteria) {
+        this.joinCriteria = joinCriteria;
+    }
+
+    public void setJoinKeywordPosition(int position) {
+        this.joinKeywordPosition = position;
+    }
+
+    public void setJoinType(int joinType) {
+        this.joinType = joinType;
+    }
+
+    public void setLatestByType(int latestByType) {
+        this.latestByType = latestByType;
     }
 
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
@@ -994,9 +1027,106 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitAdviceHi = hi;
     }
 
+    public void setLimitImplemented(boolean limitImplemented) {
+        isLimitImplemented = limitImplemented;
+    }
+
+    public void setLimitPosition(int limitPosition) {
+        this.limitPosition = limitPosition;
+    }
+
+    public void setModelPosition(int modelPosition) {
+        this.modelPosition = modelPosition;
+    }
+
+    public void setModelType(int modelType) {
+        this.modelType = modelType;
+    }
+
+    public void setNestedModel(QueryModel nestedModel) {
+        this.nestedModel = nestedModel;
+    }
+
+    public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
+        this.nestedModelIsSubQuery = nestedModelIsSubQuery;
+    }
+
+    public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
+        this.orderByAdviceMnemonic = orderByAdviceMnemonic;
+    }
+
+    public void setOrderByPosition(int orderByPosition) {
+        this.orderByPosition = orderByPosition;
+    }
+
+    public void setOrderedJoinModels(IntList that) {
+        assert that == orderedJoinModels1 || that == orderedJoinModels2;
+        this.orderedJoinModels = that;
+    }
+
+    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
+        this.postJoinWhereClause = postJoinWhereClause;
+    }
+
+    public void setSampleBy(ExpressionNode sampleBy) {
+        this.sampleBy = sampleBy;
+    }
+
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
         this.sampleBy = sampleBy;
         this.sampleByUnit = sampleByUnit;
+    }
+
+    public void setSampleByOffset(ExpressionNode sampleByOffset) {
+        this.sampleByOffset = sampleByOffset;
+    }
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    public void setSelectModelType(int selectModelType) {
+        this.selectModelType = selectModelType;
+    }
+
+    public void setSelectTranslation(boolean isSelectTranslation) {
+        this.isSelectTranslation = isSelectTranslation;
+    }
+
+    public void setSetOperationType(int setOperationType) {
+        this.setOperationType = setOperationType;
+    }
+
+    public void setTableId(int id) {
+        this.tableId = id;
+    }
+
+    public void setTableName(ExpressionNode tableName) {
+        this.tableName = tableName;
+    }
+
+    public void setTableNameFunction(Function function) {
+        this.tableNameFunction = function;
+    }
+
+    public void setTableVersion(long tableVersion) {
+        this.tableVersion = tableVersion;
+    }
+
+    public void setTimestamp(ExpressionNode timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    public void setUnionModel(QueryModel unionModel) {
+        this.unionModel = unionModel;
+    }
+
+    public void setUpdateTableName(String tableName) {
+        this.updateTableName = tableName;
+    }
+
+    public void setWhereClause(ExpressionNode whereClause) {
+        this.whereClause = whereClause;
     }
 
     @Override
@@ -1327,143 +1457,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             getNestedModel().toSink(sink);
             sink.put(")");
         }
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryModel that = (QueryModel) o;
-        // joinModels always contain this as the first element, so we need to compare them manually.
-        if (joinModels.size() != that.joinModels.size()) {
-            return false;
-        }
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            if (!joinModels.getQuick(i).equals(that.joinModels.getQuick(i))) {
-                return false;
-            }
-        }
-        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
-        if (sqlNodeStack.size() != that.sqlNodeStack.size()) {
-            return false;
-        }
-        Iterator<ExpressionNode> i1 = sqlNodeStack.iterator();
-        Iterator<ExpressionNode> i2 = that.sqlNodeStack.iterator();
-        while (i1.hasNext() && i2.hasNext()) {
-            ExpressionNode n1 = i1.next();
-            ExpressionNode n2 = i2.next();
-            if (!Objects.equals(n1, n2)) {
-                return false;
-            }
-        }
-        return orderByPosition == that.orderByPosition
-                && latestByType == that.latestByType
-                && tableVersion == that.tableVersion
-                && joinType == that.joinType
-                && joinKeywordPosition == that.joinKeywordPosition
-                && limitPosition == that.limitPosition
-                && isLimitImplemented == that.isLimitImplemented
-                && isSelectTranslation == that.isSelectTranslation
-                && selectModelType == that.selectModelType
-                && nestedModelIsSubQuery == that.nestedModelIsSubQuery
-                && distinct == that.distinct
-                && setOperationType == that.setOperationType
-                && modelPosition == that.modelPosition
-                && orderByAdviceMnemonic == that.orderByAdviceMnemonic
-                && tableId == that.tableId
-                && isUpdateModel == that.isUpdateModel
-                && modelType == that.modelType
-                && artificialStar == that.artificialStar
-                && Objects.equals(bottomUpColumns, that.bottomUpColumns)
-                && Objects.equals(topDownNameSet, that.topDownNameSet)
-                && Objects.equals(topDownColumns, that.topDownColumns)
-                && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
-                && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
-                && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
-                && Objects.equals(bottomUpColumnNames, that.bottomUpColumnNames)
-                && Objects.equals(orderBy, that.orderBy)
-                && Objects.equals(groupBy, that.groupBy)
-                && Objects.equals(orderByDirection, that.orderByDirection)
-                && Objects.equals(dependencies, that.dependencies)
-                && Objects.equals(orderedJoinModels1, that.orderedJoinModels1)
-                && Objects.equals(orderedJoinModels2, that.orderedJoinModels2)
-                && Objects.equals(columnAliasIndexes, that.columnAliasIndexes)
-                && Objects.equals(modelAliasIndexes, that.modelAliasIndexes)
-                && Objects.equals(expressionModels, that.expressionModels)
-                && Objects.equals(parsedWhere, that.parsedWhere)
-                && Objects.equals(parsedWhereConstants, that.parsedWhereConstants)
-                && Objects.equals(orderHash, that.orderHash)
-                && Objects.equals(joinColumns, that.joinColumns)
-                && Objects.equals(sampleByFill, that.sampleByFill)
-                && Objects.equals(latestBy, that.latestBy)
-                && Objects.equals(orderByAdvice, that.orderByAdvice)
-                && Objects.equals(orderByDirectionAdvice, that.orderByDirectionAdvice)
-                && Objects.equals(withClauseModel, that.withClauseModel)
-                && Objects.equals(updateSetColumns, that.updateSetColumns)
-                && Objects.equals(updateTableColumnTypes, that.updateTableColumnTypes)
-                && Objects.equals(updateTableColumnNames, that.updateTableColumnNames)
-                && Objects.equals(sampleByTimezoneName, that.sampleByTimezoneName)
-                && Objects.equals(sampleByOffset, that.sampleByOffset)
-                && Objects.equals(whereClause, that.whereClause)
-                && Objects.equals(backupWhereClause, that.backupWhereClause)
-                && Objects.equals(postJoinWhereClause, that.postJoinWhereClause)
-                && Objects.equals(constWhereClause, that.constWhereClause)
-                && Objects.equals(nestedModel, that.nestedModel)
-                && Objects.equals(tableName, that.tableName)
-                && Objects.equals(tableNameFunction, that.tableNameFunction)
-                && Objects.equals(alias, that.alias)
-                && Objects.equals(timestamp, that.timestamp)
-                && Objects.equals(sampleBy, that.sampleBy)
-                && Objects.equals(sampleByUnit, that.sampleByUnit)
-                && Objects.equals(context, that.context)
-                && Objects.equals(joinCriteria, that.joinCriteria)
-                && Objects.equals(orderedJoinModels, that.orderedJoinModels)
-                && Objects.equals(limitLo, that.limitLo)
-                && Objects.equals(limitHi, that.limitHi)
-                && Objects.equals(limitAdviceLo, that.limitAdviceLo)
-                && Objects.equals(limitAdviceHi, that.limitAdviceHi)
-                && Objects.equals(unionModel, that.unionModel)
-                && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableName, that.updateTableName);
-    }
-
-    @Override
-    public int hashCode() {
-        int hash = super.hashCode();
-        // joinModels always contain this as the first element, so we need to hash them manually.
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            hash = 31 * hash + Objects.hash(joinModels.getQuick(i));
-        }
-        // ArrayDeque doesn't implement equals and hashCode, so we deal with sqlNodeStack separately.
-        for (ExpressionNode node : sqlNodeStack) {
-            hash = 31 * hash + Objects.hash(node);
-        }
-        return 31 * hash + Objects.hash(
-                bottomUpColumns, topDownNameSet, topDownColumns,
-                aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
-                bottomUpColumnNames, orderBy,
-                orderByPosition, groupBy, orderByDirection,
-                dependencies, orderedJoinModels1, orderedJoinModels2,
-                columnAliasIndexes, modelAliasIndexes, expressionModels,
-                parsedWhere, parsedWhereConstants,
-                orderHash, joinColumns, sampleByFill,
-                latestBy, orderByAdvice, orderByDirectionAdvice,
-                withClauseModel, updateSetColumns, updateTableColumnTypes,
-                updateTableColumnNames, sampleByTimezoneName, sampleByOffset,
-                latestByType, whereClause, backupWhereClause,
-                postJoinWhereClause, constWhereClause, nestedModel,
-                tableName, tableVersion, tableNameFunction,
-                alias, timestamp, sampleBy,
-                sampleByUnit, context, joinCriteria,
-                joinType, joinKeywordPosition, orderedJoinModels,
-                limitLo, limitHi, limitPosition,
-                limitAdviceLo, limitAdviceHi, isLimitImplemented,
-                isSelectTranslation, selectModelType, nestedModelIsSubQuery,
-                distinct, unionModel, setOperationType,
-                modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, modelType, updateTableModel,
-                updateTableName, artificialStar
-        );
     }
 
     public static final class QueryModelFactory implements ObjectFactory<QueryModel> {

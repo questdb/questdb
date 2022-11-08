@@ -26,11 +26,7 @@ package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.griffin.PlanSink;
 
-/**
- *
- */
 public interface CaseFunction extends MultiArgFunction {
     @Override
     default void toPlan(PlanSink sink) {

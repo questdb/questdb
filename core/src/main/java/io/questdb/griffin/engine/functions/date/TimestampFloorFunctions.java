@@ -52,17 +52,17 @@ final class TimestampFloorFunctions {
         }
 
         @Override
+        public String getSymbol() {
+            return "timestamp_floor";
+        }
+
+        @Override
         final public long getTimestamp(Record rec) {
             long micros = arg.getTimestamp(rec);
             return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
         }
 
         abstract protected long floor(long timestamp);
-
-        @Override
-        public String getSymbol() {
-            return "timestamp_floor";
-        }
     }
 
     static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {

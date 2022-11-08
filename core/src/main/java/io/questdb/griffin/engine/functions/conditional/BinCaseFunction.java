@@ -31,8 +31,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 
 class BinCaseFunction extends BinFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public BinCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

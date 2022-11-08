@@ -82,14 +82,8 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("DistinctKey");
-        sink.child(baseAggregatorFactory);
-    }
-
-    @Override
-    protected void _close() {
-        this.baseAggregatorFactory.close();
+    public RecordCursorFactory getBaseFactory() {
+        return baseAggregatorFactory;
     }
 
     @Override
@@ -98,12 +92,18 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return baseAggregatorFactory;
+    public boolean recordCursorSupportsRandomAccess() {
+        return this.baseAggregatorFactory.recordCursorSupportsRandomAccess();
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return this.baseAggregatorFactory.recordCursorSupportsRandomAccess();
+    public void toPlan(PlanSink sink) {
+        sink.type("DistinctKey");
+        sink.child(baseAggregatorFactory);
+    }
+
+    @Override
+    protected void _close() {
+        this.baseAggregatorFactory.close();
     }
 }

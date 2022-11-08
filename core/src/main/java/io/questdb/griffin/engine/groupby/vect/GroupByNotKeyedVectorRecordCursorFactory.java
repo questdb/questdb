@@ -51,13 +51,13 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
-    private final RecordCursorFactory base;
-    private final ObjList<VectorAggregateFunction> vafList;
-    private final ObjectPool<VectorAggregateEntry> entryPool;
     private final ObjList<VectorAggregateEntry> activeEntries;
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final ObjectPool<VectorAggregateEntry> entryPool;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
+    private final ObjList<VectorAggregateFunction> vafList;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoConfiguration configuration,
@@ -76,9 +76,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(vafList);
-        Misc.free(base);
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
+    }
+
+    @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -180,6 +184,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByNotKeyed");
+        sink.meta("vectorized").val(true);
+        sink.optAttr("groupByFunctions", vafList, true);
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
@@ -200,21 +212,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("GroupByNotKeyed");
-        sink.meta("vectorized").val(true);
-        sink.optAttr("groupByFunctions", vafList, true);
-        sink.child(base);
-    }
-
-    @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return base.getMetadata().getColumnName(idx);
-    }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    protected void _close() {
+        Misc.freeObjList(vafList);
+        Misc.free(base);
     }
 
     private static class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {
@@ -242,13 +242,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
-        public void toTop() {
-            countDown = 1;
+        public long size() {
+            return 1;
         }
 
         @Override
-        public long size() {
-            return 1;
+        public void toTop() {
+            countDown = 1;
         }
 
         private GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor) {

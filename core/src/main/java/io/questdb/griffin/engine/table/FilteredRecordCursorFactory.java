@@ -28,7 +28,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -48,16 +47,8 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Filter");
-        sink.meta("filter").val(filter);
-        sink.child(base);
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
-        filter.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -73,8 +64,8 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
     }
 
     @Override
@@ -88,12 +79,20 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Filter");
+        sink.meta("filter").val(filter);
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return base.hasDescendingOrder();
+    protected void _close() {
+        base.close();
+        filter.close();
     }
 }

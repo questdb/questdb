@@ -79,6 +79,11 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.SHORT);
@@ -92,10 +97,5 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     @Override
     public void setShort(MapValue mapValue, short value) {
         mapValue.putShort(this.valueIndex, value);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

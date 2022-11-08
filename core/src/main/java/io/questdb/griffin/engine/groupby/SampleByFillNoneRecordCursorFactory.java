@@ -84,17 +84,6 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    protected void _close() {
-        cursor.close();
-        super._close();
-    }
-
-    @Override
-    public AbstractNoRecordSampleByCursor getRawCursor() {
-        return cursor;
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -112,9 +101,20 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillNone");
         sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
         sink.child(base);
+    }
+
+    @Override
+    protected void _close() {
+        cursor.close();
+        super._close();
     }
 }

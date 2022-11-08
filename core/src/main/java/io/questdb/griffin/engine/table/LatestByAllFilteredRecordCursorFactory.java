@@ -60,6 +60,11 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllFiltered");
         sink.child((Plannable) cursor);
@@ -70,10 +75,5 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     protected void _close() {
         this.cursor.close();
         super._close();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 }

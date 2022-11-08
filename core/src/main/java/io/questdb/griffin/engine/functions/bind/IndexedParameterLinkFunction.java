@@ -34,7 +34,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
@@ -224,13 +223,13 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         return true;
     }
 
-    private Function getBase() {
-        assert base != null;
-        return base;
-    }
-
     @Override
     public void toPlan(PlanSink sink) {
         sink.put("$").put(variableIndex).put("::").put(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
+    }
+
+    private Function getBase() {
+        assert base != null;
+        return base;
     }
 }

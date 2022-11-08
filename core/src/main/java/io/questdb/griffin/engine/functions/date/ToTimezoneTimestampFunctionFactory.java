@@ -84,6 +84,11 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "to_timezone";
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final long timestampValue = timestamp.getTimestamp(rec);
             try {
@@ -92,11 +97,6 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return timestampValue;
             }
-        }
-
-        @Override
-        public String getSymbol() {
-            return "to_timezone";
         }
     }
 }

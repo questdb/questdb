@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Sinkable;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.griffin.PlanSink;
 
@@ -80,17 +79,20 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         long diff(long a, long b);
     }
 
-    private static class DiffVarVarFunction extends LongFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-        private final LongDiffFunction func;
-        private final char symbol;
+    private static class DateDiffFunc extends LongFunction implements TernaryFunction {
+        final Function center;
+        final Function left;
+        final Function right;
 
-        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func, char symbol) {
+        public DateDiffFunc(Function left, Function center, Function right) {
             this.left = left;
+            this.center = center;
             this.right = right;
-            this.func = func;
-            this.symbol = symbol;
+        }
+
+        @Override
+        public Function getCenter() {
+            return center;
         }
 
         @Override
@@ -99,23 +101,24 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            final char l = left.getChar(rec);
+            final long c = center.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween(l, c, r);
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }
 
         @Override
-        public long getLong(Record rec) {
-            final long l = left.getTimestamp(rec);
-            final long r = right.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return func.diff(l, r);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
-            sink.put("datediff('").put(symbol).put("',").put(left).put(',').put(right).put(')');
+            sink.put("datediff('").put(left).put("',").put(center).put(',').put(right).put(')');
         }
     }
 
@@ -152,15 +155,17 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DateDiffFunc extends LongFunction implements TernaryFunction {
-        final Function left;
-        final Function center;
-        final Function right;
+    private static class DiffVarVarFunction extends LongFunction implements BinaryFunction {
+        private final LongDiffFunction func;
+        private final Function left;
+        private final Function right;
+        private final char symbol;
 
-        public DateDiffFunc(Function left, Function center, Function right) {
+        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func, char symbol) {
             this.left = left;
-            this.center = center;
             this.right = right;
+            this.func = func;
+            this.symbol = symbol;
         }
 
         @Override
@@ -169,8 +174,13 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getCenter() {
-            return center;
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return func.diff(l, r);
         }
 
         @Override
@@ -179,19 +189,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            final char l = left.getChar(rec);
-            final long c = center.getTimestamp(rec);
-            final long r = right.getTimestamp(rec);
-            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return Timestamps.getPeriodBetween(l, c, r);
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
-            sink.put("datediff('").put(left).put("',").put(center).put(',').put(right).put(')');
+            sink.put("datediff('").put(symbol).put("',").put(left).put(',').put(right).put(')');
         }
     }
 

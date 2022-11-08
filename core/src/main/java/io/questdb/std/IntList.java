@@ -91,6 +91,14 @@ public class IntList implements Mutable, Sinkable {
         pos = capacity;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof IntList && equals((IntList) that);
+    }
+
     public void extendAndSet(int index, int value) {
         ensureCapacity0(index + 1);
         if (index >= pos) {
@@ -135,53 +143,6 @@ public class IntList implements Mutable, Sinkable {
             hashCode = 31 * hashCode + (v == NO_ENTRY_VALUE ? 0 : v);
         }
         return hashCode;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
-        for (int i = 0, k = size(); i < k; i++) {
-            if (i > 0) {
-                sink.put(',');
-            }
-            sink.put(get(i));
-        }
-        sink.put(']');
-    }
-
-    public void toSink(CharSink sink, int exceptValue) {
-        sink.put('[');
-        boolean pastFirst = false;
-        for (int i = 0, k = size(); i < k; i++) {
-            if (pastFirst) {
-                sink.put(',');
-            }
-            int val = get(i);
-            if (val == exceptValue) {
-                continue;
-            }
-            sink.put(val);
-            pastFirst = true;
-        }
-        sink.put(']');
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        CharSink b = Misc.getThreadLocalBuilder();
-        toSink(b);
-        return b.toString();
     }
 
     public void increment(int index) {
@@ -256,6 +217,45 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = size(); i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(get(i));
+        }
+        sink.put(']');
+    }
+
+    public void toSink(CharSink sink, int exceptValue) {
+        sink.put('[');
+        boolean pastFirst = false;
+        for (int i = 0, k = size(); i < k; i++) {
+            if (pastFirst) {
+                sink.put(',');
+            }
+            int val = get(i);
+            if (val == exceptValue) {
+                continue;
+            }
+            sink.put(val);
+            pastFirst = true;
+        }
+        sink.put(']');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        CharSink b = Misc.getThreadLocalBuilder();
+        toSink(b);
+        return b.toString();
     }
 
     public void zero(int value) {

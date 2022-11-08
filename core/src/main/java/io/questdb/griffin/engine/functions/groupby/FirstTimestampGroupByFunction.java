@@ -59,6 +59,11 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(this.valueIndex);
     }
@@ -72,10 +77,5 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putTimestamp(this.valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

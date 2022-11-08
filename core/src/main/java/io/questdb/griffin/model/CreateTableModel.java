@@ -182,13 +182,13 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return name.token;
     }
 
-    public ExpressionNode getTimestamp() {
-        return timestamp;
-    }
-
     @Override
     public CharSequence getTargetTableName() {
         return getTableName();
+    }
+
+    public ExpressionNode getTimestamp() {
+        return timestamp;
     }
 
     @Override

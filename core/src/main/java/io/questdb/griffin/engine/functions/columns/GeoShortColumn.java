@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -66,6 +65,11 @@ public class GeoShortColumn extends GeoShortFunction {
         return true;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;
@@ -80,10 +84,5 @@ public class GeoShortColumn extends GeoShortFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 }

@@ -122,13 +122,13 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return strMem.getStr(symbolKey);
+        public CharSequence valueBOf(int symbolKey) {
+            return valueOf(symbolKey);
         }
 
         @Override
-        public CharSequence valueBOf(int symbolKey) {
-            return valueOf(symbolKey);
+        public CharSequence valueOf(int symbolKey) {
+            return strMem.getStr(symbolKey);
         }
 
         private int next() {

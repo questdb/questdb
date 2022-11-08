@@ -126,6 +126,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("replace(").put(value).put(',').put(oldSubStr).put(',').put(newSubStr).put(')');
+        }
+
         private void checkLengthLimit(int length) {
             if (length > maxLength) {
                 throw CairoException.nonCritical()
@@ -133,11 +138,6 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
                         .put(" [maxLength=").put(maxLength)
                         .put(", requiredLength=").put(length).put(']');
             }
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("replace(").put(value).put(',').put(oldSubStr).put(',').put(newSubStr).put(')');
         }
 
         //if result is null then return null; otherwise return sink

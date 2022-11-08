@@ -135,6 +135,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             return sink1.length();
         }
 
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("to_str(").put(arg).put(')');
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getTimestamp(rec);
@@ -148,11 +153,6 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
         private void toSink(long value, CharSink sink) {
             format.format(value, locale, "Z", sink);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("to_str(").put(arg).put(')');
         }
     }
 }

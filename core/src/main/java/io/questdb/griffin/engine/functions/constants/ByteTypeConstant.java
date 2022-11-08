@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.griffin.PlanSink;
 
 public class ByteTypeConstant extends ByteFunction implements TypeConstant {
     public static final ByteTypeConstant INSTANCE = new ByteTypeConstant();

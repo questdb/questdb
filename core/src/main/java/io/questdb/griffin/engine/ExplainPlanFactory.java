@@ -42,15 +42,8 @@ import io.questdb.std.str.CharSink;
 public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA;
-
-    static {
-        METADATA = new GenericRecordMetadata();
-        METADATA.add(new TableColumnMetadata("QUERY PLAN", 1, ColumnType.STRING));
-    }
-
     private final RecordCursorFactory base;
     private final ExplainPlanRecordCursor cursor;
-
     public ExplainPlanFactory(RecordCursorFactory base) {
         super(METADATA);
         this.base = base;
@@ -58,8 +51,9 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        base.close();
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        cursor.of(base, executionContext);
+        return cursor;
     }
 
     @Override
@@ -73,20 +67,66 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base, executionContext);
-        return cursor;
+    protected void _close() {
+        base.close();
+    }
+
+    public class ExplainPlanRecord implements Record {
+        private final PlanSink planSink;
+
+        public ExplainPlanRecord(PlanSink sink) {
+            this.planSink = sink;
+        }
+
+        @Override
+        public CharSequence getStr(int col) {
+            return planSink.getLine(cursor.row);
+        }
+
+        @Override
+        public void getStr(int col, CharSink sink) {
+            sink.put(planSink.getLine(cursor.row));
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStr(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return planSink.getLine(cursor.row).length();
+        }
     }
 
     public class ExplainPlanRecordCursor implements RecordCursor {
-        private final Record record;
         private final PlanSink planSink;
+        private final Record record;
         private int row = 0;
         private int rowCount;
 
         public ExplainPlanRecordCursor() {
             this.planSink = new PlanSink();
             this.record = new ExplainPlanRecord(planSink);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean hasNext() {
+            return row++ < rowCount;
         }
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
@@ -103,65 +143,23 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return row++ < rowCount;
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void toTop() {
-            row = 0;
         }
 
         @Override
         public long size() {
             return rowCount;
         }
+
+        @Override
+        public void toTop() {
+            row = 0;
+        }
     }
 
-    public class ExplainPlanRecord implements Record {
-        private final PlanSink planSink;
-
-        public ExplainPlanRecord(PlanSink sink) {
-            this.planSink = sink;
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            return planSink.getLine(cursor.row);
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
-        }
-
-        @Override
-        public void getStr(int col, CharSink sink) {
-            sink.put(planSink.getLine(cursor.row));
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return planSink.getLine(cursor.row).length();
-        }
+    static {
+        METADATA = new GenericRecordMetadata();
+        METADATA.add(new TableColumnMetadata("QUERY PLAN", 1, ColumnType.STRING));
     }
 }

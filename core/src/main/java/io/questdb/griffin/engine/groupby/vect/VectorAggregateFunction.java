@@ -47,13 +47,13 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void pushValueTypes(ArrayColumnTypes types);
 
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
-    //returns true if wrapUp was fine and false if it failed on memory allocation
-    boolean wrapUp(long pRosti);
-
     @Override
     default void toPlan(PlanSink sink) {
         sink.put(getSymbol()).put('(').putColumnName(getColumnIndex()).put(')');
     }
+
+    // sets null as result of aggregation of all nulls
+    // this typically checks non-null count and replaces 0 with null if all values were null
+    //returns true if wrapUp was fine and false if it failed on memory allocation
+    boolean wrapUp(long pRosti);
 }

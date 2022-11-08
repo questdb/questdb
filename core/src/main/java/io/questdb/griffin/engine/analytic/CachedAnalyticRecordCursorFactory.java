@@ -41,13 +41,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final CachedAnalyticRecordCursor cursor;
-    private final RecordCursorFactory base;
-    private final int orderedGroupCount;
-    private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
-    @Nullable private final ObjList<AnalyticFunction> unorderedFunctions;
     private final ObjList<AnalyticFunction> allFunctions;
+    private final RecordCursorFactory base;
     private final ObjList<RecordComparator> comparators;
+    private final CachedAnalyticRecordCursor cursor;
+    private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
+    private final int orderedGroupCount;
+    @Nullable
+    private final ObjList<AnalyticFunction> unorderedFunctions;
     private boolean closed = false;
 
     public CachedAnalyticRecordCursorFactory(
@@ -101,21 +102,8 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("CachedAnalytic");
-        sink.optAttr("functions", allFunctions);
-        sink.child(base);
-    }
-
-    @Override
-    protected void _close() {
-        if (closed) {
-            return;
-        }
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.freeObjList(allFunctions);
-        closed = true;
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -126,13 +114,15 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+    public void toPlan(PlanSink sink) {
+        sink.type("CachedAnalytic");
+        sink.optAttr("functions", allFunctions);
+        sink.child(base);
     }
 
     @Override
@@ -146,12 +136,23 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
+    @Override
+    protected void _close() {
+        if (closed) {
+            return;
+        }
+        Misc.free(base);
+        Misc.free(cursor);
+        Misc.freeObjList(allFunctions);
+        closed = true;
+    }
+
     class CachedAnalyticRecordCursor implements RecordCursor {
 
+        private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
         private RecordCursor base;
-        private final IntList columnIndexes; // Used for symbol table lookups.
         private boolean isOpen;
 
         public CachedAnalyticRecordCursor(IntList columnIndexes, RecordChain recordChain, ObjList<LongTreeChain> orderedSources) {
@@ -162,30 +163,57 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             this.orderedSources = orderedSources;
         }
 
-        private void of(RecordCursor base, SqlExecutionContext context) {
-            this.base = base;
-            if (!isOpen) {
-                recordChain.reopen();
-                recordChain.setSymbolTableResolver(this);
-                reopenTrees();
-                reopen(allFunctions);
-                isOpen = true;
-            }
-            buildRecordChain(context);
-        }
-
-        private void reopenTrees() {
-            for (int i = 0; i < orderedGroupCount; i++) {
-                orderedSources.getQuick(i).reopen();
-            }
-        }
-
-        private void reopen(ObjList<?> list) {
-            for (int i = 0, n = list.size(); i < n; i++) {
-                if (list.getQuick(i) instanceof Reopenable) {
-                    ((Reopenable) list.getQuick(i)).reopen();
+        @Override
+        public void close() {
+            if (isOpen) {
+                Misc.free(base);
+                Misc.free(recordChain);
+                for (int i = 0, n = orderedSources.size(); i < n; i++) {
+                    Misc.free(orderedSources.getQuick(i));
                 }
+                resetFunctions(); // calls close on map within RowNumber
+                isOpen = false;
             }
+        }
+
+        @Override
+        public Record getRecord() {
+            return recordChain.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
+            return recordChain.getRecordB();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));
+        }
+
+        @Override
+        public boolean hasNext() {
+            return recordChain.hasNext();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            recordChain.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            return recordChain.size();
+        }
+
+        @Override
+        public void toTop() {
+            recordChain.toTop();
         }
 
         private void buildRecordChain(SqlExecutionContext context) {
@@ -248,57 +276,30 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
             recordChain.toTop();
         }
 
-        @Override
-        public void close() {
-            if (isOpen) {
-                Misc.free(base);
-                Misc.free(recordChain);
-                for (int i = 0, n = orderedSources.size(); i < n; i++) {
-                    Misc.free(orderedSources.getQuick(i));
+        private void of(RecordCursor base, SqlExecutionContext context) {
+            this.base = base;
+            if (!isOpen) {
+                recordChain.reopen();
+                recordChain.setSymbolTableResolver(this);
+                reopenTrees();
+                reopen(allFunctions);
+                isOpen = true;
+            }
+            buildRecordChain(context);
+        }
+
+        private void reopen(ObjList<?> list) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.getQuick(i) instanceof Reopenable) {
+                    ((Reopenable) list.getQuick(i)).reopen();
                 }
-                resetFunctions(); // calls close on map within RowNumber
-                isOpen = false;
             }
         }
 
-        @Override
-        public Record getRecord() {
-            return recordChain.getRecord();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));
-        }
-
-        @Override
-        public boolean hasNext() {
-            return recordChain.hasNext();
-        }
-
-        @Override
-        public long size() {
-            return recordChain.size();
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordChain.getRecordB();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(record, atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            recordChain.toTop();
+        private void reopenTrees() {
+            for (int i = 0; i < orderedGroupCount; i++) {
+                orderedSources.getQuick(i).reopen();
+            }
         }
     }
 }

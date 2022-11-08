@@ -39,11 +39,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestMatchFunctionFactory implements FunctionFactory {
 
+    private static final String SIGNATURE = "test_match()";
     private static final AtomicInteger closeCount = new AtomicInteger();
     private static final AtomicInteger openCounter = new AtomicInteger();
     private static final AtomicInteger topCounter = new AtomicInteger();
-
-    private static final String SIGNATURE = "test_match()";
 
     public static boolean assertAPI(SqlExecutionContext executionContext) {
         return openCounter.get() > 0 && openCounter.get() >= closeCount.get() && topCounter.get() > 0

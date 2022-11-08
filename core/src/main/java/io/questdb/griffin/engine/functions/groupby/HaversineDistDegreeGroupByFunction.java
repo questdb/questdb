@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 import static java.lang.Math.*;
@@ -53,6 +52,41 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        //first item
+        saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        //last item
+        saveLastItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
+        //result
+        saveDistance(mapValue, 0);
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        double lat1Degrees = getLastLatitude(mapValue);
+        double lon1Degrees = getLastLongitude(mapValue);
+        long timestamp1 = getLastTimestamp(mapValue);
+        double lat2Degrees = this.latDegree.getDouble(record);
+        double lon2Degrees = this.lonDegree.getDouble(record);
+        long timestamp2 = this.timestamp.getTimestamp(record);
+        if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees) && timestamp1 != Numbers.LONG_NaN) {
+            if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees) && timestamp2 != Numbers.LONG_NaN) {
+                double currentTotalDistance = getDistance(mapValue);
+                double distance = calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
+                saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
+                saveDistance(mapValue, distance);
+            }
+        } else {
+            saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
+        }
+    }
+
+    @Override
+    public Function getCenter() {
+        return this.lonDegree;
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return getDistance(rec);
     }
@@ -63,13 +97,13 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     }
 
     @Override
-    public Function getCenter() {
-        return this.lonDegree;
+    public Function getRight() {
+        return this.timestamp;
     }
 
     @Override
-    public Function getRight() {
-        return this.timestamp;
+    public String getSymbol() {
+        return "haversine_dist_deg";
     }
 
     @Override
@@ -112,36 +146,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     @Override
     public boolean isScalar() {
         return false;
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        //first item
-        saveFirstItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
-        //last item
-        saveLastItem(mapValue, this.latDegree.getDouble(record), this.lonDegree.getDouble(record), this.timestamp.getTimestamp(record));
-        //result
-        saveDistance(mapValue, 0);
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        double lat1Degrees = getLastLatitude(mapValue);
-        double lon1Degrees = getLastLongitude(mapValue);
-        long timestamp1 = getLastTimestamp(mapValue);
-        double lat2Degrees = this.latDegree.getDouble(record);
-        double lon2Degrees = this.lonDegree.getDouble(record);
-        long timestamp2 = this.timestamp.getTimestamp(record);
-        if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees) && timestamp1 != Numbers.LONG_NaN) {
-            if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees) && timestamp2 != Numbers.LONG_NaN) {
-                double currentTotalDistance = getDistance(mapValue);
-                double distance = calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
-                saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
-                saveDistance(mapValue, distance);
-            }
-        } else {
-            saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
-        }
     }
 
     @Override
@@ -202,10 +206,6 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         return result.getDouble(valueIndex + 6);
     }
 
-    private double toRad(double deg) {
-        return deg * PI / 180;
-    }
-
     private double getFirstLatitude(MapValue value) {
         return value.getDouble(valueIndex);
     }
@@ -250,8 +250,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         mapValue.putTimestamp(this.valueIndex + 5, timestamp);
     }
 
-    @Override
-    public String getSymbol() {
-        return "haversine_dist_deg";
+    private double toRad(double deg) {
+        return deg * PI / 180;
     }
 }

@@ -59,6 +59,11 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
+    public boolean fragmentedSymbolTables() {
+        return true;
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         throw new UnsupportedOperationException();
     }
@@ -66,11 +71,6 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public boolean fragmentedSymbolTables() {
-        return true;
     }
 
     @Override

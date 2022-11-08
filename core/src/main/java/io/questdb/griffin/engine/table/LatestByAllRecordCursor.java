@@ -49,6 +49,14 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor impleme
     }
 
     @Override
+    public void close() {
+        if (isOpen()) {
+            map.close();
+            super.close();
+        }
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Row backward scan");
     }
@@ -80,14 +88,6 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor impleme
             }
         } finally {
             map.clear();
-        }
-    }
-
-    @Override
-    public void close() {
-        if (isOpen()) {
-            map.close();
-            super.close();
         }
     }
 }

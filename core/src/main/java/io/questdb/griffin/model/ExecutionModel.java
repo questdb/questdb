@@ -27,12 +27,12 @@ package io.questdb.griffin.model;
 public interface ExecutionModel {
     int COPY = 5;
     int CREATE_TABLE = 2;
+    int EXPLAIN = 7;
     int INSERT = 4;
+    int MAX = EXPLAIN + 1;
     int QUERY = 1;
     int RENAME_TABLE = 3;
     int UPDATE = 6;
-    int EXPLAIN = 7;
-    int MAX = EXPLAIN + 1;
 
     int getModelType();
 
@@ -40,12 +40,12 @@ public interface ExecutionModel {
         return null;
     }
 
-    default String getTypeName() {
-        return Inner.typeNameMap[getModelType()];
-    }
-
     default CharSequence getTargetTableName() {
         return null;
+    }
+
+    default String getTypeName() {
+        return Inner.typeNameMap[getModelType()];
     }
 
     class Inner {

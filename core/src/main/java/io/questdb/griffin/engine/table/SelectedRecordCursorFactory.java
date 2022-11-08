@@ -50,6 +50,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursorFactory getBaseFactory() {
+        return base;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         this.cursor.of(base.getCursor(executionContext));
         return cursor;
@@ -57,11 +62,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public boolean hasDescendingOrder() {
         return base.hasDescendingOrder();
-    }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
     }
 
     @Override
@@ -75,6 +75,12 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("SelectedRecord");
+        sink.child(base);
+    }
+
+    @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
@@ -82,11 +88,5 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("SelectedRecord");
-        sink.child(base);
     }
 }

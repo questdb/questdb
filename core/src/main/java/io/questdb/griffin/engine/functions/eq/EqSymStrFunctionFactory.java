@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class EqSymStrFunctionFactory implements FunctionFactory {
     @Override
@@ -83,97 +82,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getSymbol(rec) == null);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(arg);
-            if (negated) {
-                sink.put(" is not null");
-            } else {
-                sink.put(" is null");
-            }
-        }
-    }
-
-    private static abstract class ConstEqSymFunc extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-        protected final CharSequence constant;
-
-        protected ConstEqSymFunc(Function arg, CharSequence constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(arg);
-            if (negated) {
-                sink.put('!');
-            }
-            sink.put("='").put(constant).put('\'');
-        }
-    }
-
-
-    private static class ConstCheckFunc extends ConstEqSymFunc {
-        public ConstCheckFunc(Function arg, CharSequence constant) {
-            super(arg, constant);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(constant, arg.getSymbol(rec));
-        }
-    }
-
-    private static class ConstSymIntCheckFunc extends ConstEqSymFunc {
-        private int valueIndex;
-        private boolean exists;
-
-        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
-            super(arg, constant);
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (exists && arg().getInt(rec) == valueIndex);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg().init(symbolTableSource, executionContext);
-            StaticSymbolTable staticSymbolTable = arg().getStaticSymbolTable();
-            assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
-            valueIndex = staticSymbolTable.keyOf(constant);
-            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
-        }
-
-        SymbolFunction arg() {
-            return (SymbolFunction) arg;
-        }
-    }
-
     private static class ConstCheckColumnFunc extends ConstEqSymFunc {
         private int valueIndex;
 
@@ -204,6 +112,68 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class ConstCheckFunc extends ConstEqSymFunc {
+        public ConstCheckFunc(Function arg, CharSequence constant) {
+            super(arg, constant);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(constant, arg.getSymbol(rec));
+        }
+    }
+
+    private static abstract class ConstEqSymFunc extends NegatableBooleanFunction implements UnaryFunction {
+        protected final Function arg;
+        protected final CharSequence constant;
+
+        protected ConstEqSymFunc(Function arg, CharSequence constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put('!');
+            }
+            sink.put("='").put(constant).put('\'');
+        }
+    }
+
+    private static class ConstSymIntCheckFunc extends ConstEqSymFunc {
+        private boolean exists;
+        private int valueIndex;
+
+        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
+            super(arg, constant);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (exists && arg().getInt(rec) == valueIndex);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg().init(symbolTableSource, executionContext);
+            StaticSymbolTable staticSymbolTable = arg().getStaticSymbolTable();
+            assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
+            valueIndex = staticSymbolTable.keyOf(constant);
+            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
+        }
+
+        SymbolFunction arg() {
+            return (SymbolFunction) arg;
+        }
+    }
+
     private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
             super(left, right);
@@ -222,6 +192,34 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             }
 
             return negated != Chars.equalsNc(a, b);
+        }
+    }
+
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getSymbol(rec) == null);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(arg);
+            if (negated) {
+                sink.put(" is not null");
+            } else {
+                sink.put(" is null");
+            }
         }
     }
 }

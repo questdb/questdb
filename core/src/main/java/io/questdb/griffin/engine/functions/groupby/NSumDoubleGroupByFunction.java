@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -68,6 +67,21 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getLong(valueIndex + 2) > 0 ? rec.getDouble(valueIndex) + rec.getDouble(valueIndex + 1) : Double.NaN;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE); // sum
@@ -88,18 +102,8 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getLong(valueIndex + 2) > 0 ? rec.getDouble(valueIndex) + rec.getDouble(valueIndex + 1) : Double.NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
+    public void toPlan(PlanSink sink) {
+        sink.put("nsum(").put(arg).put(')');
     }
 
     private void sum(MapValue mapValue, double value, double sum, double c) {
@@ -111,10 +115,5 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
         }
         mapValue.putDouble(valueIndex, t);
         mapValue.putDouble(valueIndex + 1, c);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put("nsum(").put(arg).put(')');
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 
 public class DateConstant extends DateFunction implements ConstantFunction {
     public static final DateConstant NULL = new DateConstant(Numbers.LONG_NaN);

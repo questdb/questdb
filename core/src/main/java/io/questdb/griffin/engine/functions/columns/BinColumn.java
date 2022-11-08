@@ -30,7 +30,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -64,16 +63,16 @@ public class BinColumn extends BinFunction implements ScalarFunction {
         return false;
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new BinColumn(i));
         }
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
 }

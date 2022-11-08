@@ -42,13 +42,13 @@ public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
 
     private static final TimestampFunction FUNC = new TimestampFunction() {
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(SIGNATURE);
+        public long getTimestamp(Record rec) {
+            return Timestamps.STARTUP_TIMESTAMP;
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return Timestamps.STARTUP_TIMESTAMP;
+        public void toPlan(PlanSink sink) {
+            sink.put(SIGNATURE);
         }
     };
 

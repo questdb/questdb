@@ -40,12 +40,12 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
 
     public static final DoubleBinaryOperator MAX = Math::max;
-    private final DoubleAccumulator max = new DoubleAccumulator(
-            MAX, Double.NEGATIVE_INFINITY
-    );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final DoubleAccumulator max = new DoubleAccumulator(
+            MAX, Double.NEGATIVE_INFINITY
+    );
     private int valueOffset;
 
     public MaxDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -79,8 +79,24 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void clear() {
+        max.reset();
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        final double value = max.get();
+        return Double.isInfinite(value) ? Double.NaN : value;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "max";
     }
 
     @Override
@@ -91,6 +107,11 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), Double.NEGATIVE_INFINITY);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -107,27 +128,5 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMaxDoubleWrapUp(pRosti, valueOffset, max.get());
-    }
-
-    @Override
-    public void clear() {
-        max.reset();
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        final double value = max.get();
-        return Double.isInfinite(value) ? Double.NaN : value;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-
-    @Override
-    public String getSymbol() {
-        return "max";
     }
 }

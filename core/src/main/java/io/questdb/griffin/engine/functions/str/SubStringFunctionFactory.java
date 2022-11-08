@@ -132,6 +132,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
             return Math.max(0, end - start);
         }
 
+        @Override
+        public String getSymbol() {
+            return "substring";
+        }
+
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
             CharSequence str = strFunc.getStr(rec);
@@ -156,11 +161,6 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
             sink.put(str, start, end);
             return sink;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "substring";
         }
     }
 }

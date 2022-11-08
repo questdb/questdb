@@ -31,7 +31,6 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,26 +64,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         this.preTouchColumnTypes = preTouchColumnTypes;
     }
 
-    @Override
-    public void close() {
-        Misc.free(filter);
-        Misc.freeObjList(perWorkerFilters);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        filter.init(symbolTableSource, executionContext);
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
-    }
-
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (perWorkerFilters == null) {
             return -1;
@@ -107,6 +86,12 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         }
     }
 
+    @Override
+    public void close() {
+        Misc.free(filter);
+        Misc.freeObjList(perWorkerFilters);
+    }
+
     public Function getFilter(int filterId) {
         if (filterId == -1) {
             return filter;
@@ -115,11 +100,18 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         return perWorkerFilters.getQuick(filterId);
     }
 
-    public void releaseFilter(int filterId) {
-        if (filterId == -1) {
-            return;
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        filter.init(symbolTableSource, executionContext);
+        if (perWorkerFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
         }
-        perWorkerLocks.set(filterId, 0);
     }
 
     /**
@@ -186,7 +178,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         break;
                     case ColumnType.STRING:
                         CharSequence cs = record.getStr(i);
-                        if (cs !=null && cs.length() > 0) {
+                        if (cs != null && cs.length() > 0) {
                             // Touch the first page of the string contents only.
                             sum += cs.charAt(0);
                         }
@@ -203,6 +195,13 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         }
         // Flush the accumulated sum to the blackhole.
         PRE_TOUCH_BLACKHOLE.add(sum);
+    }
+
+    public void releaseFilter(int filterId) {
+        if (filterId == -1) {
+            return;
+        }
+        perWorkerLocks.set(filterId, 0);
     }
 
     @Override

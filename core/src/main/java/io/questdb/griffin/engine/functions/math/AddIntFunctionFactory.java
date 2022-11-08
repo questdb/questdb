@@ -70,13 +70,6 @@ public class AddIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant()
-                    || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
-                    || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
-        }
-
-        @Override
         public Function getLeft() {
             return left;
         }
@@ -84,6 +77,13 @@ public class AddIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return left.isConstant() && right.isConstant()
+                    || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
+                    || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
         }
 
         @Override

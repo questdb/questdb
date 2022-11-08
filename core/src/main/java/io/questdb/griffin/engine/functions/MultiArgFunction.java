@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public interface MultiArgFunction extends Function {
 
@@ -41,35 +40,18 @@ public interface MultiArgFunction extends Function {
         Misc.freeObjList(getArgs());
     }
 
+    ObjList<Function> getArgs();
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         Function.init(getArgs(), symbolTableSource, executionContext);
     }
 
     @Override
-    default void toTop() {
-        GroupByUtils.toTop(getArgs());
-    }
-
-    ObjList<Function> getArgs();
-
-    @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
-        for(int i = 0, n = args.size(); i < n; i++) {
-            if (!args.getQuick(i).isConstant()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    default boolean isRuntimeConstant() {
-        final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isRuntimeConstant() && !function.isConstant()) {
+            if (!args.getQuick(i).isConstant()) {
                 return false;
             }
         }
@@ -89,7 +71,24 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean isRuntimeConstant() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isRuntimeConstant() && !function.isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.put(getSymbol()).put('(').put(getArgs()).put(')');
+    }
+
+    @Override
+    default void toTop() {
+        GroupByUtils.toTop(getArgs());
     }
 }

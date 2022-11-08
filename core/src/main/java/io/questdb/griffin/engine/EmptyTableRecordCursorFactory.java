@@ -37,16 +37,6 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Empty table");
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return EmptyTableRecordCursor.INSTANCE;
     }
@@ -54,5 +44,15 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Empty table");
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeIfCloseable(getMetadata());
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.griffin.PlanSink;
 
 public class CharTypeConstant extends CharFunction implements TypeConstant {
 

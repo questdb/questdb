@@ -35,12 +35,12 @@ import io.questdb.std.str.StringSink;
  */
 public class PlanSink {
 
-    private final StringSink sink;
-    private int depth;
-    private String childIndent;
-    private String attrIndent;
     private final IntList eolIndexes;
     private final ObjStack<RecordCursorFactory> factoryStack;
+    private final StringSink sink;
+    private String attrIndent;
+    private String childIndent;
+    private int depth;
     private SqlExecutionContext executionContext;
     private boolean useBaseMetadata;
 
@@ -54,15 +54,73 @@ public class PlanSink {
         this.factoryStack = new ObjStack<>();
     }
 
-    public void reset() {
-        this.sink.clear();
-        this.depth = 0;
-        this.attrIndent = "  ";
-        this.childIndent = "    ";
-        this.eolIndexes.clear();
-        this.eolIndexes.add(0);
-        this.factoryStack.clear();
-        this.executionContext = null;
+    public PlanSink attr(CharSequence name) {
+        newLine();
+        sink.put(attrIndent);
+        sink.put(name).put(':').put(' ');
+        return this;
+    }
+
+    public PlanSink child(CharSequence outer, Plannable inner) {
+        depth++;
+        newLine();
+        sink.put(outer);
+        child(inner);
+        depth--;
+
+        return this;
+    }
+
+    public PlanSink child(Plannable p) {
+        depth++;
+        newLine();
+        if (p instanceof RecordCursorFactory) {
+            //metadataStack.push(((RecordCursorFactory) p).getMetadata());
+            factoryStack.push((RecordCursorFactory) p);
+        }
+        p.toPlan(this);
+        if (p instanceof RecordCursorFactory) {
+            factoryStack.pop();
+        }
+        depth--;
+
+        return this;
+    }
+
+    public void clear() {
+        reset();
+    }
+
+    public void end() {
+        newLine();
+    }
+
+    public CharSequence getLine(int idx) {
+        return sink.subSequence(eolIndexes.getQuick(idx - 1), eolIndexes.getQuick(idx));
+    }
+
+    public int getLineCount() {
+        return eolIndexes.size() - 1;
+    }
+
+    public StringSink getSink() {
+        return sink;
+    }
+
+    public StringSink getText() {
+        StringSink result = Misc.getThreadLocalBuilder();
+
+        for (int i = 0, n = eolIndexes.size() - 1; i < n; i++) {
+            result.put(sink, eolIndexes.getQuick(i), eolIndexes.getQuick(i + 1));
+        }
+
+        return result;
+    }
+
+    public PlanSink meta(CharSequence name) {
+        sink.put(" ");
+        sink.put(name).put(": ");
+        return this;
     }
 
     public void of(RecordCursorFactory factory, SqlExecutionContext executionContext) {
@@ -73,17 +131,6 @@ public class PlanSink {
             factory.toPlan(this);
         }
         end();
-    }
-
-    public PlanSink type(CharSequence type) {
-        sink.put(type);
-        return this;
-    }
-
-    public PlanSink meta(CharSequence name) {
-        sink.put(" ");
-        sink.put(name).put(": ");
-        return this;
     }
 
     public PlanSink optAttr(CharSequence name, Sinkable value) {
@@ -120,10 +167,86 @@ public class PlanSink {
         return this;
     }
 
-    public PlanSink attr(CharSequence name) {
-        newLine();
-        sink.put(attrIndent);
-        sink.put(name).put(':').put(' ');
+    public PlanSink put(Sinkable s) {
+        val(s);
+        return this;
+    }
+
+    public PlanSink put(RecordCursorFactory factory) {
+        child(factory);
+        return this;
+    }
+
+    public PlanSink put(CharSequence cs) {
+        sink.put(cs);
+        return this;
+    }
+
+    public PlanSink put(boolean b) {
+        sink.put(b);
+        return this;
+    }
+
+    public PlanSink put(char c) {
+        sink.put(c);
+        return this;
+    }
+
+    public PlanSink put(int i) {
+        sink.put(i);
+        return this;
+    }
+
+    public PlanSink put(double d) {
+        sink.put(d);
+        return this;
+    }
+
+    public PlanSink put(long l) {
+        sink.put(l);
+        return this;
+    }
+
+    public PlanSink put(Function f) {
+        return val(f);
+    }
+
+    public PlanSink putBaseColumnName(int no) {
+        sink.put(factoryStack.peek().getBaseColumnName(no, executionContext));
+        return this;
+    }
+
+    public PlanSink putBaseColumnNameNoRemap(int no) {
+        sink.put(factoryStack.peek().getBaseColumnNameNoRemap(no, executionContext));
+        return this;
+    }
+
+    public PlanSink putColumnName(int no) {
+        if (useBaseMetadata) {
+            putBaseColumnName(no);
+        } else {
+            sink.put(factoryStack.peek().getColumnName(no, executionContext));
+        }
+        return this;
+    }
+
+    public void reset() {
+        this.sink.clear();
+        this.depth = 0;
+        this.attrIndent = "  ";
+        this.childIndent = "    ";
+        this.eolIndexes.clear();
+        this.eolIndexes.add(0);
+        this.factoryStack.clear();
+        this.executionContext = null;
+    }
+
+    public void setUseBaseMetadata(boolean b) {
+        this.useBaseMetadata = b;
+    }
+
+    public PlanSink type(CharSequence type) {
+        sink.put(type);
         return this;
     }
 
@@ -201,127 +324,11 @@ public class PlanSink {
         return this;
     }
 
-    public PlanSink put(Sinkable s) {
-        val(s);
-        return this;
-    }
-
-    public PlanSink put(RecordCursorFactory factory) {
-        child(factory);
-        return this;
-    }
-
-    public PlanSink put(CharSequence cs) {
-        sink.put(cs);
-        return this;
-    }
-
-    public PlanSink putColumnName(int no) {
-        if (useBaseMetadata) {
-            putBaseColumnName(no);
-        } else {
-            sink.put(factoryStack.peek().getColumnName(no, executionContext));
-        }
-        return this;
-    }
-
-    public PlanSink putBaseColumnName(int no) {
-        sink.put(factoryStack.peek().getBaseColumnName(no, executionContext));
-        return this;
-    }
-
-    public PlanSink putBaseColumnNameNoRemap(int no) {
-        sink.put(factoryStack.peek().getBaseColumnNameNoRemap(no, executionContext));
-        return this;
-    }
-
-    public PlanSink put(boolean b) {
-        sink.put(b);
-        return this;
-    }
-
-    public PlanSink put(char c) {
-        sink.put(c);
-        return this;
-    }
-
-    public PlanSink put(int i) {
-        sink.put(i);
-        return this;
-    }
-
-    public PlanSink put(double d) {
-        sink.put(d);
-        return this;
-    }
-
-    public PlanSink put(long l) {
-        sink.put(l);
-        return this;
-    }
-
-
-    public PlanSink put(Function f) {
-        return val(f);
-    }
-
-    public PlanSink child(CharSequence outer, Plannable inner) {
-        depth++;
-        newLine();
-        sink.put(outer);
-        child(inner);
-        depth--;
-
-        return this;
-    }
-
-    public PlanSink child(Plannable p) {
-        depth++;
-        newLine();
-        if (p instanceof RecordCursorFactory) {
-            //metadataStack.push(((RecordCursorFactory) p).getMetadata());
-            factoryStack.push((RecordCursorFactory) p);
-        }
-        p.toPlan(this);
-        if (p instanceof RecordCursorFactory) {
-            factoryStack.pop();
-        }
-        depth--;
-
-        return this;
-    }
-
     private void newLine() {
         eolIndexes.add(sink.length());
         for (int i = 0; i < depth; i++) {
             sink.put(childIndent);
         }
-    }
-
-    public StringSink getText() {
-        StringSink result = Misc.getThreadLocalBuilder();
-
-        for (int i = 0, n = eolIndexes.size() - 1; i < n; i++) {
-            result.put(sink, eolIndexes.getQuick(i), eolIndexes.getQuick(i + 1));
-        }
-
-        return result;
-    }
-
-    public void clear() {
-        reset();
-    }
-
-    public int getLineCount() {
-        return eolIndexes.size() - 1;
-    }
-
-    public CharSequence getLine(int idx) {
-        return sink.subSequence(eolIndexes.getQuick(idx - 1), eolIndexes.getQuick(idx));
-    }
-
-    public void end() {
-        newLine();
     }
 
     private static class EscapingStringSink extends StringSink {
@@ -383,13 +390,5 @@ public class PlanSink {
                 super.put(c);
             }
         }
-    }
-
-    public StringSink getSink() {
-        return sink;
-    }
-
-    public void setUseBaseMetadata(boolean b) {
-        this.useBaseMetadata = b;
     }
 }

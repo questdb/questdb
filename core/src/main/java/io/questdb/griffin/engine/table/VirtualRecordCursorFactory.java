@@ -36,9 +36,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory baseFactory;
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final RecordCursorFactory baseFactory;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
@@ -60,14 +60,13 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(functions);
-        Misc.free(baseFactory);
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return baseFactory.getMetadata().getColumnName(idx);
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return baseFactory.usesCompiledFilter();
+    public RecordCursorFactory getBaseFactory() {
+        return baseFactory;
     }
 
     @Override
@@ -84,13 +83,8 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return baseFactory.getMetadata().getColumnName(idx);
-    }
-
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return baseFactory;
+    public boolean hasDescendingOrder() {
+        return baseFactory.hasDescendingOrder();
     }
 
     @Override
@@ -104,14 +98,20 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return baseFactory.hasDescendingOrder();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("VirtualRecord");
         sink.optAttr("functions", functions, true);
         sink.child(baseFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return baseFactory.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(functions);
+        Misc.free(baseFactory);
     }
 }

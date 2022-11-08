@@ -39,15 +39,14 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
-    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
-
+    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
     private final int columnIndex;
-    private final double[] sum;
     private final long[] count;
-    private final int workerCount;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final double[] sum;
+    private final int workerCount;
     private int valueOffset;
 
     public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -88,8 +87,30 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void clear() {
+        Arrays.fill(sum, 0);
+        Arrays.fill(count, 0);
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(@Nullable Record rec) {
+        double sum = 0;
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
+        }
+        return count > 0 ? sum : Double.NaN;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sum";
     }
 
     @Override
@@ -101,6 +122,11 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void initRosti(long pRosti) {
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -124,32 +150,5 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
             count += this.count[i * COUNT_PADDING];
         }
         return Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
-    }
-
-    @Override
-    public void clear() {
-        Arrays.fill(sum, 0);
-        Arrays.fill(count, 0);
-    }
-
-    @Override
-    public double getDouble(@Nullable Record rec) {
-        double sum = 0;
-        long count = 0;
-        for (int i = 0; i < workerCount; i++) {
-            sum += this.sum[i * SUM_PADDING];
-            count += this.count[i * COUNT_PADDING];
-        }
-        return count > 0 ? sum : Double.NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum";
     }
 }

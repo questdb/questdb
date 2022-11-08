@@ -38,9 +38,9 @@ import io.questdb.std.str.Path;
 
 public class PgAttrDefFunctionFactory implements FunctionFactory {
 
+    static final RecordMetadata METADATA;
     private static final Log LOG = LogFactory.getLog(PgAttrDefFunctionFactory.class);
     private static final String SIGNATURE = "pg_attrdef()";
-    static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
@@ -64,54 +64,19 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
-
-        private final Path path = new Path();
-        private final AttrDefCatalogueCursor cursor;
-        private final long tempMem;
-
-        public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
-            super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.type(SIGNATURE);
-        }
-
-        @Override
-        protected void _close() {
-            Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-        }
-
-        @Override
-        public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
-            return cursor;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return false;
-        }
-    }
-
     private static class AttrDefCatalogueCursor implements NoRandomAccessRecordCursor {
-        private final Path path;
-        private final FilesFacade ff;
         private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
+        private final FilesFacade ff;
+        private final Path path;
         private final int plimit;
         private final long tempMem;
-        private int tableId = -1;
-        private long findFileStruct = 0;
-        private int columnIndex = 0;
-        private boolean readNextFileFromDisk = true;
         private int columnCount;
-        private boolean hasNextFile = true;
+        private int columnIndex = 0;
+        private long findFileStruct = 0;
         private boolean foundMetadataFile = false;
+        private boolean hasNextFile = true;
+        private boolean readNextFileFromDisk = true;
+        private int tableId = -1;
 
         public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
             this.ff = configuration.getFilesFacade();
@@ -147,13 +112,13 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         private boolean next0() {
@@ -241,6 +206,41 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
             public int getStrLen(int col) {
                 return getStr(col).length();
             }
+        }
+    }
+
+    private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
+
+        private final AttrDefCatalogueCursor cursor;
+        private final Path path = new Path();
+        private final long tempMem;
+
+        public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+            super(metadata);
+            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            cursor.toTop();
+            return cursor;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type(SIGNATURE);
+        }
+
+        @Override
+        protected void _close() {
+            Misc.free(path);
+            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

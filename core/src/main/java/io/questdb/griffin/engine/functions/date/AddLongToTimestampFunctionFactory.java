@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class AddLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
@@ -67,6 +66,11 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getSymbol() {
+            return "+";
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             final long l = left.getTimestamp(rec);
             final long r = right.getLong(rec);
@@ -74,11 +78,6 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return l + r;
-        }
-
-        @Override
-        public String getSymbol() {
-            return "+";
         }
 
         @Override

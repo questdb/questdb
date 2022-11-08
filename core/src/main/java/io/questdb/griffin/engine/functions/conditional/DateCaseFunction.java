@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.ObjList;
 
 class DateCaseFunction extends DateFunction implements CaseFunction {
-    private final CaseFunctionPicker picker;
     private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
 
     public DateCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         this.picker = picker;

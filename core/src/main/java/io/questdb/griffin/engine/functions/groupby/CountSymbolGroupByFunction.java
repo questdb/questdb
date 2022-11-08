@@ -103,6 +103,11 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     }
 
     @Override
+    public String getSymbol() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -138,10 +143,5 @@ public class CountSymbolGroupByFunction extends LongFunction implements UnaryFun
     public void toTop() {
         UnaryFunction.super.toTop();
         setIndex = 0;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "count";
     }
 }

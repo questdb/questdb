@@ -104,11 +104,87 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
     }
 
+    static class LongSequenceRecord implements Record {
+        private long value;
+
+        @Override
+        public long getLong(int col) {
+            return value;
+        }
+
+        @Override
+        public long getRowId() {
+            return value;
+        }
+
+        long getValue() {
+            return value;
+        }
+
+        void next() {
+            value++;
+        }
+
+        void of(long value) {
+            this.value = value;
+        }
+    }
+
+    static class LongSequenceRecordCursor implements RecordCursor {
+
+        private final LongSequenceRecord recordA = new LongSequenceRecord();
+        private final LongSequenceRecord recordB = new LongSequenceRecord();
+        private final long recordCount;
+
+        public LongSequenceRecordCursor(long recordCount) {
+            this.recordCount = recordCount;
+            this.recordA.of(0);
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return recordA;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return recordB;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (recordA.getValue() < recordCount) {
+                recordA.next();
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            ((LongSequenceRecord) record).of(atRowId);
+        }
+
+        @Override
+        public long size() {
+            return recordCount;
+        }
+
+        @Override
+        public void toTop() {
+            recordA.of(0);
+        }
+    }
+
     private static class SeedingLongSequenceCursorFactory extends AbstractRecordCursorFactory {
         private final LongSequenceRecordCursor cursor;
         private final Rnd rnd;
-        private final long seedLo;
         private final long seedHi;
+        private final long seedLo;
 
         public SeedingLongSequenceCursorFactory(RecordMetadata metadata, long recordCount, long seedLo, long seedHi) {
             super(metadata);
@@ -133,83 +209,6 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.type("long_sequence");
             sink.meta("count").val(cursor.recordCount);
-        }
-    }
-
-
-    static class LongSequenceRecordCursor implements RecordCursor {
-
-        private final long recordCount;
-        private final LongSequenceRecord recordA = new LongSequenceRecord();
-        private final LongSequenceRecord recordB = new LongSequenceRecord();
-
-        public LongSequenceRecordCursor(long recordCount) {
-            this.recordCount = recordCount;
-            this.recordA.of(0);
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public Record getRecord() {
-            return recordA;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (recordA.getValue() < recordCount) {
-                recordA.next();
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return recordB;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            ((LongSequenceRecord) record).of(atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            recordA.of(0);
-        }
-
-        @Override
-        public long size() {
-            return recordCount;
-        }
-    }
-
-    static class LongSequenceRecord implements Record {
-        private long value;
-
-        @Override
-        public long getLong(int col) {
-            return value;
-        }
-
-        @Override
-        public long getRowId() {
-            return value;
-        }
-
-        long getValue() {
-            return value;
-        }
-
-        void next() {
-            value++;
-        }
-
-        void of(long value) {
-            this.value = value;
         }
     }
 

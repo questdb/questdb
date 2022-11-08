@@ -45,21 +45,21 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
 
     }
 
+    public ExecutionModel getInnerExecutionModel() {
+        return model;
+    }
+
     @Override
     public int getModelType() {
         return EXPLAIN;
     }
 
+    public void setModel(ExecutionModel model) {
+        this.model = model;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put("EXPLAIN");
-    }
-
-    public ExecutionModel getInnerExecutionModel() {
-        return model;
-    }
-
-    public void setModel(ExecutionModel model) {
-        this.model = model;
     }
 }

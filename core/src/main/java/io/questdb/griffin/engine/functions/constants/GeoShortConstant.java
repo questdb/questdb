@@ -29,7 +29,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GeoShortFunction;
-import io.questdb.griffin.PlanSink;
 
 public class GeoShortConstant extends GeoShortFunction implements ConstantFunction {
 

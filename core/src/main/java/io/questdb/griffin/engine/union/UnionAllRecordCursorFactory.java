@@ -27,8 +27,6 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {

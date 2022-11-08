@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class DivLongFunctionFactory implements FunctionFactory {
     @Override
@@ -63,11 +62,6 @@ public class DivLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
@@ -76,6 +70,11 @@ public class DivLongFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return l / r;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
 
         @Override

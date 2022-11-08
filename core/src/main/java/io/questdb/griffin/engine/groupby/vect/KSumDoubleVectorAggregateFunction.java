@@ -38,16 +38,15 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
     // We're using two double values per worker, hence +1 element in the padding.
     private static final int SUM_PADDING = (Misc.CACHE_LINE_SIZE / Double.BYTES) + 1;
-    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
-
     private final int columnIndex;
-    private final double[] sum;
     private final long[] count;
-    private final int workerCount;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final double[] sum;
+    private final int workerCount;
     private int valueOffset;
 
     public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -91,8 +90,34 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
+    public void clear() {
+        Arrays.fill(sum, 0);
+        Arrays.fill(count, 0);
+    }
+
+    @Override
     public int getColumnIndex() {
         return columnIndex;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        double sum = 0;
+        long count = 0;
+        double c = 0;
+        for (int i = 0; i < workerCount; i++) {
+            double y = this.sum[i * SUM_PADDING] - c;
+            double t = sum + y;
+            c = t - sum - y;
+            sum = t;
+            count += this.count[i * COUNT_PADDING];
+        }
+        return count > 0 ? sum : Double.NaN;
+    }
+
+    @Override
+    public String getSymbol() {
+        return "ksum";
     }
 
     @Override
@@ -105,6 +130,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), 0.0);
         Unsafe.getUnsafe().putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0.0);
         Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), 0);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override
@@ -133,36 +163,5 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             count += this.count[i * COUNT_PADDING];
         }
         return Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
-    }
-
-    @Override
-    public void clear() {
-        Arrays.fill(sum, 0);
-        Arrays.fill(count, 0);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        double sum = 0;
-        long count = 0;
-        double c = 0;
-        for (int i = 0; i < workerCount; i++) {
-            double y = this.sum[i * SUM_PADDING] - c;
-            double t = sum + y;
-            c = t - sum - y;
-            sum = t;
-            count += this.count[i * COUNT_PADDING];
-        }
-        return count > 0 ? sum : Double.NaN;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "ksum";
     }
 }

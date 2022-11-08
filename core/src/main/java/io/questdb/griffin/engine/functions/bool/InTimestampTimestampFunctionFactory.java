@@ -40,6 +40,14 @@ import io.questdb.std.*;
 import io.questdb.griffin.PlanSink;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
+    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(position);
+        }
+    }
+
     @Override
     public String getSignature() {
         return "in(NV)";
@@ -106,11 +114,37 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
-    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(position);
+    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final LongList inList;
+        private final Function tsFunc;
+
+        public InTimestampConstFunction(Function tsFunc, LongList longList) {
+            this.tsFunc = tsFunc;
+            this.inList = longList;
+        }
+
+        @Override
+        public Function getArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = tsFunc.getTimestamp(rec);
+            if (ts == Numbers.LONG_NaN) {
+                return negated;
+            }
+
+            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(tsFunc);
+            if (negated) {
+                sink.put(" not");
+            }
+            sink.put(" in ").put(inList);
         }
     }
 
@@ -162,40 +196,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.put(" in ");
             args.toSink(sink.getSink(), 1);
-        }
-    }
-
-    private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function tsFunc;
-        private final LongList inList;
-
-        public InTimestampConstFunction(Function tsFunc, LongList longList) {
-            this.tsFunc = tsFunc;
-            this.inList = longList;
-        }
-
-        @Override
-        public Function getArg() {
-            return tsFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long ts = tsFunc.getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
-                return negated;
-            }
-
-            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(tsFunc);
-            if (negated) {
-                sink.put(" not");
-            }
-            sink.put(" in ").put(inList);
         }
     }
 }

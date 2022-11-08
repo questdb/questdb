@@ -91,6 +91,36 @@ public class StrPosFunctionFactory implements FunctionFactory {
         return 0;
     }
 
+    public static class ConstFunc extends IntFunction implements UnaryFunction {
+
+        private final Function strFunc;
+        private final CharSequence substr;
+
+        public ConstFunc(Function strFunc, CharSequence substr) {
+            this.strFunc = strFunc;
+            this.substr = substr;
+        }
+
+        @Override
+        public Function getArg() {
+            return strFunc;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final CharSequence str = this.strFunc.getStr(rec);
+            if (str == null) {
+                return Numbers.INT_NaN;
+            }
+            return strpos(str, substr);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put("strpos(").put(strFunc).put(",'").put(substr).put("')");
+        }
+    }
+
     public static class Func extends IntFunction implements BinaryFunction {
 
         private final Function strFunc;
@@ -127,36 +157,6 @@ public class StrPosFunctionFactory implements FunctionFactory {
         @Override
         public String getSymbol() {
             return "strpos";
-        }
-    }
-
-    public static class ConstFunc extends IntFunction implements UnaryFunction {
-
-        private final Function strFunc;
-        private final CharSequence substr;
-
-        public ConstFunc(Function strFunc, CharSequence substr) {
-            this.strFunc = strFunc;
-            this.substr = substr;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
-            if (str == null) {
-                return Numbers.INT_NaN;
-            }
-            return strpos(str, substr);
-        }
-
-        @Override
-        public Function getArg() {
-            return strFunc;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put("strpos(").put(strFunc).put(",'").put(substr).put("')");
         }
     }
 }

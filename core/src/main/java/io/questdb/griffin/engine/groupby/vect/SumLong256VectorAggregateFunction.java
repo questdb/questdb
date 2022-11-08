@@ -121,6 +121,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
+    public String getSymbol() {
+        return "sum";
+    }
+
+    @Override
     public int getValueOffset() {
         return valueOffset;
     }
@@ -144,11 +149,6 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
         this.valueOffset = types.getColumnCount();
         types.add(ColumnType.LONG256);
         types.add(ColumnType.LONG);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum";
     }
 
     @Override

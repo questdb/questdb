@@ -32,7 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
-import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 public class MapSymbolColumn extends SymbolFunction {
@@ -113,6 +112,11 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(mapColumnIndex);
+    }
+
+    @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
     }
@@ -120,10 +124,5 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(mapColumnIndex);
     }
 }

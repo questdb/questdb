@@ -32,8 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.Sinkable;
-import io.questdb.griffin.PlanSink;
 
 public class CountLongGroupByFunction extends LongFunction implements GroupByFunction {
     private int valueIndex;
@@ -46,6 +44,16 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         mapValue.addLong(valueIndex, 1);
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
@@ -67,16 +75,6 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     public void toPlan(PlanSink sink) {

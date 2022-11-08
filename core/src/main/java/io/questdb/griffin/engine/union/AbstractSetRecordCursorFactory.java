@@ -36,10 +36,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
+    private final RecordCursorFactory factoryA;
+    private final RecordCursorFactory factoryB;
     protected AbstractSetRecordCursor cursor;
 
     public AbstractSetRecordCursorFactory(
@@ -57,11 +57,12 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    protected void _close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.freeObjListAndClear(castFunctionsA);
-        Misc.freeObjListAndClear(castFunctionsB);
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        if (idx < factoryA.getMetadata().getColumnCount()) {
+            return factoryA.getMetadata().getColumnName(idx);
+        } else {
+            return factoryB.getMetadata().getColumnName(idx);
+        }
     }
 
     @Override
@@ -87,8 +88,6 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         return factoryA.recordCursorSupportsRandomAccess();
     }
 
-    protected abstract CharSequence getOperation();
-
     @Override
     public void toPlan(PlanSink sink) {
         sink.type(getOperation());
@@ -100,16 +99,17 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
-    protected boolean isSecondFactoryHashed() {
-        return false;
+    @Override
+    protected void _close() {
+        Misc.free(factoryA);
+        Misc.free(factoryB);
+        Misc.freeObjListAndClear(castFunctionsA);
+        Misc.freeObjListAndClear(castFunctionsB);
     }
 
-    @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        if (idx < factoryA.getMetadata().getColumnCount()) {
-            return factoryA.getMetadata().getColumnName(idx);
-        } else {
-            return factoryB.getMetadata().getColumnName(idx);
-        }
+    protected abstract CharSequence getOperation();
+
+    protected boolean isSecondFactoryHashed() {
+        return false;
     }
 }

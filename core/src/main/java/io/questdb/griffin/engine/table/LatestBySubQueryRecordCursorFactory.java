@@ -40,13 +40,13 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final int columnIndex;
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
+    private final RecordCursorFactory recordCursorFactory;
     // this instance is shared between factory and cursor
     // factory will be resolving symbols for cursor and if successful
     // symbol keys will be added to this hash set
     private final IntHashSet symbolKeys = new IntHashSet();
-    private final RecordCursorFactory recordCursorFactory;
-    private final Function filter;
-    private final Record.CharSequenceFunction func;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -77,6 +77,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
         this.func = func;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
@@ -112,10 +117,5 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         return super.getCursorInstance(dataFrameCursor, executionContext);
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 }

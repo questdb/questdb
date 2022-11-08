@@ -48,7 +48,28 @@ import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
-    protected abstract boolean isCaseInsensitive();
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
+        int len = pattern.length();
+
+        StringSink sink = Misc.getThreadLocalBuilder();
+        for (int i = 0; i < len; i++) {
+            char c = pattern.charAt(i);
+            if (c == '_')
+                sink.put(".");
+            else if (c == '%')
+                sink.put(".*?");
+            else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
+                sink.put("\\");
+                sink.put(c);
+            } else
+                sink.put(c);
+        }
+
+        if (Chars.equalsNc(sink, prev)) {
+            return null;
+        }
+        return Chars.toString(sink);
+    }
 
     @Override
     public Function newInstance(
@@ -86,71 +107,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
-    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) {
-        int len = pattern.length();
-
-        StringSink sink = Misc.getThreadLocalBuilder();
-        for (int i = 0; i < len; i++) {
-            char c = pattern.charAt(i);
-            if (c == '_')
-                sink.put(".");
-            else if (c == '%')
-                sink.put(".*?");
-            else if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
-                sink.put("\\");
-                sink.put(c);
-            } else
-                sink.put(c);
-        }
-
-        if (Chars.equalsNc(sink, prev)) {
-            return null;
-        }
-        return Chars.toString(sink);
-    }
-
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Matcher matcher;
-
-        public ConstLikeStrFunction(Function value, Matcher matcher) {
-            this.value = value;
-            this.matcher = matcher;
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
-            return cs != null && matcher.reset(cs).matches();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.put(value);
-            sink.put(" ~ ");//impl is regex 
-            sink.put(matcher.pattern().toString());
-            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
-                sink.put(" [case-sensitive]");
-            }
-        }
-    }
+    protected abstract boolean isCaseInsensitive();
 
     private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
-        private final Function pattern;
         private final boolean caseInsensitive;
-        private Matcher matcher;
+        private final Function pattern;
+        private final Function value;
         private String lastPattern = null;
+        private Matcher matcher;
 
         public BindLikeStrFunction(Function value, Function pattern, boolean caseInsensitive) {
             this.value = value;
@@ -205,6 +169,42 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.put(" ~ ");//impl is regex 
             sink.put(pattern);
             if (!caseInsensitive) {
+                sink.put(" [case-sensitive]");
+            }
+        }
+    }
+
+    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+        private final Matcher matcher;
+        private final Function value;
+
+        public ConstLikeStrFunction(Function value, Matcher matcher) {
+            this.value = value;
+            this.matcher = matcher;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            CharSequence cs = getArg().getStr(rec);
+            return cs != null && matcher.reset(cs).matches();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.put(value);
+            sink.put(" ~ ");//impl is regex 
+            sink.put(matcher.pattern().toString());
+            if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
                 sink.put(" [case-sensitive]");
             }
         }

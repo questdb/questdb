@@ -45,14 +45,8 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Count");
-        sink.child(base);
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -73,13 +67,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    public void toPlan(PlanSink sink) {
+        sink.type("Count");
+        sink.child(base);
     }
 
     @Override
@@ -87,10 +82,15 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    protected void _close() {
+        base.close();
+    }
+
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
-        private boolean hasNext = true;
         private long count;
+        private boolean hasNext = true;
 
         @Override
         public void close() {
@@ -111,13 +111,13 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void toTop() {
-            hasNext = true;
+        public long size() {
+            return 1;
         }
 
         @Override
-        public long size() {
-            return 1;
+        public void toTop() {
+            hasNext = true;
         }
 
         private void of(long count) {

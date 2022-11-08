@@ -162,10 +162,6 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
-        return of(EXPLAIN, recordCursorFactory);
-    }
-
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
@@ -224,6 +220,10 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofDrop() {
         return of(DROP);
+    }
+
+    CompiledQuery ofExplain(RecordCursorFactory recordCursorFactory) {
+        return of(EXPLAIN, recordCursorFactory);
     }
 
     CompiledQuery ofInsert(InsertOperation insertOperation) {

@@ -29,14 +29,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -59,9 +56,9 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
     }
 
     public static class CastDoubleToStrFunction extends AbstractCastToStrFunction {
+        private final int scale;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private final int scale;
 
         public CastDoubleToStrFunction(Function arg, int scale) {
             super(arg);
@@ -80,6 +77,15 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final double value = arg.getDouble(rec);
+            if (Double.isNaN(value)) {
+                return;
+            }
+            sink.put(value, scale);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final double value = arg.getDouble(rec);
             if (Double.isNaN(value)) {
@@ -88,15 +94,6 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value, scale);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
-            }
-            sink.put(value, scale);
         }
     }
 }

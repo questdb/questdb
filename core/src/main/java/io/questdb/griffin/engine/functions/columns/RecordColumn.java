@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.RecordFunction;
-import io.questdb.std.str.CharSink;
 
 public class RecordColumn extends RecordFunction {
     private final int columnIndex;

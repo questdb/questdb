@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
@@ -98,6 +97,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public String getSymbol() {
+        return "count_distinct";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -133,10 +137,5 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     public void toTop() {
         UnaryFunction.super.toTop();
         setIndex = 0;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "count_distinct";
     }
 }

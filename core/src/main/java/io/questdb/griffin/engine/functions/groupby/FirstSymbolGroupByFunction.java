@@ -69,6 +69,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public CharSequence getSymbolB(Record rec) {
         return arg.valueBOf(getInt(rec));
     }
@@ -104,10 +109,5 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public CharSequence valueOf(int key) {
         return arg.valueOf(key);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

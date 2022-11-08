@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -57,6 +56,21 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
+    public void computeFirst(MapValue mapValue, Record record) {
+        mapValue.putDouble(valueIndex, arg.getDouble(record));
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record) {
+        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
     public CharSequence getStr(Record rec) {
         return null;
     }
@@ -67,13 +81,8 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, arg.getDouble(record));
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + arg.getDouble(record));
+    public String getSymbol() {
+        return "sum_t";
     }
 
     @Override
@@ -90,15 +99,5 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sum_t";
     }
 }

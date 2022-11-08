@@ -57,16 +57,6 @@ public class DivIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
@@ -75,6 +65,16 @@ public class DivIntFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NaN;
             }
             return l / r;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
 
         @Override

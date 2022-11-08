@@ -57,14 +57,6 @@ public class Long128Column extends Long128Function implements ScalarFunction {
         return rec.getLong128Lo(columnIndex);
     }
 
-
-    static {
-        COLUMNS.setPos(STATIC_COLUMN_COUNT);
-        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new Long128Column(i));
-        }
-    }
-
     @Override
     public boolean isReadThreadSafe() {
         return true;
@@ -73,5 +65,12 @@ public class Long128Column extends Long128Function implements ScalarFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
+    }
+
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new Long128Column(i));
+        }
     }
 }

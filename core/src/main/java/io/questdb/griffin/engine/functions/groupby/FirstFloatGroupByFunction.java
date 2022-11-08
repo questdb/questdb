@@ -53,6 +53,21 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     }
 
     @Override
+    public Function getArg() {
+        return this.arg;
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+        return rec.getFloat(this.valueIndex);
+    }
+
+    @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);
@@ -66,20 +81,5 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         setFloat(mapValue, Float.NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return this.arg;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(this.valueIndex);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

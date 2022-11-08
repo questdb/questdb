@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.NotNull;
 
 public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -59,6 +58,21 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getDouble(valueIndex);
+    }
+
+    @Override
+    public String getSymbol() {
+        return "sumx";
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -72,20 +86,5 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public String getSymbol() {
-        return "sumx";
     }
 }

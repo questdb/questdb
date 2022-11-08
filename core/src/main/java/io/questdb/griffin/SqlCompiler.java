@@ -1211,23 +1211,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
-            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
-                    updateQueryModel.getUpdateTableName(),
-                    selectQueryModel,
-                    updateQueryModel,
-                    executionContext
-            );
-
-            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, executionContext);
-        } else {
-            return codeGenerator.generateExplain(model, executionContext);
-        }
-    }
-
     private long copyOrdered(
             TableWriter writer,
             RecordMetadata metadata,
@@ -1679,6 +1662,23 @@ public class SqlCompiler implements Closeable {
         } while (attemptsLeft > 0);
 
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
+    }
+
+    private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
+            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+            final RecordCursorFactory recordCursorFactory = prepareForUpdate(
+                    updateQueryModel.getUpdateTableName(),
+                    selectQueryModel,
+                    updateQueryModel,
+                    executionContext
+            );
+
+            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, executionContext);
+        } else {
+            return codeGenerator.generateExplain(model, executionContext);
+        }
     }
 
     private int getNextValidTokenPosition() {

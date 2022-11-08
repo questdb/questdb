@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.*;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
@@ -128,33 +127,29 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
+    private static class DateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
 
-        public TwoDoubleCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
+        public DateCoalesceFunction(ObjList<Function> args, int size) {
+            this.args = args;
+            this.size = size;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            double value = args0.getDouble(rec);
-            if (value == value) {
-                return value;
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            for (int i = 0; i < size; i++) {
+                long value = args.getQuick(i).getDate(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
             }
-            return args1.getDouble(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
+            return Numbers.LONG_NaN;
         }
     }
 
@@ -184,36 +179,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoFloatCoalesceFunction extends FloatFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoFloatCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public float getFloat(Record rec) {
-            float value = args0.getFloat(rec);
-            if (value == value) {
-                return value;
-            }
-            return args1.getFloat(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
     private static class FloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -240,41 +205,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoDateCoalesceFunction extends DateFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoDateCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            long value = args0.getDate(rec);
-            if (value != Numbers.LONG_NaN) {
-                return value;
-            }
-            return args1.getDate(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
-    private static class DateCoalesceFunction extends DateFunction implements MultiArgCoalesceFunction {
+    private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
-        public DateCoalesceFunction(ObjList<Function> args, int size) {
+        public IntCoalesceFunction(ObjList<Function> args, int size) {
+            super();
             this.args = args;
             this.size = size;
         }
@@ -285,175 +221,14 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDate(Record rec) {
+        public int getInt(Record rec) {
             for (int i = 0; i < size; i++) {
-                long value = args.getQuick(i).getDate(rec);
-                if (value != Numbers.LONG_NaN) {
+                int value = args.getQuick(i).getInt(rec);
+                if (value != Numbers.INT_NaN) {
                     return value;
                 }
             }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoTimestampCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            long value = args0.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return value;
-            }
-            return args1.getTimestamp(rec);
-        }
-    }
-
-    private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
-        private final ObjList<Function> args;
-        private final int size;
-
-        public TimestampCoalesceFunction(ObjList<Function> args) {
-            this.args = args;
-            this.size = args.size();
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            for (int i = 0; i < size; i++) {
-                long value = args.getQuick(i).getTimestamp(rec);
-                if (value != Numbers.LONG_NaN) {
-                    return value;
-                }
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    public static class TwoLongCoalesceFunction extends LongFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoLongCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            long value = args0.getLong(rec);
-            if (value != Numbers.LONG_NaN) {
-                return value;
-            }
-            return args1.getLong(rec);
-        }
-    }
-
-    public static class LongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
-        private final ObjList<Function> args;
-        private final int size;
-
-        public LongCoalesceFunction(ObjList<Function> args, int size) {
-            this.args = args;
-            this.size = size;
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            long value;
-            for (int i = 0; i < size; i++) {
-                value = args.getQuick(i).getLong(rec);
-                if (value != Numbers.LONG_NaN) {
-                    return value;
-                }
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryCoalesceFunction {
-        private final Function args1;
-        private final Function args0;
-
-        public TwoLong256CoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        @Override
-        public void getLong256(Record rec, CharSink sink) {
-            Long256 value = args0.getLong256A(rec);
-            if (!isNotNull(value)) {
-                value = args1.getLong256A(rec);
-            }
-            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
-        }
-
-        @Override
-        public Long256 getLong256A(Record rec) {
-            Long256 value = args0.getLong256A(rec);
-            if (isNotNull(value)) {
-                return value;
-            }
-            return args1.getLong256A(rec);
-        }
-
-        @Override
-        public Long256 getLong256B(Record rec) {
-            Long256 value = args0.getLong256B(rec);
-            if (isNotNull(value)) {
-                return value;
-            }
-            return args1.getLong256B(rec);
+            return Numbers.INT_NaN;
         }
     }
 
@@ -507,42 +282,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoIntCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            int value = args0.getInt(rec);
-            if (value != Numbers.INT_NaN) {
-                return value;
-            }
-            return args1.getInt(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
-    private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
+    public static class LongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
 
-        public IntCoalesceFunction(ObjList<Function> args, int size) {
-            super();
+        public LongCoalesceFunction(ObjList<Function> args, int size) {
             this.args = args;
             this.size = size;
         }
@@ -553,135 +297,15 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getInt(Record rec) {
+        public long getLong(Record rec) {
+            long value;
             for (int i = 0; i < size; i++) {
-                int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NaN) {
+                value = args.getQuick(i).getLong(rec);
+                if (value != Numbers.LONG_NaN) {
                     return value;
                 }
             }
-            return Numbers.INT_NaN;
-        }
-    }
-
-    private static class TwoSymStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-        private final boolean args0IsSymbol;
-        private final boolean arg1IsSymbol;
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        public TwoSymStrCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
-            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStr(rec);
-            if (value != null) {
-                return value;
-            }
-            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStr(rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            CharSequence value = args0IsSymbol ? args0.getSymbolB(rec) : args0.getStrB(rec);
-            if (value != null) {
-                return value;
-            }
-            return arg1IsSymbol ? args1.getSymbolB(rec) : args1.getStrB(rec);
-        }
-    }
-
-    private static class TwoSymCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        public TwoSymCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0.getSymbol(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getSymbol(rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            CharSequence value = args0.getSymbolB(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getSymbolB(rec);
-        }
-    }
-
-    private static class TwoStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-
-        public TwoStrCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public CharSequence getStr(Record rec) {
-            CharSequence value = args0.getStr(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getStr(rec);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            CharSequence value = args0.getStrB(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getStrB(rec);
+            return Numbers.LONG_NaN;
         }
     }
 
@@ -722,6 +346,381 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return null;
+        }
+    }
+
+    private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public TimestampCoalesceFunction(ObjList<Function> args) {
+            this.args = args;
+            this.size = args.size();
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            for (int i = 0; i < size; i++) {
+                long value = args.getQuick(i).getTimestamp(rec);
+                if (value != Numbers.LONG_NaN) {
+                    return value;
+                }
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    private static class TwoDateCoalesceFunction extends DateFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDateCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            long value = args0.getDate(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getDate(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoDoubleCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            double value = args0.getDouble(rec);
+            if (value == value) {
+                return value;
+            }
+            return args1.getDouble(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoFloatCoalesceFunction extends FloatFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoFloatCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            float value = args0.getFloat(rec);
+            if (value == value) {
+                return value;
+            }
+            return args1.getFloat(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoIntCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            int value = args0.getInt(rec);
+            if (value != Numbers.INT_NaN) {
+                return value;
+            }
+            return args1.getInt(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoLong256CoalesceFunction extends Long256Function implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoLong256CoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink sink) {
+            Long256 value = args0.getLong256A(rec);
+            if (!isNotNull(value)) {
+                value = args1.getLong256A(rec);
+            }
+            Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), sink);
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            Long256 value = args0.getLong256A(rec);
+            if (isNotNull(value)) {
+                return value;
+            }
+            return args1.getLong256A(rec);
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            Long256 value = args0.getLong256B(rec);
+            if (isNotNull(value)) {
+                return value;
+            }
+            return args1.getLong256B(rec);
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    public static class TwoLongCoalesceFunction extends LongFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoLongCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long value = args0.getLong(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getLong(rec);
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+    }
+
+    private static class TwoStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoStrCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0.getStr(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getStr(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            CharSequence value = args0.getStrB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getStrB(rec);
+        }
+    }
+
+    private static class TwoSymCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoSymCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0.getSymbol(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getSymbol(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            CharSequence value = args0.getSymbolB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getSymbolB(rec);
+        }
+    }
+
+    private static class TwoSymStrCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
+        private final boolean arg1IsSymbol;
+        private final Function args0;
+        private final boolean args0IsSymbol;
+        private final Function args1;
+
+        public TwoSymStrCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
+            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbol(rec) : args0.getStr(rec);
+            if (value != null) {
+                return value;
+            }
+            return arg1IsSymbol ? args1.getSymbol(rec) : args1.getStr(rec);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            CharSequence value = args0IsSymbol ? args0.getSymbolB(rec) : args0.getStrB(rec);
+            if (value != null) {
+                return value;
+            }
+            return arg1IsSymbol ? args1.getSymbolB(rec) : args1.getStrB(rec);
+        }
+    }
+
+    private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoTimestampCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            long value = args0.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return value;
+            }
+            return args1.getTimestamp(rec);
         }
     }
 }

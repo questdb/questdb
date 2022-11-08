@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {

@@ -37,7 +37,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -56,6 +55,50 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public CharSequence getSymbolB(Record rec) {
+        return getSymbol(rec);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        arg.init(symbolTableSource, executionContext);
+        symbolTableShortcut.clear();
+        symbols.clear();
+        symbols.add(null);
+        next = 1;
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        AbstractCastToSymbolFunction copy = newFunc();
+        copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+        copy.symbols.clear();
+        copy.symbols.addAll(this.symbols);
+        copy.next = this.next;
+        return copy;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.put(arg).put("::symbol");
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
+        return valueOf(key);
+    }
+
+    @Override
+    public CharSequence valueOf(int symbolKey) {
+        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
     }
 
     protected int getInt0(int value) {
@@ -86,50 +129,5 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
         return str;
     }
 
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        arg.init(symbolTableSource, executionContext);
-        symbolTableShortcut.clear();
-        symbols.clear();
-        symbols.add(null);
-        next = 1;
-    }
-
-    @Override
-    public boolean isSymbolTableStatic() {
-        return false;
-    }
-
-    @Override
-    public CharSequence getSymbolB(Record rec) {
-        return getSymbol(rec);
-    }
-
-
-    @Override
-    public CharSequence valueOf(int symbolKey) {
-        return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        return valueOf(key);
-    }
-
     protected abstract AbstractCastToSymbolFunction newFunc();
-
-    @Override
-    public @Nullable SymbolTable newSymbolTable() {
-        AbstractCastToSymbolFunction copy = newFunc();
-        copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
-        copy.symbols.clear();
-        copy.symbols.addAll(this.symbols);
-        copy.next = this.next;
-        return copy;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.put(arg).put("::symbol");
-    }
 }

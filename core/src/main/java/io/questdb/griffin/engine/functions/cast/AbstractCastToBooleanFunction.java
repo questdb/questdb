@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.PlanSink;
 
 public abstract class AbstractCastToBooleanFunction extends BooleanFunction implements UnaryFunction {
     protected final Function arg;

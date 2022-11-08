@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -65,6 +64,11 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     }
 
     @Override
+    public String getSymbol() {
+        return "first";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -83,10 +87,5 @@ public class FirstIntGroupByFunction extends IntFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         setInt(mapValue, Numbers.INT_NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "first";
     }
 }

@@ -95,6 +95,11 @@ public class CountLong256GroupByFunction extends LongFunction implements UnaryFu
     }
 
     @Override
+    public String getSymbol() {
+        return "count";
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
@@ -138,10 +143,5 @@ public class CountLong256GroupByFunction extends LongFunction implements UnaryFu
                 value.getLong1() != Numbers.LONG_NaN ||
                 value.getLong2() != Numbers.LONG_NaN ||
                 value.getLong3() != Numbers.LONG_NaN);
-    }
-
-    @Override
-    public String getSymbol() {
-        return "count";
     }
 }

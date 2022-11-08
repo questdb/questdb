@@ -39,12 +39,10 @@ import io.questdb.std.Misc;
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
-
-    private final CairoConfiguration configuration;
     private final RecordComparator comparator;
-    private final Function loFunction;
+    private final CairoConfiguration configuration;
     private final Function hiFunction;
-
+    private final Function loFunction;
     //initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor;//LimitedSizeSortedLightRecordCursor or SortedLightRecordCursor
 
@@ -65,23 +63,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Sort light");
-        if (loFunction != null) {
-            sink.meta("lo").val(loFunction);
-        }
-        if (hiFunction != null) {
-            sink.meta("hi").val(hiFunction);
-        }
-        sink.child(base);
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
-        if (cursor != null) {
-            cursor.close();
-        }
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -99,30 +82,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
-    }
-
-    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
-        if (isInitialized()) {
-            return;
-        }
-
-        if (canBeOptimized(baseCursor, executionContext)) {
-            initializeLimitedSizeCursor(executionContext, baseCursor);
-        } else {
-            initializeUnlimitedSizeCursor();
-        }
-    }
-
-    private void initializeUnlimitedSizeCursor() {
-        LongTreeChain chain = new LongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration
-                        .getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
-        this.cursor = new SortedLightRecordCursor(chain, comparator);
+    public boolean implementsLimit() {
+        return true;
     }
 
     /*
@@ -203,8 +164,21 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, limit, skipFirst, skipLast);
     }
 
-    private boolean isInitialized() {
-        return cursor != null;
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Sort light");
+        if (loFunction != null) {
+            sink.meta("lo").val(loFunction);
+        }
+        if (hiFunction != null) {
+            sink.meta("hi").val(hiFunction);
+        }
+        sink.child(base);
     }
 
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
@@ -220,14 +194,38 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 hiFunction.getLong(null) < 0);
     }
 
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        if (isInitialized()) {
+            return;
+        }
+
+        if (canBeOptimized(baseCursor, executionContext)) {
+            initializeLimitedSizeCursor(executionContext, baseCursor);
+        } else {
+            initializeUnlimitedSizeCursor();
+        }
+    }
+
+    private void initializeUnlimitedSizeCursor() {
+        LongTreeChain chain = new LongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortKeyMaxPages(),
+                configuration
+                        .getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages());
+        this.cursor = new SortedLightRecordCursor(chain, comparator);
+    }
+
+    private boolean isInitialized() {
+        return cursor != null;
     }
 
     @Override
-    public boolean implementsLimit() {
-        return true;
+    protected void _close() {
+        base.close();
+        if (cursor != null) {
+            cursor.close();
+        }
     }
 }
 

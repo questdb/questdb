@@ -70,15 +70,15 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
     }
 
     @Override
+    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return base.getMetadata().getColumnName(idx);
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleByFillNoneNotKeyed");
         sink.optAttr("groupByFunctions", cursor.groupByFunctions, true);
         sink.child(base);
-    }
-
-    @Override
-    public String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return base.getMetadata().getColumnName(idx);
     }
 
     @Override

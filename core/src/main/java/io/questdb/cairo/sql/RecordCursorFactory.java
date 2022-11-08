@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -89,6 +90,24 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return getBaseFactory().getColumnName(idx, sqlExecutionContext);
+    }
+
+    //necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
+    default String getBaseColumnNameNoRemap(int idx, SqlExecutionContext sqlExecutionContext) {
+        return getBaseColumnName(idx, sqlExecutionContext);
+    }
+
+    default RecordCursorFactory getBaseFactory() {
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    /* used for describing query execution plan */
+    default String getColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
+        return getMetadata().getColumnName(idx);
+    }
+
     /**
      * Creates an instance of RecordCursor. Factories will typically reuse cursor instances.
      * The calling code must not hold on to copies of the cursor.
@@ -110,24 +129,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * @return metadata
      */
     RecordMetadata getMetadata();
-
-    /* used for describing query execution plan */
-    default String getColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return getMetadata().getColumnName(idx);
-    }
-
-    default String getBaseColumnName(int idx, SqlExecutionContext sqlExecutionContext) {
-        return getBaseFactory().getColumnName(idx, sqlExecutionContext);
-    }
-
-    //necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
-    default String getBaseColumnNameNoRemap(int idx, SqlExecutionContext sqlExecutionContext) {
-        return getBaseColumnName(idx, sqlExecutionContext);
-    }
-
-    default RecordCursorFactory getBaseFactory() {
-        throw new UnsupportedOperationException("Unsupported for: " + getClass());
-    }
 
     default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         return null;

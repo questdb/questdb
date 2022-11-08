@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 
 public class LengthSymbolFunctionFactory implements FunctionFactory {
     @Override

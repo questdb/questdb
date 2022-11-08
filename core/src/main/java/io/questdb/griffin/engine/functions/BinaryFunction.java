@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.PlanSink;
 
 public interface BinaryFunction extends Function {
 
@@ -43,6 +42,10 @@ public interface BinaryFunction extends Function {
 
     Function getRight();
 
+    default String getSymbol() {
+        return getClass().getName();
+    }
+
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getLeft().init(symbolTableSource, executionContext);
@@ -52,6 +55,11 @@ public interface BinaryFunction extends Function {
     @Override
     default boolean isConstant() {
         return getLeft().isConstant() && getRight().isConstant();
+    }
+
+    //used in generic toSink implementation
+    default boolean isOperator() {
+        return false;
     }
 
     @Override
@@ -66,26 +74,17 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void toTop() {
-        getLeft().toTop();
-        getRight().toTop();
-    }
-
-    //used in generic toSink implementation
-    default boolean isOperator() {
-        return false;
-    }
-
-    default String getSymbol() {
-        return getClass().getName();
-    }
-
-    @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
             sink.put(getLeft()).put(getSymbol()).put(getRight());
         } else {
             sink.put(getSymbol()).put('(').put(getLeft()).put(',').put(getRight()).put(')');
         }
+    }
+
+    @Override
+    default void toTop() {
+        getLeft().toTop();
+        getRight().toTop();
     }
 }

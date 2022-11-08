@@ -69,8 +69,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function left;
         private final long from;
+        private final Function left;
         private final long to;
 
         public ConstFunc(Function left, long from, long to) {
@@ -80,16 +80,16 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             long timestamp = left.getTimestamp(rec);
             if (timestamp == Numbers.LONG_NaN) return false;
 
             return from <= timestamp && timestamp <= to;
-        }
-
-        @Override
-        public Function getArg() {
-            return left;
         }
 
         @Override
@@ -130,13 +130,13 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return from;
+        public Function getCenter() {
+            return arg;
         }
 
         @Override
-        public Function getCenter() {
-            return arg;
+        public Function getLeft() {
+            return from;
         }
 
         @Override

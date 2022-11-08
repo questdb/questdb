@@ -35,7 +35,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {

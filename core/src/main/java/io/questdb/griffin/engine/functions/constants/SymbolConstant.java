@@ -33,11 +33,11 @@ import io.questdb.griffin.PlanSink;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
+    public static final SymbolConstant FALSE = new SymbolConstant("false", 0);
     public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
     public static final SymbolConstant TRUE = new SymbolConstant("true", 0);
-    public static final SymbolConstant FALSE = new SymbolConstant("false", 0);
-    private final String value;
     private final int index;
+    private final String value;
 
     public SymbolConstant(CharSequence value, int index) {
         if (value == null) {
@@ -70,11 +70,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public boolean isSymbolTableStatic() {
-        return false;
-    }
-
-    @Override
     public int getInt(Record rec) {
         return index;
     }
@@ -90,6 +85,16 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
+    public boolean isSymbolTableStatic() {
+        return false;
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        return this;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         if (value == null) {
             sink.put("null::symbol");
@@ -99,17 +104,12 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public CharSequence valueOf(int symbolKey) {
-        return value;
-    }
-
-    @Override
     public CharSequence valueBOf(int key) {
         return value;
     }
 
     @Override
-    public @Nullable SymbolTable newSymbolTable() {
-        return this;
+    public CharSequence valueOf(int symbolKey) {
+        return value;
     }
 }

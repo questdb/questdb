@@ -53,21 +53,6 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
-    }
-
-    @Override
-    public void setNull(MapValue mapValue) {
-        setShort(mapValue, (short) 0);
-    }
-
-    public void setShort(MapValue mapValue, short value) {
-        mapValue.putShort(this.valueIndex, value);
-    }
-
-    @Override
     public Function getArg() {
         return this.arg;
     }
@@ -80,5 +65,20 @@ public class FirstShortGroupByFunction extends ShortFunction implements GroupByF
     @Override
     public String getSymbol() {
         return "first";
+    }
+
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        setShort(mapValue, (short) 0);
+    }
+
+    public void setShort(MapValue mapValue, short value) {
+        mapValue.putShort(this.valueIndex, value);
     }
 }

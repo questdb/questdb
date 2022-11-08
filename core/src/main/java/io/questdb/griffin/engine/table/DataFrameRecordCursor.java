@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -35,13 +34,12 @@ import org.jetbrains.annotations.Nullable;
 import java.util.function.BooleanSupplier;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
-    private final RowCursorFactory rowCursorFactory;
     private final boolean entityCursor;
-    private RowCursor rowCursor;
-    private BooleanSupplier next;
-    private final BooleanSupplier nextRow = this::nextRow;
-    private final BooleanSupplier nextFrame = this::nextFrame;
     private final Function filter;
+    private final RowCursorFactory rowCursorFactory;
+    private BooleanSupplier next;
+    private RowCursor rowCursor;
+    private final BooleanSupplier nextRow = this::nextRow;
 
     public DataFrameRecordCursor(
             RowCursorFactory rowCursorFactory,
@@ -56,6 +54,12 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.filter = filter;
     }
 
+    private final BooleanSupplier nextFrame = this::nextFrame;
+
+    public RowCursorFactory getRowCursorFactory() {
+        return rowCursorFactory;
+    }
+
     @Override
     public boolean hasNext() {
         try {
@@ -66,20 +70,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        if (filter != null) {
-            filter.toTop();
-        }
-        dataFrameCursor.toTop();
-        next = nextFrame;
-    }
-
-    private boolean nextRow() {
-        if (rowCursor.hasNext()) {
-            recordA.setRecordIndex(rowCursor.next());
-            return true;
-        }
-        return nextFrame();
+    public boolean isUsingIndex() {
+        return rowCursorFactory.isUsingIndex();
     }
 
     @Override
@@ -99,19 +91,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         return entityCursor ? dataFrameCursor.size() : -1;
     }
 
-    private boolean nextFrame() {
-        DataFrame dataFrame;
-        while ((dataFrame = dataFrameCursor.next()) != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            if (rowCursor.hasNext()) {
-                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
-                next = nextRow;
-                return true;
-            }
-        }
-        return false;
-    }
-
     @Override
     public void skipTo(long rowCount) {
         if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
@@ -128,11 +107,34 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public boolean isUsingIndex() {
-        return rowCursorFactory.isUsingIndex();
+    public void toTop() {
+        if (filter != null) {
+            filter.toTop();
+        }
+        dataFrameCursor.toTop();
+        next = nextFrame;
     }
 
-    public RowCursorFactory getRowCursorFactory() {
-        return rowCursorFactory;
+    private boolean nextFrame() {
+        DataFrame dataFrame;
+        while ((dataFrame = dataFrameCursor.next()) != null) {
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            if (rowCursor.hasNext()) {
+                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                next = nextRow;
+                return true;
+            }
+        }
+        return false;
     }
+
+    private boolean nextRow() {
+        if (rowCursor.hasNext()) {
+            recordA.setRecordIndex(rowCursor.next());
+            return true;
+        }
+        return nextFrame();
+    }
+
+
 }

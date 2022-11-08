@@ -62,9 +62,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        base.close();
-        cursor.close();
+    public RecordCursorFactory getBaseFactory() {
+        return base;
     }
 
     @Override
@@ -74,13 +73,14 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursorFactory getBaseFactory() {
-        return base;
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
+    public void toPlan(PlanSink sink) {
+        sink.type("Sort");
+        sink.child(base);
     }
 
     @Override
@@ -89,8 +89,8 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Sort");
-        sink.child(base);
+    protected void _close() {
+        base.close();
+        cursor.close();
     }
 }
