@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.Long128Function;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 

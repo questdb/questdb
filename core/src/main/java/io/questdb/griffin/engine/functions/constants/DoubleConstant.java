@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);

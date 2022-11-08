@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.CharSink;
 
 class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable {
     float value;

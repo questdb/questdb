@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 
 public class LongTypeConstant extends LongFunction implements TypeConstant {
     public static final LongTypeConstant INSTANCE = new LongTypeConstant();

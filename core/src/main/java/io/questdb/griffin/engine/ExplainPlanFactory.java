@@ -44,6 +44,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA;
     private final RecordCursorFactory base;
     private final ExplainPlanRecordCursor cursor;
+
     public ExplainPlanFactory(RecordCursorFactory base) {
         super(METADATA);
         this.base = base;

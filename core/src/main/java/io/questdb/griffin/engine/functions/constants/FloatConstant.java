@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.FloatFunction;
 
 public class FloatConstant extends FloatFunction implements ConstantFunction {
     public static final FloatConstant NULL = new FloatConstant(Float.NaN);

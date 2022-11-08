@@ -28,13 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.*;
-import io.questdb.griffin.PlanSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;

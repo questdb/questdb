@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UntypedFunction;
-import io.questdb.griffin.PlanSink;
 
 public class RegClassTypeConstant extends UntypedFunction implements TypeConstant {
     public static final RegClassTypeConstant INSTANCE = new RegClassTypeConstant();

@@ -25,11 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;

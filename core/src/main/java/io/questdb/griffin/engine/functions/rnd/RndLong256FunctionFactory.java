@@ -29,10 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.*;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 

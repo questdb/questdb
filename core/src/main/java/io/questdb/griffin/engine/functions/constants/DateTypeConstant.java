@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.std.Numbers;
-import io.questdb.griffin.PlanSink;
 
 public class DateTypeConstant extends DateFunction implements TypeConstant {
     public static final DateTypeConstant INSTANCE = new DateTypeConstant();

@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;

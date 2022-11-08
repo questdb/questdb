@@ -24,7 +24,8 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
