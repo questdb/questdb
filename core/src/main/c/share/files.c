@@ -126,7 +126,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
          jlong fd,
          jlong offset) {
     jlong result;
-    ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset);
+    ssize_t readLen;
+    RESTARTABLE(pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset), readLen);
     if (readLen != 8) {
         return -1;
     }

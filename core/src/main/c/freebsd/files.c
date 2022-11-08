@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include "../share/sysutil.h"
 
 #if defined(__APPLE__)
 #include <copyfile.h>
@@ -140,14 +141,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         long wrtn;
 
         do {
-            wrtn = pwrite(output, out_ptr, read_sz, wrt_off);
-            if (wrtn >= 0) {
-                read_sz -= wrtn;
-                out_ptr += wrtn;
-                wrt_off += wrtn;
-            } else if (errno != EINTR) {
+            RESTARTABLE(pwrite(output, out_ptr, read_sz, wrt_off), wrtn);
+            if (wrtn < 0) {
                 break;
             }
+            read_sz -= wrtn;
+            out_ptr += wrtn;
+            wrt_off += wrtn;
         } while (read_sz > 0);
 
         if (read_sz > 0) {
