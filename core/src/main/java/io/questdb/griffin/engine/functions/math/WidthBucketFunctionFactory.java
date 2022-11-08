@@ -84,7 +84,6 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        @Nullable
         public int getInt(Record rec) {
             double operand = operand_func.getDouble(rec);
             double low = low_func.getDouble(rec);
