@@ -45,7 +45,7 @@ import java.util.List;
 import static io.questdb.cairo.TableUtils.META_OFFSET_VERSION;
 import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
-public class Mig655Test {
+public class Mig656Test {
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -53,7 +53,7 @@ public class Mig655Test {
     @Test
     public void testMigrate() throws IOException {
 
-        final String dbRoot = temp.newFolder("dbRoot").getAbsolutePath();
+        final String dbRoot = temp.newFolder("Mig656").getAbsolutePath();
         final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
         final int currentVersion;
@@ -64,16 +64,7 @@ public class Mig655Test {
                 final Path other = new Path()
         ) {
             // copy resources _txn and _meta into temp local files
-            try (
-                    final InputStream txnIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_txn");
-                    final InputStream metaIs = Mig655Test.class.getResourceAsStream("/migration/txn_v426/_meta")
-            ) {
-                Assert.assertNotNull(txnIs);
-                Assert.assertNotNull(metaIs);
-                final byte[] buffer = new byte[(int) Files.PAGE_SIZE];
-                copyToTempFile(txnIs, new File(dbRoot + Files.SEPARATOR + TableUtils.TXN_FILE_NAME), buffer);
-                copyToTempFile(metaIs, new File(dbRoot + Files.SEPARATOR + TableUtils.META_FILE_NAME), buffer);
-            }
+            loadRequiredFiles(dbRoot);
 
             // open _meta file and read current version, which should be 426
             final long metaFd = openFileRWOrFail(
@@ -85,8 +76,9 @@ public class Mig655Test {
             currentVersion = TableUtils.readIntOrFail(ff, metaFd, META_OFFSET_VERSION, metaVersionMem, other);
             Assert.assertEquals(426, currentVersion);
 
+            // perform migration 426 -> 427
             try {
-                Mig655.migrate(new MigrationContext(null, metaVersionMem, Long.BYTES, virtualMem, rwMemory) {
+                Mig656.migrate(new MigrationContext(null, metaVersionMem, Long.BYTES, virtualMem, rwMemory) {
                     @Override
                     public FilesFacade getFf() {
                         return ff;
@@ -183,5 +175,18 @@ public class Mig655Test {
         }
         Assert.assertTrue(dst.exists());
         Assert.assertTrue(dst.length() > 0);
+    }
+
+    private static void loadRequiredFiles(String dbRoot) throws IOException {
+        try (
+                final InputStream txnIs = Mig656Test.class.getResourceAsStream("/migration/txn_v426/_txn");
+                final InputStream metaIs = Mig656Test.class.getResourceAsStream("/migration/txn_v426/_meta")
+        ) {
+            Assert.assertNotNull(txnIs);
+            Assert.assertNotNull(metaIs);
+            final byte[] buffer = new byte[(int) Files.PAGE_SIZE];
+            copyToTempFile(txnIs, new File(dbRoot + Files.SEPARATOR + TableUtils.TXN_FILE_NAME), buffer);
+            copyToTempFile(metaIs, new File(dbRoot + Files.SEPARATOR + TableUtils.META_FILE_NAME), buffer);
+        }
     }
 }

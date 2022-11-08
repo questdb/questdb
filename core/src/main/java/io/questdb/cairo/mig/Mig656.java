@@ -32,7 +32,7 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class Mig655 {
+public class Mig656 {
 
     static void migrate(MigrationContext context) {
         // Update transaction file
@@ -45,8 +45,7 @@ public class Mig655 {
         final FilesFacade ff = context.getFf();
         final Path path = context.getTablePath();   // preloaded with tha table's path
         final int pathLen = path.length();
-        final Path other = context.getTablePath2(); // tmp path whose content we don't care about
-        other.of(path).trimTo(pathLen);
+        final Path other = context.getTablePath2().of(path).trimTo(pathLen);
 
         // backup current _txn file to _txn.v426
         path.concat(TableUtils.TXN_FILE_NAME).$();
@@ -57,27 +56,32 @@ public class Mig655 {
         EngineMigration.backupFile(ff, path, other, TableUtils.TXN_FILE_NAME, 426);
 
         // open _txn file for RW
-        try (MemoryMARW txnFile = context.createRwMemoryOf(ff, path)) {
+        try (MemoryMARW txFile = context.createRwMemoryOf(ff, path)) {
 
-            boolean isA = (txnFile.getLong(TX_BASE_OFFSET_VERSION_64) & 1L) == 0L;
+            final long version = txFile.getLong(TX_BASE_OFFSET_VERSION_64);
+            boolean isA = (version & 1L) == 0L;
             final long partitionSegmentSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
-            final int partitionSegmentSize = txnFile.getInt(partitionSegmentSizeOffset);
+            final int partitionSegmentSize = txFile.getInt(partitionSegmentSizeOffset);
 
             if (partitionSegmentSize > 0) {
 
-                MigrationActions.LOG.info().$("partition table [table=").$(context.getTablePath())
-                        .$(", size=").$(partitionSegmentSize)
+                final int newPartitionSegmentSize = partitionSegmentSize * 2;
+
+                MigrationActions.LOG.info().$("extending partition table [table=").$(context.getTablePath())
+                        .$(", version=").$(version)
+                        .$(", from_size=").$(partitionSegmentSize)
+                        .$(", to_size=").$(newPartitionSegmentSize)
                         .$(", partitions=").$(partitionSegmentSize / (4 * Long.BYTES)) // version 426 -> 4 longs
                         .I$();
 
                 // read/extend current partition table
                 MemoryARW txFileUpdate = context.getTempVirtualMem();
                 txFileUpdate.jumpTo(0);
-                final int symbolsSize = txnFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
-                final int baseOffset = txnFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
-                final long readOffset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + symbolsSize + Integer.BYTES;
+                final int symbolsSize = txFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+                final int baseOffset = txFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
+                final long partitionSegmentOffset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + symbolsSize + Integer.BYTES;
                 for (int i = 0, limit = partitionSegmentSize; i < limit; i += Long.BYTES) { // for each long
-                    txFileUpdate.putLong(txnFile.getLong(readOffset + i));
+                    txFileUpdate.putLong(txFile.getLong(partitionSegmentOffset + i));
                     if ((i + Long.BYTES) % (4 * Long.BYTES) == 0) {
                         txFileUpdate.putLong(0L); // mask
                         txFileUpdate.putLong(0L); // available0
@@ -87,15 +91,15 @@ public class Mig655 {
                 }
 
                 // overwrite partition table with patched version
-                final int newPartitionSegmentSize = partitionSegmentSize * 2;
-                txnFile.putInt(partitionSegmentSizeOffset, newPartitionSegmentSize); // A/B header
-                txnFile.jumpTo(readOffset - Integer.BYTES);
-                txnFile.putInt(newPartitionSegmentSize);
+                txFile.putInt(partitionSegmentSizeOffset, newPartitionSegmentSize); // A/B header
+                txFile.jumpTo(partitionSegmentOffset - Integer.BYTES);
+                txFile.putInt(newPartitionSegmentSize);
                 long updateSize = txFileUpdate.getAppendOffset();
                 int pageId = 0;
+                txFile.jumpTo(partitionSegmentOffset);
                 while (updateSize > 0) {
                     long writeSize = Math.min(updateSize, txFileUpdate.getPageSize());
-                    txnFile.putBlockOfBytes(txFileUpdate.getPageAddress(pageId++), writeSize);
+                    txFile.putBlockOfBytes(txFileUpdate.getPageAddress(pageId++), writeSize);
                     updateSize -= writeSize;
                 }
             }

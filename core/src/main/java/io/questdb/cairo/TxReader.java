@@ -49,7 +49,7 @@ public class TxReader implements Closeable, Mutable {
     // +-------+----------------+
     // when RO bit is set, the partition is read only
     //
-    // there are 3 available slots in the partition table for future use:
+    // there are 3 available slots in the partition table for future use.
     protected static final int PARTITION_MASK_OFFSET = 4;
     protected static final int PARTITION_MASK_RO_BIT_OFFSET = 63;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;

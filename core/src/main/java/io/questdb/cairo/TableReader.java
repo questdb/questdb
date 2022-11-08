@@ -135,15 +135,15 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < partitionCount; i++) {
                 // ts, number of rows, txn, column version, 64bit mask, plus 3 available slots are tracked for each partition
                 // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
-                int baseOffset = i * LONGS_PER_TX_ATTACHED_PARTITION;
+                final int baseOffset = i * LONGS_PER_TX_ATTACHED_PARTITION;
                 this.openPartitionInfo.setQuick(baseOffset + PARTITION_TS_OFFSET, txFile.getPartitionTimestamp(i));
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_SIZE_OFFSET, -1); // size
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_NAME_TX_OFFSET, txFile.getPartitionNameTxn(i)); // txn
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_COLUMN_VERSION_OFFSET, txFile.getPartitionColumnVersion(i)); // cv
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_MASK_OFFSET, txFile.getPartitionMask(i)); // mask
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE0_OFFSET, txFile.getPartitionAvailable0(i)); // available0
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE1_OFFSET, txFile.getPartitionAvailable1(i)); // available1
-                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE2_OFFSET, txFile.getPartitionAvailable2(i)); // available2
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_SIZE_OFFSET, -1L);
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_NAME_TX_OFFSET, txFile.getPartitionNameTxn(i));
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_COLUMN_VERSION_OFFSET, txFile.getPartitionColumnVersion(i));
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_MASK_OFFSET, txFile.getPartitionMask(i));
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE0_OFFSET, txFile.getPartitionAvailable0(i));
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE1_OFFSET, txFile.getPartitionAvailable1(i));
+                this.openPartitionInfo.setQuick(baseOffset + PARTITION_AVAILABLE2_OFFSET, txFile.getPartitionAvailable2(i));
             }
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
@@ -718,13 +718,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         openPartitionInfo.insert(offset, LONGS_PER_TX_ATTACHED_PARTITION);
         openPartitionInfo.setQuick(offset, timestamp);
-        openPartitionInfo.setQuick(offset + PARTITION_SIZE_OFFSET, -1L); // size
-        openPartitionInfo.setQuick(offset + PARTITION_NAME_TX_OFFSET, -1L); // name txn
-        openPartitionInfo.setQuick(offset + PARTITION_COLUMN_VERSION_OFFSET, -1L); // column version
-        openPartitionInfo.setQuick(offset + PARTITION_MASK_OFFSET, 0L); // mask
-        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE0_OFFSET, 0L); // available0
-        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE1_OFFSET, 0L); // available1
-        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE2_OFFSET, 0L); // available2
+        openPartitionInfo.setQuick(offset + PARTITION_SIZE_OFFSET, -1L);
+        openPartitionInfo.setQuick(offset + PARTITION_NAME_TX_OFFSET, -1L);
+        openPartitionInfo.setQuick(offset + PARTITION_COLUMN_VERSION_OFFSET, -1L);
+        openPartitionInfo.setQuick(offset + PARTITION_MASK_OFFSET, 0L);
+        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE0_OFFSET, 0L);
+        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE1_OFFSET, 0L);
+        openPartitionInfo.setQuick(offset + PARTITION_AVAILABLE2_OFFSET, 0L);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
     }

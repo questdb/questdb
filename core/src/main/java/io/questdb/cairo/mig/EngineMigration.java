@@ -198,12 +198,12 @@ public class EngineMigration {
         int copyPathLen = toTemp.length();
         try {
             toTemp.concat(backupName).put(".v").put(version);
+            int versionLen = toTemp.length();
             for (int i = 1; ff.exists(toTemp.$()); i++) {
                 // if backup file already exists
                 // add .<num> at the end until file name is unique
                 LOG.info().$("backup dest exists [to=").$(toTemp).I$();
-                toTemp.trimTo(copyPathLen);
-                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+                toTemp.trimTo(versionLen).put('.').put(i);
             }
 
             LOG.info().$("backing up [file=").$(src).$(", to=").$(toTemp).I$();
@@ -226,6 +226,6 @@ public class EngineMigration {
         MIGRATIONS.put(424, Mig609::migrate);
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
-        MIGRATIONS.put(427, Mig655::migrate);
+        MIGRATIONS.put(427, Mig656::migrate); // extends partition table segment from 4 to 8 longs per attached partition
     }
 }
