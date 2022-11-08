@@ -46,7 +46,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 
@@ -93,9 +93,9 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
                 return Numbers.INT_NaN;
             } else if (!(count > 0)) {
-				throw new SqlException("count must be greater than 0");
+				throw SqlException.$(args, "count must be greater than 0");
 			} else if (low == high) {
-				throw new SqlException("low must not be equal to high");
+				throw  SqlException.$(args, "low must not be equal to high");
 			}
 
             if (operand < low) {
