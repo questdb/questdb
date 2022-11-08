@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.QuarternaryFunction;
@@ -90,9 +91,13 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             double high = high_func.getDouble(rec);
             int count = count_func.getInt(rec);
 
-            if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN || !(count > 0) || (low == high)) {
+            if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
                 return Numbers.INT_NaN;
-            }
+            } else if (!(count > 0))) {
+				throw new SqlException("count must be greater than 0");
+			} else if (low == high) {
+				throw new SqlException("low must not be equal to high");
+			}
 
             if (operand < low) {
                 return 0;
