@@ -30,15 +30,6 @@ import org.junit.Test;
 
 public class OffsetParserTest {
 
-    private static void assertError(String offset) {
-        Assert.assertEquals(Long.MIN_VALUE, Timestamps.parseOffset(offset));
-    }
-
-    private static void assertThat(int expected, String offset) {
-        long r = Timestamps.parseOffset(offset);
-        Assert.assertEquals(expected, Numbers.decodeLowInt(r));
-    }
-
     @Test
     public void testBadDelim() {
         assertError("UTC+01x30");
@@ -162,5 +153,14 @@ public class OffsetParserTest {
     @Test
     public void testUTCPositive() {
         assertThat(9 * 60, "UTC+09:00");
+    }
+
+    private static void assertError(String offset) {
+        Assert.assertEquals(Long.MIN_VALUE, Timestamps.parseOffset(offset));
+    }
+
+    private static void assertThat(int expected, String offset) {
+        long r = Timestamps.parseOffset(offset);
+        Assert.assertEquals(expected, Numbers.decodeLowInt(r));
     }
 }

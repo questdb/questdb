@@ -36,8 +36,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
     private final Function symbolFunc;
-    private int symbolKey;
     private boolean convertedToFrame;
+    private int symbolKey;
 
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -88,20 +88,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
-        return this.convertedToFrame;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        assert !this.convertedToFrame;
-        return super.getCursorInstance(dataFrameCursor, executionContext);
-    }
-
-    @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert this.convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
@@ -115,5 +101,19 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             }
         }
         return fwdPageFrameCursor;
+    }
+
+    @Override
+    public boolean supportPageFrameCursor() {
+        return this.convertedToFrame;
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert !this.convertedToFrame;
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 }

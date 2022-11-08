@@ -37,55 +37,55 @@ import java.nio.ByteOrder;
 
 public class BytecodeAssembler {
 
-    private static final int ACC_PUBLIC = 0x01;
     private static final int ACC_PRIVATE = 0x02;
+    private static final int ACC_PUBLIC = 0x01;
     private static final Log LOG = LogFactory.getLog(BytecodeAssembler.class);
+    private static final int O_POOL_COUNT = 8;
     private static final int aload = 0x19;
     private static final int aload_0 = 0x2a;
     private static final int aload_1 = 0x2b;
     private static final int aload_2 = 0x2c;
     private static final int aload_3 = 0x2d;
-    private static final int istore = 0x36;
-    private static final int istore_0 = 0x3b;
-    private static final int istore_1 = 0x3c;
-    private static final int istore_2 = 0x3d;
-    private static final int istore_3 = 0x3e;
-    private static final int lstore = 0x37;
-    private static final int lstore_0 = 0x3f;
-    private static final int lstore_1 = 0x40;
-    private static final int lstore_2 = 0x41;
-    private static final int lstore_3 = 0x42;
+    private static final int bipush = 0x10;
+    private static final int iconst_0 = 3;
+    private static final int iconst_m1 = 2;
     private static final int iinc = 0x84;
-    private static final int lload = 0x16;
-    private static final int lload_0 = 0x1e;
-    private static final int lload_1 = 0x1f;
-    private static final int lload_2 = 0x20;
-    private static final int lload_3 = 0x21;
     private static final int iload = 0x15;
     private static final int iload_0 = 0x1a;
     private static final int iload_1 = 0x1b;
     private static final int iload_2 = 0x1c;
     private static final int iload_3 = 0x1d;
-    private static final int iconst_m1 = 2;
-    private static final int iconst_0 = 3;
-    private static final int bipush = 0x10;
-    private static final int sipush = 0x11;
     private static final int invokespecial = 183;
-    private static final int O_POOL_COUNT = 8;
+    private static final int istore = 0x36;
+    private static final int istore_0 = 0x3b;
+    private static final int istore_1 = 0x3c;
+    private static final int istore_2 = 0x3d;
+    private static final int istore_3 = 0x3e;
+    private static final int lload = 0x16;
+    private static final int lload_0 = 0x1e;
+    private static final int lload_1 = 0x1f;
+    private static final int lload_2 = 0x20;
+    private static final int lload_3 = 0x21;
+    private static final int lstore = 0x37;
+    private static final int lstore_0 = 0x3f;
+    private static final int lstore_1 = 0x40;
+    private static final int lstore_2 = 0x41;
+    private static final int lstore_3 = 0x42;
+    private static final int sipush = 0x11;
+    private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
-    private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private ByteBuffer buf;
-    private int poolCount;
-    private int objectClassIndex;
-    private int defaultConstructorNameIndex;
-    private int defaultConstructorDescIndex;
-    private int defaultConstructorMethodIndex;
     private int codeAttributeIndex;
     private int codeAttributeStart;
     private int codeStart;
-    private int stackMapTableCut;
+    private int defaultConstructorDescIndex;
+    private int defaultConstructorMethodIndex;
+    private int defaultConstructorNameIndex;
     private Class<?> host;
+    private int objectClassIndex;
+    private int poolCount;
+    private int stackMapTableCut;
 
     public BytecodeAssembler() {
         this.buf = ByteBuffer.allocate(1024 * 1024).order(ByteOrder.BIG_ENDIAN);
@@ -799,8 +799,8 @@ public class BytecodeAssembler {
     }
 
     public class Utf8Appender extends AbstractCharSink implements CharSink {
-        private int utf8len = 0;
         private int lenpos;
+        private int utf8len = 0;
 
         public int $() {
             putShort(lenpos, utf8len);

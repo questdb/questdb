@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.Record;
 
 public interface GroupByFunctionsUpdater {
 
-    void updateNew(MapValue value, Record record);
+    void updateEmpty(MapValue value);
 
     void updateExisting(MapValue value, Record record);
 
-    void updateEmpty(MapValue value);
+    void updateNew(MapValue value, Record record);
 }

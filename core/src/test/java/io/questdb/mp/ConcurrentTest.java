@@ -868,26 +868,96 @@ public class ConcurrentTest {
         sequence.done(cursor);
     }
 
-    private static class LongMsg {
-        public long correlationId;
+    private static class BusyConsumer extends Thread {
+        private final CyclicBarrier barrier;
+        private final int[] buf;
+        private final CountDownLatch doneLatch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
+        private volatile int finalIndex = 0;
+
+        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.sequence = sequence;
+            this.buf = new int[cycle];
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                int p = 0;
+                while (true) {
+                    long cursor = sequence.next();
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+                    int v = queue.get(cursor).value;
+                    sequence.done(cursor);
+
+                    if (v == Integer.MIN_VALUE) {
+                        break;
+                    }
+                    buf[p++] = v;
+                }
+
+                finalIndex = p;
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
-    private static class TwoLongMsg {
-        public long f1;
-        public int f2;
-        public long f3;
-        public int f4;
+    private static class BusyProducer extends Thread {
+        private final CyclicBarrier barrier;
+        private final int cycle;
+        private final CountDownLatch doneLatch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
+
+        BusyProducer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.sequence = sequence;
+            this.cycle = cycle;
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                int p = 0;
+                while (p < cycle) {
+                    long cursor = sequence.next();
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+                    queue.get(cursor).value = ++p == cycle ? Integer.MIN_VALUE : p;
+                    sequence.done(cursor);
+                }
+
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private static class BusyProducerConsumer extends Thread {
-        private final Sequence producerSequence;
+        private final CyclicBarrier barrier;
         private final Sequence consumerSequence;
         private final int cycle;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
         private final CountDownLatch doneLatch;
-        private int produced;
+        private final Sequence producerSequence;
+        private final RingQueue<Event> queue;
         private int consumed;
+        private int produced;
 
         BusyProducerConsumer(int cycle, Sequence producerSequence, Sequence consumerSequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
             this.producerSequence = producerSequence;
@@ -942,93 +1012,23 @@ public class ConcurrentTest {
         }
     }
 
-    private static class BusyProducer extends Thread {
-        private final Sequence sequence;
-        private final int cycle;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch doneLatch;
-
-        BusyProducer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
-            this.sequence = sequence;
-            this.cycle = cycle;
-            this.queue = queue;
-            this.barrier = barrier;
-            this.doneLatch = doneLatch;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                int p = 0;
-                while (p < cycle) {
-                    long cursor = sequence.next();
-                    if (cursor < 0) {
-                        Os.pause();
-                        continue;
-                    }
-                    queue.get(cursor).value = ++p == cycle ? Integer.MIN_VALUE : p;
-                    sequence.done(cursor);
-                }
-
-                doneLatch.countDown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+    private static class LongMsg {
+        public long correlationId;
     }
 
-    private static class BusyConsumer extends Thread {
-        private final Sequence sequence;
-        private final int[] buf;
-        private final RingQueue<Event> queue;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch doneLatch;
-        private volatile int finalIndex = 0;
-
-        BusyConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
-            this.sequence = sequence;
-            this.buf = new int[cycle];
-            this.queue = queue;
-            this.barrier = barrier;
-            this.doneLatch = doneLatch;
-        }
-
-        @Override
-        public void run() {
-            try {
-                barrier.await();
-                int p = 0;
-                while (true) {
-                    long cursor = sequence.next();
-                    if (cursor < 0) {
-                        Os.pause();
-                        continue;
-                    }
-                    int v = queue.get(cursor).value;
-                    sequence.done(cursor);
-
-                    if (v == Integer.MIN_VALUE) {
-                        break;
-                    }
-                    buf[p++] = v;
-                }
-
-                finalIndex = p;
-                doneLatch.countDown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+    private static class TwoLongMsg {
+        public long f1;
+        public int f2;
+        public long f3;
+        public int f4;
     }
 
     private static class WaitingConsumer extends Thread {
-        private final Sequence sequence;
-        private final int[] buf;
-        private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
+        private final int[] buf;
         private final SOCountDownLatch latch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
         private volatile int finalIndex = 0;
 
         WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, SOCountDownLatch latch) {

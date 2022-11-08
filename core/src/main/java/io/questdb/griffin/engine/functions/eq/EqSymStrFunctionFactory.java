@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -82,75 +81,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-
-        public NullCheckFunc(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getSymbol(rec) == null);
-        }
-    }
-
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final CharSequence constant;
-
-        public ConstCheckFunc(Function arg, CharSequence constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(constant, arg.getSymbol(rec));
-        }
-    }
-
-    private static class ConstSymIntCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final SymbolFunction arg;
-        private final CharSequence constant;
-        private int valueIndex;
-        private boolean exists;
-
-        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (exists && arg.getInt(rec) == valueIndex);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            StaticSymbolTable staticSymbolTable = arg.getStaticSymbolTable();
-            assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
-            valueIndex = staticSymbolTable.keyOf(constant);
-            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
-        }
-    }
-
     private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final CharSequence constant;
@@ -185,6 +115,57 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final CharSequence constant;
+
+        public ConstCheckFunc(Function arg, CharSequence constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(constant, arg.getSymbol(rec));
+        }
+    }
+
+    private static class ConstSymIntCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final SymbolFunction arg;
+        private final CharSequence constant;
+        private boolean exists;
+        private int valueIndex;
+
+        public ConstSymIntCheckFunc(SymbolFunction arg, CharSequence constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (exists && arg.getInt(rec) == valueIndex);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            StaticSymbolTable staticSymbolTable = arg.getStaticSymbolTable();
+            assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
+            valueIndex = staticSymbolTable.keyOf(constant);
+            exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
+        }
+    }
+
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
@@ -192,16 +173,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
         }
 
         @Override
@@ -217,6 +188,34 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             }
 
             return negated != Chars.equalsNc(a, b);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+    }
+
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+
+        public NullCheckFunc(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (arg.getSymbol(rec) == null);
         }
     }
 }

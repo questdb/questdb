@@ -25,14 +25,16 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriter;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class O3MetricsTest extends AbstractO3Test {
-    private static final long MICROS_IN_MINUTE = 60000000L;
-    private static final long MICROS_IN_HOUR = 3600000000L;
     private static final long MICROS_IN_DAY = 86400000000L;
+    private static final long MICROS_IN_HOUR = 3600000000L;
+    private static final long MICROS_IN_MINUTE = 60000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     @Test

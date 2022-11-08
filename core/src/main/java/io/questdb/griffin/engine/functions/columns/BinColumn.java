@@ -63,16 +63,16 @@ public class BinColumn extends BinFunction implements ScalarFunction {
         return false;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("BinColumn(").put(columnIndex).put(')');
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new BinColumn(i));
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("BinColumn(").put(columnIndex).put(')');
     }
 
 }

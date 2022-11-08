@@ -36,66 +36,53 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
-    private final CairoConfiguration configuration;
-
-    private final RingQueue<ColumnIndexerTask> indexerQueue;
-    private final MPSequence indexerPubSeq;
-    private final MCSequence indexerSubSeq;
-
-    private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
-    private final MPSequence vectorAggregatePubSeq;
-    private final MCSequence vectorAggregateSubSeq;
-
-    private final RingQueue<O3CallbackTask> o3CallbackQueue;
-    private final MPSequence o3CallbackPubSeq;
-    private final MCSequence o3CallbackSubSeq;
-
-    private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
-    private final MPSequence o3PurgeDiscoveryPubSeq;
-    private final MCSequence o3PurgeDiscoverySubSeq;
-
-    private final RingQueue<O3PartitionTask> o3PartitionQueue;
-    private final MPSequence o3PartitionPubSeq;
-    private final MCSequence o3PartitionSubSeq;
-
-    private final RingQueue<O3OpenColumnTask> o3OpenColumnQueue;
-    private final MPSequence o3OpenColumnPubSeq;
-    private final MCSequence o3OpenColumnSubSeq;
-
-    private final RingQueue<O3CopyTask> o3CopyQueue;
-    private final MPSequence o3CopyPubSeq;
-    private final MCSequence o3CopySubSeq;
-
-    private final RingQueue<LatestByTask> latestByQueue;
-    private final MPSequence latestByPubSeq;
-    private final MCSequence latestBySubSeq;
-
-    private final RingQueue<TableWriterTask> tableWriterEventQueue;
-    private final MPSequence tableWriterEventPubSeq;
-    private final FanOut tableWriterEventSubSeq;
-
-    private final MPSequence queryCacheEventPubSeq;
-    private final FanOut queryCacheEventSubSeq;
-
-    private final int pageFrameReduceShardCount;
-    private final MPSequence[] pageFrameReducePubSeq;
-    private final MCSequence[] pageFrameReduceSubSeq;
-    private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
-    private final FanOut[] pageFrameCollectFanOut;
+    private final MPSequence columnPurgePubSeq;
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
-    private final MPSequence columnPurgePubSeq;
-
-    private final RingQueue<TextImportTask> textImportQueue;
-    private final SPSequence textImportPubSeq;
-    private final MCSequence textImportSubSeq;
+    private final CairoConfiguration configuration;
+    private final MPSequence indexerPubSeq;
+    private final RingQueue<ColumnIndexerTask> indexerQueue;
+    private final MCSequence indexerSubSeq;
+    private final MPSequence latestByPubSeq;
+    private final RingQueue<LatestByTask> latestByQueue;
+    private final MCSequence latestBySubSeq;
+    private final MPSequence o3CallbackPubSeq;
+    private final RingQueue<O3CallbackTask> o3CallbackQueue;
+    private final MCSequence o3CallbackSubSeq;
+    private final MPSequence o3CopyPubSeq;
+    private final RingQueue<O3CopyTask> o3CopyQueue;
+    private final MCSequence o3CopySubSeq;
+    private final MPSequence o3OpenColumnPubSeq;
+    private final RingQueue<O3OpenColumnTask> o3OpenColumnQueue;
+    private final MCSequence o3OpenColumnSubSeq;
+    private final MPSequence o3PartitionPubSeq;
+    private final RingQueue<O3PartitionTask> o3PartitionQueue;
+    private final MCSequence o3PartitionSubSeq;
+    private final MPSequence o3PurgeDiscoveryPubSeq;
+    private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
+    private final MCSequence o3PurgeDiscoverySubSeq;
+    private final FanOut[] pageFrameCollectFanOut;
+    private final MPSequence[] pageFrameReducePubSeq;
+    private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
+    private final int pageFrameReduceShardCount;
+    private final MCSequence[] pageFrameReduceSubSeq;
+    private final MPSequence queryCacheEventPubSeq;
+    private final FanOut queryCacheEventSubSeq;
+    private final MPSequence tableWriterEventPubSeq;
+    private final RingQueue<TableWriterTask> tableWriterEventQueue;
+    private final FanOut tableWriterEventSubSeq;
     private final SCSequence textImportColSeq;
-    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
+    private final SPSequence textImportPubSeq;
+    private final RingQueue<TextImportTask> textImportQueue;
     private final MPSequence textImportRequestPubSeq;
+    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
     private final SCSequence textImportRequestSubSeq;
-
-    private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
+    private final MCSequence textImportSubSeq;
+    private final MPSequence vectorAggregatePubSeq;
+    private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
+    private final MCSequence vectorAggregateSubSeq;
     private final Sequence walTxnNotificationPubSequence;
+    private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
     private final Sequence walTxnNotificationSubSequence;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
@@ -208,18 +195,6 @@ public class MessageBusImpl implements MessageBus {
         // We need to close only queues with native backing memory.
         Misc.free(getTableWriterEventQueue());
         Misc.free(pageFrameReduceQueue);
-    }
-
-    @TestOnly
-    public void reset() {
-        clearQueue(walTxnNotificationSubSequence);
-    }
-
-    private void clearQueue(Sequence subSequence) {
-        long cursor;
-        while ((cursor = subSequence.next()) > -1) {
-            subSequence.done(cursor);
-        }
     }
 
     @Override
@@ -373,6 +348,16 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public FanOut getQueryCacheEventFanOut() {
+        return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public MPSequence getQueryCacheEventPubSeq() {
+        return queryCacheEventPubSeq;
+    }
+
+    @Override
     public FanOut getTableWriterEventFanOut() {
         return tableWriterEventSubSeq;
     }
@@ -385,6 +370,41 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
+    }
+
+    @Override
+    public SCSequence getTextImportColSeq() {
+        return textImportColSeq;
+    }
+
+    @Override
+    public Sequence getTextImportPubSeq() {
+        return textImportPubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return textImportQueue;
+    }
+
+    @Override
+    public MPSequence getTextImportRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
+        return textImportRequestQueue;
+    }
+
+    @Override
+    public Sequence getTextImportRequestSubSeq() {
+        return textImportRequestSubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportSubSeq() {
+        return textImportSubSeq;
     }
 
     @Override
@@ -403,48 +423,8 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public MPSequence getQueryCacheEventPubSeq() {
-        return queryCacheEventPubSeq;
-    }
-
-    @Override
-    public FanOut getQueryCacheEventFanOut() {
-        return queryCacheEventSubSeq;
-    }
-
-    @Override
-    public RingQueue<TextImportTask> getTextImportQueue() {
-        return textImportQueue;
-    }
-
-    @Override
-    public Sequence getTextImportPubSeq() {
-        return textImportPubSeq;
-    }
-
-    @Override
-    public Sequence getTextImportSubSeq() {
-        return textImportSubSeq;
-    }
-
-    @Override
-    public SCSequence getTextImportColSeq() {
-        return textImportColSeq;
-    }
-
-    @Override
-    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
-        return textImportRequestQueue;
-    }
-
-    @Override
-    public MPSequence getTextImportRequestPubSeq() {
-        return textImportRequestPubSeq;
-    }
-
-    @Override
-    public Sequence getTextImportRequestSubSeq() {
-        return textImportRequestSubSeq;
+    public Sequence getWalTxnNotificationPubSequence() {
+        return walTxnNotificationPubSequence;
     }
 
     @Override
@@ -453,12 +433,19 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getWalTxnNotificationPubSequence() {
-        return walTxnNotificationPubSequence;
-    }
-
-    @Override
     public Sequence getWalTxnNotificationSubSequence() {
         return walTxnNotificationSubSequence;
+    }
+
+    @TestOnly
+    public void reset() {
+        clearQueue(walTxnNotificationSubSequence);
+    }
+
+    private void clearQueue(Sequence subSequence) {
+        long cursor;
+        while ((cursor = subSequence.next()) > -1) {
+            subSequence.done(cursor);
+        }
     }
 }

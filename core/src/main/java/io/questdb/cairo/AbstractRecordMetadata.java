@@ -34,8 +34,8 @@ import io.questdb.std.ObjList;
 public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMetadataCollection, Mutable {
     protected final ObjList<TableColumnMetadata> columnMetadata = new ObjList<>();
     protected final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    protected int timestampIndex = -1;
     protected int columnCount;
+    protected int timestampIndex = -1;
 
     public static TableColumnMetadata copyOf(RecordMetadata metadata, int columnIndex) {
         if (metadata instanceof AbstractRecordMetadata) {
@@ -52,13 +52,16 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
     }
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
+    public void clear() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
+        timestampIndex = -1;
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return getColumnMetadata(columnIndex).getType();
+    public int getColumnCount() {
+        return columnCount;
     }
 
     @Override
@@ -71,8 +74,18 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
     }
 
     @Override
+    public TableColumnMetadata getColumnMetadata(int index) {
+        return columnMetadata.getQuick(index);
+    }
+
+    @Override
     public String getColumnName(int columnIndex) {
         return getColumnMetadata(columnIndex).getName();
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getType();
     }
 
     @Override
@@ -81,24 +94,24 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
     }
 
     @Override
+    public RecordMetadata getMetadata(int columnIndex) {
+        return getColumnMetadata(columnIndex).getMetadata();
+    }
+
+    @Override
     public int getTimestampIndex() {
         return timestampIndex;
     }
 
     @Override
-    public RecordMetadata getMetadata(int columnIndex) {
-        return getColumnMetadata(columnIndex).getMetadata();
+    public int getWriterIndex(int columnIndex) {
+        return getColumnMetadata(columnIndex).getWriterIndex();
     }
 
     @Override
     public boolean hasColumn(int columnIndex) {
         final TableColumnMetadata columnMeta = columnMetadata.getQuiet(columnIndex);
         return columnMeta != null && !columnMeta.isDeleted();
-    }
-
-    @Override
-    public int getWriterIndex(int columnIndex) {
-        return getColumnMetadata(columnIndex).getWriterIndex();
     }
 
     @Override
@@ -109,18 +122,5 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, ColumnMe
     @Override
     public boolean isSymbolTableStatic(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolTableStatic();
-    }
-
-    @Override
-    public TableColumnMetadata getColumnMetadata(int index) {
-        return columnMetadata.getQuick(index);
-    }
-
-    @Override
-    public void clear() {
-        columnMetadata.clear();
-        columnNameIndexMap.clear();
-        columnCount = 0;
-        timestampIndex = -1;
     }
 }

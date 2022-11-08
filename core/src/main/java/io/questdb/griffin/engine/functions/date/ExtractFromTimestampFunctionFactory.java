@@ -224,52 +224,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
-    static final class WeekFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public WeekFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getWeek(value);
-            }
-            return Numbers.INT_NaN;
-        }
-    }
-
-    static final class IsoYearFunction extends IntFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public IsoYearFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getIsoYear(value);
-            }
-            return Numbers.INT_NaN;
-        }
-    }
-
     static final class EpochFunction extends LongFunction implements UnaryFunction {
 
         private final Function arg;
@@ -288,52 +242,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
                 return value / Timestamps.SECOND_MICROS;
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    static final class MicrosecondsFunction extends LongFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public MicrosecondsFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMicrosOfMinute(value);
-            }
-            return Numbers.LONG_NaN;
-        }
-    }
-
-    static final class MillisecondsFunction extends LongFunction implements UnaryFunction {
-
-        private final Function arg;
-
-        public MillisecondsFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
-                return Timestamps.getMillisOfMinute(value);
             }
             return Numbers.LONG_NaN;
         }
@@ -362,6 +270,52 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    static final class IsoYearFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public IsoYearFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getIsoYear(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class MicrosecondsFunction extends LongFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public MicrosecondsFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMicrosOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
     static final class MillenniumFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
@@ -385,6 +339,29 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
     }
 
+    static final class MillisecondsFunction extends LongFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public MillisecondsFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMillisOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
     static final class QuarterFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
@@ -403,6 +380,29 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
                 return Timestamps.getQuarter(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class WeekFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public WeekFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getWeek(value);
             }
             return Numbers.INT_NaN;
         }

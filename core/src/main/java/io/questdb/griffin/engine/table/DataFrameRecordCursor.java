@@ -34,13 +34,11 @@ import org.jetbrains.annotations.Nullable;
 import java.util.function.BooleanSupplier;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
-    private final RowCursorFactory rowCursorFactory;
     private final boolean entityCursor;
-    private RowCursor rowCursor;
-    private BooleanSupplier next;
-    private final BooleanSupplier nextRow = this::nextRow;
-    private final BooleanSupplier nextFrame = this::nextFrame;
     private final Function filter;
+    private final RowCursorFactory rowCursorFactory;
+    private BooleanSupplier next;
+    private RowCursor rowCursor;
 
     public DataFrameRecordCursor(
             RowCursorFactory rowCursorFactory,
@@ -55,13 +53,11 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.filter = filter;
     }
 
+    private final BooleanSupplier nextRow = this::nextRow;
+
     @Override
-    public boolean hasNext() {
-        try {
-            return next.getAsBoolean();
-        } catch (NoMoreFramesException ignore) {
-            return false;
-        }
+    public boolean isUsingIndex() {
+        return rowCursorFactory.isUsingIndex();
     }
 
     @Override
@@ -73,12 +69,28 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         next = nextFrame;
     }
 
-    private boolean nextRow() {
-        if (rowCursor.hasNext()) {
-            recordA.setRecordIndex(rowCursor.next());
-            return true;
+    private final BooleanSupplier nextFrame = this::nextFrame;
+
+    @Override
+    public boolean hasNext() {
+        try {
+            return next.getAsBoolean();
+        } catch (NoMoreFramesException ignore) {
+            return false;
         }
-        return nextFrame();
+    }
+
+    private boolean nextFrame() {
+        DataFrame dataFrame;
+        while ((dataFrame = dataFrameCursor.next()) != null) {
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            if (rowCursor.hasNext()) {
+                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                next = nextRow;
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -98,19 +110,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         return entityCursor ? dataFrameCursor.size() : -1;
     }
 
-    private boolean nextFrame() {
-        DataFrame dataFrame;
-        while ((dataFrame = dataFrameCursor.next()) != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            if (rowCursor.hasNext()) {
-                recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
-                next = nextRow;
-                return true;
-            }
-        }
-        return false;
-    }
-
     @Override
     public void skipTo(long rowCount) {
         if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
@@ -126,8 +125,13 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    @Override
-    public boolean isUsingIndex() {
-        return rowCursorFactory.isUsingIndex();
+    private boolean nextRow() {
+        if (rowCursor.hasNext()) {
+            recordA.setRecordIndex(rowCursor.next());
+            return true;
+        }
+        return nextFrame();
     }
+
+
 }

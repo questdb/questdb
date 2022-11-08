@@ -30,7 +30,6 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
@@ -39,9 +38,9 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
+    protected final ObjList<GroupByFunction> groupByFunctions;
     //factory keeps a reference but allocation lifecycle is governed by cursor
     protected final Map map;
-    protected final ObjList<GroupByFunction> groupByFunctions;
     protected final RecordSink mapSink;
 
     public AbstractSampleByFillRecordCursorFactory(
@@ -61,12 +60,6 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
         this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-    }
-
-    @Override
-    protected void _close() {
-        super._close();
-        getRawCursor().close();
     }
 
     @Override
@@ -122,5 +115,11 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             Misc.free(rawCursor);
             throw ex;
         }
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        getRawCursor().close();
     }
 }

@@ -33,15 +33,15 @@ import io.questdb.std.*;
 
 public class RecordComparatorCompiler {
     private final BytecodeAssembler asm;
-    private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
-    private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
+    private final IntList branches = new IntList();
+    private final IntList comparatorAccessorIndices = new IntList();
     private final IntList fieldIndices = new IntList();
     private final IntList fieldNameIndices = new IntList();
-    private final IntList fieldTypeIndices = new IntList();
     private final IntList fieldRecordAccessorIndicesA = new IntList();
     private final IntList fieldRecordAccessorIndicesB = new IntList();
-    private final IntList comparatorAccessorIndices = new IntList();
-    private final IntList branches = new IntList();
+    private final IntList fieldTypeIndices = new IntList();
+    private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
 
     public RecordComparatorCompiler(BytecodeAssembler asm) {
         this.asm = asm;

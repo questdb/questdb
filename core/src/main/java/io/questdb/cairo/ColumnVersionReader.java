@@ -37,21 +37,20 @@ import io.questdb.std.str.LPSZ;
 import java.io.Closeable;
 
 public class ColumnVersionReader implements Closeable, Mutable {
+    public static final int BLOCK_SIZE = 4;
+    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
+    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
+    // PARTITION_TIMESTAMP_OFFSET = 0;
+    public static final int COLUMN_INDEX_OFFSET = 1;
+    public static final int COLUMN_NAME_TXN_OFFSET = 2;
+    public static final int COLUMN_TOP_OFFSET = 3;
+    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
     public static final int OFFSET_VERSION_64 = 0;
     public static final int OFFSET_OFFSET_A_64 = OFFSET_VERSION_64 + 8;
     public static final int OFFSET_SIZE_A_64 = OFFSET_OFFSET_A_64 + 8;
     public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
     public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
     public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
-    public static final int BLOCK_SIZE = 4;
-    public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
-    public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
-    public static final long COL_TOP_DEFAULT_PARTITION = Long.MIN_VALUE;
-    // PARTITION_TIMESTAMP_OFFSET = 0;
-    public static final int COLUMN_INDEX_OFFSET = 1;
-    public static final int COLUMN_NAME_TXN_OFFSET = 2;
-    public static final int COLUMN_TOP_OFFSET = 3;
-
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedList = new LongList();
     private MemoryCMR mem;
@@ -107,8 +106,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     /**
      * Checks that column exists in the partition and returns the column top
+     *
      * @param partitionTimestamp timestamp of the partition
-     * @param columnIndex column index
+     * @param columnIndex        column index
      * @return column top in the partition or -1 if column does not exist in the partition
      */
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
@@ -128,17 +128,6 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return -1L;
     }
 
-    /**
-     * Returns the column top without checking that column exists in the partition
-     * @param partitionTimestamp timestamp of the partition
-     * @param columnIndex column index
-     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no column top
-     */
-    public long getColumnTopQuick(long partitionTimestamp, int columnIndex) {
-        int index = getRecordIndex(partitionTimestamp, columnIndex);
-        return getColumnTopByIndex(index);
-    }
-
     public long getColumnTopByIndex(int versionRecordIndex) {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + COLUMN_TOP_OFFSET) : 0L;
     }
@@ -149,12 +138,25 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * All partitions after that will have 0 column top (column fully exists)
      * Exception is when O3 commit can overwrite column top for any partition where the column did not exist
      * with concrete column top value
+     *
      * @param columnIndex column index
      * @return the partition timestamp where column added or Long.MIN_VALUE if column was present from table creation
      */
     public long getColumnTopPartitionTimestamp(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
         return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;
+    }
+
+    /**
+     * Returns the column top without checking that column exists in the partition
+     *
+     * @param partitionTimestamp timestamp of the partition
+     * @param columnIndex        column index
+     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no column top
+     */
+    public long getColumnTopQuick(long partitionTimestamp, int columnIndex) {
+        int index = getRecordIndex(partitionTimestamp, columnIndex);
+        return getColumnTopByIndex(index);
     }
 
     public long getDefaultColumnNameTxn(int columnIndex) {
@@ -258,6 +260,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
     }
 
+    private long unsafeGetVersion() {
+        return mem.getLong(OFFSET_VERSION_64);
+    }
+
     void ofRO(MemoryCMR mem) {
         if (this.mem != null && ownMem) {
             this.mem.close();
@@ -276,9 +282,5 @@ public class ColumnVersionReader implements Closeable, Mutable {
         mem.resize(offset + size);
         readUnsafe(offset, size, cachedList, mem);
         return version;
-    }
-
-    private long unsafeGetVersion() {
-        return mem.getLong(OFFSET_VERSION_64);
     }
 }

@@ -27,8 +27,8 @@ package io.questdb.std;
 import java.io.Closeable;
 
 public interface ClosableInstance<T> extends Closeable {
-    T instance();
-
     @Override
     void close();
+
+    T instance();
 }

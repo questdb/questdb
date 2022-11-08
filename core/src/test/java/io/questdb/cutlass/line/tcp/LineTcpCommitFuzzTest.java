@@ -39,27 +39,22 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         super(walMode);
     }
 
-    @Override
-    protected Log getLog() {
-        return LOG;
-    }
-
     @Test
-    public void testCommitIntervalBasedFraction() throws Exception {
-        // This test only makes sense for non-WAL tables since they support commit lag.
+    public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
+        // This test makes sense for only non-WAL tables since they support commit lag.
         Assume.assumeFalse(walEnabled);
 
-        // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
-        configOverrideMaxUncommittedRows = 110;
+        // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
+        configOverrideMaxUncommittedRows = 22;
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
+        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
         configOverrideCommitLagMicros = 1_000_000;
-        commitIntervalFraction = 0.5;
-        commitIntervalDefault = 300_000;
+        commitIntervalFraction = 0.0;
+        commitIntervalDefault = 500;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
@@ -89,21 +84,21 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testCommitIntervalBasedDefaultFractionZero() throws Exception {
-        // This test makes sense for only non-WAL tables since they support commit lag.
+    public void testCommitIntervalBasedFraction() throws Exception {
+        // This test only makes sense for non-WAL tables since they support commit lag.
         Assume.assumeFalse(walEnabled);
 
-        // rows based commit every 22 rows -> will commit 88 rows per table only -> test would timeout
-        configOverrideMaxUncommittedRows = 22;
+        // rows based commit every 110 rows -> will never happen, we ingest only 100 rows per table -> test would timeout
+        configOverrideMaxUncommittedRows = 110;
 
         // idle table commit after 5 mins inactivity -> test would timeout
         maintenanceInterval = 300_000_000;
         minIdleMsBeforeWriterRelease = 300_000_000;
 
-        // time based commit every 0.5 seconds (default interval) -> should commit last 12 rows per table -> make test pass
+        // time based commit every 0.5 seconds (50% of 1 sec commit lag) -> should commit rows -> make test pass
         configOverrideCommitLagMicros = 1_000_000;
-        commitIntervalFraction = 0.0;
-        commitIntervalDefault = 500;
+        commitIntervalFraction = 0.5;
+        commitIntervalDefault = 300_000;
 
         initLoadParameters(20, 5, 2, 2, 50, true);
 
@@ -164,6 +159,15 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Override
+    protected Log getLog() {
+        return LOG;
+    }
+
+    void handleWriterReturnEvent(CharSequence name) {
+        setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
+    }
+
+    @Override
     void handleWriterUnlockEvent(CharSequence name) {
         super.handleWriterUnlockEvent(name);
 
@@ -171,9 +175,5 @@ public class LineTcpCommitFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         // instead of the 'ready' latch we will rely on the timeout in assertTable(table)
         final TableData table = tables.get(name);
         table.returnPermit();
-    }
-
-    void handleWriterReturnEvent(CharSequence name) {
-        setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
     }
 }

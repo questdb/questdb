@@ -25,8 +25,8 @@
 package io.questdb.tasks;
 
 public class WalTxnNotificationTask {
-    private String tableName;
     private int tableId;
+    private String tableName;
     private long txn;
 
     public int getTableId() {

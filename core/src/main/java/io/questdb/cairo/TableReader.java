@@ -47,39 +47,39 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
-    private static final int PARTITIONS_SLOT_SIZE = 4;
-    private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
-    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
+    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
+    private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
+    private static final int PARTITIONS_SLOT_SIZE = 4;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-    private final FilesFacade ff;
-    private final Path path;
-    private final int partitionBy;
-    private final int rootLen;
-    private final TableReaderMetadata metadata;
-    private final DateFormat partitionDirFormatMethod;
-    private final LongList openPartitionInfo;
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
-    private final String tableName;
-    private final MessageBus messageBus;
-    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final CairoConfiguration configuration;
-    private final TxReader txFile;
-    private final MemoryMR todoMem = Vm.getMRInstance();
-    private final TxnScoreboard txnScoreboard;
+    private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
-    private int partitionCount;
-    private LongList columnTops;
-    private ObjList<MemoryMR> columns;
+    private final CairoConfiguration configuration;
+    private final FilesFacade ff;
+    private final MessageBus messageBus;
+    private final TableReaderMetadata metadata;
+    private final LongList openPartitionInfo;
+    private final int partitionBy;
+    private final DateFormat partitionDirFormatMethod;
+    private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final Path path;
+    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
+    private final int rootLen;
+    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final String tableName;
+    private final MemoryMR todoMem = Vm.getMRInstance();
+    private final TxReader txFile;
+    private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountShl;
+    private LongList columnTops;
+    private ObjList<MemoryMR> columns;
+    private int partitionCount;
     private long rowCount;
-    private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
+    private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
-    private final MillisecondClock clock;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -291,11 +291,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex);
     }
 
-    @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
-        return getSymbolMapReader(columnIndex).newSymbolTableView();
-    }
-
     public String getTableName() {
         return tableName;
     }
@@ -306,6 +301,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TxReader getTxFile() {
         return txFile;
+    }
+
+    public long getTxn() {
+        return txn;
     }
 
     public long getTxnStructureVersion() {
@@ -330,6 +329,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public boolean isOpen() {
         return tempMem8b != 0;
+    }
+
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+        return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
     public long openPartition(int partitionIndex) {
@@ -687,26 +691,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    int getColumnCount() {
-        return columnCount;
-    }
-
-    int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountShl;
-    }
-
-    long getPartitionRowCount(int partitionIndex) {
-        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-    }
-
-    public long getTxn() {
-        return txn;
-    }
-
-    TxnScoreboard getTxnScoreboard() {
-        return txnScoreboard;
-    }
-
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
@@ -726,10 +710,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1L); // column version
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
-    }
-
-    boolean isColumnCached(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
     @NotNull
@@ -1290,5 +1270,25 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null));
             }
         }
+    }
+
+    int getColumnCount() {
+        return columnCount;
+    }
+
+    int getPartitionIndex(int columnBase) {
+        return columnBase >>> columnCountShl;
+    }
+
+    long getPartitionRowCount(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+    }
+
+    TxnScoreboard getTxnScoreboard() {
+        return txnScoreboard;
+    }
+
+    boolean isColumnCached(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 }

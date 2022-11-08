@@ -32,10 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class O3Basket implements Mutable {
     private final ObjList<BitmapIndexWriter> indexers = new ObjList<BitmapIndexWriter>();
     private final ObjList<AtomicInteger> partCounters = new ObjList<AtomicInteger>();
-    private int indexerPointer;
-    private int partCounterPointer;
     private int columnCount;
     private int indexCount;
+    private int indexerPointer;
+    private int partCounterPointer;
 
     @Override
     public void clear() {

@@ -66,6 +66,21 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getDouble(valueIndex) / rec.getLong(valueIndex + 1);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
@@ -82,21 +97,6 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex) / rec.getLong(valueIndex + 1);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     @Override

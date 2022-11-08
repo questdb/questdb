@@ -37,12 +37,12 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public int getSymbolCount() {
+    public int getSymbolCapacity() {
         return 0;
     }
 
     @Override
-    public int getSymbolCapacity() {
+    public int getSymbolCount() {
         return 0;
     }
 
@@ -57,7 +57,8 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public void updateSymbolCount(int count) {
+    public int keyOf(CharSequence value) {
+        return SymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override
@@ -66,17 +67,16 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public int keyOf(CharSequence value) {
-        return SymbolTable.VALUE_NOT_FOUND;
-    }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        return null;
+    public void updateSymbolCount(int count) {
     }
 
     @Override
     public CharSequence valueBOf(int key) {
+        return null;
+    }
+
+    @Override
+    public CharSequence valueOf(int key) {
         return null;
     }
 }

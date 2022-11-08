@@ -43,13 +43,13 @@ public class TestWorkerPool extends WorkerPool {
     private TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
         super(new WorkerPoolConfiguration() {
             @Override
-            public int getWorkerCount() {
-                return workerCount;
+            public String getPoolName() {
+                return poolName;
             }
 
             @Override
-            public String getPoolName() {
-                return poolName;
+            public int getWorkerCount() {
+                return workerCount;
             }
         }, metrics.health());
     }

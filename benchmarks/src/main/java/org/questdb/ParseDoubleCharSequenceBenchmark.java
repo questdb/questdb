@@ -40,8 +40,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class ParseDoubleCharSequenceBenchmark {
-    private final static List<String> doubles = new ArrayList<>();
     private static final int N = 100;
+    private final static List<String> doubles = new ArrayList<>();
     private static final DirectByteCharSequence flyweight = new DirectByteCharSequence();
     private final long mem = Unsafe.malloc(8 * 1024, MemoryTag.NATIVE_DEFAULT);
 

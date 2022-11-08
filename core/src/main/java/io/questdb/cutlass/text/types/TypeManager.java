@@ -36,15 +36,15 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectCharSink;
 
 public class TypeManager implements Mutable {
-    private final ObjList<TypeAdapter> probes = new ObjList<>();
-    private final int probeCount;
-    private final StringAdapter stringAdapter;
-    private final SymbolAdapter indexedSymbolAdapter;
-    private final SymbolAdapter notIndexedSymbolAdapter;
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
-    private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
-    private final ObjectPool<TimestampAdapter> timestampAdapterPool;
+    private final SymbolAdapter indexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
+    private final SymbolAdapter notIndexedSymbolAdapter;
+    private final int probeCount;
+    private final ObjList<TypeAdapter> probes = new ObjList<>();
+    private final StringAdapter stringAdapter;
+    private final ObjectPool<TimestampAdapter> timestampAdapterPool;
+    private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
 
     public TypeManager(
             TextConfiguration configuration,
@@ -143,6 +143,10 @@ public class TypeManager implements Mutable {
         return dateAdapterPool.next();
     }
 
+    public TypeAdapter nextSymbolAdapter(boolean indexed) {
+        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
+    }
+
     public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
         if (decodeUtf8) {
             TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
@@ -153,10 +157,6 @@ public class TypeManager implements Mutable {
         TimestampAdapter adapter = timestampAdapterPool.next();
         adapter.of(format, locale);
         return adapter;
-    }
-
-    public TypeAdapter nextSymbolAdapter(boolean indexed) {
-        return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
     private void addDefaultProbes() {

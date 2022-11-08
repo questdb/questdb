@@ -29,7 +29,6 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,22 +43,21 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     protected final RecordCursorFactory base;
     private final SampleByInterpolateRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
+    private final int groupByFunctionCount;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final int groupByScalarFunctionCount;
     private final ObjList<GroupByFunction> groupByScalarFunctions;
+    private final int groupByTwoPointFunctionCount;
     private final ObjList<GroupByFunction> groupByTwoPointFunctions;
-    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
-
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final int timestampIndex;
+    private final ObjList<Function> recordFunctions;
     private final TimestampSampler sampler;
+    private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
+    private final int timestampIndex;
     private final int yDataSize;
-    private final int groupByFunctionCount;
-    private final int groupByScalarFunctionCount;
-    private final int groupByTwoPointFunctionCount;
     private long yData;
 
     public SampleByInterpolateRecordCursorFactory(
@@ -148,14 +146,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
         this.cursor = new SampleByInterpolateRecordCursor(recordFunctions, configuration, keyTypes, valueTypes);
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        freeYData();
-        Misc.free(base);
-        Misc.free(cursor);
     }
 
     @Override
@@ -489,6 +479,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 groupByFunctions.getQuick(i).setNull(value);
             }
         }
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        freeYData();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {

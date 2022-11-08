@@ -32,27 +32,22 @@ public class FileNameExtractorCharSequence extends AbstractCharSequence {
             new ThreadLocal<>(FileNameExtractorCharSequence::new);
 
     private static final char separator;
-
-    static {
-        separator = System.getProperty("file.separator").charAt(0);
-    }
-
     private CharSequence base;
-    private int lo;
     private int hi;
+    private int lo;
 
     public static CharSequence get(CharSequence that) {
         return SINGLETON.get().of(that);
     }
 
     @Override
-    public int length() {
-        return hi - lo;
+    public char charAt(int index) {
+        return base.charAt(lo + index);
     }
 
     @Override
-    public char charAt(int index) {
-        return base.charAt(lo + index);
+    public int length() {
+        return hi - lo;
     }
 
     public CharSequence of(CharSequence base) {
@@ -66,5 +61,9 @@ public class FileNameExtractorCharSequence extends AbstractCharSequence {
             }
         }
         return this;
+    }
+
+    static {
+        separator = System.getProperty("file.separator").charAt(0);
     }
 }

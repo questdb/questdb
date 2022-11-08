@@ -34,17 +34,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Net {
 
-    public static final long MMSGHDR_SIZE;
-    public static final long MMSGHDR_BUFFER_ADDRESS_OFFSET;
-    public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
-
-    public static final int EWOULDBLOCK;
     @SuppressWarnings("unused")
-    public static final int ERETRY = 0;
+    public static final int EOTHERDISCONNECT = -2;
     @SuppressWarnings("unused")
     public static final int EPEERDISCONNECT = -1;
     @SuppressWarnings("unused")
-    public static final int EOTHERDISCONNECT = -2;
+    public static final int ERETRY = 0;
+    public static final int EWOULDBLOCK;
+    public static final long MMSGHDR_BUFFER_ADDRESS_OFFSET;
+    public static final long MMSGHDR_BUFFER_LENGTH_OFFSET;
+    public static final long MMSGHDR_SIZE;
     public static final int SHUT_WR = 1;
 
     private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
@@ -112,8 +111,6 @@ public final class Net {
         }
     }
 
-    private static native void freeAddrInfo0(long pAddrInfo);
-
     public static void freeAddrInfo(long pAddrInfo) {
         if (pAddrInfo != 0) {
             ADDR_INFO_COUNTER.decrementAndGet();
@@ -123,7 +120,6 @@ public final class Net {
 
     public static native void freeMsgHeaders(long msgHeaders);
 
-    private static native void freeSockAddr0(long sockaddr);
     public static void freeSockAddr(long sockaddr) {
         if (sockaddr != 0) {
             SOCK_ADDR_COUNTER.decrementAndGet();
@@ -140,8 +136,6 @@ public final class Net {
             return getAddrInfo(p, port);
         }
     }
-
-    private static native long getAddrInfo0(long lpszHost, int port);
 
     public static long getAddrInfo(long lpszHost, int port) {
         long addrInfo = getAddrInfo0(lpszHost, port);
@@ -259,8 +253,6 @@ public final class Net {
         return sockaddr0(ipv4address, port);
     }
 
-    private native static long sockaddr0(int ipv4address, int port);
-
     public static long socketTcp(boolean blocking) {
         return Files.bumpFileCount(socketTcp0(blocking));
     }
@@ -271,17 +263,25 @@ public final class Net {
 
     private native static long accept0(long fd);
 
-    private native static long socketTcp0(boolean blocking);
+    private static native void freeAddrInfo0(long pAddrInfo);
 
-    private native static long socketUdp0();
+    private static native void freeSockAddr0(long sockaddr);
 
-    private static native long getMsgHeaderSize();
+    private static native long getAddrInfo0(long lpszHost, int port);
+
+    private native static int getEwouldblock();
 
     private static native long getMsgHeaderBufferAddressOffset();
 
     private static native long getMsgHeaderBufferLengthOffset();
 
-    private native static int getEwouldblock();
+    private static native long getMsgHeaderSize();
+
+    private native static long sockaddr0(int ipv4address, int port);
+
+    private native static long socketTcp0(boolean blocking);
+
+    private native static long socketUdp0();
 
     static {
         Os.init();

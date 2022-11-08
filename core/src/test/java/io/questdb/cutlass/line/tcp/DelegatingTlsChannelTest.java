@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.LineChannel;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.line.LineChannel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -36,7 +36,12 @@ public class DelegatingTlsChannelTest {
     public void testNoLeakWhenHandshakeFail() throws Exception {
         LineChannel exceptionThrowingChannel = new LineChannel() {
             @Override
-            public void send(long ptr, int len) {
+            public void close() {
+                throw new UnsupportedOperationException("go away, yes, I throw an exception even during close()");
+            }
+
+            @Override
+            public int errno() {
                 throw new UnsupportedOperationException("go away");
             }
 
@@ -46,19 +51,15 @@ public class DelegatingTlsChannelTest {
             }
 
             @Override
-            public int errno() {
+            public void send(long ptr, int len) {
                 throw new UnsupportedOperationException("go away");
-            }
-
-            @Override
-            public void close() {
-                throw new UnsupportedOperationException("go away, yes, I throw an exception even during close()");
             }
         };
         TestUtils.assertMemoryLeak(() -> {
             try {
                 new DelegatingTlsChannel(exceptionThrowingChannel, null, null, Sender.TlsValidationMode.DEFAULT, "localhost");
-            } catch (Throwable ignored) { }
+            } catch (Throwable ignored) {
+            }
         });
     }
 }

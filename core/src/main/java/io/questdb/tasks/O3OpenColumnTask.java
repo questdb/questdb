@@ -31,49 +31,49 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
-    private Path pathToTable;
-    private AtomicInteger columnCounter;
-    private AtomicInteger partCounter;
-    private long txn;
-    private int openColumnMode;
-    private CharSequence columnName;
-    private int columnType;
-    private int indexBlockCapacity;
-    private long srcTimestampFd;
-    private long srcTimestampAddr;
-    private long srcTimestampSize;
-    private long timestampMergeIndexAddr;
-    private long timestampMergeIndexSize;
-    private long srcOooFixAddr;
-    private long srcOooVarAddr;
-    private long srcDataTop;
-    private long srcDataMax;
-    private long srcDataTxn;
-    private long srcOooLo;
-    private long srcOooHi;
-    private long srcOooMax;
-    private long timestampMin;
-    private long timestampMax;
-    private long oooTimestampLo;
-    private long partitionTimestamp;
-    private int prefixType;
-    private long prefixLo;
-    private long prefixHi;
-    private int mergeType;
-    private long mergeDataLo;
-    private long mergeDataHi;
-    private long mergeOOOLo;
-    private long mergeOOOHi;
-    private int suffixType;
-    private long suffixLo;
-    private long suffixHi;
     private long activeFixFd;
     private long activeVarFd;
     private long colTopSinkAddr;
-    private TableWriter tableWriter;
-    private BitmapIndexWriter indexWriter;
+    private AtomicInteger columnCounter;
     private int columnIndex;
+    private CharSequence columnName;
     private long columnNameTxn;
+    private int columnType;
+    private int indexBlockCapacity;
+    private BitmapIndexWriter indexWriter;
+    private long mergeDataHi;
+    private long mergeDataLo;
+    private long mergeOOOHi;
+    private long mergeOOOLo;
+    private int mergeType;
+    private long oooTimestampLo;
+    private int openColumnMode;
+    private AtomicInteger partCounter;
+    private long partitionTimestamp;
+    private Path pathToTable;
+    private long prefixHi;
+    private long prefixLo;
+    private int prefixType;
+    private long srcDataMax;
+    private long srcDataTop;
+    private long srcDataTxn;
+    private long srcOooFixAddr;
+    private long srcOooHi;
+    private long srcOooLo;
+    private long srcOooMax;
+    private long srcOooVarAddr;
+    private long srcTimestampAddr;
+    private long srcTimestampFd;
+    private long srcTimestampSize;
+    private long suffixHi;
+    private long suffixLo;
+    private int suffixType;
+    private TableWriter tableWriter;
+    private long timestampMax;
+    private long timestampMergeIndexAddr;
+    private long timestampMergeIndexSize;
+    private long timestampMin;
+    private long txn;
 
     public long getActiveFixFd() {
         return activeFixFd;
@@ -105,6 +105,10 @@ public class O3OpenColumnTask {
 
     public int getColumnType() {
         return columnType;
+    }
+
+    public int getIndexBlockCapacity() {
+        return indexBlockCapacity;
     }
 
     public BitmapIndexWriter getIndexWriter() {
@@ -241,10 +245,6 @@ public class O3OpenColumnTask {
 
     public long getTxn() {
         return txn;
-    }
-
-    public int getIndexBlockCapacity() {
-        return indexBlockCapacity;
     }
 
     public void of(

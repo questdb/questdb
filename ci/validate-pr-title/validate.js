@@ -1,29 +1,29 @@
 const allowedTypes = [
-  "feat",
-  "fix",
-  "chore",
-  "docs",
-  "style",
-  "refactor",
-  "perf",
-  "test",
-  "ci",
-  "chore",
-  "revert",
+    "feat",
+    "fix",
+    "chore",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "ci",
+    "chore",
+    "revert",
 ];
 
 const allowedSubTypes = [
-  "build",
-  "sql",
-  "log",
-  "mig",
-  "core",
-  "ilp",
-  "pgwire",
-  "http",
-  "conf",
-  "ui",
-  "wal",
+    "build",
+    "sql",
+    "log",
+    "mig",
+    "core",
+    "ilp",
+    "pgwire",
+    "http",
+    "conf",
+    "ui",
+    "wal",
 ];
 
 const errorMessage = `
@@ -50,23 +50,23 @@ perf(sql): improve pattern matching performance for SELECT sub-queries
  * consult ./validate.test.js for a full list
  * */
 const prTitleRegex = new RegExp(
-  `^(((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join(
-    "|"
-  )})\\))|build): .*`
+    `^(((?:${allowedTypes.join("|")})\\((?:${allowedSubTypes.join(
+        "|"
+    )})\\))|build): .*`
 );
 
-function validate({ title, onError }) {
-  // Early return for title that matches predefined regex.
-  // No action required in such case.
-  if (title.match(prTitleRegex)) {
-    return;
-  }
+function validate({title, onError}) {
+    // Early return for title that matches predefined regex.
+    // No action required in such case.
+    if (title.match(prTitleRegex)) {
+        return;
+    }
 
-  onError(errorMessage);
+    onError(errorMessage);
 }
 
 module.exports = {
-  allowedTypes,
-  allowedSubTypes,
-  validate,
+    allowedTypes,
+    allowedSubTypes,
+    validate,
 };

@@ -29,7 +29,6 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -60,12 +59,6 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        base.close();
-        cursor.close();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -87,13 +80,19 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    protected void _close() {
+        base.close();
+        cursor.close();
+    }
+
     private static class DistinctRecordCursor implements RecordCursor {
-        private RecordCursor baseCursor;
         private final Map dataMap;
-        private RecordSink recordSink;
-        private Record record;
+        private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
+        private Record record;
+        private RecordSink recordSink;
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
             this.dataMap = MapFactory.createMap(configuration, metadata);
@@ -115,13 +114,13 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+        public Record getRecordB() {
+            return baseCursor.getRecordB();
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -138,19 +137,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            return baseCursor.getRecordB();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            baseCursor.recordAt(record, atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            baseCursor.toTop();
-            dataMap.clear();
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -165,8 +153,19 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void recordAt(Record record, long atRowId) {
+            baseCursor.recordAt(record, atRowId);
+        }
+
+        @Override
         public long size() {
             return -1;
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+            dataMap.clear();
         }
     }
 }

@@ -35,8 +35,6 @@ public interface TableWriterAPI extends Closeable {
 
     long apply(UpdateOperation operation);
 
-    void truncate();
-
     @Override
     void close();
 
@@ -55,16 +53,6 @@ public interface TableWriterAPI extends Closeable {
      */
     long getStructureVersion();
 
-    CharSequence getTableName();
-
-    long getUncommittedRowCount();
-
-    TableWriter.Row newRow();
-
-    TableWriter.Row newRow(long timestamp);
-
-    void rollback();
-
     /**
      * Returns safe watermark for the symbol count stored in the given column.
      * The purpose of the watermark is to let ILP I/O threads (SymbolCache) to
@@ -76,4 +64,16 @@ public interface TableWriterAPI extends Closeable {
      * Implementations must be thread-safe.
      */
     int getSymbolCountWatermark(int columnIndex);
+
+    CharSequence getTableName();
+
+    long getUncommittedRowCount();
+
+    TableWriter.Row newRow();
+
+    TableWriter.Row newRow(long timestamp);
+
+    void rollback();
+
+    void truncate();
 }

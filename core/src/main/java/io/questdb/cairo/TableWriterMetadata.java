@@ -31,13 +31,13 @@ import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private final String tableName;
-    private int tableId;
-    private int metaFileSize;
-    private int symbolMapCount;
-    private int version;
-    private int maxUncommittedRows;
     private long commitLag;
+    private int maxUncommittedRows;
+    private int metaFileSize;
     private long structureVersion;
+    private int symbolMapCount;
+    private int tableId;
+    private int version;
     private boolean walEnabled;
 
     public TableWriterMetadata(String tableName, MemoryMR metaMem) {
@@ -50,13 +50,27 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         // nothing to release
     }
 
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
     public int getFileDataSize() {
         return metaFileSize;
     }
 
     @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
     public long getStructureVersion() {
         return structureVersion;
+    }
+
+    public int getSymbolMapCount() {
+        return symbolMapCount;
     }
 
     @Override
@@ -67,32 +81,6 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     @Override
     public String getTableName() {
         return tableName;
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
-    public void setMaxUncommittedRows(int rows) {
-        this.maxUncommittedRows = rows;
-    }
-
-    public void setStructureVersion(long value) {
-        this.structureVersion = value;
-    }
-
-    public int getSymbolMapCount() {
-        return symbolMapCount;
     }
 
     public int getTableVersion() {
@@ -144,6 +132,18 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
             offset += Vm.getStorageLength(name);
         }
         metaFileSize = (int) offset;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
+    }
+
+    public void setMaxUncommittedRows(int rows) {
+        this.maxUncommittedRows = rows;
+    }
+
+    public void setStructureVersion(long value) {
+        this.structureVersion = value;
     }
 
     public void setTableVersion() {

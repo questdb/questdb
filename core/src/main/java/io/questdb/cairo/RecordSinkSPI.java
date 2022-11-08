@@ -35,6 +35,8 @@ public interface RecordSinkSPI {
 
     void putByte(byte value);
 
+    void putChar(char value);
+
     void putDate(long value);
 
     void putDouble(double value);
@@ -45,13 +47,13 @@ public interface RecordSinkSPI {
 
     void putLong(long value);
 
-    void putLong256(Long256 value);
-
     void putLong128LittleEndian(long hi, long lo);
 
-    void putShort(short value);
+    void putLong256(Long256 value);
 
-    void putChar(char value);
+    void putRecord(Record value);
+
+    void putShort(short value);
 
     void putStr(CharSequence value);
 
@@ -64,8 +66,6 @@ public interface RecordSinkSPI {
     default void putStrLowerCase(CharSequence value, int lo, int hi) {
         throw new UnsupportedOperationException();
     }
-
-    void putRecord(Record value);
 
     void putTimestamp(long value);
 

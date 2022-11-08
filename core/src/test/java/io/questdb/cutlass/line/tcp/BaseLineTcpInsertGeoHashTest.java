@@ -46,10 +46,10 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name="{0}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][] {
-                { WalMode.WITH_WAL }, { WalMode.NO_WAL }
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
         });
     }
 
@@ -60,25 +60,31 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public abstract void testGeoHashes() throws Exception;
-
-    @Test
-    public abstract void testGeoHashesTruncating() throws Exception;
-
-    @Test
-    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
-
-    @Test
     public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
+
+    @Test
+    public abstract void testGeoHashes() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
 
     @Test
-    public abstract void testWrongCharGeoHashes() throws Exception;
+    public abstract void testGeoHashesTruncating() throws Exception;
 
     @Test
     public abstract void testNullGeoHash() throws Exception;
+
+    @Test
+    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
+
+    @Test
+    public abstract void testWrongCharGeoHashes() throws Exception;
+
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
 
     protected void assertGeoHash(int columnBits, String inboundLines, String expected) throws Exception {
         assertGeoHash(columnBits, inboundLines, expected, (String[]) null);
@@ -112,11 +118,5 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
                 }
             }
         });
-    }
-
-    private void mayDrainWalQueue() {
-        if (walEnabled) {
-            drainWalQueue();
-        }
     }
 }

@@ -29,7 +29,6 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -45,10 +44,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private final ObjList<Function> recordFunctions;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -77,13 +76,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -105,17 +97,24 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("GroupByRecord");
         sink.meta("vectorized").val(false);
         sink.attr("groupByFunctions").val(groupByFunctions);
         sink.attr("recordFunctions").val(recordFunctions);
         sink.child(base);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(recordFunctions);
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -134,6 +133,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
             this.isOpen = true;
+        }
+
+        @Override
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(dataMap);
+                Misc.clearObjList(groupByFunctions);
+                super.close();
+            }
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -158,16 +167,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             } catch (Throwable e) {
                 close();
                 throw e;
-            }
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(dataMap);
-                Misc.clearObjList(groupByFunctions);
-                super.close();
             }
         }
     }

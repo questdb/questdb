@@ -26,7 +26,6 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
@@ -48,6 +47,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean implementsLimit() {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -62,14 +66,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         base.close();
     }
 
-    @Override
-    public boolean implementsLimit() {
-        return true;
-    }
-
     private static class LimitRecordCursor implements RecordCursor {
-        private final Function loFunction;
         private final Function hiFunction;
+        private final Function loFunction;
         private RecordCursor base;
         private long limit;
         private long size;
@@ -85,31 +84,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public long size() {
-            if (size > -1) {
-                return size;
-            }
-            return -1;
-        }
-
-        @Override
         public Record getRecord() {
             return base.getRecord();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndex);
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndex);
-        }
-
-        @Override
-        public boolean hasNext() {
-            return limit-- > 0 && base.hasNext();
         }
 
         @Override
@@ -118,8 +94,18 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void recordAt(Record record, long atRowId) {
-            base.recordAt(record, atRowId);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return limit-- > 0 && base.hasNext();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
         }
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
@@ -129,6 +115,23 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 hiFunction.init(base, executionContext);
             }
             toTop();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            base.recordAt(record, atRowId);
+        }
+
+        @Override
+        public long size() {
+            if (size > -1) {
+                return size;
+            }
+            return -1;
+        }
+
+        public void skipTo(long rowCount) {
+            base.skipTo(Math.max(0, rowCount));
         }
 
         @Override
@@ -220,10 +223,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 count++;
             }
             return count;
-        }
-
-        public void skipTo(long rowCount) {
-            base.skipTo(Math.max(0, rowCount));
         }
     }
 }

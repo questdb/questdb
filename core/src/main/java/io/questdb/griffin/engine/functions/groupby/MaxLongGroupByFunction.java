@@ -59,6 +59,16 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -72,16 +82,6 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
     }
 
     @Override

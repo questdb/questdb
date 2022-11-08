@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -38,16 +37,16 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
     private final int columnIndex;
-    private final Function filter;
+    private final IntList columnIndexes;
+    private final DataFrameRecordCursor cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
     private IntObjHashMap<RowCursorFactory> factories;
-    private final Record.CharSequenceFunction func;
-    private final IntList columnIndexes;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -70,17 +69,17 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         super._close();
         Misc.free(filter);
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 
     @Override

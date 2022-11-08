@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.analytic;
 
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,14 +39,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final CachedAnalyticRecordCursor cursor;
+    private final ObjList<AnalyticFunction> allFunctions;
     private final RecordCursorFactory base;
-    private final int orderedGroupCount;
+    private final ObjList<RecordComparator> comparators;
+    private final CachedAnalyticRecordCursor cursor;
     private final ObjList<ObjList<AnalyticFunction>> orderedFunctions;
+    private final int orderedGroupCount;
     @Nullable
     private final ObjList<AnalyticFunction> unorderedFunctions;
-    private final ObjList<AnalyticFunction> allFunctions;
-    private final ObjList<RecordComparator> comparators;
     private boolean closed = false;
 
     public CachedAnalyticRecordCursorFactory(
@@ -117,6 +116,12 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         return base.usesCompiledFilter();
     }
 
+    private void resetFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).reset();
+        }
+    }
+
     @Override
     protected void _close() {
         if (closed) {
@@ -128,17 +133,11 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         closed = true;
     }
 
-    private void resetFunctions() {
-        for (int i = 0, n = allFunctions.size(); i < n; i++) {
-            allFunctions.getQuick(i).reset();
-        }
-    }
-
     class CachedAnalyticRecordCursor implements RecordCursor {
 
+        private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
-        private final IntList columnIndexes; // Used for symbol table lookups.
         private RecordCursor base;
         private boolean isOpen;
 
@@ -169,13 +168,13 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));
+        public Record getRecordB() {
+            return recordChain.getRecordB();
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -184,8 +183,8 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public Record getRecordB() {
-            return recordChain.getRecordB();
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -194,13 +193,13 @@ public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public void toTop() {
-            recordChain.toTop();
+        public long size() {
+            return recordChain.size();
         }
 
         @Override
-        public long size() {
-            return recordChain.size();
+        public void toTop() {
+            recordChain.toTop();
         }
 
         private void buildRecordChain(SqlExecutionContext context) {

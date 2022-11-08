@@ -19,7 +19,8 @@ If you're not sure whether you should raise an issue, you can also join our
 community **[Slack channel](https://slack.questdb.io/)** and post your questions
 there.
 
-If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
+If you find any **security bug**, kindly refer
+to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
 
 We aim to respond to your issues and questions soonest. If you wish to receive a
 faster response, we recommend you always describe your steps and provide
@@ -132,10 +133,12 @@ core/src/main/c -> core/src/main/resources/io/questdb/bin
 
 ## Local setup for frontend development
 
-The frontend code (i.e. web console) is located in a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).
+The frontend code (i.e. web console) is located in
+a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).
 To set it up you should follow instructions provided in that repository.
 
-The development environment for frontend can run on it's own, but will require QuestDB instance running in the background. You can achieve this in multiple ways:
+The development environment for frontend can run on it's own, but will require QuestDB instance running in the
+background. You can achieve this in multiple ways:
 
 1. Run development version of QuestDB from this repository. Consult
    [environment setup](#environment-setup) section of this document

@@ -39,6 +39,11 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
     }
 
     @Override
+    protected byte getListenerSrc() {
+        return PoolListener.SRC_METADATA;
+    }
+
+    @Override
     protected MetadataTenant newTenant(String tableName, Entry<MetadataTenant> entry, int index) {
         if (tableSequencerAPI.hasSequencer(tableName)) {
             return new SequencerMetadataTenant(this, entry, index, tableName, tableSequencerAPI);
@@ -46,68 +51,14 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         return new TableReaderMetadataTenant(this, entry, index, tableName);
     }
 
-    @Override
-    protected byte getListenerSrc() {
-        return PoolListener.SRC_METADATA;
-    }
-
     public interface MetadataTenant extends TableRecordMetadata, PoolTenant {
-    }
-
-    private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
-        private final int index;
-        private AbstractMultiTenantPool<MetadataTenant> pool;
-        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
-
-        public TableReaderMetadataTenant(
-                AbstractMultiTenantPool<MetadataTenant> pool,
-                AbstractMultiTenantPool.Entry<MetadataTenant> entry,
-                int index,
-                CharSequence name
-        ) {
-            super(pool.getConfiguration(), name);
-            this.pool = pool;
-            this.entry = entry;
-            this.index = index;
-        }
-
-        @Override
-        public void close() {
-            if (pool != null && getEntry() != null) {
-                if (pool.returnToPool(this)) {
-                    return;
-                }
-            }
-            super.close();
-        }
-
-        public void goodbye() {
-            entry = null;
-            pool = null;
-        }
-
-        @Override
-        public void refresh() {
-            reload();
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
-            return entry;
-        }
-
-        @Override
-        public int getIndex() {
-            return index;
-        }
     }
 
     private static class SequencerMetadataTenant extends GenericTableRecordMetadata implements MetadataTenant {
         private final int index;
         private final TableSequencerAPI tableSequencerAPI;
-        private AbstractMultiTenantPool<MetadataTenant> pool;
         private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
+        private AbstractMultiTenantPool<MetadataTenant> pool;
 
         public SequencerMetadataTenant(
                 AbstractMultiTenantPool<MetadataTenant> pool,
@@ -133,6 +84,17 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
             super.close();
         }
 
+        @SuppressWarnings("unchecked")
+        @Override
+        public AbstractMultiTenantPool.Entry<MetadataTenant> getEntry() {
+            return entry;
+        }
+
+        @Override
+        public int getIndex() {
+            return index;
+        }
+
         public void goodbye() {
             entry = null;
             pool = null;
@@ -141,6 +103,34 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         @Override
         public void refresh() {
             tableSequencerAPI.reloadMetadataConditionally(getTableName(), getStructureVersion(), this);
+        }
+    }
+
+    private static class TableReaderMetadataTenant extends DynamicTableReaderMetadata implements MetadataTenant {
+        private final int index;
+        private AbstractMultiTenantPool.Entry<MetadataTenant> entry;
+        private AbstractMultiTenantPool<MetadataTenant> pool;
+
+        public TableReaderMetadataTenant(
+                AbstractMultiTenantPool<MetadataTenant> pool,
+                AbstractMultiTenantPool.Entry<MetadataTenant> entry,
+                int index,
+                CharSequence name
+        ) {
+            super(pool.getConfiguration(), name);
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+        }
+
+        @Override
+        public void close() {
+            if (pool != null && getEntry() != null) {
+                if (pool.returnToPool(this)) {
+                    return;
+                }
+            }
+            super.close();
         }
 
         @SuppressWarnings("unchecked")
@@ -152,6 +142,16 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
         @Override
         public int getIndex() {
             return index;
+        }
+
+        public void goodbye() {
+            entry = null;
+            pool = null;
+        }
+
+        @Override
+        public void refresh() {
+            reload();
         }
     }
 }

@@ -305,11 +305,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
     public Path seekZ() {
         int count = 0;
         while (count < capacity + 1) {
@@ -331,6 +326,11 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path slash$() {
         ensureSeparator();
         return $();
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     public void toSink(CharSink sink) {

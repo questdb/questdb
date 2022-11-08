@@ -38,8 +38,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
-    private final Map map;
     private final RecordSink keyMapSink;
+    private final Map map;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
     private boolean isOpen;
@@ -76,6 +76,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         this.mapCursor = map.getCursor();
         this.mapRecord = map.getRecord();
         this.isOpen = true;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -158,13 +167,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue());
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         if (base.hasNext()) {
@@ -200,11 +202,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
-    public void close() {
-        if (isOpen) {
-            map.close();
-            super.close();
-            isOpen = false;
-        }
+    protected void updateValueWhenClockMovesBack(MapValue value) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue());
     }
 }

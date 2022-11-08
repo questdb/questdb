@@ -36,10 +36,6 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.*;
-
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -50,13 +46,15 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+
 public class TextLoaderTest extends AbstractGriffinTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
-
-    private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
     private static final String PATH_SEP_REGEX = Os.type == Os.WINDOWS ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
     public static void tearDownClass() {
@@ -67,6 +65,44 @@ public class TextLoaderTest extends AbstractGriffinTest {
     public void tearDown2() {
         sink.clear();
         engine.clear();
+    }
+
+    @Test
+    public void testAppendToTableColumnReorder() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected1 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
+
+            final String csv1 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
+
+            final String expected2 = "timing\ta\tb\tc\n" +
+                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n" +
+                    "2022-01-04T09:58:56.225032Z\t0\t0\t1\n" +
+                    "2022-01-04T09:58:57.225032Z\t0\t0\t1\n" +
+                    "2022-01-04T09:58:58.225032Z\t0\t0\t1\n";
+
+            final String csv2 = "c\tb\ta\ttiming\n" +
+                    "1\t0\t0\t2022-01-04T09:58:56.225032Z\n" +
+                    "1\t0\t0\t2022-01-04T09:58:57.225032Z\n" +
+                    "1\t0\t0\t2022-01-04T09:58:58.225032Z";
+
+            configureLoaderDefaults(textLoader);
+            playText0(textLoader, csv1, 1024, ENTITY_MANIPULATOR);
+            assertTable(expected1);
+            textLoader.clear();
+
+            configureLoaderDefaults(textLoader);
+            playText0(textLoader, csv2, 1024, ENTITY_MANIPULATOR);
+            assertTable(expected2);
+            textLoader.clear();
+        });
     }
 
     @Test
@@ -556,42 +592,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateValueInFileWithForcedHeader() throws Exception {
-        assertDuplicateColumnError(true);
-    }
-
-    @Test
-    public void testDuplicateValueInFileWithoutForcedHeader() throws Exception {
-        assertDuplicateColumnError(false);
-    }
-
-    private void assertDuplicateColumnError(boolean forceHeader) throws Exception {
-        assertNoLeak(textLoader -> {
-            String csv = "ts,100i,i0,100i\r\n" +
-                    "1972-09-29T00:00:00.000000Z,100.0,i1,1\r\n" +
-                    "1972-09-30T00:00:00.000000Z,25.47,j1,2\r\n";
-
-            configureLoaderDefaults(textLoader, (byte) ',');
-            textLoader.setForceHeaders(forceHeader);
-
-            try {
-                playText(
-                        textLoader,
-                        csv,
-                        200,
-                        "",
-                        "",
-                        -1,
-                        -1
-                );
-                Assert.fail("TextException should be thrown!");
-            } catch (TextException e) {
-                assertThat(e.getMessage(), containsString("duplicate column name found"));
-            }
-        });
-    }
-
-    @Test
     public void testDOSLineEnds() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
@@ -804,6 +804,16 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     2
             );
         });
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithForcedHeader() throws Exception {
+        assertDuplicateColumnError(true);
+    }
+
+    @Test
+    public void testDuplicateValueInFileWithoutForcedHeader() throws Exception {
+        assertDuplicateColumnError(false);
     }
 
     @Test
@@ -1714,29 +1724,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSingleRowImport() throws Exception {
-        assertNoLeak(textLoader -> {
-            String text = "value1,value2,value3\n";
-            configureLoaderDefaults(textLoader);
-            try {
-                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-            } catch (NotEnoughLinesException e) {
-                return;
-            }
-            Assert.fail();
-        });
-    }
-
-    @Test
-    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
-        assertNoLeak(textLoader -> {
-            String text = "value1,value2,value3\n";
-            configureLoaderDefaults(textLoader, (byte) ',');
-            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
-        });
-    }
-
-    @Test
     public void testOverrideDoubleWithFloat() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
@@ -2297,6 +2284,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     11,
                     11
             );
+        });
+    }
+
+    @Test
+    public void testSingleRowImport() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (NotEnoughLinesException e) {
+                return;
+            }
+            Assert.fail();
+        });
+    }
+
+    @Test
+    public void testSingleRowImportWithSpecifiedDelimiter() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "value1,value2,value3\n";
+            configureLoaderDefaults(textLoader, (byte) ',');
+            playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
         });
     }
 
@@ -2938,55 +2948,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testAppendToTableColumnReorder() throws Exception {
-        assertNoLeak(textLoader -> {
-            final String expected1 = "timing\ta\tb\tc\n" +
-                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
-
-            final String csv1 = "timing\ta\tb\tc\n" +
-                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n";
-
-            final String expected2 = "timing\ta\tb\tc\n" +
-                    "2022-01-04T09:58:53.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:54.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:55.225032Z\t1\t0\t0\n" +
-                    "2022-01-04T09:58:56.225032Z\t0\t0\t1\n" +
-                    "2022-01-04T09:58:57.225032Z\t0\t0\t1\n" +
-                    "2022-01-04T09:58:58.225032Z\t0\t0\t1\n";
-
-            final String csv2 = "c\tb\ta\ttiming\n" +
-                    "1\t0\t0\t2022-01-04T09:58:56.225032Z\n" +
-                    "1\t0\t0\t2022-01-04T09:58:57.225032Z\n" +
-                    "1\t0\t0\t2022-01-04T09:58:58.225032Z";
-
-            configureLoaderDefaults(textLoader);
-            playText0(textLoader, csv1, 1024, ENTITY_MANIPULATOR);
-            assertTable(expected1);
-            textLoader.clear();
-
-            configureLoaderDefaults(textLoader);
-            playText0(textLoader, csv2, 1024, ENTITY_MANIPULATOR);
-            assertTable(expected2);
-            textLoader.clear();
-        });
-    }
-
-    private static String extractLast(Path path) {
-        String nameStr = path.toString();
-        String[] pathElements = nameStr.split(PATH_SEP_REGEX);
-        return pathElements[pathElements.length - 1];
-    }
-
-    @SafeVarargs
-    private static <T> Set<T> setOf(T... elements) {
-        return new HashSet<>(Arrays.asList(elements));
-    }
-
     private static void assertTable(String expected) throws SqlException {
         TestUtils.assertSql(
                 compiler,
@@ -2995,6 +2956,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 sink,
                 expected
         );
+    }
+
+    private static String extractLast(Path path) {
+        String nameStr = path.toString();
+        String[] pathElements = nameStr.split(PATH_SEP_REGEX);
+        return pathElements[pathElements.length - 1];
     }
 
     private static void playText(
@@ -3062,6 +3029,37 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Unsafe.free(buf, len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
+    }
+
+    @SafeVarargs
+    private static <T> Set<T> setOf(T... elements) {
+        return new HashSet<>(Arrays.asList(elements));
+    }
+
+    private void assertDuplicateColumnError(boolean forceHeader) throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "ts,100i,i0,100i\r\n" +
+                    "1972-09-29T00:00:00.000000Z,100.0,i1,1\r\n" +
+                    "1972-09-30T00:00:00.000000Z,25.47,j1,2\r\n";
+
+            configureLoaderDefaults(textLoader, (byte) ',');
+            textLoader.setForceHeaders(forceHeader);
+
+            try {
+                playText(
+                        textLoader,
+                        csv,
+                        200,
+                        "",
+                        "",
+                        -1,
+                        -1
+                );
+                Assert.fail("TextException should be thrown!");
+            } catch (TextException e) {
+                assertThat(e.getMessage(), containsString("duplicate column name found"));
+            }
+        });
     }
 
     private void assertNoLeak(TestCode code) throws Exception {
@@ -3251,8 +3249,18 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
+            public long getCommitLag() {
+                return commitLag;
+            }
+
+            @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return maxUncommittedRows;
             }
 
             @Override
@@ -3263,16 +3271,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         return 1;
                     }
                 };
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                return maxUncommittedRows;
-            }
-
-            @Override
-            public long getCommitLag() {
-                return commitLag;
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {

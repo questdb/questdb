@@ -33,11 +33,11 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
 
 public class InsertRowImpl {
-    private final VirtualRecord virtualRecord;
     private final RecordToRowCopier copier;
-    private final Function timestampFunction;
     private final RowFactory rowFactory;
+    private final Function timestampFunction;
     private final int tupleIndex;
+    private final VirtualRecord virtualRecord;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
@@ -60,8 +60,18 @@ public class InsertRowImpl {
         }
     }
 
-    private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
-        return tableWriter.newRow(timestampFunction.getTimestamp(null));
+    public void append(TableWriterAPI writer) throws SqlException {
+        final TableWriter.Row row = rowFactory.getRow(writer);
+        copier.copy(virtualRecord, row);
+        row.append();
+    }
+
+    public void initContext(SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
+        Function.init(functions, null, executionContext);
+        if (timestampFunction != null) {
+            timestampFunction.init(null, executionContext);
+        }
     }
 
     private TableWriter.Row getRowWithStringTimestamp(TableWriterAPI tableWriter) {
@@ -74,22 +84,12 @@ public class InsertRowImpl {
         );
     }
 
+    private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
+        return tableWriter.newRow(timestampFunction.getTimestamp(null));
+    }
+
     private TableWriter.Row getRowWithoutTimestamp(TableWriterAPI tableWriter) {
         return tableWriter.newRow();
-    }
-
-    public void initContext(SqlExecutionContext executionContext) throws SqlException {
-        final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
-        if (timestampFunction != null) {
-            timestampFunction.init(null, executionContext);
-        }
-    }
-
-    public void append(TableWriterAPI writer) throws SqlException {
-        final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
     }
 
     @FunctionalInterface

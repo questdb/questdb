@@ -1,6 +1,6 @@
 name: Bug report
 description: Create a bug report to help us improve QuestDB
-labels: [bug]
+labels: [ bug ]
 body:
   - type: markdown
     attributes:

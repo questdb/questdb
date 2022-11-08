@@ -116,35 +116,8 @@ public class FanOut implements Barrier {
     }
 
     @Override
-    public void setCurrent(long value) {
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).setCurrent(value);
-        }
-    }
-
-    @Override
     public WaitStrategy getWaitStrategy() {
         return holder.waitStrategy;
-    }
-
-    @Override
-    public Barrier root() {
-        return barrier != null ? barrier.root() : this;
-    }
-
-    public void setBarrier(Barrier barrier) {
-        this.barrier = barrier;
-        ObjList<Barrier> barriers = holder.barriers;
-        for (int i = 0, n = barriers.size(); i < n; i++) {
-            barriers.getQuick(i).root().setBarrier(barrier);
-        }
-    }
-
-    @Override
-    public Barrier then(Barrier barrier) {
-        barrier.setBarrier(this);
-        return barrier;
     }
 
     public void remove(Barrier barrier) {
@@ -185,11 +158,38 @@ public class FanOut implements Barrier {
         } while (true);
     }
 
+    @Override
+    public Barrier root() {
+        return barrier != null ? barrier.root() : this;
+    }
+
+    public void setBarrier(Barrier barrier) {
+        this.barrier = barrier;
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).root().setBarrier(barrier);
+        }
+    }
+
+    @Override
+    public void setCurrent(long value) {
+        ObjList<Barrier> barriers = holder.barriers;
+        for (int i = 0, n = barriers.size(); i < n; i++) {
+            barriers.getQuick(i).setCurrent(value);
+        }
+    }
+
+    @Override
+    public Barrier then(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
+    }
+
     private static class Holder {
 
         private final ObjList<Barrier> barriers = new ObjList<>();
-        private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
         private final FanOutWaitStrategy fanOutWaitStrategy = new FanOutWaitStrategy();
+        private final ObjList<WaitStrategy> waitStrategies = new ObjList<>();
         private WaitStrategy waitStrategy;
 
         private void setupWaitStrategy() {

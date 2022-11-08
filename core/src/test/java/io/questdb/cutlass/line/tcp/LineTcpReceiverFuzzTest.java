@@ -37,18 +37,6 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         super(walMode);
     }
 
-    @Override
-    protected Log getLog() {
-        return LOG;
-    }
-
-    @Test
-    public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, false, true, false);
-        runTest();
-    }
-
     @Test
     public void testAddColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
@@ -57,9 +45,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testDuplicatesReorderingColumnsNoTagsStringsAsSymbol() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, false, true, false);
+    public void testAddColumnsNoTagsStringsAsSymbol() throws Exception {
+        initLoadParameters(15, 2, 2, 5, 75);
+        initFuzzParameters(-1, -1, -1, 4, -1, false, false, true, false);
         runTest();
     }
 
@@ -71,9 +59,22 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
+    public void testDuplicatesReorderingColumnsNoTagsStringsAsSymbol() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, -1, -1, true, false, true, false);
+        runTest();
+    }
+
+    @Test
     public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, false, true);
+        runTest();
+    }
+
+    @Test
+    public void testLoad() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 7, 12, 20);
         runTest();
     }
 
@@ -92,8 +93,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testLoad() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 7, 12, 20);
+    public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, false);
         runTest();
     }
 
@@ -105,9 +107,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
+    public void testReorderingColumns() throws Exception {
         initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, false);
+        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, false);
         runTest();
     }
 
@@ -118,10 +120,8 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
-    @Test
-    public void testReorderingColumns() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, false);
-        runTest();
+    @Override
+    protected Log getLog() {
+        return LOG;
     }
 }

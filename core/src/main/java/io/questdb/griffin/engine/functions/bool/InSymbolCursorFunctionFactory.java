@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.bool;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,12 +62,81 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         return new StrInCursorFunction(symbolFunction, cursorFunction, func);
     }
 
+    private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
+
+        private final Function cursorArg;
+        private final Record.CharSequenceFunction func;
+        private final Function valueArg;
+        private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
+        private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
+        private CharSequenceHashSet valueSet;
+
+        public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
+            this.valueArg = valueArg;
+            this.cursorArg = cursorArg;
+            this.valueSet = valueSetA;
+            this.func = func;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return valueSet.contains(valueArg.getSymbol(rec));
+        }
+
+        @Override
+        public Function getLeft() {
+            return valueArg;
+        }
+
+        @Override
+        public Function getRight() {
+            return cursorArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            valueArg.init(symbolTableSource, executionContext);
+            cursorArg.init(symbolTableSource, executionContext);
+
+            CharSequenceHashSet valueSet;
+            if (this.valueSet == this.valueSetA) {
+                valueSet = this.valueSetB;
+            } else {
+                valueSet = this.valueSetA;
+            }
+
+            valueSet.clear();
+
+            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    CharSequence value = func.get(record, 0);
+                    if (value == null) {
+                        valueSet.addNull();
+                    } else {
+                        int toIndex = valueSet.keyIndex(value);
+                        if (toIndex > -1) {
+                            int index = this.valueSet.keyIndex(value);
+                            if (index < 0) {
+                                valueSet.addAt(toIndex, this.valueSet.keyAt(index));
+                            } else {
+                                valueSet.addAt(toIndex, Chars.toString(value));
+                            }
+                        }
+                    }
+                }
+            }
+            this.valueSet = valueSet;
+        }
+    }
+
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
 
-        private final SymbolFunction valueArg;
         private final Function cursorArg;
-        private final IntHashSet symbolKeys = new IntHashSet();
         private final Record.CharSequenceFunction func;
+        private final IntHashSet symbolKeys = new IntHashSet();
+        private final SymbolFunction valueArg;
 
         public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -110,75 +178,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                     }
                 }
             }
-        }
-    }
-
-    private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
-
-        private final Function valueArg;
-        private final Function cursorArg;
-        private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
-        private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
-        private final Record.CharSequenceFunction func;
-        private CharSequenceHashSet valueSet;
-
-        public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
-            this.valueArg = valueArg;
-            this.cursorArg = cursorArg;
-            this.valueSet = valueSetA;
-            this.func = func;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return valueSet.contains(valueArg.getSymbol(rec));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            valueArg.init(symbolTableSource, executionContext);
-            cursorArg.init(symbolTableSource, executionContext);
-
-            CharSequenceHashSet valueSet;
-            if (this.valueSet == this.valueSetA) {
-                valueSet = this.valueSetB;
-            } else {
-                valueSet = this.valueSetA;
-            }
-
-            valueSet.clear();
-
-            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    CharSequence value = func.get(record, 0);
-                    if (value == null) {
-                        valueSet.addNull();
-                    } else {
-                        int toIndex = valueSet.keyIndex(value);
-                        if (toIndex > -1) {
-                            int index = this.valueSet.keyIndex(value);
-                            if (index < 0) {
-                                valueSet.addAt(toIndex, this.valueSet.keyAt(index));
-                            } else {
-                                valueSet.addAt(toIndex, Chars.toString(value));
-                            }
-                        }
-                    }
-                }
-            }
-            this.valueSet = valueSet;
-        }
-
-        @Override
-        public Function getLeft() {
-            return valueArg;
-        }
-
-        @Override
-        public Function getRight() {
-            return cursorArg;
         }
     }
 }

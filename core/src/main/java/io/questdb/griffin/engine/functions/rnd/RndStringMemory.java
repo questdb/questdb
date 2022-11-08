@@ -35,11 +35,11 @@ import io.questdb.std.Rnd;
 import java.io.Closeable;
 
 class RndStringMemory implements Closeable {
-    private final MemoryAR strMem;
-    private final MemoryAR idxMem;
     private final int count;
-    private final int lo;
     private final int hi;
+    private final MemoryAR idxMem;
+    private final int lo;
+    private final MemoryAR strMem;
 
     RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
         this.count = count;
@@ -72,33 +72,8 @@ class RndStringMemory implements Closeable {
         Misc.free(idxMem);
     }
 
-    CharSequence getStr(long index) {
-        if (index < 0) {
-            return null;
-        }
-        return strMem.getStr(getStrAddress(index));
-    }
-
-    CharSequence getStr2(long index) {
-        if (index < 0) {
-            return null;
-        }
-        return strMem.getStr2(getStrAddress(index));
-    }
-
     private long getStrAddress(long index) {
         return idxMem.getLong(index * Long.BYTES);
-    }
-
-    void init(Rnd rnd) {
-        strMem.jumpTo(0);
-        idxMem.jumpTo(0);
-
-        if (lo == hi) {
-            initFixedLength(rnd);
-        } else {
-            initVariableLength(rnd);
-        }
     }
 
     private void initFixedLength(Rnd rnd) {
@@ -114,6 +89,31 @@ class RndStringMemory implements Closeable {
             final int len = lo + rnd.nextPositiveInt() % (hi - lo + 1);
             final long o = strMem.putStr(rnd.nextChars(len));
             idxMem.putLong(o - Vm.getStorageLength(len));
+        }
+    }
+
+    CharSequence getStr(long index) {
+        if (index < 0) {
+            return null;
+        }
+        return strMem.getStr(getStrAddress(index));
+    }
+
+    CharSequence getStr2(long index) {
+        if (index < 0) {
+            return null;
+        }
+        return strMem.getStr2(getStrAddress(index));
+    }
+
+    void init(Rnd rnd) {
+        strMem.jumpTo(0);
+        idxMem.jumpTo(0);
+
+        if (lo == hi) {
+            initFixedLength(rnd);
+        } else {
+            initVariableLength(rnd);
         }
     }
 }

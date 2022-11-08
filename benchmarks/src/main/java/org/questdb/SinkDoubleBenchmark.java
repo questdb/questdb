@@ -38,9 +38,9 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class SinkDoubleBenchmark {
-    private final static long memSize = 1024 * 16;
     private final static double d = 78899.9;
     private final static long l = 2298989898L;
+    private final static long memSize = 1024 * 16;
     private final static DirectUnboundedByteSink unboundedSink = new DirectUnboundedByteSink();
     private long mem;
 

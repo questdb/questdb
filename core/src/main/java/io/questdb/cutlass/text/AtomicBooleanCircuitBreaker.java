@@ -31,6 +31,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
     private final AtomicBoolean canceledFlag = new AtomicBoolean(false);
 
+    public void cancel() {
+        canceledFlag.set(true);
+    }
+
     @Override
     public boolean checkIfTripped() {
         return isCanceled();
@@ -42,9 +46,5 @@ public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
 
     public void reset() {
         canceledFlag.set(false);
-    }
-
-    public void cancel() {
-        canceledFlag.set(true);
     }
 }

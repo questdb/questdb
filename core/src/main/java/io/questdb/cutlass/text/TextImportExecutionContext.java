@@ -32,9 +32,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class TextImportExecutionContext {
     public static final long INACTIVE = -1;
-
-    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private final AtomicLong activeImportId = new AtomicLong(INACTIVE);
+    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final Rnd rnd;
 
@@ -43,21 +42,21 @@ public class TextImportExecutionContext {
         this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
+    public long assignActiveImportId() {
+        long nextId = rnd.nextPositiveLong();
+        activeImportId.set(nextId);
+        return nextId;
     }
 
     public long getActiveImportId() {
         return activeImportId.get();
     }
 
-    public void resetActiveImportId() {
-        activeImportId.set(INACTIVE);
+    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
     }
 
-    public long assignActiveImportId() {
-        long nextId = rnd.nextPositiveLong();
-        activeImportId.set(nextId);
-        return nextId;
+    public void resetActiveImportId() {
+        activeImportId.set(INACTIVE);
     }
 }

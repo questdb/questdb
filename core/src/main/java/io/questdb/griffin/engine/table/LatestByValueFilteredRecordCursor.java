@@ -36,8 +36,8 @@ import org.jetbrains.annotations.NotNull;
 class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
-    private final int symbolKey;
     private final Function filter;
+    private final int symbolKey;
     private boolean empty;
     private boolean hasNext;
 
@@ -59,12 +59,6 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        hasNext = !empty;
-        filter.toTop();
-    }
-
-    @Override
     public boolean hasNext() {
         if (hasNext) {
             hasNext = false;
@@ -79,13 +73,9 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        this.recordA.of(dataFrameCursor.getTableReader());
-        this.recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
-        findRecord(executionContext);
+    public void toTop() {
         hasNext = !empty;
+        filter.toTop();
     }
 
     private void findRecord(SqlExecutionContext executionContext) {
@@ -110,5 +100,15 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
+    }
+
+    @Override
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.dataFrameCursor = dataFrameCursor;
+        this.recordA.of(dataFrameCursor.getTableReader());
+        this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
+        findRecord(executionContext);
+        hasNext = !empty;
     }
 }

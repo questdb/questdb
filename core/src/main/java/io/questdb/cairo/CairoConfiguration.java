@@ -38,11 +38,10 @@ import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
-    long O_NONE = 0;
     long O_ASYNC = 0x40;
-    long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
+    long O_NONE = 0;
+    long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -127,10 +126,6 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    long getInactiveWalWriterTTL();
-
-    int getMetadataPoolCapacity();
-
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();
@@ -151,6 +146,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -168,6 +165,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -229,8 +228,6 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
-    int getStrFunctionMaxBufferLength();
-
     int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
@@ -242,8 +239,6 @@ public interface CairoConfiguration {
     }
 
     int getSampleByIndexSearchPageSize();
-
-    long getWalSegmentRolloverRowCount();
 
     boolean getSimulateCrashEnabled();
 
@@ -368,6 +363,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
@@ -381,6 +378,10 @@ public interface CairoConfiguration {
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
 
     int getWalTxnNotificationQueueCapacity();
 
@@ -399,8 +400,6 @@ public interface CairoConfiguration {
     long getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
-
-    int getWalRecreateDistressedSequencerAttempts();
 
     boolean isIOURingEnabled();
 

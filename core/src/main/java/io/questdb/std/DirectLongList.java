@@ -34,13 +34,13 @@ import java.io.Closeable;
 public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
-    private final int memoryTag;
     private final long initialCapacity;
-    private long pos;
-    private long start;
-    private long limit;
+    private final int memoryTag;
     private long address;
     private long capacity;
+    private long limit;
+    private long pos;
+    private long start;
 
     public DirectLongList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -118,20 +118,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         }
     }
 
-    // desired capacity in LONGs (not count of bytes)
-    public void setCapacity(long capacity) {
-        setCapacityBytes(capacity * Long.BYTES);
-    }
-
     public void resetCapacity() {
         setCapacityBytes(initialCapacity);
-    }
-
-    public void shrink(long newCapacity) {
-        // deallocates memory but keeps reusable
-        if (newCapacity < capacity) {
-            setCapacityBytes(newCapacity << 3);
-        }
     }
 
     public long scanSearch(long v, long low, long high) {
@@ -152,9 +140,21 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putLong(start + (p << 3), v);
     }
 
+    // desired capacity in LONGs (not count of bytes)
+    public void setCapacity(long capacity) {
+        setCapacityBytes(capacity * Long.BYTES);
+    }
+
     public void setPos(long p) {
         assert p * Long.BYTES <= capacity;
         pos = start + p * Long.BYTES;
+    }
+
+    public void shrink(long newCapacity) {
+        // deallocates memory but keeps reusable
+        if (newCapacity < capacity) {
+            setCapacityBytes(newCapacity << 3);
+        }
     }
 
     public long size() {
@@ -187,13 +187,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Vect.memset(start, pos - start, (int) v);
     }
 
-    void ensureCapacity() {
-        if (this.pos < limit) {
-            return;
-        }
-        setCapacityBytes(this.capacity * 2);
-    }
-
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
@@ -206,5 +199,12 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             this.limit = address + capacity;
             LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
         }
+    }
+
+    void ensureCapacity() {
+        if (this.pos < limit) {
+            return;
+        }
+        setCapacityBytes(this.capacity * 2);
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
@@ -33,10 +32,10 @@ import io.questdb.std.ObjList;
 
 public abstract class AbstractVirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualRecord recordA;
-    private final VirtualRecord recordB;
-    protected RecordCursor baseCursor;
     private final ObjList<Function> functions;
+    private final VirtualRecord recordB;
     private final boolean supportsRandomAccess;
+    protected RecordCursor baseCursor;
 
     public AbstractVirtualFunctionRecordCursor(ObjList<Function> functions, boolean supportsRandomAccess) {
         this.functions = functions;
@@ -61,21 +60,34 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
-    public boolean hasNext() {
-        return baseCursor.hasNext();
-    }
-
-    @Override
-    public long size() {
-        return baseCursor.size();
-    }
-
-    @Override
     public Record getRecordB() {
         if (supportsRandomAccess) {
             return recordB;
         }
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return (SymbolTable) functions.getQuick(columnIndex);
+    }
+
+    @Override
+    public boolean hasNext() {
+        return baseCursor.hasNext();
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
+    }
+
+    public void of(RecordCursor cursor) {
+        this.baseCursor = cursor;
+        recordA.of(baseCursor.getRecord());
+        if (recordB != null) {
+            recordB.of(baseCursor.getRecordB());
+        }
     }
 
     @Override
@@ -88,26 +100,13 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return (SymbolTable) functions.getQuick(columnIndex);
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
+    public long size() {
+        return baseCursor.size();
     }
 
     @Override
     public void toTop() {
         baseCursor.toTop();
         GroupByUtils.toTop(functions);
-    }
-
-    public void of(RecordCursor cursor) {
-        this.baseCursor = cursor;
-        recordA.of(baseCursor.getRecord());
-        if (recordB != null) {
-            recordB.of(baseCursor.getRecordB());
-        }
     }
 }

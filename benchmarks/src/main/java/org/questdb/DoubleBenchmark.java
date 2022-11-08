@@ -53,13 +53,8 @@ public class DoubleBenchmark {
     }
 
     @Benchmark
-    public long testToLong() {
-        return Double.doubleToLongBits(x);
-    }
-
-    @Benchmark
-    public double testStraight() {
-        return x;
+    public boolean testBitFiddle() {
+        return (Double.doubleToLongBits(x) & EXP_BIT_MASK) == EXP_BIT_MASK;
     }
 
     @Benchmark
@@ -68,7 +63,12 @@ public class DoubleBenchmark {
     }
 
     @Benchmark
-    public boolean testBitFiddle() {
-        return (Double.doubleToLongBits(x) & EXP_BIT_MASK) == EXP_BIT_MASK;
+    public double testStraight() {
+        return x;
+    }
+
+    @Benchmark
+    public long testToLong() {
+        return Double.doubleToLongBits(x);
     }
 }

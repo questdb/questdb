@@ -41,6 +41,16 @@ public class StringChannel implements LineChannel {
         //empty
     }
 
+    @Override
+    public int errno() {
+        throw new UnsupportedOperationException("errno() not implemented");
+    }
+
+    @Override
+    public int receive(long ptr, int len) {
+        throw new UnsupportedOperationException("receive() not implemented");
+    }
+
     public void reset() {
         pos = 0;
     }
@@ -55,16 +65,6 @@ public class StringChannel implements LineChannel {
             buffer[i + pos] = Unsafe.getUnsafe().getByte(ptr + i);
         }
         pos += len;
-    }
-
-    @Override
-    public int receive(long ptr, int len) {
-        throw new UnsupportedOperationException("receive() not implemented");
-    }
-
-    @Override
-    public int errno() {
-        throw new UnsupportedOperationException("errno() not implemented");
     }
 
     @Override

@@ -28,8 +28,10 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -54,11 +56,6 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    protected void _close() {
-        Misc.free(base);
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
@@ -66,6 +63,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(base);
     }
 
     private static final class RecordAsAFieldRecord implements Record {
@@ -95,13 +97,20 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public Record getRecordB() {
+            return recordB;
+        }
+
+        @Override
         public boolean hasNext() {
             return base.hasNext();
         }
 
         @Override
-        public Record getRecordB() {
-            return recordB;
+        public void of(RecordCursor base, SqlExecutionContext executionContext) {
+            this.base = base;
+            record.base = base.getRecord();
+//            recordB.base = base.getRecordB();
         }
 
         @Override
@@ -110,20 +119,13 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public void toTop() {
-            base.toTop();
-        }
-
-        @Override
         public long size() {
             return base.size();
         }
 
         @Override
-        public void of(RecordCursor base, SqlExecutionContext executionContext) {
-            this.base = base;
-            record.base = base.getRecord();
-//            recordB.base = base.getRecordB();
+        public void toTop() {
+            base.toTop();
         }
     }
 }

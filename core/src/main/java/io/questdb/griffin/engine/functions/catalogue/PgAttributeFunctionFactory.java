@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.pgwire.PGOids;
@@ -76,19 +75,13 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
-        private final Path path = new Path();
-        private final MemoryMR metaMem = Vm.getMRInstance();
         private final AttributeClassCatalogueCursor cursor;
+        private final MemoryMR metaMem = Vm.getMRInstance();
+        private final Path path = new Path();
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
             this.cursor = new AttributeClassCatalogueCursor(configuration, path, metaMem);
-        }
-
-        @Override
-        protected void _close() {
-            Misc.free(path);
-            Misc.free(metaMem);
         }
 
         @Override
@@ -101,21 +94,27 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
+
+        @Override
+        protected void _close() {
+            Misc.free(path);
+            Misc.free(metaMem);
+        }
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
-        private final Path path;
-        private final FilesFacade ff;
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final int plimit;
+        private final FilesFacade ff;
         private final MemoryMR metaMem;
-        private long findFileStruct = 0;
-        private int columnIndex = 0;
-        private int tableId = 1000;
-        private boolean readNextFileFromDisk = true;
+        private final Path path;
+        private final int plimit;
         private int columnCount;
-        private boolean hasNextFile = true;
+        private int columnIndex = 0;
+        private long findFileStruct = 0;
         private boolean foundMetadataFile = false;
+        private boolean hasNextFile = true;
+        private boolean readNextFileFromDisk = true;
+        private int tableId = 1000;
 
         public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MemoryMR metaMem) {
             this.ff = configuration.getFilesFacade();
@@ -152,13 +151,13 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         private boolean next0() {
@@ -214,10 +213,10 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         }
 
         static class DiskReadingRecord implements Record {
-            public final short[] shortValues = new short[9];
             public final int[] intValues = new int[9];
-            public CharSequence name = null;
+            public final short[] shortValues = new short[9];
             private final StringSink strBSink = new StringSink();
+            public CharSequence name = null;
 
             @Override
             public boolean getBool(int col) {

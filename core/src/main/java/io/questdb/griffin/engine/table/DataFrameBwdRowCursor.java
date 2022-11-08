@@ -31,12 +31,17 @@ import io.questdb.cairo.sql.RowCursor;
  * Row cursor that goes through data frame backwards / from end to start / hi to lo .
  */
 public class DataFrameBwdRowCursor implements RowCursor {
-    private long lo;
     private long current;
+    private long lo;
 
     @Override
     public boolean hasNext() {
         return current >= lo;
+    }
+
+    @Override
+    public void jumpTo(long position) {
+        this.current = position;
     }
 
     @Override
@@ -47,10 +52,5 @@ public class DataFrameBwdRowCursor implements RowCursor {
     void of(DataFrame frame) {
         this.current = frame.getRowHi() - 1;
         this.lo = frame.getRowLo();
-    }
-
-    @Override
-    public void jumpTo(long position) {
-        this.current = position;
     }
 }

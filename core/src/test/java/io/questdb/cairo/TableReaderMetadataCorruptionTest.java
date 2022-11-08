@@ -284,7 +284,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     ff.close(fd);
                 }
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)){
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
                     metadata.load(path);
                     Assert.fail();
                 } catch (CairoException e) {

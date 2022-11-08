@@ -36,9 +36,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory baseFactory;
     private final VirtualFunctionDirectSymbolRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final RecordCursorFactory baseFactory;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
@@ -60,17 +60,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        Misc.freeObjList(functions);
-        Misc.free(baseFactory);
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return baseFactory.usesCompiledFilter();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = baseFactory.getCursor(executionContext);
         try {
@@ -84,6 +73,11 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return baseFactory.hasDescendingOrder();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
     }
@@ -94,11 +88,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return baseFactory.hasDescendingOrder();
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.type("VirtualRecordCursorFactory");
         sink.attr("supportsRandomAccess");
@@ -106,5 +95,16 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.attr("functions");
         sink.val(functions);
         sink.child(baseFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return baseFactory.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        Misc.freeObjList(functions);
+        Misc.free(baseFactory);
     }
 }

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -54,13 +53,13 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return chainCursor.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return chainCursor.getRecordB();
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return chainCursor.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return chainCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -69,23 +68,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return chainCursor.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        chainCursor.recordAt(record, atRowId);
-    }
-
-    @Override
-    public void toTop() {
-        chainCursor.toTop();
-    }
-
-    @Override
-    public long size() {
-        return chainCursor.size();
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return chainCursor.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -112,5 +96,20 @@ class SortedRecordCursor implements DelegatingRecordCursor {
             base.close();
             throw ex;
         }
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        chainCursor.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return chainCursor.size();
+    }
+
+    @Override
+    public void toTop() {
+        chainCursor.toTop();
     }
 }
