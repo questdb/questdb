@@ -1577,6 +1577,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         public final int columnType;
         public final String emtpyValue;
         public final String funcArg;
+
         public TypeVal(int type, String val) {
             columnType = type;
             emtpyValue = val;

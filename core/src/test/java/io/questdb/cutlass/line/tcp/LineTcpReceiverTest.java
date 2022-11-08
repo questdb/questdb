@@ -437,6 +437,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final Rnd rnd = new Rnd();
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
+        // We set the minIdleMsBeforeWriterRelease interval to a rather large value
+        // (1 sec) to prevent false positive WAL writer releases.
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
@@ -453,12 +455,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 for (int i = 1; i < numOfColumns; i++) {
                     sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13 - (int) Math.log10(i)) + i + "=32 " + i + "\n");
                 }
-                finished.await(30_000_000_000L);
+                finished.await();
             } finally {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
-        }, false, 250);
+        }, false, 1000);
 
         mayDrainWalQueue();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {

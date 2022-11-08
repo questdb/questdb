@@ -139,6 +139,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .put(" but was ").put(seqTxn);
                     }
 
+                    if (walId == 0) {
+                        throw CairoException.critical(0)
+                                .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
+                                .put(writer.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
+                    }
+
                     if (walId != TableTransactionLog.STRUCTURAL_CHANGE_WAL_ID) {
                         // Always set full path when using thread static path
                         tempPath.of(engine.getConfiguration().getRoot()).concat(writer.getTableName()).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);
