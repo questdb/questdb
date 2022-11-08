@@ -32,7 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -87,16 +86,21 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
-    @Override
-    public void close() {
+    public boolean checkClose() {
         if (!closed) {
             schemaLock.writeLock().lock();
             try {
-                closeLocked();
+                return closeLocked();
             } finally {
                 schemaLock.writeLock().unlock();
             }
         }
+        return false;
+    }
+
+    @Override
+    public void close() {
+        checkClose();
     }
 
     @Override
@@ -294,6 +298,18 @@ public class TableSequencerImpl implements TableSequencer {
         metadata.syncToMetaFile();
     }
 
+    private boolean closeLocked() {
+        if (!closed) {
+            closed = true;
+            Misc.free(metadata);
+            Misc.free(tableTransactionLog);
+            Misc.free(walIdGenerator);
+            Misc.free(path);
+            return true;
+        }
+        return false;
+    }
+
     private void checkDropped() {
         if (metadata.isDropped()) {
             throw CairoException.nonCritical().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
@@ -311,17 +327,6 @@ public class TableSequencerImpl implements TableSequencer {
 
     private long nextTxn(int walId, int segmentId, long segmentTxn) {
         return tableTransactionLog.addEntry(walId, segmentId, segmentTxn);
-    }
-
-    void closeLocked() {
-        if (!closed) {
-            closed = true;
-            Misc.free(metadata);
-            Misc.free(tableTransactionLog);
-            Misc.free(walIdGenerator);
-            Misc.free(path);
-            Unsafe.getUnsafe().fullFence();
-        }
     }
 
     void create(int tableId, TableStructure model) {

@@ -186,9 +186,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public void switchTo(Path path, int pathLen) {
-        if (metaMem.getFd() > -1) {
-            metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
-        }
+        assert metaMem.getFd() == -1;
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile();
     }

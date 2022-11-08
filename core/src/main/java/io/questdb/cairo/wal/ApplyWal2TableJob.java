@@ -219,12 +219,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         .put(']');
                             }
                             break;
+
                         case DROP_TABLE_WALID:
                             tryDestroyDroppedTable(systemTableName, writer, engine);
                             return;
 
                         case RENAME_TABLE_WALID:
                             break;
+
+                        case 0:
+                            throw CairoException.critical(0)
+                                    .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
+                                    .put(writer.getTableName()).put(", seqTxn=").put(seqTxn).put(']');
+
                         default:
                             // Always set full path when using thread static path
                             tempPath.of(engine.getConfiguration().getRoot()).concat(systemTableName).slash().put(WAL_NAME_BASE).put(walId).slash().put(segmentId);

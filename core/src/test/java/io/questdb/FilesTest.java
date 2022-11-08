@@ -34,6 +34,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -641,23 +642,28 @@ public class FilesTest {
 
     @Test
     public void testSoftLinkAsciiName() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("some_column.d");
     }
 
     @Test
     public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";
             try (
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$();
+                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
             ) {
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
 
                 // check that when listing it we can actually find it
                 File link = new File(softLinkFilePath.toString());
-                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                File[] fileArray = link.getParentFile().listFiles();
+                Assert.assertNotNull(fileArray);
+                List<File> files = Arrays.asList(fileArray);
                 Assert.assertEquals(fileName + ".1", files.get(0).getName());
 
                 // however
@@ -673,6 +679,7 @@ public class FilesTest {
 
     @Test
     public void testSoftLinkNonAsciiName() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
     }
 
@@ -700,6 +707,7 @@ public class FilesTest {
 
     @Test
     public void testUnlink() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("unlink");
             final String fileName = "いくつかの列.d";
@@ -715,7 +723,7 @@ public class FilesTest {
             try (
                     Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$();
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
             ) {
                 createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
 
@@ -926,9 +934,7 @@ public class FilesTest {
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
                 Files.remove(srcFilePath);
-                if (null != hardLinkFilePath) {
-                    Assert.assertTrue(Files.remove(hardLinkFilePath));
-                }
+                Assert.assertTrue(Files.remove(hardLinkFilePath));
             }
         });
     }
@@ -956,7 +962,7 @@ public class FilesTest {
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
                     Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$();
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 
@@ -986,7 +992,9 @@ public class FilesTest {
 
                 // check that when listing the folder where the link is, we can actually find it
                 File link = new File(softLinkRenamedFilePath.toString());
-                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                File[] fileArray = link.getParentFile().listFiles();
+                Assert.assertNotNull(fileArray);
+                List<File> files = Arrays.asList(fileArray);
                 Assert.assertEquals(fileName, files.get(0).getName());
 
                 // however, OS checks do check the existence of the file pointed to
