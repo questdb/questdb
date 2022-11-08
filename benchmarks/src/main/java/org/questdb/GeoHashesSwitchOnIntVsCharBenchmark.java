@@ -38,15 +38,6 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GeoHashesSwitchOnIntVsCharBenchmark {
 
-    public static void main(String[] args) throws Exception {
-        new Runner(new OptionsBuilder()
-                .include(GeoHashesSwitchOnIntVsCharBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(3)
-                .forks(1)
-                .build()).run();
-    }
-
     @Benchmark
     public static void isValidBits0() {
         Rnd rnd = new Rnd();
@@ -67,6 +58,15 @@ public class GeoHashesSwitchOnIntVsCharBenchmark {
                 throw new AssertionError();
             }
         }
+    }
+
+    public static void main(String[] args) throws Exception {
+        new Runner(new OptionsBuilder()
+                .include(GeoHashesSwitchOnIntVsCharBenchmark.class.getSimpleName())
+                .warmupIterations(2)
+                .measurementIterations(3)
+                .forks(1)
+                .build()).run();
     }
 
     private static boolean isValidBits0(CharSequence tok, int start) {
