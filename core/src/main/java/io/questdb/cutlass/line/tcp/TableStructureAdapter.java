@@ -58,11 +58,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
-    }
-
-    @Override
     public CharSequence getColumnName(int columnIndex) {
         assert columnIndex < getColumnCount();
         if (columnIndex == getTimestampIndex()) {

@@ -68,6 +68,8 @@ public class ImportIODispatcherTest {
             "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
             "Expect: 100-continue\r\n" +
             "\r\n";
+    private static final String REQUEST_FOOTER = "\r\n" +
+            "--------------------------27d997ca93d2689d--";
     private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
@@ -121,7 +123,7 @@ public class ImportIODispatcherTest {
             "B00014,2017-02-01 14:58:00,\r\n" +
             "B00014,2017-02-01 15:33:00,\r\n" +
             "B00014,2017-02-01 15:45:00,\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
     private static final String Request2Header = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -163,8 +165,6 @@ public class ImportIODispatcherTest {
             "Content-Type: application/octet-stream\r\n" +
             "\r\n" +
             "Col1,Col2,Col3,Col4,Pickup_DateTime\r\n";
-    private static final String RequestFooter = "\r\n" +
-            "--------------------------27d997ca93d2689d--";
     private static final String ValidImportRequest2 = Request2Header +
             "B00008,,,,2017-02-01 00:30:00\r\n" +
             "B00008,,,,2017-02-01 00:40:00\r\n" +
@@ -190,7 +190,7 @@ public class ImportIODispatcherTest {
             "B00014,,,,2017-02-01 14:58:00\r\n" +
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
@@ -954,7 +954,7 @@ public class ImportIODispatcherTest {
                                         String requestTemplate =
                                                 headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
                                                         + generateImportCsv(low, hi, csvTemplate[tableIndex])
-                                                        + RequestFooter;
+                                                        + REQUEST_FOOTER;
 
                                         new SendAndReceiveRequestBuilder()
                                                 .withCompareLength(15)

@@ -66,7 +66,7 @@ public final class ColumnType {
     public static final short GEOSHORT = 15;
     public static final int GEOSHORT_MAX_BITS = 15;
     public static final int GEOSHORT_MIN_BITS = 8;
-    public static final int GEO_HASH_MAX_BITS_LENGTH;
+    public static final int GEO_HASH_MAX_BITS_LENGTH = 60;
     public static final int GEOLONG_MAX_BITS = GEO_HASH_MAX_BITS_LENGTH;
     public static final short INT = 5;
     public static final short LONG = 6;
@@ -368,7 +368,6 @@ public final class ColumnType {
     }
 
     static {
-        GEO_HASH_MAX_BITS_LENGTH = 60;
         GEO_TYPE_SIZE_POW2 = new int[GEO_HASH_MAX_BITS_LENGTH + 1];
         for (int bits = 1; bits <= GEO_HASH_MAX_BITS_LENGTH; bits++) {
             GEO_TYPE_SIZE_POW2[bits] = Numbers.msb(Numbers.ceilPow2(((bits + Byte.SIZE) & -Byte.SIZE)) >> 3);
