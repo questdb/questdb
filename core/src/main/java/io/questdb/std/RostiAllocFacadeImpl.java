@@ -46,6 +46,11 @@ public class RostiAllocFacadeImpl implements RostiAllocFacade {
     }
 
     @Override
+    public long getSize(long pRosti) {
+        return Rosti.getSize(pRosti);
+    }
+
+    @Override
     public boolean reset(long pRosti, int toSize) {
         return Rosti.reset(pRosti, toSize);
     }
@@ -53,10 +58,5 @@ public class RostiAllocFacadeImpl implements RostiAllocFacade {
     @Override
     public void updateMemoryUsage(long pRosti, long oldSize) {
         Rosti.updateMemoryUsage(pRosti, oldSize);
-    }
-
-    @Override
-    public long getSize(long pRosti) {
-        return Rosti.getSize(pRosti);
     }
 }

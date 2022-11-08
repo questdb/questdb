@@ -31,10 +31,10 @@ import io.questdb.std.Vect;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
     private static final int M_OPERATION = 2;
-    private final FDSet readFdSet;
-    private final FDSet writeFdSet;
     private final LongIntHashMap fds = new LongIntHashMap();
+    private final FDSet readFdSet;
     private final SelectFacade sf;
+    private final FDSet writeFdSet;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -57,11 +57,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         readFdSet.close();
         writeFdSet.close();
         LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -107,6 +102,16 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
     }
 
     @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        listenerRegistered = true;
+    }
+
+    @Override
     protected boolean runSerially() {
 
         final long timestamp = clock.getTicks();
@@ -146,7 +151,7 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             final long fd = pending.get(i, M_FD);
             final int _new_op = fds.get(fd);
             assert fd != serverFd;
-            
+
             if (_new_op == -1) {
 
                 // check if expired
@@ -184,21 +189,26 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         }
 
         if (listenerRegistered) {
-             assert serverFd >= 0;
-             readFdSet.add(serverFd);
-             readFdCount++;
+            assert serverFd >= 0;
+            readFdSet.add(serverFd);
+            readFdCount++;
         }
-        
+
         readFdSet.setCount(readFdCount);
         writeFdSet.setCount(writeFdCount);
         return useful;
     }
 
+    @Override
+    protected void unregisterListenerFd() {
+        listenerRegistered = false;
+    }
+
     private static class FDSet {
-        private long address;
-        private int size;
         private long _wptr;
+        private long address;
         private long lim;
+        private int size;
 
         private FDSet(int size) {
             int l = SelectAccessor.ARRAY_OFFSET + 8 * size;
@@ -232,10 +242,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             return Unsafe.getUnsafe().getInt(address + SelectAccessor.COUNT_OFFSET);
         }
 
-        private void setCount(int count) {
-            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
-        }
-
         private void reset() {
             _wptr = address + SelectAccessor.ARRAY_OFFSET;
         }
@@ -251,16 +257,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             _wptr = _addr + (_wptr - address);
             address = _addr;
         }
-    }
 
-    @Override
-    protected void registerListenerFd() {
-        listenerRegistered = true;
-    }
-
-    @Override
-    protected void unregisterListenerFd() {
-        listenerRegistered = false;
+        private void setCount(int count) {
+            Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
+        }
     }
 }
 

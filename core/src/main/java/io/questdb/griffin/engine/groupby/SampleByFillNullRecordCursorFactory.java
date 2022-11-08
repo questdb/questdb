@@ -93,21 +93,9 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         }
     }
 
-    @NotNull
-    static ObjList<Function> createPlaceholderFunctions(
-            ObjList<Function> recordFunctions,
-            IntList recordFunctionPositions
-    ) throws SqlException {
-        final ObjList<Function> placeholderFunctions = new ObjList<>();
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            Function function = recordFunctions.getQuick(i);
-            if (function instanceof GroupByFunction) {
-                placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
-            } else {
-                placeholderFunctions.add(function);
-            }
-        }
-        return placeholderFunctions;
+    @Override
+    public AbstractNoRecordSampleByCursor getRawCursor() {
+        return cursor;
     }
 
     static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type) throws SqlException {
@@ -137,8 +125,20 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
         }
     }
 
-    @Override
-    public AbstractNoRecordSampleByCursor getRawCursor() {
-        return cursor;
+    @NotNull
+    static ObjList<Function> createPlaceholderFunctions(
+            ObjList<Function> recordFunctions,
+            IntList recordFunctionPositions
+    ) throws SqlException {
+        final ObjList<Function> placeholderFunctions = new ObjList<>();
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            Function function = recordFunctions.getQuick(i);
+            if (function instanceof GroupByFunction) {
+                placeholderFunctions.add(createPlaceHolderFunction(recordFunctionPositions, i, function.getType()));
+            } else {
+                placeholderFunctions.add(function);
+            }
+        }
+        return placeholderFunctions;
     }
 }

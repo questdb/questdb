@@ -57,16 +57,16 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
         return true;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("BooleanColumn(").put(columnIndex).put(')');
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new BooleanColumn(i));
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("BooleanColumn(").put(columnIndex).put(')');
     }
 
 }

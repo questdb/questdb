@@ -34,11 +34,19 @@ public interface LineUdpReceiverConfiguration {
 
     boolean getAutoCreateNewTables();
 
-    int getCommitMode();
-
     int getBindIPv4Address();
 
+    CairoSecurityContext getCairoSecurityContext();
+
+    int getCommitMode();
+
     int getCommitRate();
+
+    short getDefaultColumnTypeForFloat();
+
+    short getDefaultColumnTypeForInteger();
+
+    int getDefaultPartitionBy();
 
     int getGroupIPv4Address();
 
@@ -54,7 +62,7 @@ public interface LineUdpReceiverConfiguration {
 
     int getReceiveBufferSize();
 
-    CairoSecurityContext getCairoSecurityContext();
+    LineProtoTimestampAdapter getTimestampAdapter();
 
     boolean isEnabled();
 
@@ -63,12 +71,4 @@ public interface LineUdpReceiverConfiguration {
     boolean ownThread();
 
     int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
-
-    int getDefaultPartitionBy();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
 }

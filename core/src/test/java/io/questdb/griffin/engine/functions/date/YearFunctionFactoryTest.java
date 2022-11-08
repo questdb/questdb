@@ -29,11 +29,11 @@ import org.junit.Test;
 
 public class YearFunctionFactoryTest extends AbstractGriffinTest {
     @Test
-    public void testVanilla() throws Exception {
+    public void testNull() throws Exception {
         assertQuery(
                 "year\n" +
-                        "1997\n",
-                "select year('1997-04-11T22:00:30.555555Z'::timestamp)",
+                        "NaN\n",
+                "select year(null)",
                 null,
                 null,
                 true,
@@ -57,11 +57,11 @@ public class YearFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testNull() throws Exception {
+    public void testVanilla() throws Exception {
         assertQuery(
                 "year\n" +
-                        "NaN\n",
-                "select year(null)",
+                        "1997\n",
+                "select year('1997-04-11T22:00:30.555555Z'::timestamp)",
                 null,
                 null,
                 true,

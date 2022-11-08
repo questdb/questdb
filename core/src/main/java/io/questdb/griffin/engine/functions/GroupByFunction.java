@@ -36,6 +36,10 @@ public interface GroupByFunction extends Function, Mutable {
     default void clear() {
     }
 
+    void computeFirst(MapValue mapValue, Record record);
+
+    void computeNext(MapValue mapValue, Record record);
+
     default void interpolateBoundary(MapValue mapValue1,
                                      MapValue mapValue2,
                                      long boundaryTimestamp,
@@ -49,10 +53,6 @@ public interface GroupByFunction extends Function, Mutable {
                                 long x) {
         throw new UnsupportedOperationException();
     }
-
-    void computeFirst(MapValue mapValue, Record record);
-
-    void computeNext(MapValue mapValue, Record record);
 
     default boolean isScalar() {
         return true;

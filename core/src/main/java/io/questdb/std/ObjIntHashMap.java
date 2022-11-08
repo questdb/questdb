@@ -33,15 +33,15 @@ import java.util.Iterator;
 public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final Object noEntryValue = new Object();
-    private final int noKeyValue;
-    private final double loadFactor;
-    private final EntryIterator iterator = new EntryIterator();
-    private K[] keys;
-    private int[] values;
-    private int free;
     private final int initialCapacity;
+    private final EntryIterator iterator = new EntryIterator();
+    private final double loadFactor;
+    private final int noKeyValue;
     private int capacity;
+    private int free;
+    private K[] keys;
     private int mask;
+    private int[] values;
 
     public ObjIntHashMap() {
         this(8);
@@ -63,29 +63,16 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         clear();
     }
 
+    public int capacity() {
+        return capacity;
+    }
+
     @Override
     public final void clear() {
         if (free != capacity) {
             free = capacity;
             Arrays.fill(keys, noEntryValue);
         }
-    }
-
-    public void reset() {
-        if (capacity == initialCapacity) {
-            clear();
-        } else {
-            free = capacity = initialCapacity;
-            keys = createKeys();
-            values = new int[keys.length];
-            mask = keys.length - 1;
-            Arrays.fill(keys, noEntryValue);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private K[] createKeys() {
-        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
     }
 
     public int get(K key) {
@@ -135,17 +122,30 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         return false;
     }
 
-    public int size() {
-        return capacity - free;
+    public void reset() {
+        if (capacity == initialCapacity) {
+            clear();
+        } else {
+            free = capacity = initialCapacity;
+            keys = createKeys();
+            values = new int[keys.length];
+            mask = keys.length - 1;
+            Arrays.fill(keys, noEntryValue);
+        }
     }
 
-    public int capacity() {
-        return capacity;
+    public int size() {
+        return capacity - free;
     }
 
     public int valueAt(int index) {
         int index1 = -index - 1;
         return index < 0 ? values[index1] : noKeyValue;
+    }
+
+    @SuppressWarnings("unchecked")
+    private K[] createKeys() {
+        return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
     }
 
     private int probe(K key, int index) {

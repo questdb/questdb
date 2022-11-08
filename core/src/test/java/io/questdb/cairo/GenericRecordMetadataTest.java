@@ -84,7 +84,7 @@ public class GenericRecordMetadataTest {
 
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("abc", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("cde", 2,ColumnType.INT));
+        metadata.add(new TableColumnMetadata("cde", 2, ColumnType.INT));
 
         sink.clear();
         metadata.toJson(sink);
@@ -107,7 +107,7 @@ public class GenericRecordMetadataTest {
     public void testReuse() {
         String expected1 = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"abc\",\"type\":\"INT\"},{\"index\":1,\"name\":\"cde\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("abc", 1,ColumnType.INT));
+        metadata.add(new TableColumnMetadata("abc", 1, ColumnType.INT));
         metadata.add(new TableColumnMetadata("cde", 2, ColumnType.INT));
         metadata.add(new TableColumnMetadata("timestamp", 3, ColumnType.TIMESTAMP));
         metadata.setTimestampIndex(2);

@@ -31,7 +31,6 @@ import io.questdb.mp.*;
 import io.questdb.tasks.*;
 
 import java.io.IOException;
-import java.util.concurrent.locks.Lock;
 
 public class MessageBusStub implements MessageBus {
     @Override
@@ -190,6 +189,16 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
+    public FanOut getQueryCacheEventFanOut() {
+        return null;
+    }
+
+    @Override
+    public MPSequence getQueryCacheEventPubSeq() {
+        return null;
+    }
+
+    @Override
     public FanOut getTableWriterEventFanOut() {
         return null;
     }
@@ -205,6 +214,41 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
+    public SCSequence getTextImportColSeq() {
+        return null;
+    }
+
+    @Override
+    public Sequence getTextImportPubSeq() {
+        return null;
+    }
+
+    @Override
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return null;
+    }
+
+    @Override
+    public MPSequence getTextImportRequestPubSeq() {
+        return null;
+    }
+
+    @Override
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
+        return null;
+    }
+
+    @Override
+    public Sequence getTextImportRequestSubSeq() {
+        return null;
+    }
+
+    @Override
+    public Sequence getTextImportSubSeq() {
+        return null;
+    }
+
+    @Override
     public Sequence getVectorAggregatePubSeq() {
         return null;
     }
@@ -216,51 +260,6 @@ public class MessageBusStub implements MessageBus {
 
     @Override
     public Sequence getVectorAggregateSubSeq() {
-        return null;
-    }
-
-    @Override
-    public MPSequence getQueryCacheEventPubSeq() {
-        return null;
-    }
-
-    @Override
-    public FanOut getQueryCacheEventFanOut() {
-        return null;
-    }
-
-    @Override
-    public RingQueue<TextImportTask> getTextImportQueue() {
-        return null;
-    }
-
-    @Override
-    public Sequence getTextImportPubSeq() {
-        return null;
-    }
-
-    @Override
-    public Sequence getTextImportSubSeq() {
-        return null;
-    }
-
-    @Override
-    public SCSequence getTextImportColSeq() {
-        return null;
-    }
-
-    @Override
-    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
-        return null;
-    }
-
-    @Override
-    public MPSequence getTextImportRequestPubSeq() {
-        return null;
-    }
-
-    @Override
-    public Sequence getTextImportRequestSubSeq() {
         return null;
     }
 }

@@ -27,14 +27,14 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public abstract class AbstractIntHashSet implements Mutable {
-    protected static final int noEntryKey = -1;
     protected static final int MIN_INITIAL_CAPACITY = 16;
+    protected static final int noEntryKey = -1;
     protected final double loadFactor;
     protected final int noEntryKeyValue;
+    protected int capacity;
+    protected int free;
     protected int[] keys;
     protected int mask;
-    protected int free;
-    protected int capacity;
 
     public AbstractIntHashSet(int initialCapacity, double loadFactor) {
         this(initialCapacity, loadFactor, noEntryKey);
@@ -125,10 +125,6 @@ public abstract class AbstractIntHashSet implements Mutable {
         return capacity - free;
     }
 
-    abstract protected void erase(int index);
-
-    abstract protected void move(int from, int to);
-
     private int probe(int key, int index) {
         do {
             index = (index + 1) & mask;
@@ -140,4 +136,8 @@ public abstract class AbstractIntHashSet implements Mutable {
             }
         } while (true);
     }
+
+    abstract protected void erase(int index);
+
+    abstract protected void move(int from, int to);
 }

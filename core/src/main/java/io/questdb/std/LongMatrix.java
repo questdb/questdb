@@ -26,9 +26,9 @@ package io.questdb.std;
 
 public class LongMatrix<T> {
     private final int bits;
-    private int pos;
     private long[] data;
     private T[] payload;
+    private int pos;
     private int rows;
 
     @SuppressWarnings("unchecked")

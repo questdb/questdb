@@ -34,6 +34,15 @@ import org.junit.Test;
 
 public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
+    public void tesEqualNull() throws SqlException {
+        CharSequence tok1 = "0x7ae65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
+        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l2 = Long256Impl.NULL_LONG256;
+        callBySignature("=(HH)", l1, l2).andAssert(false);
+        callBySignature("=(HH)", l2, l1).andAssert(false);
+    }
+
+    @Test
     public void testEqual() throws SqlException {
         CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
@@ -49,15 +58,6 @@ public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
         Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
-        callBySignature("=(HH)", l1, l2).andAssert(false);
-        callBySignature("=(HH)", l2, l1).andAssert(false);
-    }
-
-    @Test
-    public void tesEqualNull() throws SqlException {
-        CharSequence tok1 = "0x7ae65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Long256Impl.NULL_LONG256;
         callBySignature("=(HH)", l1, l2).andAssert(false);
         callBySignature("=(HH)", l2, l1).andAssert(false);
     }

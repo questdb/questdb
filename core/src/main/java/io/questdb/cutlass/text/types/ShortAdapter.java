@@ -49,6 +49,6 @@ public final class ShortAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putShort(column, SqlKeywords.isNullKeyword(value) ?  (short) 0 : (short) Numbers.parseInt(value));
+        row.putShort(column, SqlKeywords.isNullKeyword(value) ? (short) 0 : (short) Numbers.parseInt(value));
     }
 }

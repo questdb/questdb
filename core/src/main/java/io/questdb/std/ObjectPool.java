@@ -34,8 +34,8 @@ import org.jetbrains.annotations.NotNull;
 public class ObjectPool<T extends Mutable> implements Mutable {
 
     private final static Log LOG = LogFactory.getLog(ObjectPool.class);
-    private final ObjList<T> list;
     private final ObjectFactory<T> factory;
+    private final ObjList<T> list;
     private int pos = 0;
     private int size;
 

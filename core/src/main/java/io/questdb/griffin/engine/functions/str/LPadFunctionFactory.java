@@ -64,11 +64,11 @@ public class LPadFunctionFactory implements FunctionFactory {
 
     public static class LPadFunc extends StrFunction implements BinaryFunction {
 
-        private final Function strFunc;
         private final Function lenFunc;
         private final int maxLength;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final Function strFunc;
 
         public LPadFunc(Function strFunc, Function lenFunc, int maxLength) {
             this.strFunc = strFunc;
@@ -87,6 +87,16 @@ public class LPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public CharSequence getStr(final Record rec) {
+            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
+        }
+
+        @Override
+        public CharSequence getStrB(final Record rec) {
+            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
+        }
+
+        @Override
         public int getStrLen(Record rec) {
             final CharSequence str = strFunc.getStr(rec);
             final int len = lenFunc.getInt(rec);
@@ -95,16 +105,6 @@ public class LPadFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
-        }
-
-        @Override
-        public CharSequence getStr(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
-        }
-
-        @Override
-        public CharSequence getStrB(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Nullable

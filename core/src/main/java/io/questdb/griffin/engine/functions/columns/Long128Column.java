@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.Long128Function;
 import io.questdb.std.ObjList;
+
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
 public class Long128Column extends Long128Function implements ScalarFunction {
@@ -55,16 +56,15 @@ public class Long128Column extends Long128Function implements ScalarFunction {
         return rec.getLong128Lo(columnIndex);
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
 
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
             COLUMNS.setQuick(i, new Long128Column(i));
         }
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
     }
 }

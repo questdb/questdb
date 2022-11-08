@@ -25,11 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
-import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -48,13 +44,28 @@ import static org.junit.Assert.assertTrue;
 public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testSanity() throws Exception {
-        // we want to make sure metrics in tests are enabled by default
-        assertTrue(metrics.isEnabled());
-        assertTrue(engine.getMetrics().isEnabled());
+    public void testCursor() throws Exception {
+        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
+        }
+    }
 
-        MetricsSnapshot metricsSnapshot = snapshotMetrics();
-        assertMetricsCursorEquals(metricsSnapshot);
+    @Test
+    public void testDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
+                 SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
+                 SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
+                         .with(AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
+                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+            }
+        });
     }
 
     @Test
@@ -73,28 +84,6 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     }
 
     @Test
-    public void testSql() throws Exception{
-        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, true, false, null);
-    }
-
-    @Test
-    public void testDisabled() throws Exception {
-        assertMemoryLeak(() -> {
-            try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
-                SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
-                SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
-                         .with(AllowAllCairoSecurityContext.INSTANCE,
-                                 new BindVariableServiceImpl(configuration),
-                                 null,
-                                 -1,
-                                 null)) {
-                MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
-                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
-            }
-        });
-    }
-
-    @Test
     public void testOneFactoryToMultipleCursors() throws Exception {
         int cursorCount = 10;
         assertMemoryLeak(() -> {
@@ -109,11 +98,37 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     }
 
     @Test
-    public void testCursor() throws Exception{
-        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
-        }
+    public void testSanity() throws Exception {
+        // we want to make sure metrics in tests are enabled by default
+        assertTrue(metrics.isEnabled());
+        assertTrue(engine.getMetrics().isEnabled());
+
+        MetricsSnapshot metricsSnapshot = snapshotMetrics();
+        assertMetricsCursorEquals(metricsSnapshot);
+    }
+
+    @Test
+    public void testSql() throws Exception {
+        printSqlResult(() -> toExpectedTableContent(snapshotMetrics()), "select * from table_writer_metrics()", null, null, null, false, true, true, false, null);
+    }
+
+    private static MetricsSnapshot snapshotMetrics() {
+        TableWriterMetrics writerMetrics = engine.getMetrics().tableWriter();
+        return new MetricsSnapshot(writerMetrics.getCommitCount(),
+                writerMetrics.getCommittedRows(),
+                writerMetrics.getO3CommitCount(),
+                writerMetrics.getRollbackCount(),
+                writerMetrics.getPhysicallyWrittenRows()
+        );
+    }
+
+    private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
+        return "name\tvalue\n" +
+                "total_commits" + '\t' + metricsSnapshot.commitCount + '\n' +
+                "o3commits" + '\t' + metricsSnapshot.o3CommitCount + '\n' +
+                "rollbacks" + '\t' + metricsSnapshot.rollbackCount + '\n' +
+                "committed_rows" + '\t' + metricsSnapshot.committedRows + '\n' +
+                "physically_written_rows" + '\t' + metricsSnapshot.physicallyWrittenRows + '\n';
     }
 
     private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {
@@ -123,22 +138,12 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
         }
     }
 
-    private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
-        StringBuilder sb = new StringBuilder("name\tvalue\n")
-                .append("total_commits").append('\t').append(metricsSnapshot.commitCount).append('\n')
-                .append("o3commits").append('\t').append(metricsSnapshot.o3CommitCount).append('\n')
-                .append("rollbacks").append('\t').append(metricsSnapshot.rollbackCount).append('\n')
-                .append("committed_rows").append('\t').append(metricsSnapshot.committedRows).append('\n')
-                .append("physically_written_rows").append('\t').append(metricsSnapshot.physicallyWrittenRows).append('\n');
-        return sb.toString();
-    }
-
     private static class MetricsSnapshot {
         private final long commitCount;
         private final long committedRows;
         private final long o3CommitCount;
-        private final long rollbackCount;
         private final long physicallyWrittenRows;
+        private final long rollbackCount;
 
         private MetricsSnapshot(long commitCount, long committedRows, long o3CommitCount, long rollbackCount, long physicallyWrittenRows) {
             this.commitCount = commitCount;
@@ -171,15 +176,5 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                     ", physicallyWrittenRows=" + physicallyWrittenRows +
                     '}';
         }
-    }
-
-    private static MetricsSnapshot snapshotMetrics() {
-        TableWriterMetrics writerMetrics = engine.getMetrics().tableWriter();
-        return new MetricsSnapshot(writerMetrics.getCommitCount(),
-                writerMetrics.getCommittedRows(),
-                writerMetrics.getO3CommitCount(),
-                writerMetrics.getRollbackCount(),
-                writerMetrics.getPhysicallyWrittenRows()
-        );
     }
 }

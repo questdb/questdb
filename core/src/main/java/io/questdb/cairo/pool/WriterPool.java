@@ -65,21 +65,21 @@ import java.util.Iterator;
  */
 public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_NONE = null;
-    public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     public static final String OWNERSHIP_REASON_RELEASED = "released";
+    public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
-    private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
-    private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
-    private final CairoConfiguration configuration;
     private final MicrosecondClock clock;
-    private final CharSequence root;
+    private final CairoConfiguration configuration;
+    private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     @NotNull
     private final MessageBus messageBus;
     @NotNull
     private final Metrics metrics;
+    private final CharSequence root;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
@@ -111,6 +111,7 @@ public class WriterPool extends AbstractPool {
      * <li>{@link CairoException}: When table is locked outside of pool, which includes same or different process.
      * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.</li>
      * </ul>
+     *
      * @param tableName  name of the table
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
@@ -331,64 +332,6 @@ public class WriterPool extends AbstractPool {
         return logAndReturn(e, PoolListener.EV_GET);
     }
 
-    /**
-     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
-     * are outside of pool will close when their close() method is invoked.
-     * <p>
-     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
-     * </p>
-     */
-    @Override
-    protected void closePool() {
-        super.closePool();
-        LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        final int reason;
-
-        if (deadline == Long.MAX_VALUE) {
-            reason = PoolConstants.CR_POOL_CLOSE;
-        } else {
-            reason = PoolConstants.CR_IDLE;
-        }
-
-        Iterator<Entry> iterator = entries.values().iterator();
-        while (iterator.hasNext()) {
-            Entry e = iterator.next();
-            // lastReleaseTime is volatile, which makes
-            // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
-                // looks like this writer is unallocated and can be released
-                // Lock with negative 3-based owner thread id to indicate it's that next
-                // allocating thread can wait until the entry is released.
-                // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {
-                    // lock successful
-                    closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
-                    iterator.remove();
-                    removed = true;
-                }
-            } else if (e.lockFd != -1L && deadline == Long.MAX_VALUE) {
-                // do not release locks unless pool is shutting down, which is
-                // indicated via deadline to be Long.MAX_VALUE
-                if (ff.close(e.lockFd)) {
-                    e.lockFd = -1L;
-                    iterator.remove();
-                    removed = true;
-                }
-            } else if (e.ex != null) {
-                LOG.info().$("purging entry for failed to allocate writer").$();
-                iterator.remove();
-                removed = true;
-            }
-        }
-        return removed;
-    }
-
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
@@ -400,19 +343,6 @@ public class WriterPool extends AbstractPool {
             LOG.info().$("closed [table=`").utf8(name).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
             notifyListener(thread, name, ev);
         }
-    }
-
-    int countFreeWriters() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            final long owner = e.owner;
-            if (owner == UNALLOCATED) {
-                count++;
-            } else {
-                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(owner).$(']').$();
-            }
-        }
-        return count;
     }
 
     private TableWriter createWriter(CharSequence name, Entry e, long thread, CharSequence lockReason) {
@@ -585,15 +515,86 @@ public class WriterPool extends AbstractPool {
         return true;
     }
 
+    /**
+     * Closes writer pool. When pool is closed only writers that are in pool are proactively released. Writers that
+     * are outside of pool will close when their close() method is invoked.
+     * <p>
+     * After pool is closed it will notify listener with #EV_POOL_CLOSED event.
+     * </p>
+     */
+    @Override
+    protected void closePool() {
+        super.closePool();
+        LOG.info().$("closed").$();
+    }
+
+    int countFreeWriters() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            final long owner = e.owner;
+            if (owner == UNALLOCATED) {
+                count++;
+            } else {
+                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(owner).$(']').$();
+            }
+        }
+        return count;
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        long thread = Thread.currentThread().getId();
+        boolean removed = false;
+        final int reason;
+
+        if (deadline == Long.MAX_VALUE) {
+            reason = PoolConstants.CR_POOL_CLOSE;
+        } else {
+            reason = PoolConstants.CR_IDLE;
+        }
+
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            Entry e = iterator.next();
+            // lastReleaseTime is volatile, which makes
+            // order of conditions important
+            if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
+                // looks like this writer is unallocated and can be released
+                // Lock with negative 3-based owner thread id to indicate it's that next
+                // allocating thread can wait until the entry is released.
+                // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {
+                    // lock successful
+                    closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
+                    iterator.remove();
+                    removed = true;
+                }
+            } else if (e.lockFd != -1L && deadline == Long.MAX_VALUE) {
+                // do not release locks unless pool is shutting down, which is
+                // indicated via deadline to be Long.MAX_VALUE
+                if (ff.close(e.lockFd)) {
+                    e.lockFd = -1L;
+                    iterator.remove();
+                    removed = true;
+                }
+            } else if (e.ex != null) {
+                LOG.info().$("purging entry for failed to allocate writer").$();
+                iterator.remove();
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
     private class Entry implements LifecycleManager {
+        private CairoException ex = null;
+        // time writer was last released
+        private volatile long lastReleaseTime;
+        private volatile long lockFd = -1L;
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
         private volatile CharSequence ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
-        // time writer was last released
-        private volatile long lastReleaseTime;
-        private CairoException ex = null;
-        private volatile long lockFd = -1L;
 
         public Entry(long lastReleaseTime) {
             this.lastReleaseTime = lastReleaseTime;

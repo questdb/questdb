@@ -29,15 +29,14 @@ import io.questdb.std.ObjectFactory;
 
 public class ColumnCastModel implements Mutable {
     public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
-
-    private ExpressionNode name;
+    private int columnNamePos;
     private int columnType;
     private int columnTypePos;
-    private int columnNamePos;
-    private int symbolCapacity;
-    private boolean symbolCacheFlag;
-    private boolean indexed;
     private int indexValueBlockSize;
+    private boolean indexed;
+    private ExpressionNode name;
+    private boolean symbolCacheFlag;
+    private int symbolCapacity;
 
     private ColumnCastModel() {
     }
@@ -63,40 +62,40 @@ public class ColumnCastModel implements Mutable {
         return indexValueBlockSize;
     }
 
-    public void setIndexValueBlockSize(int indexValueBlockSize) {
-        this.indexValueBlockSize = indexValueBlockSize;
-    }
-
-    public boolean isIndexed() {
-        return indexed;
-    }
-
-    public void setIndexed(boolean indexed) {
-        this.indexed = indexed;
-    }
-
     public ExpressionNode getName() {
         return name;
-    }
-
-    public void setName(ExpressionNode name) {
-        this.name = name;
-    }
-
-    public int getSymbolCapacity() {
-        return symbolCapacity;
-    }
-
-    public void setSymbolCapacity(int symbolCapacity) {
-        this.symbolCapacity = symbolCapacity;
     }
 
     public boolean getSymbolCacheFlag() {
         return symbolCacheFlag;
     }
 
+    public int getSymbolCapacity() {
+        return symbolCapacity;
+    }
+
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    public void setIndexValueBlockSize(int indexValueBlockSize) {
+        this.indexValueBlockSize = indexValueBlockSize;
+    }
+
+    public void setIndexed(boolean indexed) {
+        this.indexed = indexed;
+    }
+
+    public void setName(ExpressionNode name) {
+        this.name = name;
+    }
+
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {
         this.symbolCacheFlag = symbolCacheFlag;
+    }
+
+    public void setSymbolCapacity(int symbolCapacity) {
+        this.symbolCapacity = symbolCapacity;
     }
 
     public void setType(int columnType, int columnNamePos, int columnTypePos) {

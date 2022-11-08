@@ -193,29 +193,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
                 scanDownBlock(shl, value, low, high + 1);
     }
 
-    @TestOnly
-    public void shuffle(Rnd rnd, int sh) {
-        // sh is a power of 2 to indicate number of
-        // values stored per virtual "slot". E.g. if
-        // we store two values at a time, we want to shuffle pairs
-        int size = size() >> sh;
-        for (int i = size; i > 1; i--) {
-            swap(i - 1, rnd.nextInt(i), sh);
-        }
-    }
-
-    public void swap(int i, int j, int shl) {
-        int k = 1 << shl;
-        for (int k1 = 0; k1 < k; k1++) {
-            final int ii = (i << shl) + k1;
-            final int ji = (j << shl) + k1;
-            final long jv = getQuick(ji);
-            setQuick(ji, getQuick(ii));
-            setQuick(ii, jv);
-        }
-    }
-
-
     public void clear() {
         pos = 0;
     }
@@ -232,6 +209,14 @@ public class LongList implements Mutable, LongVec, Sinkable {
             System.arraycopy(data, 0, buf, 0, l);
             this.data = buf;
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean equals(Object that) {
+        return this == that || that instanceof LongList && equals((LongList) that);
     }
 
     public void erase() {
@@ -276,12 +261,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return noEntryValue;
     }
 
-    public void setLast(long value) {
-        if (pos > 0) {
-            data[pos - 1] = value;
-        }
-    }
-
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
@@ -293,18 +272,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
      */
     public long getQuick(int index) {
         return data[index];
-    }
-
-    public void setQuick(int index, long value) {
-        assert index < pos;
-        data[index] = value;
-    }
-
-    @Override
-    public LongVec newInstance() {
-        LongList newList = new LongList(size());
-        newList.setPos(pos);
-        return newList;
     }
 
     /**
@@ -320,38 +287,17 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return (int) hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof LongList && equals((LongList) that);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put('[');
-        for (int i = 0, k = pos; i < k; i++) {
-            if (i > 0) {
-                sink.put(',');
-            }
-            sink.put(get(i));
-        }
-        sink.put(']');
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public String toString() {
-        final CharSink sb = Misc.getThreadLocalBuilder();
-        toSink(sb);
-        return sb.toString();
-    }
-
     public void increment(int index) {
         data[index] = data[index] + 1;
+    }
+
+    public int indexOf(long o) {
+        for (int i = 0, n = pos; i < n; i++) {
+            if (o == getQuick(i)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public void insert(int index, int length) {
@@ -369,6 +315,13 @@ public class LongList implements Mutable, LongVec, Sinkable {
             insert(index, len);
             System.arraycopy(src.data, srcLo, data, index, len);
         }
+    }
+
+    @Override
+    public LongVec newInstance() {
+        LongList newList = new LongList(size());
+        newList.setPos(pos);
+        return newList;
     }
 
     public void remove(long v) {
@@ -427,9 +380,31 @@ public class LongList implements Mutable, LongVec, Sinkable {
         Arrays.fill(data, value);
     }
 
+    public void setLast(long value) {
+        if (pos > 0) {
+            data[pos - 1] = value;
+        }
+    }
+
     final public void setPos(int pos) {
         ensureCapacity(pos);
         this.pos = pos;
+    }
+
+    public void setQuick(int index, long value) {
+        assert index < pos;
+        data[index] = value;
+    }
+
+    @TestOnly
+    public void shuffle(Rnd rnd, int sh) {
+        // sh is a power of 2 to indicate number of
+        // values stored per virtual "slot". E.g. if
+        // we store two values at a time, we want to shuffle pairs
+        int size = size() >> sh;
+        for (int i = size; i > 1; i--) {
+            swap(i - 1, rnd.nextInt(i), sh);
+        }
     }
 
     public int size() {
@@ -451,6 +426,39 @@ public class LongList implements Mutable, LongVec, Sinkable {
         return that;
     }
 
+    public void swap(int i, int j, int shl) {
+        int k = 1 << shl;
+        for (int k1 = 0; k1 < k; k1++) {
+            final int ii = (i << shl) + k1;
+            final int ji = (j << shl) + k1;
+            final long jv = getQuick(ji);
+            setQuick(ji, getQuick(ii));
+            setQuick(ii, jv);
+        }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = pos; i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(get(i));
+        }
+        sink.put(']');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public String toString() {
+        final CharSink sb = Misc.getThreadLocalBuilder();
+        toSink(sb);
+        return sb.toString();
+    }
+
     public void zero(int value) {
         Arrays.fill(data, 0, pos, value);
     }
@@ -468,15 +476,6 @@ public class LongList implements Mutable, LongVec, Sinkable {
             }
         }
         return true;
-    }
-
-    public int indexOf(long o) {
-        for (int i = 0, n = pos; i < n; i++) {
-            if (o == getQuick(i)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private int scanDown(long v, int low, int high) {

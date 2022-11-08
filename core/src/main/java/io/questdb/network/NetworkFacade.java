@@ -37,13 +37,15 @@ public interface NetworkFacade {
 
     boolean bindTcp(long fd, CharSequence ipv4Address, int port);
 
+    boolean bindUdp(long fd, int ipv4Address, int port);
+
     int close(long fd);
 
     void close(long fd, Log logger);
 
-    void configureNoLinger(long fd);
-
     int configureLinger(long fd, int seconds);
+
+    void configureNoLinger(long fd);
 
     int configureNonBlocking(long fd);
 
@@ -51,41 +53,48 @@ public interface NetworkFacade {
 
     int connectAddrInfo(long fd, long pAddrInfo);
 
-    void freeSockAddr(long pSockaddr);
+    int errno();
 
     void freeAddrInfo(long pAddrInfo);
 
+    void freeMsgHeaders(long msgVec);
+
+    void freeSockAddr(long pSockaddr);
+
+    long getAddrInfo(LPSZ host, int port);
+
+    long getAddrInfo(CharSequence host, int port);
+
+    long getMMsgBuf(long msg);
+
+    long getMMsgBufLen(long msg);
+
     long getPeerIP(long fd);
 
-    void listen(long serverFd, int backlog);
-
-    int recv(long fd, long buffer, int bufferLen);
-
-    int peek(long fd, long buffer, int bufferLen);
-
-    int send(long fd, long buffer, int bufferLen);
-
-    int errno();
-
-    long sockaddr(int address, int port);
-
-    int sendTo(long fd, long lo, int len, long socketAddress);
-
-    long socketTcp(boolean blocking);
-
-    long socketUdp();
-
-    boolean bindUdp(long fd, int ipv4Address, int port);
+    int getSndBuf(long fd);
 
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 
     boolean join(long fd, int bindIPv4, int groupIPv4);
 
-    long sockaddr(CharSequence address, int port);
+    void listen(long serverFd, int backlog);
 
-    long getAddrInfo(LPSZ host, int port);
+    long msgHeaders(int msgBufferSize, int msgCount);
 
-    long getAddrInfo(CharSequence host, int port);
+    int parseIPv4(CharSequence ipv4Address);
+
+    int peek(long fd, long buffer, int bufferLen);
+
+    int recv(long fd, long buffer, int bufferLen);
+
+    @SuppressWarnings("SpellCheckingInspection")
+    int recvmmsg(long fd, long msgVec, int msgCount);
+
+    int resolvePort(long fd);
+
+    int send(long fd, long buffer, int bufferLen);
+
+    int sendTo(long fd, long lo, int len, long socketAddress);
 
     int setMulticastInterface(long fd, CharSequence address);
 
@@ -93,32 +102,23 @@ public interface NetworkFacade {
 
     int setMulticastLoop(long fd, boolean loop);
 
-    int shutdown(long fd, int how);
-
-    int parseIPv4(CharSequence ipv4Address);
-
-    int setReusePort(long fd);
-
-    int setTcpNoDelay(long fd, boolean noDelay);
+    int setMulticastTtl(long fd, int ttl);
 
     int setRcvBuf(long fd, int size);
 
-    void freeMsgHeaders(long msgVec);
-
-    long getMMsgBuf(long msg);
-
-    long getMMsgBufLen(long msg);
-
-    long msgHeaders(int msgBufferSize, int msgCount);
-
-    @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(long fd, long msgVec, int msgCount);
-
-    int resolvePort(long fd);
+    int setReusePort(long fd);
 
     boolean setSndBuf(long fd, int size);
 
-    int getSndBuf(long fd);
+    int setTcpNoDelay(long fd, boolean noDelay);
 
-    int setMulticastTtl(long fd, int ttl);
+    int shutdown(long fd, int how);
+
+    long sockaddr(int address, int port);
+
+    long sockaddr(CharSequence address, int port);
+
+    long socketTcp(boolean blocking);
+
+    long socketUdp();
 }

@@ -34,11 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -71,40 +67,13 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
-    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return indexFunc.getInt(rec);
-        }
-    }
-
-    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
-        private final int index;
-
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
-            this.index = index;
-        }
-
-        @Override
-        int getIndex(Record rec) {
-            return index;
-        }
-    }
-
     private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        protected final Function strFunc;
         protected final Function delimiterFunc;
         protected final Function indexFunc;
+        protected final Function strFunc;
         private final int indexPosition;
+        private final StringSink sink = new StringSink();
+        private final StringSink sinkB = new StringSink();
 
         public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
             this.strFunc = strFunc;
@@ -113,27 +82,14 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             this.indexPosition = indexPosition;
         }
 
-        abstract int getIndex(Record rec);
-
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (indexFunc.isRuntimeConstant()) {
-                int index = indexFunc.getInt(null);
-                if (index == 0) {
-                    throw SqlException.$(indexPosition, "field position must not be zero");
-                }
-            }
+        public final Function getCenter() {
+            return delimiterFunc;
         }
 
         @Override
         public final Function getLeft() {
             return strFunc;
-        }
-
-        @Override
-        public final Function getCenter() {
-            return delimiterFunc;
         }
 
         @Override
@@ -147,13 +103,24 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            getStr0(rec, sink, false);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             return getStr0(rec, sinkB, true);
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            getStr0(rec, sink, false);
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (indexFunc.isRuntimeConstant()) {
+                int index = indexFunc.getInt(null);
+                if (index == 0) {
+                    throw SqlException.$(indexPosition, "field position must not be zero");
+                }
+            }
         }
 
         @Nullable
@@ -208,6 +175,34 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             }
             sink.put(str, start, end);
             return sink;
+        }
+
+        abstract int getIndex(Record rec);
+    }
+
+    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
+        private final int index;
+
+        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                           int index) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+            this.index = index;
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return index;
+        }
+    }
+
+    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
+        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+        }
+
+        @Override
+        int getIndex(Record rec) {
+            return indexFunc.getInt(rec);
         }
     }
 }

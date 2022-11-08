@@ -50,8 +50,8 @@ public class LikeCharFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
         private final char expected;
+        private final Function value;
 
         public MatchFunction(Function value, char expected) {
             this.value = value;

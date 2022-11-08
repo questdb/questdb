@@ -35,40 +35,14 @@ import java.io.Closeable;
 import java.util.Arrays;
 
 public class TextDelimiterScanner implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);
-    private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
     private static final double DOUBLE_TOLERANCE = 0.05d;
+    private static final Log LOG = LogFactory.getLog(TextDelimiterScanner.class);
     private static final byte[] potentialDelimiterBytes = new byte[256];
-
-    static {
-        configurePriority((byte) ',', (byte) 10);
-        configurePriority((byte) '\t', (byte) 10);
-        configurePriority((byte) '|', (byte) 10);
-        configurePriority((byte) ':', (byte) 9);
-        configurePriority((byte) ' ', (byte) 8);
-        configurePriority((byte) ';', (byte) 8);
-
-        Arrays.fill(potentialDelimiterBytes, (byte) 0);
-        for (int i = 1; i < '0'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-        for (int i = '9' + 1; i < 'A'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-
-        for (int i = 'Z'; i < 'a'; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-
-        for (int i = 'z' + 1; i < 255; i++) {
-            potentialDelimiterBytes[i] = 1;
-        }
-    }
-
-    private final long matrix;
-    private final int matrixSize;
-    private final int matrixRowSize;
+    private static final byte[] priorities = new byte[Byte.MAX_VALUE + 1];
     private final int lineCountLimit;
+    private final long matrix;
+    private final int matrixRowSize;
+    private final int matrixSize;
     private final double maxRequiredDelimiterStdDev;
     private final double maxRequiredLineLengthStdDev;
     private CharSequence tableName;
@@ -82,6 +56,11 @@ public class TextDelimiterScanner implements Closeable {
         this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
     }
 
+    @Override
+    public void close() {
+        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+    }
+
     private static void configurePriority(byte value, byte priority) {
         assert value > -1;
         priorities[value] = priority;
@@ -89,11 +68,6 @@ public class TextDelimiterScanner implements Closeable {
 
     private static byte getPriority(byte value) {
         return priorities[value];
-    }
-
-    @Override
-    public void close() {
-        Unsafe.free(matrix, matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
     }
 
     private void bumpCountAt(int line, byte bytePosition, int increment) {
@@ -286,5 +260,30 @@ public class TextDelimiterScanner implements Closeable {
 
     void setTableName(CharSequence tableName) {
         this.tableName = tableName;
+    }
+
+    static {
+        configurePriority((byte) ',', (byte) 10);
+        configurePriority((byte) '\t', (byte) 10);
+        configurePriority((byte) '|', (byte) 10);
+        configurePriority((byte) ':', (byte) 9);
+        configurePriority((byte) ' ', (byte) 8);
+        configurePriority((byte) ';', (byte) 8);
+
+        Arrays.fill(potentialDelimiterBytes, (byte) 0);
+        for (int i = 1; i < '0'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+        for (int i = '9' + 1; i < 'A'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'Z'; i < 'a'; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
+
+        for (int i = 'z' + 1; i < 255; i++) {
+            potentialDelimiterBytes[i] = 1;
+        }
     }
 }

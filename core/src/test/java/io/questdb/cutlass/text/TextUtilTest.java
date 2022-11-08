@@ -34,16 +34,6 @@ import org.junit.Test;
 public class TextUtilTest {
 
     @Test
-    public void testQuotedTextParsing() throws Utf8Exception {
-        StringSink query = new StringSink();
-
-        String text = "select count(*) from \"file.csv\" abcd";
-        copyToSinkWithTextUtil(query, text, false);
-
-        Assert.assertEquals(text, query.toString());
-    }
-
-    @Test
     public void testDoubleQuotedTextBySingleQuoteParsing() throws Utf8Exception {
         StringSink query = new StringSink();
 
@@ -61,6 +51,16 @@ public class TextUtilTest {
         copyToSinkWithTextUtil(query, text, true);
 
         Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
+    }
+
+    @Test
+    public void testQuotedTextParsing() throws Utf8Exception {
+        StringSink query = new StringSink();
+
+        String text = "select count(*) from \"file.csv\" abcd";
+        copyToSinkWithTextUtil(query, text, false);
+
+        Assert.assertEquals(text, query.toString());
     }
 
     private void copyToSinkWithTextUtil(StringSink query, String text, boolean doubleQuoteParse) throws Utf8Exception {

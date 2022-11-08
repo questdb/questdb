@@ -48,11 +48,10 @@ public abstract class AbstractBootstrapTest {
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    protected static final int ILP_BUFFER_SIZE = 4 * 1024;
+    protected static final int ILP_PORT = 9009;
     protected static final Properties PG_CONNECTION_PROPERTIES = new Properties();
     protected static final String PG_CONNECTION_URI = "jdbc:postgresql://127.0.0.1:8822/qdb";
-
-    protected static final int ILP_PORT = 9009;
-    protected static final int ILP_BUFFER_SIZE = 4 * 1024;
     private static final File siteDir = new File(ServerMain.class.getResource("/io/questdb/site/").getFile());
     protected static CharSequence root;
     private static boolean publicZipStubCreated = false;

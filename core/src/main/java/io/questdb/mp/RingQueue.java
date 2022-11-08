@@ -29,11 +29,11 @@ import io.questdb.std.*;
 import java.io.Closeable;
 
 public class RingQueue<T> implements Closeable {
-    private final int mask;
     private final T[] buf;
+    private final int mask;
     private final long memory;
-    private long memorySize;
     private final int memoryTag;
+    private long memorySize;
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {

@@ -49,6 +49,12 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
+    public void close() {
+        super.close();
+        Misc.free(intervals);
+    }
+
+    @Override
     public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (order == ORDER_ASC || order == ORDER_ANY) {
             cursor.of(getReader(executionContext), executionContext);
@@ -64,12 +70,6 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     @Override
     public int getOrder() {
         return ORDER_ASC;
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        Misc.free(intervals);
     }
 
     @Override

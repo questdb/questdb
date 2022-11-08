@@ -25,16 +25,7 @@
 package io.questdb.cairo;
 
 public interface WalWriterRollStrategy {
-    default void setMaxSegmentSize(long maxSegmentSize) {
-    }
-
-    default void setMaxRowCount(long maxRowCount) {
-    }
-
-    default void setRollInterval(long rollInterval) {
-    }
-
-    default boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
+    default boolean isMaxRowCountSet() {
         return false;
     }
 
@@ -42,11 +33,20 @@ public interface WalWriterRollStrategy {
         return false;
     }
 
-    default boolean isMaxRowCountSet() {
+    default boolean isRollIntervalSet() {
         return false;
     }
 
-    default boolean isRollIntervalSet() {
+    default void setMaxRowCount(long maxRowCount) {
+    }
+
+    default void setMaxSegmentSize(long maxSegmentSize) {
+    }
+
+    default void setRollInterval(long rollInterval) {
+    }
+
+    default boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
         return false;
     }
 }

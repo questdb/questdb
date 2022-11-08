@@ -149,42 +149,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testWeekOfYear() throws Exception {
-        long millis = DateFormatUtils.parseUTCDate("2020-01-01T17:16:30.192Z");
-        Assert.assertEquals(1, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("2019-03-10T07:16:30.192Z");
-        Assert.assertEquals(10, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("2020-03-10T07:16:30.192Z");
-        Assert.assertEquals(11, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("1893-03-19T17:16:30.192Z");
-        Assert.assertEquals(12, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("2020-12-31T12:00:00.000Z");
-        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("2021-12-31T12:00:00.000Z");
-        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("-2020-12-31T12:00:00.000Z");
-        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
-        millis = DateFormatUtils.parseUTCDate("-2021-12-31T12:00:00.000Z");
-        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
-    }
-
-    @Test
-    public void testWeekOfMonth() throws Exception {
-        long millis = DateFormatUtils.parseUTCDate("2020-01-01T17:16:30.192Z");
-        Assert.assertEquals(1, Dates.getWeekOfMonth(millis));
-        millis = DateFormatUtils.parseUTCDate("2019-03-10T07:16:30.192Z");
-        Assert.assertEquals(2, Dates.getWeekOfMonth(millis));
-        millis = DateFormatUtils.parseUTCDate("2020-12-31T12:00:00.000Z");
-        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
-        millis = DateFormatUtils.parseUTCDate("2021-12-31T12:00:00.000Z");
-        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
-        millis = DateFormatUtils.parseUTCDate("-2019-03-10T07:16:30.192Z");
-        Assert.assertEquals(2, Dates.getWeekOfMonth(millis));
-        millis = DateFormatUtils.parseUTCDate("-2020-12-31T12:00:00.000Z");
-        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
-    }
-
-    @Test
     public void testDaysBetween() throws Exception {
         Assert.assertEquals(41168,
                 Dates.getDaysBetween(
@@ -241,6 +205,14 @@ public class DatesTest {
     }
 
     @Test
+    public void testFormatDateTime() throws Exception {
+        assertTrue("2014-11-30T12:34:55.332Z");
+        assertTrue("2008-03-15T11:22:30.500Z");
+        assertTrue("1917-10-01T11:22:30.500Z");
+        assertTrue("0900-01-01T01:02:00.005Z");
+    }
+
+    @Test
     public void testFormatHTTP() throws Exception {
         DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseUTCDate("2015-12-05T12:34:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
@@ -250,14 +222,6 @@ public class DatesTest {
     public void testFormatHTTP2() throws Exception {
         DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseUTCDate("2015-12-05T12:04:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
-    }
-
-    @Test
-    public void testFormatDateTime() throws Exception {
-        assertTrue("2014-11-30T12:34:55.332Z");
-        assertTrue("2008-03-15T11:22:30.500Z");
-        assertTrue("1917-10-01T11:22:30.500Z");
-        assertTrue("0900-01-01T01:02:00.005Z");
     }
 
     @Test
@@ -324,20 +288,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testParseDateTime() throws Exception {
-        String date = "2008-02-29T10:54:01.010Z";
-        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
-        TestUtils.assertEquals(date, sink);
-    }
-
-    @Test
-    public void testParseDateTimePrevEpoch() throws Exception {
-        String date = "1812-02-29T10:54:01.010Z";
-        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
-        TestUtils.assertEquals(date, sink);
-    }
-
-    @Test
     public void testOverflowDate() {
         Assert.assertEquals("6477-07-27T03:15:50.400Z", Dates.toString(142245170150400L));
     }
@@ -361,6 +311,20 @@ public class DatesTest {
         expectExceptionDateTime("2014-03-10T01:19:28.");
         expectExceptionDateTime("2014-03-10T01:19:28.2");
         expectExceptionDateTime("2014-03-10T01:19:28.255K");
+    }
+
+    @Test
+    public void testParseDateTime() throws Exception {
+        String date = "2008-02-29T10:54:01.010Z";
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
+        TestUtils.assertEquals(date, sink);
+    }
+
+    @Test
+    public void testParseDateTimePrevEpoch() throws Exception {
+        String date = "1812-02-29T10:54:01.010Z";
+        DateFormatUtils.appendDateTime(sink, DateFormatUtils.parseUTCDate(date));
+        TestUtils.assertEquals(date, sink);
     }
 
     @Test(expected = NumericException.class)
@@ -415,6 +379,42 @@ public class DatesTest {
         long millis = DateFormatUtils.parseUTCDate("2017-04-06T00:00:00.000Z");
         DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testWeekOfMonth() throws Exception {
+        long millis = DateFormatUtils.parseUTCDate("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Dates.getWeekOfMonth(millis));
+        millis = DateFormatUtils.parseUTCDate("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(2, Dates.getWeekOfMonth(millis));
+        millis = DateFormatUtils.parseUTCDate("2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
+        millis = DateFormatUtils.parseUTCDate("2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
+        millis = DateFormatUtils.parseUTCDate("-2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(2, Dates.getWeekOfMonth(millis));
+        millis = DateFormatUtils.parseUTCDate("-2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(5, Dates.getWeekOfMonth(millis));
+    }
+
+    @Test
+    public void testWeekOfYear() throws Exception {
+        long millis = DateFormatUtils.parseUTCDate("2020-01-01T17:16:30.192Z");
+        Assert.assertEquals(1, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2019-03-10T07:16:30.192Z");
+        Assert.assertEquals(10, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2020-03-10T07:16:30.192Z");
+        Assert.assertEquals(11, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("1893-03-19T17:16:30.192Z");
+        Assert.assertEquals(12, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("-2020-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
+        millis = DateFormatUtils.parseUTCDate("-2021-12-31T12:00:00.000Z");
+        Assert.assertEquals(53, Dates.getWeekOfYear(millis));
     }
 
     @Test

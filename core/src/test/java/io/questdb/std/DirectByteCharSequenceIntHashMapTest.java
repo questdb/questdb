@@ -121,7 +121,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 } else {
                     Assert.assertEquals(-1, ourMap.remove(dbcs));
                 }
-                p+=len;
+                p += len;
             }
 
             // compare HashMap to our map after random removal
@@ -137,7 +137,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 } else {
                     Assert.assertEquals(-1, ourMap.get(dbcs));
                 }
-                p+=len;
+                p += len;
             }
 
         } finally {

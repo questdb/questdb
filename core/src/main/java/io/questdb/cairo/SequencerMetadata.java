@@ -46,6 +46,58 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
+    @Override
+    public void close() {
+        Misc.free(metaMem);
+    }
+
+    public int getSchemaVersion() {
+        return schemaVersion;
+    }
+
+    private void addColumn(int columnIndex, CharSequence columnName, int columnType) {
+        final String name = columnName.toString();
+        columnNameIndexMap.put(name, columnNameIndexMap.size());
+        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
+        columnCount++;
+        schemaVersion++;
+    }
+
+    private void reset() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
+        timestampIndex = -1;
+    }
+
+    private void syncToMetaFile(Path path, int pathLen) {
+        int liveColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (getColumnType(i) > 0) {
+                liveColumnCount++;
+            }
+        }
+
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+
+        metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
+        metaMem.putInt(schemaVersion);
+        metaMem.putInt(liveColumnCount);
+        metaMem.putInt(timestampIndex);
+        for (int i = 0; i < columnCount; i++) {
+            final int type = getColumnType(i);
+            if (type > 0) {
+                metaMem.putInt(type);
+                metaMem.putStr(getColumnName(i));
+            }
+        }
+    }
+
+    void addColumn(int columnIndex, CharSequence columnName, int columnType, Path path, int pathLen) {
+        addColumn(columnIndex, columnName, columnType);
+        syncToMetaFile(path, pathLen);
+    }
+
     void init(TableStructure model, Path path, int pathLen) {
         reset();
 
@@ -76,35 +128,6 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         }
     }
 
-    private void reset() {
-        columnMetadata.clear();
-        columnNameIndexMap.clear();
-        columnCount = 0;
-        timestampIndex = -1;
-    }
-
-    public int getSchemaVersion() {
-        return schemaVersion;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(metaMem);
-    }
-
-    private void addColumn(int columnIndex, CharSequence columnName, int columnType) {
-        final String name = columnName.toString();
-        columnNameIndexMap.put(name, columnNameIndexMap.size());
-        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
-        columnCount++;
-        schemaVersion++;
-    }
-
-    void addColumn(int columnIndex, CharSequence columnName, int columnType, Path path, int pathLen) {
-        addColumn(columnIndex, columnName, columnType);
-        syncToMetaFile(path, pathLen);
-    }
-
     void removeColumn(int columnIndex, Path path, int pathLen) {
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
@@ -112,28 +135,5 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         schemaVersion++;
 
         syncToMetaFile(path, pathLen);
-    }
-
-    private void syncToMetaFile(Path path, int pathLen) {
-        int liveColumnCount = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (getColumnType(i) > 0) {
-                liveColumnCount++;
-            }
-        }
-
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-
-        metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
-        metaMem.putInt(schemaVersion);
-        metaMem.putInt(liveColumnCount);
-        metaMem.putInt(timestampIndex);
-        for (int i = 0; i < columnCount; i++) {
-            final int type = getColumnType(i);
-            if (type > 0) {
-                metaMem.putInt(type);
-                metaMem.putStr(getColumnName(i));
-            }
-        }
     }
 }

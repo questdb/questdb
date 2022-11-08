@@ -32,9 +32,8 @@ import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
-
-    private final NetworkFacade nf;
     private final long fd;
+    private final NetworkFacade nf;
     private final long sockaddr;
 
     public PlainTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
@@ -66,7 +65,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (addrInfo == -1) {
             nf.close(fd, LOG);
             throw new LineSenderException("could not resolve host ")
-                    .put("[host=").put(host).put( "]");
+                    .put("[host=").put(host).put("]");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
             int errno = nf.errno();
@@ -79,13 +78,6 @@ public final class PlainTcpLineChannel implements LineChannel {
         configureBuffers(nf, sndBufferSize);
     }
 
-    private void configureBuffers(NetworkFacade nf, int sndBufferSize) {
-        int orgSndBufSz = nf.getSndBuf(fd);
-        nf.setSndBuf(fd, sndBufferSize);
-        int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
-    }
-
     @Override
     public void close() {
         nf.close(fd, LOG);
@@ -95,10 +87,8 @@ public final class PlainTcpLineChannel implements LineChannel {
     }
 
     @Override
-    public void send(long ptr, int len) {
-        if (nf.send(fd, ptr, len) != len) {
-            throw new LineSenderException("send error").errno(nf.errno());
-        }
+    public int errno() {
+        return nf.errno();
     }
 
     @Override
@@ -107,7 +97,16 @@ public final class PlainTcpLineChannel implements LineChannel {
     }
 
     @Override
-    public int errno() {
-        return nf.errno();
+    public void send(long ptr, int len) {
+        if (nf.send(fd, ptr, len) != len) {
+            throw new LineSenderException("send error").errno(nf.errno());
+        }
+    }
+
+    private void configureBuffers(NetworkFacade nf, int sndBufferSize) {
+        int orgSndBufSz = nf.getSndBuf(fd);
+        nf.setSndBuf(fd, sndBufferSize);
+        int newSndBufSz = nf.getSndBuf(fd);
+        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
     }
 }

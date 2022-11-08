@@ -26,6 +26,6 @@ package io.questdb.cairo;
 
 public final class CommitMode {
     public static final int ASYNC = 0;
-    public static final int SYNC = 1;
     public static final int NOSYNC = 2;
+    public static final int SYNC = 1;
 }

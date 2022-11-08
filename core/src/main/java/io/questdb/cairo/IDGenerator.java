@@ -56,10 +56,6 @@ public class IDGenerator implements Closeable {
         }
     }
 
-    long getCurrentId() {
-        return Unsafe.getUnsafe().getLong(uniqueIdMem);
-    }
-
     public long getNextId() {
         long next;
         long x = getCurrentId();
@@ -97,5 +93,9 @@ public class IDGenerator implements Closeable {
     // It is useful for testing only
     public void reset() {
         Unsafe.getUnsafe().putLong(uniqueIdMem, 0);
+    }
+
+    long getCurrentId() {
+        return Unsafe.getUnsafe().getLong(uniqueIdMem);
     }
 }

@@ -77,26 +77,6 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         return new Func(symFunc, chrFunc);
     }
 
-    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final char constant;
-
-        public ConstCheckFunc(Function arg, char constant) {
-            this.arg = arg;
-            this.constant = constant;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
-        }
-    }
-
     private static class ConstCheckColumnFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final char constant;
@@ -126,13 +106,38 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final char constant;
+
+        public ConstCheckFunc(Function arg, char constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
+        }
+    }
+
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function symFunc;
         private final Function chrFunc;
+        private final Function symFunc;
 
         public Func(Function symFunc, Function chrFunc) {
             this.symFunc = symFunc;
             this.chrFunc = chrFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
 
         @Override
@@ -143,11 +148,6 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return chrFunc;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(symFunc.getSymbol(rec), chrFunc.getChar(rec));
         }
     }
 }

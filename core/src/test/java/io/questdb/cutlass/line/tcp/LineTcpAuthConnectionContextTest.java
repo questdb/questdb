@@ -44,8 +44,8 @@ import static org.junit.Assert.assertEquals;
 
 public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     private final Random rand = new Random(0);
-    private byte[] sentBytes;
     private int maxSendBytes = 1024;
+    private byte[] sentBytes;
 
     @Before
     @Override
@@ -158,28 +158,6 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
-            closeContext();
-            String expected = "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
-            assertTable(expected, "weather");
-        });
-    }
-
-    @Test
-    public void testGoodAuthenticationWithExtraData() throws Exception {
-        runInAuthContext(() -> {
-            try {
-                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1,
-                        "weather,location=us-midwest temperature=82 1465839830100400200\n");
-                Assert.assertTrue(authSequenceCompleted);
-            } catch (RuntimeException ex) {
-                // Expected that Java 8 does not have SHA256withECDSAinP1363
-                if (ex.getCause() instanceof NoSuchAlgorithmException && TestUtils.getJavaVersion() <= 8) {
-                    return;
-                }
-                throw ex;
-            }
-            Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -340,6 +318,28 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testGoodAuthenticationWithExtraData() throws Exception {
+        runInAuthContext(() -> {
+            try {
+                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1,
+                        "weather,location=us-midwest temperature=82 1465839830100400200\n");
+                Assert.assertTrue(authSequenceCompleted);
+            } catch (RuntimeException ex) {
+                // Expected that Java 8 does not have SHA256withECDSAinP1363
+                if (ex.getCause() instanceof NoSuchAlgorithmException && TestUtils.getJavaVersion() <= 8) {
+                    return;
+                }
+                throw ex;
+            }
+            Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";

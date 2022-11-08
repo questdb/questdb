@@ -42,31 +42,31 @@ public class CairoTextWriter implements Closeable, Mutable {
     public static final int NO_INDEX = -1;
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
     private static final String WRITER_LOCK_REASON = "textWriter";
-    private final CairoConfiguration configuration;
-    private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
+    private final CairoConfiguration configuration;
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
-    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final CairoEngine engine;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
-    private CharSequence tableName;
-    private TableWriter writer;
+    private final IntList remapIndex = new IntList();
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private long _size;
-    private boolean overwrite;
-    private boolean durable;
     private int atomicity;
-    private int partitionBy;
     private long commitLag = -1;
-    private int maxUncommittedRows = -1;
-    private int timestampIndex = NO_INDEX;
-    private CharSequence importedTimestampColumnName;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
-    private ObjList<TypeAdapter> types;
-    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private boolean durable;
+    private CharSequence importedTimestampColumnName;
+    private int maxUncommittedRows = -1;
+    private boolean overwrite;
+    private int partitionBy;
+    private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
-    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private int timestampIndex = NO_INDEX;
+    private ObjList<TypeAdapter> types;
     private int warnings;
-    private final IntList remapIndex = new IntList();
+    private TableWriter writer;
+    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
 
     public CairoTextWriter(CairoEngine engine) {
         this.engine = engine;
@@ -114,14 +114,6 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public void setCommitLag(long commitLag) {
-        this.commitLag = commitLag;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public CharSequence getTableName() {
@@ -191,6 +183,14 @@ public class CairoTextWriter implements Closeable, Mutable {
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }
+    }
+
+    public void setCommitLag(long commitLag) {
+        this.commitLag = commitLag;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
     }
 
     private void checkMaxAndCommitLag() {
@@ -396,6 +396,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
         public CharSequence getColumnName(int columnIndex) {
             return names.getQuick(columnIndex);
         }
@@ -406,18 +411,18 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public long getCommitLag() {
+            return configuration.getCommitLag();
+        }
+
+        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return types.getQuick(columnIndex).isIndexed();
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
         }
 
         @Override
@@ -446,18 +451,13 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
+        public boolean isIndexed(int columnIndex) {
+            return types.getQuick(columnIndex).isIndexed();
         }
 
         @Override
-        public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
-        }
-
-        @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
+        public boolean isSequential(int columnIndex) {
+            return false;
         }
 
         @Override

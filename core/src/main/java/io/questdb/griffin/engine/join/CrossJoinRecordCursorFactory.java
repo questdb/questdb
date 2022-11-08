@@ -35,9 +35,9 @@ import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.Misc;
 
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final CrossJoinRecordCursor cursor;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
-    private final CrossJoinRecordCursor cursor;
 
     public CrossJoinRecordCursorFactory(
             RecordMetadata metadata,
@@ -50,13 +50,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.cursor = new CrossJoinRecordCursor(columnSplit);
-    }
-
-    @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
     }
 
     @Override
@@ -90,6 +83,13 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return masterFactory.supportsUpdateRowId(tableName);
     }
 
+    @Override
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+    }
+
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
 
@@ -101,17 +101,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public long size() {
-            long sizeA = masterCursor.size();
-            long sizeB = slaveCursor.size();
-            if (sizeA == -1 || sizeB == -1) {
-                return -1;
-            }
-            final long result = sizeA * sizeB;
-            return result < sizeA ? Long.MAX_VALUE : result;
         }
 
         @Override
@@ -127,6 +116,17 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             return false;
+        }
+
+        @Override
+        public long size() {
+            long sizeA = masterCursor.size();
+            long sizeB = slaveCursor.size();
+            if (sizeA == -1 || sizeB == -1) {
+                return -1;
+            }
+            final long result = sizeA * sizeB;
+            return result < sizeA ? Long.MAX_VALUE : result;
         }
 
         @Override

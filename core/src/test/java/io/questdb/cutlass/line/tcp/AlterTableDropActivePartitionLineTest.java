@@ -58,6 +58,33 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest {
 
     private static final Log LOG = LogFactory.getLog(AlterTableDropActivePartitionLineTest.class);
+    private static final String[] colour = {
+            "Yellow",
+            "Blue",
+            "Green",
+            "Red",
+            "Gray",
+            "Orange",
+            "Black",
+            "White",
+            "Pink",
+            "Brown",
+            "Purple",
+    };
+    private static final String[] country = {
+            "Ukraine",
+            "Poland",
+            "Lithuania",
+            "USA",
+            "Germany",
+            "Czechia",
+            "England",
+            "Spain",
+            "Singapore",
+            "Taiwan",
+            "Romania",
+    };
+    private final String tableName = "PurposelessTable";
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -208,6 +235,10 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
         );
     }
 
+    private static String rndOf(Rnd rnd, String[] array) {
+        return array[rnd.nextPositiveInt() % array.length];
+    }
+
     private LineTcpSender addLine(LineTcpSender sender, String tableName, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
         sender.metric(tableName)
                 .tag("favourite_colour", rndOf(rnd, colour))
@@ -219,37 +250,4 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 .at(timestampNano.getAndAdd(1L + rnd.nextLong(100_000L)));
         return sender;
     }
-
-    private static String rndOf(Rnd rnd, String[] array) {
-        return array[rnd.nextPositiveInt() % array.length];
-    }
-
-    private final String tableName = "PurposelessTable";
-
-    private static final String[] country = {
-            "Ukraine",
-            "Poland",
-            "Lithuania",
-            "USA",
-            "Germany",
-            "Czechia",
-            "England",
-            "Spain",
-            "Singapore",
-            "Taiwan",
-            "Romania",
-    };
-    private static final String[] colour = {
-            "Yellow",
-            "Blue",
-            "Green",
-            "Red",
-            "Gray",
-            "Orange",
-            "Black",
-            "White",
-            "Pink",
-            "Brown",
-            "Purple",
-    };
 }

@@ -29,8 +29,8 @@ import io.questdb.std.Os;
 public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
 
     private static final int M_ID = 2;
-    private final Kqueue kqueue;
     private final int capacity;
+    private final Kqueue kqueue;
     private long fdid = 1;
 
     public IODispatcherOsx(
@@ -43,6 +43,13 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         // bind socket
         this.kqueue = new Kqueue(capacity);
         registerListenerFd();
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        this.kqueue.close();
+        LOG.info().$("closed").$();
     }
 
     private void enqueuePending(int watermark) {
@@ -66,18 +73,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         if (index > 0) {
             registerWithKQueue(index);
         }
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        this.kqueue.close();
-        LOG.info().$("closed").$();
-    }
-
-    @Override
-    protected void pendingAdded(int index) {
-        pending.set(index, M_ID, fdid++);
     }
 
     private int findPending(long ts) {
@@ -146,6 +141,18 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     }
 
     @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_ID, fdid++);
+    }
+
+    @Override
+    protected void registerListenerFd() {
+        if (this.kqueue.listen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
+        }
+    }
+
+    @Override
     protected boolean runSerially() {
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
@@ -195,13 +202,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
 
         return processRegistrations(timestamp) || useful;
-    }
-
-    @Override
-    protected void registerListenerFd() {
-        if (this.kqueue.listen(serverFd) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
-        }
     }
 
     @Override

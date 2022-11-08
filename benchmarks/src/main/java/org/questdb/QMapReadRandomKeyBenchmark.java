@@ -45,13 +45,13 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class QMapReadRandomKeyBenchmark {
 
+    private static final int M = 25;
     private static final int N = 5000000;
     private static final double loadFactor = 0.5;
-    private static final int M = 25;
-    private static final Rnd rnd = new Rnd();
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -64,14 +64,14 @@ public class QMapReadRandomKeyBenchmark {
         new Runner(opt).run();
     }
 
-    @Setup(Level.Iteration)
-    public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
-    }
-
     @Benchmark
     public CharSequence baseline() {
         return rnd.nextChars(M);
+    }
+
+    @Setup(Level.Iteration)
+    public void reset() {
+        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
     }
 
     @Benchmark
@@ -82,15 +82,15 @@ public class QMapReadRandomKeyBenchmark {
     }
 
     @Benchmark
+    public Long testHashMap() {
+        return hmap.get(rnd.nextChars(M).toString());
+    }
+
+    @Benchmark
     public MapValue testQMap() {
         MapKey key = qmap.withKey();
         key.putStr(rnd.nextChars(M));
         return key.findValue();
-    }
-
-    @Benchmark
-    public Long testHashMap() {
-        return hmap.get(rnd.nextChars(M).toString());
     }
 
     static {

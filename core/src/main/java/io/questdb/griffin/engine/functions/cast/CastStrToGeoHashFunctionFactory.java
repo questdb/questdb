@@ -95,8 +95,8 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
 
     public static class Func extends GeoByteFunction implements UnaryFunction {
         private final Function arg;
-        private final int position;
         private final int bitsPrecision;
+        private final int position;
 
         public Func(int geoType, Function arg, int position) {
             super(geoType);
@@ -118,12 +118,6 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public short getGeoShort(Record rec) {
-            assert bitsPrecision >= 8 && bitsPrecision < 16;
-            return (short) getGeoHashLong0(rec);
-        }
-
-        @Override
         public int getGeoInt(Record rec) {
             assert bitsPrecision >= 16 && bitsPrecision < 32;
             return (int) getGeoHashLong0(rec);
@@ -133,6 +127,12 @@ public class CastStrToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             assert bitsPrecision >= 32;
             return getGeoHashLong0(rec);
+        }
+
+        @Override
+        public short getGeoShort(Record rec) {
+            assert bitsPrecision >= 8 && bitsPrecision < 16;
+            return (short) getGeoHashLong0(rec);
         }
 
         private long getGeoHashLong0(Record rec) {

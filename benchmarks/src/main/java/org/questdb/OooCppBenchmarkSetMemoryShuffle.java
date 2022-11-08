@@ -30,11 +30,44 @@ public class OooCppBenchmarkSetMemoryShuffle {
     private static final long BUFFER_MAX_SIZE = 256 * 1024 * 1024L;
     private static final long MB = 1024 * 1024L;
 
-    public static void main(String[] args){
+    public static void main(String[] args) {
 
         Os.init();
         System.out.println("MemoryShuffle");
         testSetMemoryShuffleToCsv();
+    }
+
+    private static double runReshuffle16(int iterations, int mb, long index, long src, long dest) {
+        long nt = System.nanoTime();
+        long size = MB * mb / 2;
+
+        for (int j = 0; j < iterations; j++) {
+            Vect.indexReshuffle16Bit(src, dest, index, size);
+        }
+        long timeout = System.nanoTime() - nt;
+        return Math.round(timeout * 1E-1 / iterations) / 100.0;
+    }
+
+    private static double runReshuffle32(int iterations, int mb, long index, long src, long dest) {
+        long nt = System.nanoTime();
+        long size = MB * mb / 4;
+
+        for (int j = 0; j < iterations; j++) {
+            Vect.indexReshuffle32Bit(src, dest, index, size);
+        }
+        long timeout = System.nanoTime() - nt;
+        return Math.round(timeout * 1E-1 / iterations) / 100.0;
+    }
+
+    private static double runReshuffle64(int iterations, int mb, long index, long src, long dest) {
+        long nt = System.nanoTime();
+        long size = MB * mb / 8;
+
+        for (int j = 0; j < iterations; j++) {
+            Vect.indexReshuffle64Bit(src, dest, index, size);
+        }
+        long timeout = System.nanoTime() - nt;
+        return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
     private static void testSetMemoryShuffleToCsv() {
@@ -46,7 +79,7 @@ public class OooCppBenchmarkSetMemoryShuffle {
         Rnd random = new Rnd();
         long size = BUFFER_MAX_SIZE / Long.BYTES;
         for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putLong(index + (i + 1L) * Long.BYTES, Math.abs(random.nextLong()) %  size);
+            Unsafe.getUnsafe().putLong(index + (i + 1L) * Long.BYTES, Math.abs(random.nextLong()) % size);
         }
 
         try {
@@ -65,38 +98,5 @@ public class OooCppBenchmarkSetMemoryShuffle {
             Unsafe.free(src, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(dest, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    private static double runReshuffle64(int iterations, int mb, long index, long src, long dest) {
-        long nt = System.nanoTime();
-        long size = MB * mb / 8;
-
-        for (int j = 0; j < iterations; j++) {
-            Vect.indexReshuffle64Bit(src, dest, index, size);
-        }
-        long timeout = System.nanoTime() - nt;
-        return Math.round(timeout * 1E-1 / iterations) / 100.0;
-    }
-
-    private static double runReshuffle32(int iterations, int mb, long index, long src, long dest) {
-        long nt = System.nanoTime();
-        long size = MB * mb / 4;
-
-        for (int j = 0; j < iterations; j++) {
-            Vect.indexReshuffle32Bit(src, dest, index, size);
-        }
-        long timeout = System.nanoTime() - nt;
-        return Math.round(timeout * 1E-1 / iterations) / 100.0;
-    }
-
-    private static double runReshuffle16(int iterations, int mb, long index, long src, long dest) {
-        long nt = System.nanoTime();
-        long size = MB * mb / 2;
-
-        for (int j = 0; j < iterations; j++) {
-            Vect.indexReshuffle16Bit(src, dest, index, size);
-        }
-        long timeout = System.nanoTime() - nt;
-        return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 }

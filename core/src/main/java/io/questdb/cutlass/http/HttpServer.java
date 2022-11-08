@@ -49,12 +49,11 @@ import java.io.Closeable;
 public class HttpServer implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
-
-    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final IODispatcher<HttpConnectionContext> dispatcher;
-    private final int workerCount;
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
+    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
+    private final int workerCount;
 
     public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool) {
         this.workerCount = pool.getWorkerCount();
@@ -128,29 +127,34 @@ public class HttpServer implements Closeable {
     ) {
         server.bind(new HttpRequestProcessorFactory() {
             @Override
-            public HttpRequestProcessor newInstance() {
-                return jsonQueryProcessorBuilder.newInstance();
+            public String getUrl() {
+                return "/exec";
             }
 
             @Override
-            public String getUrl() {
-                return "/exec";
+            public HttpRequestProcessor newInstance() {
+                return jsonQueryProcessorBuilder.newInstance();
             }
         });
 
         server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new TextImportProcessor(cairoEngine);
-            }
-
             @Override
             public String getUrl() {
                 return "/imp";
             }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TextImportProcessor(cairoEngine);
+            }
         });
 
         server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/exp";
+            }
+
             @Override
             public HttpRequestProcessor newInstance() {
                 return new TextQueryProcessor(
@@ -162,34 +166,29 @@ public class HttpServer implements Closeable {
                         snapshotAgent
                 );
             }
-
-            @Override
-            public String getUrl() {
-                return "/exp";
-            }
         });
 
         server.bind(new HttpRequestProcessorFactory() {
-            @Override
-            public HttpRequestProcessor newInstance() {
-                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
-            }
-
             @Override
             public String getUrl() {
                 return "/chk";
             }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
+            }
         });
 
         server.bind(new HttpRequestProcessorFactory() {
             @Override
-            public HttpRequestProcessor newInstance() {
-                return new StaticContentProcessor(configuration);
+            public String getUrl() {
+                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
             }
 
             @Override
-            public String getUrl() {
-                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+            public HttpRequestProcessor newInstance() {
+                return new StaticContentProcessor(configuration);
             }
         });
     }
@@ -227,20 +226,16 @@ public class HttpServer implements Closeable {
         HttpRequestProcessor newInstance();
     }
 
+    private static class HttpContextFactory extends MutableIOContextFactory<HttpConnectionContext> {
+        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
+            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
+        }
+    }
+
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
         private final CharSequenceObjHashMap<HttpRequestProcessor> processorMap = new CharSequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
-
-        @Override
-        public HttpRequestProcessor select(CharSequence url) {
-            return processorMap.get(url);
-        }
-
-        @Override
-        public HttpRequestProcessor getDefaultProcessor() {
-            return defaultRequestProcessor;
-        }
 
         @Override
         public void close() {
@@ -250,11 +245,15 @@ public class HttpServer implements Closeable {
                 Misc.freeIfCloseable(processorMap.get(processorKeys.getQuick(i)));
             }
         }
-    }
 
-    private static class HttpContextFactory extends MutableIOContextFactory<HttpConnectionContext> {
-        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
+        @Override
+        public HttpRequestProcessor getDefaultProcessor() {
+            return defaultRequestProcessor;
+        }
+
+        @Override
+        public HttpRequestProcessor select(CharSequence url) {
+            return processorMap.get(url);
         }
     }
 }
