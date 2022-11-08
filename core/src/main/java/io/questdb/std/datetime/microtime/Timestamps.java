@@ -194,6 +194,8 @@ final public class Timestamps {
         return floorSS(micros) + SECOND_MICROS;
     }
 
+    public static long ceilWW(long micros) {return floorWW(micros) + WEEK_MICROS;}
+
     public static long ceilYYYY(long micros) {
         int y;
         boolean l;
@@ -259,6 +261,10 @@ final public class Timestamps {
 
     public static long floorHH(long micros) {
         return micros - micros % HOUR_MICROS;
+    }
+
+    public static long floorWW(long micros) {
+        return (micros - micros % WEEK_MICROS) + getIsoWeekMicrosOffset(micros);
     }
 
     public static long floorMI(long micros) {

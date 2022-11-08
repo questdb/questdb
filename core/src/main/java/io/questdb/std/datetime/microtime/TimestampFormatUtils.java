@@ -289,29 +289,28 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime;
-        if (week == 0) {
-            datetime = Timestamps.yearMicros(year, leap)
-                    + Timestamps.monthOfYearMicros(month, leap)
-                    + (day - 1) * Timestamps.DAY_MICROS
-                    + hour * Timestamps.HOUR_MICROS
-                    + minute * Timestamps.MINUTE_MICROS
-                    + second * Timestamps.SECOND_MICROS
-                    + (long) millis * Timestamps.MILLI_MICROS
-                    + micros;
-        } else {
-            long yearMicros = Timestamps.yearMicros(year, leap);
-            // 4 Jan of year Y
-            // correction formula is taken from https://en.wikipedia.org/wiki/ISO_week_date
-            final long correction = Timestamps.getDayOfWeek(yearMicros + Timestamps.monthOfYearMicros(1, leap) + 4 * Timestamps.DAY_MICROS) + 3;
-            datetime = yearMicros
-                    + (week * 7L + day - correction) * Timestamps.DAY_MICROS
-                    + hour * Timestamps.HOUR_MICROS
-                    + minute * Timestamps.MINUTE_MICROS
-                    + second * Timestamps.SECOND_MICROS
-                    + (long) millis * Timestamps.MILLI_MICROS
-                    + micros;
+        if (week < 0 || week > 53) {
+            throw NumericException.INSTANCE;
         }
+
+        // calculate year, month, and day of ISO week
+        if (week != 0) {
+            long firstDayOfIsoWeekMicros = Timestamps.yearMicros(year, Timestamps.isLeapYear(year)) +
+                    (week - 1) * Timestamps.WEEK_MICROS +
+                    Timestamps.getIsoYearDayOffset(year) * Timestamps.DAY_MICROS;
+            month = Timestamps.getMonthOfYear(firstDayOfIsoWeekMicros);
+            year += (week == 1 && Timestamps.getIsoYearDayOffset(year) < 0) ? -1 : 0;
+            day = Timestamps.getDayOfMonth(firstDayOfIsoWeekMicros, year, month, Timestamps.isLeapYear(year));
+        }
+
+        long datetime = Timestamps.yearMicros(year, leap)
+                + Timestamps.monthOfYearMicros(month, leap)
+                + (day - 1) * Timestamps.DAY_MICROS
+                + hour * Timestamps.HOUR_MICROS
+                + minute * Timestamps.MINUTE_MICROS
+                + second * Timestamps.SECOND_MICROS
+                + (long) millis * Timestamps.MILLI_MICROS
+                + micros;
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year, leap);

@@ -152,6 +152,13 @@ public class TimestampsTest {
     }
 
     @Test
+    public void testCeilWW() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2024-01-02T23:59:59.999Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.ceilWW(micros));
+        TestUtils.assertEquals("2024-01-08T00:00:00.000Z", sink);
+    }
+
+    @Test
     public void testDayOfWeek() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1893-03-19T17:16:30.192Z");
         Assert.assertEquals(7, Timestamps.getDayOfWeek(micros));
@@ -240,6 +247,13 @@ public class TimestampsTest {
         long micros = TimestampFormatUtils.parseTimestamp("2008-05-12T23:45:51.045Z");
         TimestampFormatUtils.appendDateTime(sink, Timestamps.floorYYYY(micros));
         TestUtils.assertEquals("2008-01-01T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testFloorWW() throws Exception {
+        long micros = TimestampFormatUtils.parseTimestamp("2025-01-02T23:59:59.999Z");
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.floorWW(micros));
+        TestUtils.assertEquals("2024-12-30T00:00:00.000Z", sink);
     }
 
     @Test
