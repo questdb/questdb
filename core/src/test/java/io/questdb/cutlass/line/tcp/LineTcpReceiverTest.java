@@ -75,8 +75,8 @@ import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private static final long TEST_TIMEOUT_IN_MS = 120000;
-    private Path path;
     private final boolean walEnabled;
+    private Path path;
 
     public LineTcpReceiverTest(WalMode walMode) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
@@ -438,6 +438,8 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final Rnd rnd = new Rnd();
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
+        // We set the minIdleMsBeforeWriterRelease interval to a rather large value
+        // (1 sec) to prevent false positive WAL writer releases.
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
@@ -460,7 +462,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
-        }, false, 250);
+        }, false, 1000);
 
         mayDrainWalQueue();
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
