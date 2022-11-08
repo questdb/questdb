@@ -59,6 +59,16 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getDate(Record rec) {
+        return rec.getDate(valueIndex);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DATE);
@@ -67,16 +77,6 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDate(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return rec.getDate(valueIndex);
     }
 
     @Override

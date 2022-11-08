@@ -30,16 +30,16 @@ import io.questdb.std.str.CharSink;
 
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
-    private final LowerCaseCharSequenceHashSet columnNameSet = new LowerCaseCharSequenceHashSet();
     private final ObjList<CharSequence> columnNameList = new ObjList<>();
-    private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
-    private final IntList endOfRowTupleValuesPositions = new IntList();
+    private final LowerCaseCharSequenceHashSet columnNameSet = new LowerCaseCharSequenceHashSet();
     private final IntList columnPositions = new IntList();
-    private ExpressionNode tableName;
-    private QueryModel queryModel;
-    private int selectKeywordPosition;
+    private final IntList endOfRowTupleValuesPositions = new IntList();
+    private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
     private long commitLag = 0;
+    private QueryModel queryModel;
+    private int selectKeywordPosition;
+    private ExpressionNode tableName;
 
     private InsertModel() {
     }
@@ -54,6 +54,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             return;
         }
         throw SqlException.duplicateColumn(columnPosition, columnName);
+    }
+
+    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
+        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     public void addRowTupleValues(ObjList<ExpressionNode> row) {
@@ -77,24 +81,24 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.commitLag = 0;
     }
 
-    public int getColumnPosition(int columnIndex) {
-        return columnPositions.getQuick(columnIndex);
+    public long getBatchSize() {
+        return batchSize;
     }
 
     public ObjList<CharSequence> getColumnNameList() {
         return columnNameList;
     }
 
-    public ObjList<ExpressionNode> getRowTupleValues(int index) {
-        return rowTupleValues.get(index);
+    public int getColumnPosition(int columnIndex) {
+        return columnPositions.getQuick(columnIndex);
     }
 
-    public int getSelectKeywordPosition() {
-        return selectKeywordPosition;
+    public long getCommitLag() {
+        return commitLag;
     }
 
-    public void setSelectKeywordPosition(int selectKeywordPosition) {
-        this.selectKeywordPosition = selectKeywordPosition;
+    public int getEndOfRowTupleValuesPosition(int index) {
+        return endOfRowTupleValuesPositions.get(index);
     }
 
     @Override
@@ -106,42 +110,40 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return queryModel;
     }
 
-    public void setQueryModel(QueryModel queryModel) {
-        this.queryModel = queryModel;
+    public int getRowTupleCount() {
+        return rowTupleValues.size();
     }
 
-    public long getBatchSize() {
-        return batchSize;
+    public ObjList<ExpressionNode> getRowTupleValues(int index) {
+        return rowTupleValues.get(index);
+    }
+
+    public int getSelectKeywordPosition() {
+        return selectKeywordPosition;
+    }
+
+    public ExpressionNode getTableName() {
+        return tableName;
     }
 
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
     public void setCommitLag(long lag) {
         this.commitLag = lag;
     }
 
-    public int getRowTupleCount() { return rowTupleValues.size(); }
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
+    }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public void setSelectKeywordPosition(int selectKeywordPosition) {
+        this.selectKeywordPosition = selectKeywordPosition;
     }
 
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
-    }
-
-    public int getEndOfRowTupleValuesPosition(int index) {
-        return endOfRowTupleValuesPositions.get(index);
-    }
-
-    public void addEndOfRowTupleValuesPosition(int endOfValuesPosition) {
-        endOfRowTupleValuesPositions.add(endOfValuesPosition);
     }
 
     @Override

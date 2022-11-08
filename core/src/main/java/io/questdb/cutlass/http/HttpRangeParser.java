@@ -30,8 +30,8 @@ import io.questdb.std.NumericException;
 
 public class HttpRangeParser {
     private static final String BYTES = "bytes=";
-    private long lo;
     private long hi;
+    private long lo;
 
     public long getHi() {
         return hi;

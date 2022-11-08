@@ -35,16 +35,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     static final int ORDER_DESC = 1;
 
     @Test
-    public void testOrderByDescInOverClause() throws Exception {
-        String expected = "ts\ttemp\n" +
-                "1970-04-23T22:00:00.000000Z\t99.9780\n" +
-                "1971-02-02T02:00:00.000000Z\t98.3369\n";
-        String direction = "desc";
-
-        assertOrderByInOverClause(expected, direction);
-    }
-
-    @Test
     public void testOrderByAscInOverClause() throws Exception {
         String expected = "ts\ttemp\n" +
                 "1970-05-23T02:00:00.000000Z\t0.0049\n" +
@@ -52,21 +42,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
         String direction = "asc";
 
         assertOrderByInOverClause(expected, direction);
-    }
-
-    private void assertOrderByInOverClause(String expected, String direction) throws Exception {
-        assertQuery(expected,
-                "select ts, temp from \n" +
-                        "( \n" +
-                        "  Select temp, ts, \n" +
-                        "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
-                        "  from weather \n" +
-                        ") inq \n" +
-                        "where rid = 1 \n" +
-                        "order by ts",
-                "create table weather as " +
-                        "(select cast(x*36000000000 as timestamp) ts, \n" +
-                        "  rnd_float(0)*100 temp from long_sequence(1000));", null);
     }
 
     @Test
@@ -117,6 +92,16 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     @Test
     public void testOrderByAscWithTimestampFilter() throws Exception {
         testOrderByWithFilter("timestamp", ORDER_ASC);
+    }
+
+    @Test
+    public void testOrderByDescInOverClause() throws Exception {
+        String expected = "ts\ttemp\n" +
+                "1970-04-23T22:00:00.000000Z\t99.9780\n" +
+                "1971-02-02T02:00:00.000000Z\t98.3369\n";
+        String direction = "desc";
+
+        assertOrderByInOverClause(expected, direction);
     }
 
     @Test//triggers DeferredSingleSymbolFilterDataFrameRecordCursorFactory
@@ -358,6 +343,25 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByTimestampWithJitFilterAndLimitAsc() throws Exception {
+
+        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                "insert into trips " +
+                        "  select x," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);");
+
+        assertQuery("l\tts\n" +
+                        "1\t2022-01-03T00:00:00.000000Z\n" +
+                        "2\t2022-01-04T03:46:40.000000Z\n" +
+                        "3\t2022-01-05T07:33:20.000000Z\n" +
+                        "4\t2022-01-06T11:20:00.000000Z\n" +
+                        "5\t2022-01-07T15:06:40.000000Z\n",
+                "select l, ts from trips where l <=5 order by ts asc limit 5",
+                null, "ts###ASC", true, false, true);
+    }
+
+    @Test
     public void testOrderByTimestampWithJitFilterAndLimitDesc() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
@@ -382,22 +386,8 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJitFilterAndLimitAsc() throws Exception {
-
-        runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
-                "insert into trips " +
-                        "  select x," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
-
-        assertQuery("l\tts\n" +
-                        "1\t2022-01-03T00:00:00.000000Z\n" +
-                        "2\t2022-01-04T03:46:40.000000Z\n" +
-                        "3\t2022-01-05T07:33:20.000000Z\n" +
-                        "4\t2022-01-06T11:20:00.000000Z\n" +
-                        "5\t2022-01-07T15:06:40.000000Z\n",
-                "select l, ts from trips where l <=5 order by ts asc limit 5",
-                null, "ts###ASC", true, false, true);
+    public void testOrderByTimestampWithJitFilterDesc() throws Exception {
+        testOrderByTimestampWithFilterDesc();
     }
 
     @Test
@@ -421,14 +411,32 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJitFilterDesc() throws Exception {
-        testOrderByTimestampWithFilterDesc();
-    }
-
-    @Test
     public void testOrderByTimestampWithNonJitFilterDesc() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         testOrderByTimestampWithFilterDesc();
+    }
+
+    private void assertOrderByInOverClause(String expected, String direction) throws Exception {
+        assertQuery(expected,
+                "select ts, temp from \n" +
+                        "( \n" +
+                        "  Select temp, ts, \n" +
+                        "         row_number() over (partition by timestamp_floor('y', ts) order by temp " + direction + ")  rid \n" +
+                        "  from weather \n" +
+                        ") inq \n" +
+                        "where rid = 1 \n" +
+                        "order by ts",
+                "create table weather as " +
+                        "(select cast(x*36000000000 as timestamp) ts, \n" +
+                        "  rnd_float(0)*100 temp from long_sequence(1000));", null);
+    }
+
+    private void runQueries(String... queries) throws Exception {
+        assertMemoryLeak(() -> {
+            for (String query : queries) {
+                compiler.compile(query, sqlExecutionContext).execute(null).await();
+            }
+        });
     }
 
     private void testOrderByTimestampWithFilterDesc() throws Exception {
@@ -446,14 +454,6 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <= 5 order by ts desc",
                 null, "ts###DESC", true, false, false);
-    }
-
-    private void runQueries(String... queries) throws Exception {
-        assertMemoryLeak(() -> {
-            for (String query : queries) {
-                compiler.compile(query, sqlExecutionContext).execute(null).await();
-            }
-        });
     }
 
     private void testOrderByWithFilter(String type, int order) throws Exception {

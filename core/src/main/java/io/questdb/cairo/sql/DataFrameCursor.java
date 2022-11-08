@@ -31,26 +31,11 @@ import java.io.Closeable;
 
 /**
  * A cursor for managing position of operations within data frames
- *
+ * <p>
  * Interfaces which extend Closeable are not optionally-closeable.
  * close() method must be called after other calls are complete.
  */
-public interface DataFrameCursor extends Closeable, SymbolTableSource  {
-
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
-
-    /**
-     * Reload the data frame and return the cursor to the beginning of
-     * the data frame
-     * @return true when reload data has changed, false otherwise
-     */
-    boolean reload();
-
-    /**
-     * @return the next element in the data frame
-     */
-    @Nullable DataFrame next();
+public interface DataFrameCursor extends Closeable, SymbolTableSource {
 
     /**
      * Must be closed after other calls are complete
@@ -58,35 +43,50 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
     @Override
     void close();
 
+    StaticSymbolTable getSymbolTable(int columnIndex);
+
+    // same TableReader is available on each data frame
+    TableReader getTableReader();
+
+    StaticSymbolTable newSymbolTable(int columnIndex);
+
     /**
-     * Return the cursor to the beginning of the data frame
+     * @return the next element in the data frame
      */
-    void toTop();
+    @Nullable DataFrame next();
+
+    /**
+     * Reload the data frame and return the cursor to the beginning of
+     * the data frame
+     *
+     * @return true when reload data has changed, false otherwise
+     */
+    boolean reload();
 
     /**
      * @return number of items in the data frame
      */
     long size();
 
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
-    StaticSymbolTable newSymbolTable(int columnIndex);
+    /**
+     * Positions data frame at the given row number.
+     *
+     * @param rowCount absolute row number in table. Rows are numbered 0...row_count-1
+     * @return data frame and position (lo) of given rowCount (according to cursor order) .
+     */
+    default @Nullable DataFrame skipTo(long rowCount) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
-     * @return  true if cursor supports random record access (without having to iterate through all results).
+     * @return true if cursor supports random record access (without having to iterate through all results).
      */
     default boolean supportsRandomAccess() {
         return false;
     }
 
     /**
-     * Positions data frame at the given row number.
-     *
-     * @param rowCount absolute row number in table. Rows are numbered 0...row_count-1
-     *
-     * @return data frame and position (lo) of given rowCount (according to cursor order) .
+     * Return the cursor to the beginning of the data frame
      */
-    default @Nullable DataFrame skipTo(long rowCount) {
-        throw new UnsupportedOperationException();
-    }
+    void toTop();
 }

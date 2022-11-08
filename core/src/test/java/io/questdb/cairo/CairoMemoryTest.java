@@ -45,10 +45,9 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class CairoMemoryTest {
-    private static final int N = 1000000;
-    private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
-
+    private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
+    private static final int N = 1000000;
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
 
@@ -106,8 +105,8 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
 
         class X extends FilesFacadeImpl {
-            int count = 2;
             boolean allClear = false;
+            int count = 2;
 
             @Override
             public boolean allocate(long fd, long size) {

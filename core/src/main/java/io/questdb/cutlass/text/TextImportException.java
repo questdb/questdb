@@ -33,8 +33,8 @@ import io.questdb.std.str.StringSink;
 public class TextImportException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<TextImportException> tlException = new ThreadLocal<>(TextImportException::new);
     private final StringSink message = new StringSink();
-    private byte phase;
     private boolean cancelled;
+    private byte phase;
 
     public static TextImportException instance(byte phase, CharSequence message) {
         return instance(phase, message, Integer.MIN_VALUE);

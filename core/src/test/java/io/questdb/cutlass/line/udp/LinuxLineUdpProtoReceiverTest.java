@@ -43,11 +43,10 @@ import org.junit.Test;
 
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
-    private final static ReceiverFactory LINUX_FACTORY =
-            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
-
     private final static ReceiverFactory GENERIC_FACTORY =
             (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LineUdpReceiver(configuration, engine, workerPool);
+    private final static ReceiverFactory LINUX_FACTORY =
+            (configuration, engine, workerPool, localPool, sharedWorkerCount, functionFactoryCache, snapshotAgent, metrics) -> new LinuxMMLineUdpReceiver(configuration, engine, workerPool);
 
     @Test
     public void testGenericCannotBindSocket() throws Exception {
@@ -208,7 +207,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try {
-                factory.create(receiverCfg, engine, null, true,  0, null, null, metrics);
+                factory.create(receiverCfg, engine, null, true, 0, null, null, metrics);
                 Assert.fail();
             } catch (NetworkError ignore) {
             }

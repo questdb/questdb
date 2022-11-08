@@ -40,12 +40,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
 public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
-    private final LtJoinRecordCursor cursor;
     private final IntList columnIndex;
+    private final LtJoinRecordCursor cursor;
+    private final RecordCursorFactory masterFactory;
+    private final RecordSink masterKeySink;
+    private final RecordCursorFactory slaveFactory;
+    private final RecordSink slaveKeySink;
 
     public LtJoinRecordCursorFactory(
             CairoConfiguration configuration,
@@ -79,14 +79,6 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
@@ -102,26 +94,34 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
 
     @Override
-    public boolean hasDescendingOrder() {
-        return masterFactory.hasDescendingOrder();
+    protected void _close() {
+        ((JoinRecordMetadata) getMetadata()).close();
+        masterFactory.close();
+        slaveFactory.close();
+        cursor.close();
     }
 
     private class LtJoinRecordCursor extends AbstractJoinCursor {
-        private final OuterJoinRecord record;
         private final Map joinKeyMap;
         private final int masterTimestampIndex;
+        private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private boolean danglingSlaveRecord = false;
+        private boolean isOpen;
         private Record masterRecord;
         private Record slaveRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
-        private boolean danglingSlaveRecord = false;
-        private boolean isOpen;
 
         public LtJoinRecordCursor(
                 int columnSplit,
@@ -141,13 +141,17 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecord() {
-            return record;
+        public void close() {
+            if (isOpen) {
+                isOpen = false;
+                joinKeyMap.close();
+                super.close();
+            }
         }
 
         @Override
-        public long size() {
-            return masterCursor.size();
+        public Record getRecord() {
+            return record;
         }
 
         @Override
@@ -199,6 +203,11 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long size() {
+            return masterCursor.size();
+        }
+
+        @Override
         public void toTop() {
             joinKeyMap.clear();
             slaveTimestamp = Long.MIN_VALUE;
@@ -221,15 +230,6 @@ public class LtJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             MapRecord mapRecord = joinKeyMap.getRecord();
             mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
             record.of(masterRecord, mapRecord);
-        }
-
-        @Override
-        public void close() {
-            if (isOpen) {
-                isOpen = false;
-                joinKeyMap.close();
-                super.close();
-            }
         }
     }
 }

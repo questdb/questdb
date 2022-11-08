@@ -38,6 +38,19 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInvalidConstantOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("select to_utc(0, '25:40')", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(17, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+            }
+        });
+    }
+
+    @Test
     public void testInvalidConstantTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -64,38 +77,9 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInvalidConstantOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile("select to_utc(0, '25:40')", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
-            }
-        });
-    }
-
-    @Test
-    public void testZoneName() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), 'PST')",
-                "2020-03-12T22:30:00.000000Z\n"
-        );
-    }
-
-    @Test
     public void testTimeOffset() throws Exception {
         assertToUTC(
                 "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), '-07:40')",
-                        "2020-03-12T23:10:00.000000Z\n"
-        );
-    }
-
-    @Test
-    public void testVarTimezone() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)",
                 "2020-03-12T23:10:00.000000Z\n"
         );
     }
@@ -119,6 +103,22 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
             }
         });
+    }
+
+    @Test
+    public void testVarTimezone() throws Exception {
+        assertToUTC(
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)",
+                "2020-03-12T23:10:00.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testZoneName() throws Exception {
+        assertToUTC(
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), 'PST')",
+                "2020-03-12T22:30:00.000000Z\n"
+        );
     }
 
     private void assertToUTC(String sql, String expected) throws Exception {

@@ -50,13 +50,13 @@ public class NetworkError extends Error implements Sinkable, FlyweightMessageCon
         return ex;
     }
 
+    public NetworkError couldNotBindSocket(CharSequence who, int ipv4, int port) {
+        return this.put("could not bind socket [who=").put(who).put(", bindTo=").ip(ipv4).put(':').put(port).put(']');
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;
-    }
-
-    public NetworkError couldNotBindSocket(CharSequence who, int ipv4, int port) {
-        return this.put("could not bind socket [who=").put(who).put(", bindTo=").ip(ipv4).put(':').put(port).put(']');
     }
 
     @Override

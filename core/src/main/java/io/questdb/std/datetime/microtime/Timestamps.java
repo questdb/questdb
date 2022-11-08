@@ -33,41 +33,41 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 final public class Timestamps {
 
-    public static final long WEEK_MICROS = 604800000000L;
     public static final long DAY_MICROS = 86400000000L;
+    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
+    public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
+    public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
-    public static final long MILLI_MICROS = 1000;
-    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
-    public static final int STATE_INIT = 0;
-    public static final int STATE_UTC = 1;
+    public static final long STARTUP_TIMESTAMP;
+    public static final int STATE_DELIM = 4;
+    public static final int STATE_END = 6;
     public static final int STATE_GMT = 2;
     public static final int STATE_HOUR = 3;
-    public static final int STATE_DELIM = 4;
+    public static final int STATE_INIT = 0;
     public static final int STATE_MINUTE = 5;
-    public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
-    public static final long O3_MIN_TS = 0L;
-    public static final long STARTUP_TIMESTAMP;
+    public static final int STATE_UTC = 1;
+    public static final long WEEK_MICROS = 604800000000L;
+    private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
     private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
-    private static final long YEAR_MICROS = 365 * DAY_MICROS;
-    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
-    private static final int DAY_HOURS = 24;
-    private static final int HOUR_MINUTES = 60;
-    private static final int MINUTE_SECONDS = 60;
+    private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
+    private static final int DAY_HOURS = 24;
+    private static final int HOUR_MINUTES = 60;
+    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final char BEFORE_ZERO = '0' - 1;
-    private static final char AFTER_NINE = '9' + 1;
+    private static final int MINUTE_SECONDS = 60;
+    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
+    private static final long YEAR_MICROS = 365 * DAY_MICROS;
 
     private Timestamps() {
     }
@@ -1014,12 +1014,12 @@ final public class Timestamps {
         return micros;
     }
 
-    private static boolean isDigit(char c) {
-        return c > BEFORE_ZERO && c < AFTER_NINE;
-    }
-
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
+    }
+
+    private static boolean isDigit(char c) {
+        return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
     static {

@@ -29,15 +29,15 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.VirtualRecord;
 
 public interface AnalyticContext {
-    boolean isEmpty();
+    boolean baseSupportsRandomAccess();
+
+    ColumnTypes getPartitionByKeyTypes();
 
     VirtualRecord getPartitionByRecord();
 
     RecordSink getPartitionBySink();
 
-    ColumnTypes getPartitionByKeyTypes();
+    boolean isEmpty();
 
     boolean isOrdered();
-
-    boolean baseSupportsRandomAccess();
 }

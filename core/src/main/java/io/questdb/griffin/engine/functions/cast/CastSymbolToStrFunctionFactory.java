@@ -70,13 +70,13 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return arg.getSymbolB(rec);
+        public void getStr(Record rec, CharSink sink) {
+            sink.put(arg.getSymbol(rec));
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            sink.put(arg.getSymbol(rec));
+        public CharSequence getStrB(Record rec) {
+            return arg.getSymbolB(rec);
         }
     }
 }

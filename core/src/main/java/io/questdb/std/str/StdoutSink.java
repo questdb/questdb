@@ -33,12 +33,11 @@ import java.io.Closeable;
 public final class StdoutSink extends AbstractCharSink implements Closeable {
 
     public static final StdoutSink INSTANCE = new StdoutSink();
-
-    private final long stdout = Files.getStdOutFd();
     private final int bufferCapacity = 1024;
     private final long buffer = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
+    private final long stdout = Files.getStdOutFd();
 
     @Override
     public void close() {

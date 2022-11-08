@@ -33,15 +33,41 @@ import io.questdb.std.str.StringSink;
 public class PlanSink {
 
     private final StringSink sink;
-    private int depth;
-    private String childIndent;
     private String attrIndent;
+    private String childIndent;
+    private int depth;
 
     public PlanSink() {
         this.sink = new StringSink();
         this.depth = 0;
         this.attrIndent = "  ";
         this.childIndent = "    ";
+    }
+
+    public PlanSink attr(CharSequence name) {
+        newLine();
+        sink.put(attrIndent);
+        sink.put(name).put('=');
+        return this;
+    }
+
+    public PlanSink child(Plannable p) {
+        depth++;
+        newLine();
+        p.toPlan(this);
+        depth--;
+
+        return this;
+    }
+
+    public CharSequence getText() {
+        return sink;
+    }
+
+    public PlanSink meta(CharSequence name) {
+        sink.put(" ");
+        sink.put(name).put('=');
+        return this;
     }
 
     public void reset() {
@@ -53,19 +79,6 @@ public class PlanSink {
 
     public PlanSink type(CharSequence type) {
         sink.put(type);
-        return this;
-    }
-
-    public PlanSink meta(CharSequence name) {
-        sink.put(" ");
-        sink.put(name).put('=');
-        return this;
-    }
-
-    public PlanSink attr(CharSequence name) {
-        newLine();
-        sink.put(attrIndent);
-        sink.put(name).put('=');
         return this;
     }
 
@@ -111,23 +124,10 @@ public class PlanSink {
         return this;
     }
 
-    public PlanSink child(Plannable p) {
-        depth++;
-        newLine();
-        p.toPlan(this);
-        depth--;
-
-        return this;
-    }
-
     private void newLine() {
         sink.put("\n");
         for (int i = 0; i < depth; i++) {
             sink.put(childIndent);
         }
-    }
-
-    public CharSequence getText() {
-        return sink;
     }
 }

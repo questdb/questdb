@@ -244,39 +244,25 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testShowTransactionIsolationLevel() throws SqlException {
-        assertQuery(
-                "transaction_isolation\n" +
-                        "read committed\n",
-                "show transaction isolation level",
-                null,
-                false,
-                sqlExecutionContext,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testShowTransactionIsolationUnderscore() throws SqlException {
-        assertQuery(
-                "transaction_isolation\n" +
-                        "read committed\n",
-                "show transaction_isolation",
-                null,
-                false,
-                sqlExecutionContext,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testShowMaxIdentifierLength() throws SqlException {
         assertQuery(
                 "max_identifier_length\n" +
                         "63\n",
                 "show max_identifier_length",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testShowTransactionIsolationLevel() throws SqlException {
+        assertQuery(
+                "transaction_isolation\n" +
+                        "read committed\n",
+                "show transaction isolation level",
                 null,
                 false,
                 sqlExecutionContext,
@@ -303,6 +289,20 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testShowTransactionIsolationLevelErr4() throws Exception {
         assertFailure("show transaction isolation oops", null, 27, "expected 'level'");
+    }
+
+    @Test
+    public void testShowTransactionIsolationUnderscore() throws SqlException {
+        assertQuery(
+                "transaction_isolation\n" +
+                        "read committed\n",
+                "show transaction_isolation",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                true
+        );
     }
 
     @Test

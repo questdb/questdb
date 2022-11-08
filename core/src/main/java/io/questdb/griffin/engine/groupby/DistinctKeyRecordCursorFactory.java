@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -81,11 +83,6 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    protected void _close() {
-        this.baseAggregatorFactory.close();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return this.baseAggregatorFactory.getCursor(executionContext);
     }
@@ -93,5 +90,10 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return this.baseAggregatorFactory.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    protected void _close() {
+        this.baseAggregatorFactory.close();
     }
 }

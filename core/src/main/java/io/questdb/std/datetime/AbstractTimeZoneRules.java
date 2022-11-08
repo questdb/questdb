@@ -34,19 +34,19 @@ import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
 public abstract class AbstractTimeZoneRules implements TimeZoneRules {
+    public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
     public static final long SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
     public static final long STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
-    public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
     public static final long WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
     private final long cutoffTransition;
-    private final LongList historicTransitions = new LongList();
-    private final ObjList<TransitionRule> rules;
-    private final int ruleCount;
-    private final int[] wallOffsets;
     private final long firstWall;
+    private final LongList historicTransitions = new LongList();
     private final long lastWall;
-    private final long standardOffset;
     private final long multiplier;
+    private final int ruleCount;
+    private final ObjList<TransitionRule> rules;
+    private final long standardOffset;
+    private final int[] wallOffsets;
 
     public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {
         this.multiplier = multiplier;
@@ -105,28 +105,6 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long utcEpoch, int year, boolean leap) {
-        if (standardOffset != Long.MIN_VALUE) {
-            return standardOffset;
-        }
-
-        if (ruleCount > 0 && utcEpoch > cutoffTransition) {
-            return offsetFromRules(utcEpoch, year, leap);
-        }
-
-        if (utcEpoch > cutoffTransition) {
-            return lastWall;
-        }
-        return offsetFromHistory(utcEpoch);
-    }
-
-    @Override
-    public long getOffset(long utcEpoch) {
-        final int y = getYear(utcEpoch);
-        return getOffset(utcEpoch, y, isLeapYear(y));
-    }
-
-    @Override
     public long getNextDST(long utcEpoch, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             // when we have standard offset the next DST does not exist
@@ -152,7 +130,27 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return getNextDST(utcEpoch, y, isLeapYear(y));
     }
 
-    abstract protected long addDays(long epoch, int days);
+    @Override
+    public long getOffset(long utcEpoch, int year, boolean leap) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return standardOffset;
+        }
+
+        if (ruleCount > 0 && utcEpoch > cutoffTransition) {
+            return offsetFromRules(utcEpoch, year, leap);
+        }
+
+        if (utcEpoch > cutoffTransition) {
+            return lastWall;
+        }
+        return offsetFromHistory(utcEpoch);
+    }
+
+    @Override
+    public long getOffset(long utcEpoch) {
+        final int y = getYear(utcEpoch);
+        return getOffset(utcEpoch, y, isLeapYear(y));
+    }
 
     private long dstFromHistory(long epoch) {
         int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
@@ -232,14 +230,6 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return date;
     }
 
-    abstract protected int getDaysPerMonth(int month, boolean leapYear);
-
-    abstract protected int getYear(long epoch);
-
-    abstract protected boolean isLeapYear(int year);
-
-    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
-
     private long offsetFromHistory(long epoch) {
         int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
         if (index == -1) {
@@ -312,6 +302,16 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
         return offsetAfter * multiplier;
     }
+
+    abstract protected long addDays(long epoch, int days);
+
+    abstract protected int getDaysPerMonth(int month, boolean leapYear);
+
+    abstract protected int getYear(long epoch);
+
+    abstract protected boolean isLeapYear(int year);
+
+    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
 
     abstract protected long previousOrSameDayOfWeek(long epoch, int dow);
 

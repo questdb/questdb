@@ -129,84 +129,15 @@ public final class Chars {
         return indexOf(sequence, 0, sequence.length(), term) != -1;
     }
 
-    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
-        return indexOf(sequence, sequenceLo, sequenceHi, term, 1);
-    }
-
-    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term, int occurrence) {
-        int m = term.length();
-        if (m == 0) {
-            return -1;
-        }
-
-        if (occurrence == 0) {
-            return -1;
-        }
-
-        int foundIndex = -1;
-        int count = 0;
-        if (occurrence > 0) {
-            for (int i = sequenceLo; i < sequenceHi; i++) {
-                if (foundIndex == -1) {
-                    if (sequenceHi - i < m) {
-                        return -1;
-                    }
-                    if (sequence.charAt(i) == term.charAt(0)) {
-                        foundIndex = i;
-                    }
-                } else {    // first character matched, try to match the rest of the term
-                    if (sequence.charAt(i) != term.charAt(i - foundIndex)) {
-                        // start again from after where the first character was found
-                        i = foundIndex;
-                        foundIndex = -1;
-                    }
-                }
-
-                if (foundIndex != -1 && i - foundIndex == m - 1) {
-                    count++;
-                    if (count == occurrence) {
-                        return foundIndex;
-                    } else {
-                        foundIndex = -1;
-                    }
-                }
-            }
-        } else {    // if occurrence is negative, search in reverse
-            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
-                if (foundIndex == -1) {
-                    if (i - sequenceLo + 1 < m) {
-                        return -1;
-                    }
-                    if (sequence.charAt(i) == term.charAt(m - 1)) {
-                        foundIndex = i;
-                    }
-                } else {    // last character matched, try to match the rest of the term
-                    if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
-                        // start again from after where the first character was found
-                        i = foundIndex;
-                        foundIndex = -1;
-                    }
-                }
-
-                if (foundIndex != -1 && foundIndex - i == m - 1) {
-                    count--;
-                    if (count == occurrence) {
-                        return foundIndex + 1 - m;
-                    } else {
-                        foundIndex = -1;
-                    }
-                }
-            }
-        }
-
-        return -1;
-    }
-
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
             Unsafe.getUnsafe().putChar(address + 2L * i, c);
         }
+    }
+
+    public static boolean empty(final CharSequence value) {
+        return value == null || value.length() < 1;
     }
 
     public static boolean endsWith(CharSequence cs, CharSequence ends) {
@@ -422,6 +353,79 @@ public final class Chars {
         return h;
     }
 
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+        return indexOf(sequence, sequenceLo, sequenceHi, term, 1);
+    }
+
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term, int occurrence) {
+        int m = term.length();
+        if (m == 0) {
+            return -1;
+        }
+
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int foundIndex = -1;
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = sequenceLo; i < sequenceHi; i++) {
+                if (foundIndex == -1) {
+                    if (sequenceHi - i < m) {
+                        return -1;
+                    }
+                    if (sequence.charAt(i) == term.charAt(0)) {
+                        foundIndex = i;
+                    }
+                } else {    // first character matched, try to match the rest of the term
+                    if (sequence.charAt(i) != term.charAt(i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
+                    }
+                }
+
+                if (foundIndex != -1 && i - foundIndex == m - 1) {
+                    count++;
+                    if (count == occurrence) {
+                        return foundIndex;
+                    } else {
+                        foundIndex = -1;
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = sequenceHi - 1; i >= sequenceLo; i--) {
+                if (foundIndex == -1) {
+                    if (i - sequenceLo + 1 < m) {
+                        return -1;
+                    }
+                    if (sequence.charAt(i) == term.charAt(m - 1)) {
+                        foundIndex = i;
+                    }
+                } else {    // last character matched, try to match the rest of the term
+                    if (sequence.charAt(i) != term.charAt(m - 1 + i - foundIndex)) {
+                        // start again from after where the first character was found
+                        i = foundIndex;
+                        foundIndex = -1;
+                    }
+                }
+
+                if (foundIndex != -1 && foundIndex - i == m - 1) {
+                    count--;
+                    if (count == occurrence) {
+                        return foundIndex + 1 - m;
+                    } else {
+                        foundIndex = -1;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static int indexOf(CharSequence s, char c) {
         return indexOf(s, 0, c);
     }
@@ -593,20 +597,16 @@ public final class Chars {
         return lp != lhi || rp != rhi;
     }
 
-    public static boolean empty(final CharSequence value) {
-        return value == null || value.length() < 1;
-    }
-
     public static CharSequence repeat(String s, int times) {
         return new CharSequence() {
             @Override
-            public int length() {
-                return s.length() * times;
+            public char charAt(int index) {
+                return s.charAt(index % s.length());
             }
 
             @Override
-            public char charAt(int index) {
-                return s.charAt(index % s.length());
+            public int length() {
+                return s.length() * times;
             }
 
             @Override
@@ -876,8 +876,70 @@ public final class Chars {
         return true;
     }
 
-    private static int utf8error() {
-        return -1;
+    private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSinkBase sink) {
+        if (hi - lo < 2) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (isNotContinuation(b2)) {
+            return utf8error();
+        }
+
+        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
+        return 2;
+    }
+
+    private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (b2 == 0) {
+            return utf8error();
+        }
+        if (isNotContinuation(b2)) {
+            return utf8error();
+        }
+
+        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
+        return 2;
+    }
+
+    private static int utf8Decode3Byte0(int b1, CharSinkBase sink, byte b2, byte b3) {
+        if (isMalformed3(b1, b2, b3)) {
+            return utf8error();
+        }
+
+        char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
+        if (Character.isSurrogate(c)) {
+            return utf8error();
+        }
+
+        sink.put(c);
+        return 3;
+    }
+
+    private static int utf8Decode3Bytes(long lo, long hi, int b1, CharSinkBase sink) {
+        if (hi - lo < 3) {
+            return utf8error();
+        }
+
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+
+        return utf8Decode3Byte0(b1, sink, b2, b3);
+    }
+
+    private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
+        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        if (b2 == 0) {
+            return utf8error();
+        }
+
+        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        if (b3 == 0) {
+            return utf8error();
+        }
+
+        return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
     private static int utf8Decode4Bytes(long lo, int b, long hi, CharSinkBase sink) {
@@ -929,69 +991,7 @@ public final class Chars {
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
-    private static int utf8Decode3Bytes(long lo, long hi, int b1, CharSinkBase sink) {
-        if (hi - lo < 3) {
-            return utf8error();
-        }
-
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-
-        return utf8Decode3Byte0(b1, sink, b2, b3);
-    }
-
-    private static int utf8Decode3BytesZ(long lo, int b1, CharSink sink) {
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        if (b2 == 0) {
-            return utf8error();
-        }
-
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-        if (b3 == 0) {
-            return utf8error();
-        }
-
-        return utf8Decode3Byte0(b1, sink, b2, b3);
-    }
-
-    private static int utf8Decode3Byte0(int b1, CharSinkBase sink, byte b2, byte b3) {
-        if (isMalformed3(b1, b2, b3)) {
-            return utf8error();
-        }
-
-        char c = (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
-        if (Character.isSurrogate(c)) {
-            return utf8error();
-        }
-
-        sink.put(c);
-        return 3;
-    }
-
-    private static int utf8Decode2Bytes(long lo, long hi, int b1, CharSinkBase sink) {
-        if (hi - lo < 2) {
-            return utf8error();
-        }
-
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        if (isNotContinuation(b2)) {
-            return utf8error();
-        }
-
-        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
-        return 2;
-    }
-
-    private static int utf8Decode2BytesZ(long lo, int b1, CharSink sink) {
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        if (b2 == 0) {
-            return utf8error();
-        }
-        if (isNotContinuation(b2)) {
-            return utf8error();
-        }
-
-        sink.put((char) (b1 << 6 ^ b2 ^ 3968));
-        return 2;
+    private static int utf8error() {
+        return -1;
     }
 }

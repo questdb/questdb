@@ -33,6 +33,75 @@ import org.junit.Test;
 
 public class MonthTimestampSamplerTest {
     @Test
+    public void testNextTimestamp() throws NumericException {
+        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+
+        final String[] src = new String[]{
+                "2013-12-31T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2020-01-01T12:12:12.123456Z",
+        };
+        final String[] next = new String[]{
+                "2014-01-01T00:00:00.000000Z",
+                "2014-02-01T00:00:00.000000Z",
+                "2020-02-01T00:00:00.000000Z",
+        };
+        Assert.assertEquals(src.length, next.length);
+
+        for (int i = 0; i < src.length; i++) {
+            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long nextTs = sampler.nextTimestamp(ts);
+            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
+        }
+    }
+
+    @Test
+    public void testPreviousTimestamp() throws NumericException {
+        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+
+        final String[] src = new String[]{
+                "2013-12-31T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2020-02-01T12:12:12.123456Z",
+        };
+        final String[] prev = new String[]{
+                "2013-11-01T00:00:00.000000Z",
+                "2013-12-01T00:00:00.000000Z",
+                "2020-01-01T00:00:00.000000Z",
+        };
+        Assert.assertEquals(src.length, prev.length);
+
+        for (int i = 0; i < src.length; i++) {
+            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long prevTs = sampler.previousTimestamp(ts);
+            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
+        }
+    }
+
+    @Test
+    public void testRound() throws NumericException {
+        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+
+        final String[] src = new String[]{
+                "2013-12-31T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2014-02-12T12:12:12.123456Z",
+        };
+        final String[] rounded = new String[]{
+                "2013-12-01T00:00:00.000000Z",
+                "2014-01-01T00:00:00.000000Z",
+                "2014-02-01T00:00:00.000000Z",
+        };
+        Assert.assertEquals(src.length, rounded.length);
+
+        for (int i = 0; i < src.length; i++) {
+            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
+            long roundedTs = sampler.round(ts);
+            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
+        }
+    }
+
+    @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
         MonthTimestampSampler sampler = new MonthTimestampSampler(6);
@@ -70,74 +139,5 @@ public class MonthTimestampSamplerTest {
                         "2028-11-16T15:00:00.000000Z\n",
                 sink
         );
-    }
-
-    @Test
-    public void testNextTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
-
-        final String[] src = new String[] {
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2020-01-01T12:12:12.123456Z",
-        };
-        final String[] next = new String[] {
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
-                "2020-02-01T00:00:00.000000Z",
-        };
-        Assert.assertEquals(src.length, next.length);
-
-        for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long nextTs = sampler.nextTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(next[i]), nextTs);
-        }
-    }
-
-    @Test
-    public void testPreviousTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
-
-        final String[] src = new String[] {
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2020-02-01T12:12:12.123456Z",
-        };
-        final String[] prev = new String[] {
-                "2013-11-01T00:00:00.000000Z",
-                "2013-12-01T00:00:00.000000Z",
-                "2020-01-01T00:00:00.000000Z",
-        };
-        Assert.assertEquals(src.length, prev.length);
-
-        for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long prevTs = sampler.previousTimestamp(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(prev[i]), prevTs);
-        }
-    }
-
-    @Test
-    public void testRound() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
-
-        final String[] src = new String[] {
-                "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-12T12:12:12.123456Z",
-        };
-        final String[] rounded = new String[] {
-                "2013-12-01T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
-        };
-        Assert.assertEquals(src.length, rounded.length);
-
-        for (int i = 0; i < src.length; i++) {
-            long ts = TimestampFormatUtils.parseUTCTimestamp(src[i]);
-            long roundedTs = sampler.round(ts);
-            Assert.assertEquals(TimestampFormatUtils.parseUTCTimestamp(rounded[i]), roundedTs);
-        }
     }
 }

@@ -35,12 +35,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.security.KeyManagementException;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.security.UnrecoverableKeyException;
+import java.security.*;
 import java.security.cert.CertificateException;
 import java.util.Collections;
 import java.util.Set;
@@ -52,10 +47,10 @@ public final class TlsProxy {
     private final int dstPort;
     private final String keystore;
     private final char[] keystorePassword;
-    private volatile boolean shutdownRequested;
     private final Set<Link> links = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private Thread acceptorThread;
     private ServerSocket serverSocket;
+    private volatile boolean shutdownRequested;
 
     public TlsProxy(String dstHost, int dstPort, String keystore, char[] keystorePassword) {
         this.dstHost = dstHost;
@@ -84,8 +79,37 @@ public final class TlsProxy {
             acceptorThread.start();
             return serverSocket.getLocalPort();
         } catch (NoSuchAlgorithmException | IOException | KeyManagementException | CertificateException |
-                 KeyStoreException | UnrecoverableKeyException e) {
+                KeyStoreException | UnrecoverableKeyException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    public synchronized void stop() {
+        shutdownRequested = true;
+        try {
+            serverSocket.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        acceptorThread.interrupt();
+        try {
+            acceptorThread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+        for (Link link : links) {
+            link.shutDown();
+        }
+    }
+
+    private static void closeQuietly(Closeable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (IOException e) {
+                // whatever
+            }
         }
     }
 
@@ -116,28 +140,9 @@ public final class TlsProxy {
         }
     }
 
-    public synchronized void stop() {
-        shutdownRequested = true;
-        try {
-            serverSocket.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        acceptorThread.interrupt();
-        try {
-            acceptorThread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
-        }
-        for (Link link : links) {
-            link.shutDown();
-        }
-    }
-
     private static class Link {
-        private final Pump frontendToBackend;
         private final Pump backendToFrontend;
+        private final Pump frontendToBackend;
 
         private Link(Socket frontend, Socket backend) {
             AtomicInteger race = new AtomicInteger(2);
@@ -147,6 +152,11 @@ public final class TlsProxy {
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
+        }
+
+        private void shutDown() {
+            frontendToBackend.shutdown();
+            backendToFrontend.shutdown();
         }
 
         private void start() {
@@ -159,40 +169,21 @@ public final class TlsProxy {
             backendToFrontend.setOwningThread(backToFrontThread);
             backToFrontThread.start();
         }
-
-        private void shutDown() {
-            frontendToBackend.shutdown();
-            backendToFrontend.shutdown();
-        }
     }
 
     private static final class Pump implements Runnable {
         private final InputStream from;
-        private final OutputStream to;
         private final String name;
-        private volatile boolean shutdownRequested;
-        private volatile Thread owningThread;
         private final AtomicInteger race;
+        private final OutputStream to;
+        private volatile Thread owningThread;
+        private volatile boolean shutdownRequested;
 
         private Pump(InputStream from, OutputStream to, AtomicInteger race, String name) {
             this.from = from;
             this.to = to;
             this.race = race;
             this.name = name;
-        }
-
-        public void setOwningThread(Thread owningThread) {
-            this.owningThread = owningThread;
-        }
-
-        private void shutdown() {
-            shutdownRequested = true;
-            owningThread.interrupt();
-            try {
-                owningThread.join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
         }
 
         @Override
@@ -230,14 +221,18 @@ public final class TlsProxy {
                 closeQuietly(to);
             }
         }
-    }
 
-    private static void closeQuietly(Closeable closeable) {
-        if (closeable != null) {
+        public void setOwningThread(Thread owningThread) {
+            this.owningThread = owningThread;
+        }
+
+        private void shutdown() {
+            shutdownRequested = true;
+            owningThread.interrupt();
             try {
-                closeable.close();
-            } catch (IOException e) {
-                // whatever
+                owningThread.join();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
         }
     }

@@ -42,62 +42,62 @@ import static io.questdb.griffin.model.ExpressionNode.*;
 
 class SqlOptimiser {
 
-    private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
-    private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
-    private static final int NOT_OP_NOT = 1;
+    private static final int JOIN_OP_AND = 2;
+    private static final int JOIN_OP_EQUAL = 1;
+    private static final int JOIN_OP_OR = 3;
+    private static final int JOIN_OP_REGEX = 4;
     private static final int NOT_OP_AND = 2;
-    private static final int NOT_OP_OR = 3;
+    private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
     private static final int NOT_OP_GREATER_EQ = 5;
     private static final int NOT_OP_LESS = 6;
     private static final int NOT_OP_LESS_EQ = 7;
-    private static final int NOT_OP_EQUAL = 8;
+    private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
-    private final static IntHashSet joinBarriers;
-    private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
-    private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
-    private static final int JOIN_OP_EQUAL = 1;
-    private static final int JOIN_OP_AND = 2;
-    private static final int JOIN_OP_OR = 3;
-    private static final int JOIN_OP_REGEX = 4;
+    private static final int NOT_OP_OR = 3;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
-    private final CairoEngine engine;
-    private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
-    private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final static IntHashSet joinBarriers;
+    private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
+    private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
+    private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
+    private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final CharacterStore characterStore;
+    private final IntList clausesToSteal = new IntList();
+    private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
+    private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
+    private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
+    private final ObjectPool<JoinContext> contextPool;
+    private final IntHashSet deletedContexts = new IntHashSet();
+    private final CairoEngine engine;
+    private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final FunctionParser functionParser;
+    private final ObjList<Function> functionsInFlight = new ObjList<>();
+    private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
-    private final IntList tempCrosses = new IntList();
-    private final IntList tempList = new IntList();
-    private final LiteralCollector literalCollector = new LiteralCollector();
-    private final IntHashSet tablesSoFar = new IntHashSet();
-    private final IntHashSet postFilterRemoved = new IntHashSet();
-    private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
-    private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
+    private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final IntHashSet literalCollectorBIndexes = new IntHashSet();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
-    private final PostOrderTreeTraversalAlgo traversalAlgo;
-    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final ObjectPool<JoinContext> contextPool;
-    private final IntHashSet deletedContexts = new IntHashSet();
-    private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
-    private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
-    private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
-    private final IntList tempCrossIndexes = new IntList();
-    private final IntList clausesToSteal = new IntList();
-    private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
-    private final ObjectPool<QueryModel> queryModelPool;
-    private final IntPriorityQueue orderingStack = new IntPriorityQueue();
-    private final ObjectPool<QueryColumn> queryColumnPool;
-    private final FunctionParser functionParser;
-    private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
-    private final Path path;
+    private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
+    private final IntPriorityQueue orderingStack = new IntPriorityQueue();
+    private final Path path;
+    private final IntHashSet postFilterRemoved = new IntHashSet();
+    private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
+    private final ObjectPool<QueryColumn> queryColumnPool;
+    private final ObjectPool<QueryModel> queryModelPool;
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
+    private final IntHashSet tablesSoFar = new IntHashSet();
+    private final IntList tempCrossIndexes = new IntList();
+    private final IntList tempCrosses = new IntList();
+    private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjList<Function> functionsInFlight = new ObjList<>();
+    private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -127,12 +127,12 @@ class SqlOptimiser {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
 
-    private static void unlinkDependencies(QueryModel model, int parent, int child) {
-        model.getJoinModels().getQuick(parent).removeDependency(child);
-    }
-
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    private static void unlinkDependencies(QueryModel model, int parent, int child) {
+        model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
     /*
@@ -706,27 +706,6 @@ class SqlOptimiser {
         }
 
         return false;
-    }
-
-    void clear() {
-        contextPool.clear();
-        intHashSetPool.clear();
-        joinClausesSwap1.clear();
-        joinClausesSwap2.clear();
-        constNameToIndex.clear();
-        constNameToNode.clear();
-        constNameToToken.clear();
-        literalCollectorAIndexes.clear();
-        literalCollectorBIndexes.clear();
-        literalCollectorANames.clear();
-        literalCollectorBNames.clear();
-        defaultAliasCount = 0;
-        expressionNodePool.clear();
-        characterStore.clear();
-        tablesSoFar.clear();
-        clausesToSteal.clear();
-        tmpCursorAliases.clear();
-        functionsInFlight.clear();
     }
 
     private void collectModelAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -1531,6 +1510,15 @@ class SqlOptimiser {
             QueryColumn qc = columns.getQuick(i);
             traversalAlgo.traverse(qc.getAst(), new PostOrderTreeTraversalAlgo.Visitor() {
                 @Override
+                public boolean descend(ExpressionNode node) {
+                    // do not descend functions, such as `touch(select ...)`
+                    // what is allowed for correlated sub-queries - arithmetic
+                    // (select a from tab) + 1 alias
+                    // is a valid syntax
+                    return node.type != FUNCTION;
+                }
+
+                @Override
                 public void visit(ExpressionNode node) throws SqlException {
                     QueryModel qm = node.queryModel;
                     if (qm != null) {
@@ -1564,15 +1552,6 @@ class SqlOptimiser {
                             qm.setWhereClause(null);
                         }
                     }
-                }
-
-                @Override
-                public boolean descend(ExpressionNode node) {
-                    // do not descend functions, such as `touch(select ...)`
-                    // what is allowed for correlated sub-queries - arithmetic
-                    // (select a from tab) + 1 alias
-                    // is a valid syntax
-                    return node.type != FUNCTION;
                 }
             });
         }
@@ -2124,44 +2103,6 @@ class SqlOptimiser {
         }
     }
 
-    QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        QueryModel rewrittenModel = model;
-        try {
-            rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
-            //extractCorrelatedQueriesAsJoins(rewrittenModel);
-            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
-            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
-            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
-            resolveJoinColumns(rewrittenModel);
-            optimiseBooleanNot(rewrittenModel);
-            rewrittenModel = rewriteOrderBy(
-                    rewriteOrderByPositionForUnionModels(
-                            rewriteOrderByPosition(
-                                    rewriteSelectClause(
-                                            rewrittenModel,
-                                            true,
-                                            sqlExecutionContext
-                                    )
-                            )
-                    )
-            );
-            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
-            createOrderHash(rewrittenModel);
-            optimiseJoins(rewrittenModel);
-            moveWhereInsideSubQueries(rewrittenModel);
-            eraseColumnPrefixInWhereClauses(rewrittenModel);
-            moveTimestampToChooseModel(rewrittenModel);
-            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            return rewrittenModel;
-        } catch (SqlException e) {
-            // at this point models may have functions than need to be freed
-            Misc.freeObjList(functionsInFlight);
-            functionsInFlight.clear();
-            throw e;
-        }
-    }
-
     private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) {
         if (node.token != null) {
             switch (notOps.get(node.token)) {
@@ -2414,17 +2355,6 @@ class SqlOptimiser {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
-    }
-
-    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        selectQueryModel.setIsUpdate(true);
-        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
-        assert optimisedNested.isUpdate();
-        updateQueryModel.setNestedModel(optimisedNested);
-
-        // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
     }
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
@@ -3682,8 +3612,74 @@ class SqlOptimiser {
         }
     }
 
-    private static class NonLiteralException extends RuntimeException {
-        private static final NonLiteralException INSTANCE = new NonLiteralException();
+    void clear() {
+        contextPool.clear();
+        intHashSetPool.clear();
+        joinClausesSwap1.clear();
+        joinClausesSwap2.clear();
+        constNameToIndex.clear();
+        constNameToNode.clear();
+        constNameToToken.clear();
+        literalCollectorAIndexes.clear();
+        literalCollectorBIndexes.clear();
+        literalCollectorANames.clear();
+        literalCollectorBNames.clear();
+        defaultAliasCount = 0;
+        expressionNodePool.clear();
+        characterStore.clear();
+        tablesSoFar.clear();
+        clausesToSteal.clear();
+        tmpCursorAliases.clear();
+        functionsInFlight.clear();
+    }
+
+    QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        QueryModel rewrittenModel = model;
+        try {
+            rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
+            //extractCorrelatedQueriesAsJoins(rewrittenModel);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
+            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
+            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
+            resolveJoinColumns(rewrittenModel);
+            optimiseBooleanNot(rewrittenModel);
+            rewrittenModel = rewriteOrderBy(
+                    rewriteOrderByPositionForUnionModels(
+                            rewriteOrderByPosition(
+                                    rewriteSelectClause(
+                                            rewrittenModel,
+                                            true,
+                                            sqlExecutionContext
+                                    )
+                            )
+                    )
+            );
+            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            createOrderHash(rewrittenModel);
+            optimiseJoins(rewrittenModel);
+            moveWhereInsideSubQueries(rewrittenModel);
+            eraseColumnPrefixInWhereClauses(rewrittenModel);
+            moveTimestampToChooseModel(rewrittenModel);
+            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            return rewrittenModel;
+        } catch (SqlException e) {
+            // at this point models may have functions than need to be freed
+            Misc.freeObjList(functionsInFlight);
+            functionsInFlight.clear();
+            throw e;
+        }
+    }
+
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        selectQueryModel.setIsUpdate(true);
+        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
+        assert optimisedNested.isUpdate();
+        updateQueryModel.setNestedModel(optimisedNested);
+
+        // And then generate plan for UPDATE top level QueryModel
+        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
@@ -3736,6 +3732,10 @@ class SqlOptimiser {
         }
     }
 
+    private static class NonLiteralException extends RuntimeException {
+        private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
 
         @Override
@@ -3771,9 +3771,9 @@ class SqlOptimiser {
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
         private IntHashSet indexes;
+        private QueryModel model;
         private ObjList<CharSequence> names;
         private int nullCount;
-        private QueryModel model;
 
         @Override
         public void visit(ExpressionNode node) throws SqlException {

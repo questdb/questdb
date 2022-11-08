@@ -27,14 +27,14 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public abstract class AbstractLowerCaseAsciiCharSequenceHashSet implements Mutable {
-    protected static final CharSequence noEntryKey = null;
     protected static final int MIN_INITIAL_CAPACITY = 16;
+    protected static final CharSequence noEntryKey = null;
     protected final double loadFactor;
-    protected int mask;
-    protected int free;
     protected int capacity;
+    protected int free;
     // exposed for testing only
     protected CharSequence[] keys;
+    protected int mask;
 
     public AbstractLowerCaseAsciiCharSequenceHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
@@ -138,15 +138,6 @@ public abstract class AbstractLowerCaseAsciiCharSequenceHashSet implements Mutab
         return capacity - free;
     }
 
-    /**
-     * Erases entry in array.
-     *
-     * @param index always positive, no arithmetic required.
-     */
-    abstract protected void erase(int index);
-
-    abstract protected void move(int from, int to);
-
     private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
@@ -171,4 +162,13 @@ public abstract class AbstractLowerCaseAsciiCharSequenceHashSet implements Mutab
             }
         } while (true);
     }
+
+    /**
+     * Erases entry in array.
+     *
+     * @param index always positive, no arithmetic required.
+     */
+    abstract protected void erase(int index);
+
+    abstract protected void move(int from, int to);
 }

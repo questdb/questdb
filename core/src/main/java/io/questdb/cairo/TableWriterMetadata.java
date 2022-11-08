@@ -31,16 +31,68 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 public class TableWriterMetadata extends BaseRecordMetadata {
+    private long commitLag;
     private int id;
+    private int maxUncommittedRows;
     private int metaFileSize;
+    private long structureVersion;
     private int symbolMapCount;
     private int version;
-    private int maxUncommittedRows;
-    private long commitLag;
-    private long structureVersion;
 
     public TableWriterMetadata(MemoryMR metaMem) {
         reload(metaMem);
+    }
+
+    public GenericRecordMetadata copyDense() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0; i < columnCount; i++) {
+            TableColumnMetadata column = columnMetadata.getQuick(i);
+            if (column.getType() >= 0) {
+                metadata.add(column);
+                if (i == timestampIndex) {
+                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
+                }
+            }
+        }
+        return metadata;
+    }
+
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public int getDenseColumnCount() {
+        int count = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (columnMetadata.getQuick(i).getType() > 0) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public int getFileDataSize() {
+        return metaFileSize;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    public int getSymbolMapCount() {
+        return symbolMapCount;
+    }
+
+    public int getTableVersion() {
+        return version;
     }
 
     public void reload(MemoryMR metaMem) {
@@ -85,72 +137,20 @@ public class TableWriterMetadata extends BaseRecordMetadata {
         metaFileSize = (int) offset;
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getDenseColumnCount() {
-        int count = 0;
-        for (int i = 0; i < columnCount; i++) {
-            if (columnMetadata.getQuick(i).getType() > 0) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     public void setCommitLag(long micros) {
         this.commitLag = micros;
-    }
-
-    public int getFileDataSize() {
-        return metaFileSize;
-    }
-
-    public int getId() {
-        return id;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
     }
 
     public void setMaxUncommittedRows(int rows) {
         this.maxUncommittedRows = rows;
     }
 
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
     public void setStructureVersion(long value) {
         this.structureVersion = value;
     }
 
-    public int getSymbolMapCount() {
-        return symbolMapCount;
-    }
-
-    public int getTableVersion() {
-        return version;
-    }
-
     public void setTableVersion() {
         version = ColumnType.VERSION;
-    }
-
-    public GenericRecordMetadata copyDense() {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata column = columnMetadata.getQuick(i);
-            if (column.getType() >= 0) {
-                metadata.add(column);
-                if (i == timestampIndex) {
-                    metadata.setTimestampIndex(metadata.getColumnCount() - 1);
-                }
-            }
-        }
-        return metadata;
     }
 
     void addColumn(CharSequence name, long hash, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex) {

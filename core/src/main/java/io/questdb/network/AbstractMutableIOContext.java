@@ -25,8 +25,8 @@
 package io.questdb.network;
 
 public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContext<T>> implements MutableIOContext<T> {
-    protected long fd = -1;
     protected IODispatcher<T> dispatcher;
+    protected long fd = -1;
 
     @Override
     public void clear() {
@@ -35,13 +35,13 @@ public abstract class AbstractMutableIOContext<T extends AbstractMutableIOContex
     }
 
     @Override
-    public long getFd() {
-        return fd;
+    public IODispatcher<T> getDispatcher() {
+        return dispatcher;
     }
 
     @Override
-    public  IODispatcher<T> getDispatcher() {
-        return dispatcher;
+    public long getFd() {
+        return fd;
     }
 
     @SuppressWarnings("unchecked")

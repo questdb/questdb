@@ -43,12 +43,12 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 }

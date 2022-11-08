@@ -64,8 +64,8 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
         private final Matcher matcher;
+        private final Function value;
 
         public MatchConstPatternFunction(Function value, Matcher matcher) {
             this.value = value;
@@ -90,9 +90,9 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Function value;
         private final Function pattern;
         private final int patternPosition;
+        private final Function value;
         private Matcher matcher;
 
         public MatchRuntimeConstPatternFunction(Function value, Function pattern, int patternPosition) {
@@ -113,12 +113,14 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            pattern.init(symbolTableSource, executionContext);
+            this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isConstant() {
             return false;
         }
 
@@ -128,10 +130,8 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
-            this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
+        public boolean isRuntimeConstant() {
+            return false;
         }
     }
 }

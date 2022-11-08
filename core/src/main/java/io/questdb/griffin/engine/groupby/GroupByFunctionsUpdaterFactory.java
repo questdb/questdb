@@ -84,24 +84,12 @@ public class GroupByFunctionsUpdaterFactory {
         return updater;
     }
 
-    /**
-     * Here we simply unroll the function list and call computeNext on each of them.
-     * The end bytecode equals to the following:
-     * <code>
-     *   groupByFunctions.getQuick(0).computeNext(value, record);
-     *   groupByFunctions.getQuick(1).computeNext(value, record);
-     *   // ...
-     *   groupByFunctions.getQuick(n).computeNext(value, record);
-     * </code>
-     * <p>
-     * Other generated methods look similar.
-     */
-    private static void generateUpdateNew(
+    private static void generateUpdateEmpty(
             BytecodeAssembler asm,
             ObjList<GroupByFunction> groupByFunctions,
             int functionsFieldIndex,
             int getQuickIndex,
-            int computeFirstIndex,
+            int setEmptyIndex,
             int updateNameIndex,
             int updateSigIndex
     ) {
@@ -112,8 +100,7 @@ public class GroupByFunctionsUpdaterFactory {
             asm.iconst(i);
             asm.invokeVirtual(getQuickIndex);
             asm.aload(1); // map value
-            asm.aload(2); // record
-            asm.invokeInterface(computeFirstIndex, 2);
+            asm.invokeInterface(setEmptyIndex, 1);
         }
         asm.return_();
         asm.endMethodCode();
@@ -152,12 +139,24 @@ public class GroupByFunctionsUpdaterFactory {
         asm.endMethod();
     }
 
-    private static void generateUpdateEmpty(
+    /**
+     * Here we simply unroll the function list and call computeNext on each of them.
+     * The end bytecode equals to the following:
+     * <code>
+     * groupByFunctions.getQuick(0).computeNext(value, record);
+     * groupByFunctions.getQuick(1).computeNext(value, record);
+     * // ...
+     * groupByFunctions.getQuick(n).computeNext(value, record);
+     * </code>
+     * <p>
+     * Other generated methods look similar.
+     */
+    private static void generateUpdateNew(
             BytecodeAssembler asm,
             ObjList<GroupByFunction> groupByFunctions,
             int functionsFieldIndex,
             int getQuickIndex,
-            int setEmptyIndex,
+            int computeFirstIndex,
             int updateNameIndex,
             int updateSigIndex
     ) {
@@ -168,7 +167,8 @@ public class GroupByFunctionsUpdaterFactory {
             asm.iconst(i);
             asm.invokeVirtual(getQuickIndex);
             asm.aload(1); // map value
-            asm.invokeInterface(setEmptyIndex, 1);
+            asm.aload(2); // record
+            asm.invokeInterface(computeFirstIndex, 2);
         }
         asm.return_();
         asm.endMethodCode();

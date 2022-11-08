@@ -35,27 +35,27 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
-    static final int SCAN_UP = -1;
     static final int SCAN_DOWN = 1;
-    protected final RuntimeIntrinsicIntervalModel intervalsModel;
+    static final int SCAN_UP = -1;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
+    protected final RuntimeIntrinsicIntervalModel intervalsModel;
     protected final int timestampIndex;
     protected LongList intervals;
-    protected TableReader reader;
-    protected int intervalsLo;
     protected int intervalsHi;
-    protected int partitionLo;
+    protected int intervalsLo;
     protected int partitionHi;
     // This is where begin binary search on partition. When there are more
     // than one searches to be performed we can use this variable to avoid
     // searching partition from top every time
     protected long partitionLimit;
-    protected long sizeSoFar = 0;
+    protected int partitionLo;
+    protected TableReader reader;
     protected long size = -1;
-    private int initialIntervalsLo;
+    protected long sizeSoFar = 0;
     private int initialIntervalsHi;
-    private int initialPartitionLo;
+    private int initialIntervalsLo;
     private int initialPartitionHi;
+    private int initialPartitionLo;
 
     public AbstractIntervalDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         assert timestampIndex > -1;
@@ -64,8 +64,34 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
+    public void close() {
+        reader = Misc.free(reader);
+    }
+
+    @Override
+    public SymbolMapReader getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndex);
+    }
+
+    public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
+        this.reader = reader;
+        this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
+        calculateRanges(intervals);
+        return this;
     }
 
     @Override
@@ -78,8 +104,8 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
-    public void close() {
-        reader = Misc.free(reader);
+    public long size() {
+        return size > -1 ? size : computeSize();
     }
 
     @Override
@@ -89,53 +115,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         partitionLo = initialPartitionLo;
         partitionHi = initialPartitionHi;
         sizeSoFar = 0;
-    }
-
-    @Override
-    public long size() {
-        return size > -1 ? size : computeSize();
-    }
-
-    @Override
-    public SymbolMapReader getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
-        return reader.newSymbolTable(columnIndex);
-    }
-
-    public int getTimestampIndex() {
-        return timestampIndex;
-    }
-
-    public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
-        this.reader = reader;
-        this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
-        calculateRanges(intervals);
-        return this;
-    }
-
-    protected static long search(MemoryR column, long value, long low, long high, int increment) {
-        while (low < high) {
-            long mid = (low + high - 1) >>> 1;
-            long midVal = column.getLong(mid * 8);
-
-            if (midVal < value)
-                low = mid + 1;
-            else if (midVal > value)
-                high = mid;
-            else {
-                // In case of multiple equal values, find the first
-                mid += increment;
-                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
-                    mid += increment;
-                }
-                return mid - increment;
-            }
-        }
-        return -(low + 1);
     }
 
     private void calculateRanges(LongList intervals) {
@@ -283,11 +262,32 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
+    protected static long search(MemoryR column, long value, long low, long high, int increment) {
+        while (low < high) {
+            long mid = (low + high - 1) >>> 1;
+            long midVal = column.getLong(mid * 8);
+
+            if (midVal < value)
+                low = mid + 1;
+            else if (midVal > value)
+                high = mid;
+            else {
+                // In case of multiple equal values, find the first
+                mid += increment;
+                while (mid > 0 && mid < high && midVal == column.getLong(mid * 8)) {
+                    mid += increment;
+                }
+                return mid - increment;
+            }
+        }
+        return -(low + 1);
+    }
+
     protected class IntervalDataFrame implements DataFrame {
 
-        protected long rowLo = 0;
-        protected long rowHi;
         protected int partitionIndex;
+        protected long rowHi;
+        protected long rowLo = 0;
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {

@@ -35,13 +35,13 @@ public class NativeLPSZ extends AbstractCharSequence {
     private int len;
 
     @Override
-    public int length() {
-        return len;
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(address + index);
     }
 
     @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(address + index);
+    public int length() {
+        return len;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

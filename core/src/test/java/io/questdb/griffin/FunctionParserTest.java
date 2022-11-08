@@ -61,15 +61,6 @@ import static io.questdb.cairo.ColumnType.NO_OVERLOAD;
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void testOverloadBetweenNullAndAnyType() {
-        for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
-            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
-            Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
-            Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
-        }
-    }
-
-    @Test
     public void overloadFromCharToDoubleDoesNotExist() {
         Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), NO_OVERLOAD);
     }
@@ -608,13 +599,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public long getLong(int col) {
-                return 847187636514L;
+            public int getGeoInt(int col) {
+                return (int) getLong(col);
             }
 
             @Override
-            public int getGeoInt(int col) {
-                return (int) getLong(col);
+            public long getLong(int col) {
+                return 847187636514L;
             }
         };
 
@@ -1153,6 +1144,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOverloadBetweenNullAndAnyType() {
+        for (short type = ColumnType.BOOLEAN; type < ColumnType.MAX; type++) {
+            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
+            Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
+            Assert.assertEquals(msg, NO_OVERLOAD, ColumnType.overloadDistance(type, ColumnType.NULL));
+        }
+    }
+
+    @Test
     public void testPassColumnToConstVarArgFunction() {
         functions.add(new InStrFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -1200,7 +1200,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", 1,ColumnType.INT));
+        metadata.add(new TableColumnMetadata("a", 1, ColumnType.INT));
         try {
             parseFunction("x(a)", metadata, createFunctionParser());
             Assert.fail();
@@ -1284,6 +1284,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Record record = new Record() {
             @Override
+            public int getInt(int col) {
+                return 0;
+            }
+
+            @Override
             public CharSequence getStr(int col) {
                 return "ABC";
             }
@@ -1297,11 +1302,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public CharSequence getSym(int col) {
                 return symbolValue;
             }
-
-            @Override
-            public int getInt(int col) {
-                return 0;
-            }
         };
 
         function.init(new SymbolTableSource() {
@@ -1309,12 +1309,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                           public SymbolTable getSymbolTable(int columnIndex) {
                               return new SymbolTable() {
                                   @Override
-                                  public CharSequence valueOf(int key) {
+                                  public CharSequence valueBOf(int key) {
                                       return symbolValue;
                                   }
 
                                   @Override
-                                  public CharSequence valueBOf(int key) {
+                                  public CharSequence valueOf(int key) {
                                       return symbolValue;
                                   }
                               };

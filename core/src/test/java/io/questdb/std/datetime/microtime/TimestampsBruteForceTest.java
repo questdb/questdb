@@ -50,45 +50,6 @@ public class TimestampsBruteForceTest {
 
     private static final Function<ZonedDateTime, ZonedDateTime> HOURS_STEP = current -> current.plus(ThreadLocalRandom.current().nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
     private static final Function<ZonedDateTime, ZonedDateTime> SECONDS_STEP = current -> current.plus(ThreadLocalRandom.current().nextInt(1, 20_000), ChronoUnit.MILLIS);
-
-    private static final TemporalAdjuster TRUNCATE_TO_DECADE = (temporal -> {
-        // intentionally naive and different from the production impl
-        String yearString = String.valueOf(temporal.get(YEAR));
-        int shiftedYear = Integer.parseInt(replaceLastCharWithZero(yearString));
-        return temporal.with(YEAR, shiftedYear)
-                .with(DAY_OF_YEAR, 1)
-                .with(MICRO_OF_DAY, 0);
-    });
-
-    private static String replaceLastCharWithZero(String yearString) {
-        return yearString.substring(0, yearString.length() - 1) + "0";
-    }
-
-    private static final TemporalAdjuster TRUNCATE_TO_QUARTER = (temporal -> {
-        int month = temporal.get(MONTH_OF_YEAR);
-        int shiftedMonth;
-        // this is intentionally naive, to have the code as straightforward as possible
-        // and different from the production implementation under test
-        switch (month) {
-            case 1: case 2: case 3:
-                shiftedMonth = 1;
-                break;
-            case 4: case 5: case 6:
-                shiftedMonth = 4;
-                break;
-            case 7: case 8: case 9:
-                shiftedMonth = 7;
-                break;
-            case 10: case 11: case 12:
-                shiftedMonth = 10;
-                break;
-            default:
-                throw new AssertionError("More than 12 months in a year, huh? month: " + month);
-        }
-        return temporal.with(MONTH_OF_YEAR, shiftedMonth)
-                .with(DAY_OF_MONTH, 1)
-                .with(MICRO_OF_DAY, 0);
-    });
     private static final TemporalAdjuster TRUNCATE_TO_CENTURY = (temporal -> {
         int year = temporal.get(YEAR);
         int yearRemainder = year % 100;
@@ -102,25 +63,64 @@ public class TimestampsBruteForceTest {
                 .with(DAY_OF_YEAR, 1)
                 .with(MICRO_OF_DAY, 0);
     });
-
+    private static final TemporalAdjuster TRUNCATE_TO_DECADE = (temporal -> {
+        // intentionally naive and different from the production impl
+        String yearString = String.valueOf(temporal.get(YEAR));
+        int shiftedYear = Integer.parseInt(replaceLastCharWithZero(yearString));
+        return temporal.with(YEAR, shiftedYear)
+                .with(DAY_OF_YEAR, 1)
+                .with(MICRO_OF_DAY, 0);
+    });
+    private static final TemporalAdjuster TRUNCATE_TO_QUARTER = (temporal -> {
+        int month = temporal.get(MONTH_OF_YEAR);
+        int shiftedMonth;
+        // this is intentionally naive, to have the code as straightforward as possible
+        // and different from the production implementation under test
+        switch (month) {
+            case 1:
+            case 2:
+            case 3:
+                shiftedMonth = 1;
+                break;
+            case 4:
+            case 5:
+            case 6:
+                shiftedMonth = 4;
+                break;
+            case 7:
+            case 8:
+            case 9:
+                shiftedMonth = 7;
+                break;
+            case 10:
+            case 11:
+            case 12:
+                shiftedMonth = 10;
+                break;
+            default:
+                throw new AssertionError("More than 12 months in a year, huh? month: " + month);
+        }
+        return temporal.with(MONTH_OF_YEAR, shiftedMonth)
+                .with(DAY_OF_MONTH, 1)
+                .with(MICRO_OF_DAY, 0);
+    });
 
     @Test
-    public void testFlooring_MS_SS_MI_HH() {
-        // testing 4 cases at once because it allows us to amortize cost of toEpochMicros()
-        // separating this would make the test(s) run longer by a few 100s of ms.
-        testFlooring(2, SECONDS_STEP,
-                (expected, tested) -> {
-                    assertEpochMicrosEquals(expected.truncatedTo(MILLIS), Timestamps.floorMS(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(SECONDS), Timestamps.floorSS(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(MINUTES), Timestamps.floorMI(tested));
-                    assertEpochMicrosEquals(expected.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(tested));
-                });
+    public void testFlooring_CENTURY() {
+        testFlooring(40, HOURS_STEP,
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(tested)));
     }
 
     @Test
     public void testFlooring_DD() {
         testFlooring(40, HOURS_STEP,
                 (expected, tested) -> assertEpochMicrosEquals(expected.truncatedTo(DAYS), Timestamps.floorDD(tested)));
+    }
+
+    @Test
+    public void testFlooring_DECADE() {
+        testFlooring(40, HOURS_STEP,
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(tested)));
     }
 
     @Test
@@ -136,6 +136,19 @@ public class TimestampsBruteForceTest {
     }
 
     @Test
+    public void testFlooring_MS_SS_MI_HH() {
+        // testing 4 cases at once because it allows us to amortize cost of toEpochMicros()
+        // separating this would make the test(s) run longer by a few 100s of ms.
+        testFlooring(2, SECONDS_STEP,
+                (expected, tested) -> {
+                    assertEpochMicrosEquals(expected.truncatedTo(MILLIS), Timestamps.floorMS(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(SECONDS), Timestamps.floorSS(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(MINUTES), Timestamps.floorMI(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(tested));
+                });
+    }
+
+    @Test
     public void testFlooring_Quarter() {
         testFlooring(40, HOURS_STEP,
                 (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(tested)));
@@ -144,19 +157,24 @@ public class TimestampsBruteForceTest {
     @Test
     public void testFlooring_YYYY() {
         testFlooring(40, HOURS_STEP,
-                (expected, tested) ->  assertEpochMicrosEquals(expected.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(tested)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(tested)));
     }
 
-    @Test
-    public void testFlooring_DECADE() {
-        testFlooring(40, HOURS_STEP,
-                (expected, tested) ->  assertEpochMicrosEquals(expected.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(tested)));
+    private static void assertEpochMicrosEquals(ZonedDateTime expected, long epochMicros) {
+        long expectedMicros = toEpochMicros(expected);
+        if (expectedMicros != epochMicros) {
+            DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSS")
+                    .withLocale(Locale.US)
+                    .withZone(ZoneId.of("UTC"));
+            fail("Epoch micros " + epochMicros + " (="
+                    + dateTimeFormatter.format(Instant.ofEpochMilli(epochMicros / 1000))
+                    + ") is not the same instant as the expected " + expectedMicros + " (="
+                    + dateTimeFormatter.format(expected.toInstant()) + ")");
+        }
     }
 
-    @Test
-    public void testFlooring_CENTURY() {
-        testFlooring(40, HOURS_STEP,
-                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(tested)));
+    private static String replaceLastCharWithZero(String yearString) {
+        return yearString.substring(0, yearString.length() - 1) + "0";
     }
 
     private static void testFlooring(long yearsToTest, Function<ZonedDateTime, ZonedDateTime> stepFunction, BiConsumer<ZonedDateTime, Long> assertFunction) {
@@ -174,18 +192,5 @@ public class TimestampsBruteForceTest {
     private static long toEpochMicros(ZonedDateTime zonedDateTime) {
         return TimeUnit.SECONDS.toMicros(zonedDateTime.toEpochSecond())
                 + TimeUnit.NANOSECONDS.toMicros(zonedDateTime.getNano());
-    }
-
-    private static void assertEpochMicrosEquals(ZonedDateTime expected, long epochMicros) {
-        long expectedMicros = toEpochMicros(expected);
-        if (expectedMicros != epochMicros) {
-            DateTimeFormatter dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss.SSS")
-                    .withLocale(Locale.US)
-                    .withZone(ZoneId.of("UTC"));
-            fail("Epoch micros " + epochMicros + " (="
-                    + dateTimeFormatter.format(Instant.ofEpochMilli(epochMicros / 1000))
-                    + ") is not the same instant as the expected " + expectedMicros + " (="
-                    + dateTimeFormatter.format(expected.toInstant()) + ")");
-        }
     }
 }

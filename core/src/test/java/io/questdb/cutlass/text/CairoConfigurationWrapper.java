@@ -218,11 +218,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
-        return conf.getWallEnabledDefault();
-    }
-
-    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }
@@ -273,26 +268,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getSqlCopyInputRoot() {
-        return conf.getSqlCopyInputRoot();
-    }
-
-    @Override
-    public CharSequence getSqlCopyInputWorkRoot() {
-        return conf.getSqlCopyInputWorkRoot();
-    }
-
-    @Override
-    public long getSqlCopyMaxIndexChunkSize() {
-        return conf.getSqlCopyMaxIndexChunkSize();
-    }
-
-    @Override
-    public int getSqlCopyQueueCapacity() {
-        return conf.getSqlCopyQueueCapacity();
-    }
-
-    @Override
     public int getInsertPoolCapacity() {
         return conf.getInsertPoolCapacity();
     }
@@ -300,6 +275,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return conf.getLatestByQueueCapacity();
+    }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return conf.getMaxCrashFiles();
     }
 
     @Override
@@ -433,11 +413,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getStrFunctionMaxBufferLength() {
-        return conf.getStrFunctionMaxBufferLength();
-    }
-
-    @Override
     public CharSequence getRoot() {
         return conf.getRoot();
     }
@@ -520,6 +495,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return conf.getSqlCopyBufferSize();
+    }
+
+    @Override
+    public CharSequence getSqlCopyInputRoot() {
+        return conf.getSqlCopyInputRoot();
+    }
+
+    @Override
+    public CharSequence getSqlCopyInputWorkRoot() {
+        return conf.getSqlCopyInputWorkRoot();
+    }
+
+    @Override
+    public int getSqlCopyLogRetentionDays() {
+        return conf.getSqlCopyLogRetentionDays();
+    }
+
+    @Override
+    public long getSqlCopyMaxIndexChunkSize() {
+        return conf.getSqlCopyMaxIndexChunkSize();
+    }
+
+    @Override
+    public int getSqlCopyQueueCapacity() {
+        return conf.getSqlCopyQueueCapacity();
     }
 
     @Override
@@ -628,11 +628,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapKeyCapacity() {
-        return conf.getSqlSmallMapKeyCapacity();
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return conf.getSqlMapMaxPages();
     }
@@ -668,6 +663,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallMapKeyCapacity() {
+        return conf.getSqlSmallMapKeyCapacity();
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return conf.getSqlSortKeyMaxPages();
     }
@@ -698,6 +698,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
+    }
+
+    @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
     }
@@ -720,6 +725,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return conf.getVectorAggregateQueueCapacity();
+    }
+
+    @Override
+    public boolean getWallEnabledDefault() {
+        return conf.getWallEnabledDefault();
     }
 
     @Override
@@ -763,6 +773,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isIOURingEnabled() {
+        return conf.isIOURingEnabled();
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return conf.isO3QuickSortEnabled();
     }
@@ -790,20 +805,5 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return conf.isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
-    public int getSqlCopyLogRetentionDays() {
-        return conf.getSqlCopyLogRetentionDays();
-    }
-
-    @Override
-    public boolean isIOURingEnabled() {
-        return conf.isIOURingEnabled();
-    }
-
-    @Override
-    public int getMaxCrashFiles() {
-        return conf.getMaxCrashFiles();
     }
 }

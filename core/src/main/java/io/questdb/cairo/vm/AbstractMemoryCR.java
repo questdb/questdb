@@ -38,34 +38,41 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
     private final Long256Impl long256 = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    protected long pageAddress = 0;
-    protected FilesFacade ff;
     protected long fd = -1;
-    protected long size = 0;
+    protected FilesFacade ff;
     protected long lim;
+    protected long pageAddress = 0;
+    protected long size = 0;
 
-    @Override
-    public long offsetInPage(long offset) {
-        return offset;
-    }
-
-    @Override
-    public int pageIndex(long offset) {
-        return 0;
+    public long addressOf(long offset) {
+        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset;
     }
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
     }
 
-    @Override
-    public long getPageAddress(int pageIndex) {
-        return pageAddress;
+    public long getFd() {
+        return fd;
+    }
+
+    public FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    public Long256 getLong256A(long offset) {
+        getLong256(offset, long256);
+        return long256;
+    }
+
+    public Long256 getLong256B(long offset) {
+        getLong256(offset, long256B);
+        return long256B;
     }
 
     @Override
-    public long resize(long size) {
-        extend(size);
+    public long getPageAddress(int pageIndex) {
         return pageAddress;
     }
 
@@ -82,31 +89,24 @@ public abstract class AbstractMemoryCR implements MemoryCR {
         return getStr(offset, csview2);
     }
 
-    public Long256 getLong256A(long offset) {
-        getLong256(offset, long256);
-        return long256;
+    @Override
+    public long offsetInPage(long offset) {
+        return offset;
     }
 
-    public Long256 getLong256B(long offset) {
-        getLong256(offset, long256B);
-        return long256B;
+    @Override
+    public int pageIndex(long offset) {
+        return 0;
+    }
+
+    @Override
+    public long resize(long size) {
+        extend(size);
+        return pageAddress;
     }
 
     @Override
     public long size() {
         return size;
-    }
-
-    public long addressOf(long offset) {
-        assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset;
-    }
-
-    public long getFd() {
-        return fd;
-    }
-
-    public FilesFacade getFilesFacade() {
-        return ff;
     }
 }

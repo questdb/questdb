@@ -46,6 +46,10 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
         testApplyOutOfOrder(100_000);
     }
 
+    private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
+        writer.processWalCommit(walPath, -1L, inOrder, rowLo, count1, timestampLo, timestampHi, null);
+    }
+
     @SuppressWarnings("SameParameterValue")
     private void compareTables(String expected, String actual) throws SqlException {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expected, actual, LOG);
@@ -194,9 +198,5 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 compareTables("select * from wal_clean order by ts", "x");
             }
         });
-    }
-
-    private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalCommit(walPath, -1L, inOrder, rowLo, count1, timestampLo, timestampHi, null);
     }
 }

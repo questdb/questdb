@@ -52,16 +52,6 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         Arrays.fill(values, noEntryValue);
     }
 
-    @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-        values[index] = noEntryValue;
-    }
-
-    public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
-    }
-
     public boolean contains(CharSequence key) {
         return keyIndex(key) < 0;
     }
@@ -90,11 +80,8 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
         }
     }
 
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public int valueAt(int index) {
+        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     private void putAt0(int index, CharSequence key, int value) {
@@ -127,5 +114,18 @@ public class LowerCaseAsciiCharSequenceIntHashMap extends AbstractLowerCaseAscii
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }
