@@ -168,7 +168,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    const ssize_t n = recv((int) fd, (void *) ptr, (size_t) len, MSG_PEEK);
+    ssize_t n;
+    RESTARTABLE(recv((int) fd, (void *) ptr, (size_t) len, MSG_PEEK), n);
     if (n > 0) {
         return n;
     }
@@ -187,7 +188,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
-    return (jboolean) (recv((int) fd, &c, 1, 0) < 1);
+    ssize_t res;
+    RESTARTABLE(recv((int) fd, &c, 1, 0), res);
+    return (jboolean) (res < 1);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking

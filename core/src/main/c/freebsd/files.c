@@ -136,7 +136,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         return -1;
     }
 
-    while ((read_sz = pread(input, buf, sizeof buf, wrt_off)) > 0) {
+    for (;;) {
+        RESTARTABLE(pread(input, buf, sizeof buf, wrt_off), read_sz);
+        if (read_sz <= 0) {
+            break;
+        }
         char *out_ptr = buf;
         long wrtn;
 

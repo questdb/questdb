@@ -92,7 +92,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
          jlong fd,
          jlong address,
          jlong len) {
-    return write((int) fd, (void *) (address), (size_t) len);
+    ssize_t res;
+    RESTARTABLE(write((int) fd, (void *) (address), (size_t) len), res);
+    return res;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
