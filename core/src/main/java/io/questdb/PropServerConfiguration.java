@@ -1731,6 +1731,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMetadataPoolCapacity() {
+            return sqlModelPoolCapacity;
+        }
+
+        @Override
         public long getMiscAppendPageSize() {
             return writerMiscAppendPageSize;
         }

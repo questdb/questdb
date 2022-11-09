@@ -124,6 +124,11 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public boolean isColumnPreTouchEnabled() {
+                return false;
+            }
+
+            @Override
             public boolean isTimestampRequired() {
                 return false;
             }
@@ -143,6 +148,10 @@ public final class AllowAllSqlSecurityContext {
 
             @Override
             public void setCloneSymbolTables(boolean cloneSymbolTables) {
+            }
+
+            @Override
+            public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
             }
 
             @Override
