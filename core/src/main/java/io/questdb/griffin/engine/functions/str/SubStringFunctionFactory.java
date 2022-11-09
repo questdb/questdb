@@ -70,14 +70,12 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
     private static class SubStringFunc extends StrFunction implements TernaryFunction {
 
-        private final Function strFunc;
-        private final Function startFunc;
+        private final boolean isSimplifiable;
         private final Function lenFunc;
-
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-
-        private final boolean isSimplifiable;
+        private final Function startFunc;
+        private final Function strFunc;
 
         public SubStringFunc(Function strFunc, Function startFunc, Function lenFunc) {
             this.strFunc = strFunc;
@@ -89,13 +87,13 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return strFunc;
+        public Function getCenter() {
+            return startFunc;
         }
 
         @Override
-        public Function getCenter() {
-            return startFunc;
+        public Function getLeft() {
+            return strFunc;
         }
 
         @Override

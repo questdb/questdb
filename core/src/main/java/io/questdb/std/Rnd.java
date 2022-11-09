@@ -29,9 +29,9 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public class Rnd {
-    private static final long mask = (1L << 48) - 1;
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
+    private static final long mask = (1L << 48) - 1;
     private final StringSink sink = new StringSink();
     private long s0;
     private long s1;
@@ -52,7 +52,7 @@ public class Rnd {
         return (byte) nextLong();
     }
 
-    //returns random bytes between 'B' and 'Z' for legacy reasons 
+    //returns random bytes between 'B' and 'Z' for legacy reasons
     public byte[] nextBytes(int len) {
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
@@ -188,5 +188,4 @@ public class Rnd {
     private int nextIntForDouble(int bits) {
         return (int) ((nextLong() & mask) >>> (48 - bits));
     }
-
 }

@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
@@ -43,21 +42,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     private NullConstant() {
         this.type = ColumnType.NULL;
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public boolean supportsRandomAccess() {
-        return true;
     }
 
     @Override
@@ -91,6 +75,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public long getDate(Record rec) {
+        return DateConstant.NULL.getDate(null);
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return DoubleConstant.NULL.getDouble(null);
     }
@@ -101,8 +90,23 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public short getShort(Record rec) {
-        return ShortConstant.ZERO.getShort(null);
+    public byte getGeoByte(Record rec) {
+        return GeoHashes.BYTE_NULL;
+    }
+
+    @Override
+    public int getGeoInt(Record rec) {
+        return GeoHashes.INT_NULL;
+    }
+
+    @Override
+    public long getGeoLong(Record rec) {
+        return GeoHashes.NULL;
+    }
+
+    @Override
+    public short getGeoShort(Record rec) {
+        return GeoHashes.SHORT_NULL;
     }
 
     @Override
@@ -113,6 +117,16 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public long getLong(Record rec) {
         return LongConstant.NULL.getLong(null);
+    }
+
+    @Override
+    public long getLong128Hi(Record rec) {
+        return Long128Constant.NULL_HI;
+    }
+
+    @Override
+    public long getLong128Lo(Record rec) {
+        return Long128Constant.NULL_LO;
     }
 
     @Override
@@ -131,13 +145,18 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        return Numbers.LONG_NaN;
+    public Record getRecord(Record rec) {
+        return null;
     }
 
     @Override
-    public long getLong128Lo(Record rec) {
-        return Numbers.LONG_NaN;
+    public RecordCursorFactory getRecordCursorFactory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return ShortConstant.ZERO.getShort(null);
     }
 
     @Override
@@ -196,42 +215,22 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public long getDate(Record rec) {
-        return DateConstant.NULL.getDate(null);
-    }
-
-    @Override
-    public byte getGeoByte(Record rec) {
-        return GeoHashes.BYTE_NULL;
-    }
-
-    @Override
-    public short getGeoShort(Record rec) {
-        return GeoHashes.SHORT_NULL;
-    }
-
-    @Override
-    public int getGeoInt(Record rec) {
-        return GeoHashes.INT_NULL;
-    }
-
-    @Override
-    public long getGeoLong(Record rec) {
-        return GeoHashes.NULL;
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Record getRecord(Record rec) {
-        return null;
+    public int getType() {
+        return type;
     }
 
     @Override
     public boolean isNullConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsRandomAccess() {
         return true;
     }
 }

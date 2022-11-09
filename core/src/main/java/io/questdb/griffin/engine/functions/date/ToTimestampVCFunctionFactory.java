@@ -77,6 +77,16 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             timestamp = evaluateConstant(arg, timestampFormat, locale);
         }
 
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return timestamp;
+        }
+
         private long evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
             CharSequence value = arg.getStr(null);
             try {
@@ -88,23 +98,13 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
             return Numbers.LONG_NaN;
         }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return timestamp;
-        }
     }
 
     private static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
-        private final DateFormat timestampFormat;
         private final DateLocale locale;
+        private final DateFormat timestampFormat;
 
         public Func(Function arg, DateFormat timestampFormat, DateLocale locale) {
             this.arg = arg;

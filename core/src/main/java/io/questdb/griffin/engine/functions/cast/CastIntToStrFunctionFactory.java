@@ -79,6 +79,15 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final int value = arg.getInt(rec);
+            if (value == Numbers.INT_NaN) {
+                return;
+            }
+            sink.put(value);
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {
@@ -87,15 +96,6 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
-                return;
-            }
-            sink.put(value);
         }
     }
 }

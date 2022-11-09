@@ -29,7 +29,10 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.Job;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -39,8 +42,8 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class CairoEngineTest extends AbstractCairoTest {
-    private final static Path path = new Path();
     private final static Path otherPath = new Path();
+    private final static Path path = new Path();
 
     @Test
     public void testAncillaries() throws Exception {
@@ -72,6 +75,73 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 Assert.assertEquals(4, listener.count);
                 Assert.assertEquals(configuration, engine.getConfiguration());
+            }
+        });
+    }
+
+    @Test
+    public void testCannotMapTableId() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() {
+                ff = new FilesFacadeImpl() {
+                    private boolean failNextAlloc = false;
+                    private long theFD = 0;
+
+                    @Override
+                    public boolean allocate(long fd, long size) {
+                        if (failNextAlloc) {
+                            failNextAlloc = false;
+                            return false;
+                        }
+                        return super.allocate(fd, size);
+                    }
+
+                    @Override
+                    public long length(long fd) {
+                        if (theFD == fd) {
+                            failNextAlloc = true;
+                            theFD = 0;
+                            return 0;
+                        }
+                        return super.length(fd);
+                    }
+
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
+                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
+                            theFD = fd;
+                        }
+                        return fd;
+                    }
+                };
+
+                try {
+                    new CairoEngine(configuration);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                } finally {
+                    ff = null;
+                }
+                Path.clearThreadLocals();
+            }
+        });
+    }
+
+    @Test
+    public void testDuplicateTableCreation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                try {
+                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                    fail("duplicated tables should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+                }
             }
         });
     }
@@ -123,6 +193,28 @@ public class CairoEngineTest extends AbstractCairoTest {
                     Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
                     assertReader(engine, "x");
                     assertWriter(engine, "x");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLockWriter_ReadOnlyContext() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                try {
+                    engine.lockWriter(readOnlyContext, "x", "testing");
+                    fail("acquiring a write lock in read-only context should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
+
+                    // check the lock was actually NOT acquired
+                    assertNull(engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
+                    // and release it again to prevent leaks
+                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
                 }
             }
         });
@@ -189,7 +281,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "remove failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table");
                 }
             }
         });
@@ -310,7 +402,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Rename failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 assertReader(engine, "x");
@@ -368,6 +460,30 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnlockWriter_ReadOnlyContext() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
+                try {
+                    engine.unlockWriter(readOnlyContext, "x");
+                    fail("releasing a write lock in read-only context should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
+
+                    // check the lock was actually NOT released
+                    assertEquals("testing", engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
+
+                    // and now release it to prevent leaks
+                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWrongReaderVersion() throws Exception {
         createX();
 
@@ -380,57 +496,6 @@ public class CairoEngineTest extends AbstractCairoTest {
                 } catch (ReaderOutOfDateException ignored) {
                 }
                 Assert.assertTrue(engine.clear());
-            }
-        });
-    }
-
-    @Test
-    public void testCannotMapTableId() throws Exception {
-        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
-            @Override
-            public void run() {
-                ff = new FilesFacadeImpl() {
-                    private long theFD = 0;
-                    private boolean failNextAlloc = false;
-
-                    @Override
-                    public boolean allocate(long fd, long size) {
-                        if (failNextAlloc) {
-                            failNextAlloc = false;
-                            return false;
-                        }
-                        return super.allocate(fd, size);
-                    }
-
-                    @Override
-                    public long length(long fd) {
-                        if (theFD == fd) {
-                            failNextAlloc = true;
-                            theFD = 0;
-                            return 0;
-                        }
-                        return super.length(fd);
-                    }
-
-                    @Override
-                    public long openRW(LPSZ name, long opts) {
-                        long fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, TableUtils.TAB_INDEX_FILE_NAME)) {
-                            theFD = fd;
-                        }
-                        return fd;
-                    }
-                };
-
-                try {
-                    new CairoEngine(configuration);
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
-                } finally {
-                    ff = null;
-                }
-                Path.clearThreadLocals();
             }
         });
     }
@@ -459,67 +524,5 @@ public class CairoEngineTest extends AbstractCairoTest {
                 .col("b", ColumnType.INT)) {
             CairoTestUtils.create(model);
         }
-    }
-
-    @Test
-    public void testDuplicateTableCreation() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                try {
-                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
-                    fail("duplicated tables should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLockWriter_ReadOnlyContext() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                try {
-                    engine.lockWriter(readOnlyContext, "x", "testing");
-                    fail("acquiring a write lock in read-only context should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
-
-                    // check the lock was actually NOT acquired
-                    assertNull(engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
-                    // and release it again to prevent leaks
-                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testUnlockWriter_ReadOnlyContext() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoSecurityContextImpl readOnlyContext = new CairoSecurityContextImpl(false);
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
-                CairoTestUtils.create(model);
-                engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing");
-                try {
-                    engine.unlockWriter(readOnlyContext, "x");
-                    fail("releasing a write lock in read-only context should not be permitted!");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
-
-                    // check the lock was actually NOT released
-                    assertEquals("testing", engine.lockWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing"));
-
-                    // and now release it to prevent leaks
-                    engine.unlockWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
-                }
-            }
-        });
     }
 }

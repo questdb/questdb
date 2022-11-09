@@ -38,18 +38,18 @@ import java.io.Closeable;
 
 public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
-    private final StringSink tempSink = new StringSink();
-    private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final ObjHashSet<CharSequence> uniqueColumnNames = new ObjHashSet<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
+    private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
+    private final ObjHashSet<CharSequence> uniqueColumnNames = new ObjHashSet<>();
     private final DirectCharSink utf8Sink;
     private int fieldCount;
-    private boolean header = false;
     private boolean forceHeader = false;
+    private boolean header = false;
     private CharSequence tableName;
 
     public TextMetadataDetector(
@@ -211,18 +211,10 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
         return allStrings;
     }
 
-    ObjList<CharSequence> getColumnNames() {
-        return columnNames;
-    }
-
-    ObjList<TypeAdapter> getColumnTypes() {
-        return columnTypes;
-    }
-
     // metadata detector is essentially part of text lexer
     // we can potentially keep a cache of char sequences until the whole
     // system is reset, similar to flyweight char sequence over array of chars
-    //NOTE! should be kept consistent with TableUtils.isValidColumnName() 
+    //NOTE! should be kept consistent with TableUtils.isValidColumnName()
     private String normalise(CharSequence seq) {
         boolean capNext = false;
         tempSink.clear();
@@ -299,5 +291,13 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
             }
         }
+    }
+
+    ObjList<CharSequence> getColumnNames() {
+        return columnNames;
+    }
+
+    ObjList<TypeAdapter> getColumnTypes() {
+        return columnTypes;
     }
 }

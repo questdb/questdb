@@ -51,6 +51,11 @@ public class StrFunctionTest {
     };
 
     @Test
+    public void testCastStrToChar() {
+        Assert.assertEquals('A', new StrConstant("A").getChar(null));
+    }
+
+    @Test
     public void testCastToByte() {
         Assert.assertEquals(10, new StrConstant("10").getByte(null));
     }
@@ -378,11 +383,6 @@ public class StrFunctionTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `-32769` [STRING -> SHORT]");
         }
-    }
-
-    @Test
-    public void testCastStrToChar() {
-        Assert.assertEquals('A', new StrConstant("A").getChar(null));
     }
 
     @Test

@@ -58,17 +58,17 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
 
     private final PageAddressCacheRecord record;
-    private PageAddressCacheRecord recordB;
-    // Buffer used to accumulate all filtered row ids.
-    private DirectLongList rows;
-    private long rowIndex;
-    private long rowCount;
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
+    private PageAddressCacheRecord recordB;
+    private long rowCount;
+    private long rowIndex;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowLimit;
+    // Buffer used to accumulate all filtered row ids.
+    private DirectLongList rows;
 
     public AsyncFilteredNegativeLimitRecordCursor() {
         this.record = new PageAddressCacheRecord();
@@ -98,13 +98,17 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        if (recordB != null) {
+            return recordB;
+        }
+        recordB = new PageAddressCacheRecord(record);
+        return recordB;
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
     }
 
     @Override
@@ -124,12 +128,8 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        if (recordB != null) {
-            return recordB;
-        }
-        recordB = new PageAddressCacheRecord(record);
-        return recordB;
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
     }
 
     @Override
@@ -139,13 +139,13 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        rowIndex = rows.getCapacity() - rowCount;
+    public long size() {
+        return rowCount;
     }
 
     @Override
-    public long size() {
-        return rowCount;
+    public void toTop() {
+        rowIndex = rows.getCapacity() - rowCount;
     }
 
     private void fetchAllFrames() {

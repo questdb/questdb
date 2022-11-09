@@ -49,7 +49,7 @@ public class EqStrGeoHashFunctionFactory extends EqGeoHashGeoHashFunctionFactory
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
-        args.set(0, STR2GEOHASH_FF.newInstance(position, args.getQuick(1).getType(), args.getQuick(0)));
+        args.set(0, CastStrToGeoHashFunctionFactory.newInstance(position, args.getQuick(1).getType(), args.getQuick(0)));
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 }

@@ -316,10 +316,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 try {
                     CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
                     Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-                    try (
-                            UpdateOperation op = cq.getUpdateOperation();
-                            OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-                    ) {
+                    try (OperationFuture fut = cq.execute(eventSubSequence)) {
                         writer.tick();
                         fut.await();
                     }
@@ -833,6 +830,52 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateGeohashColumnWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x as lng2" +
+                    " from long_sequence(10)" +
+                    " )" +
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            compile("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
+            compile("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
+            compile("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
+            compile("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
+            compile("insert into up select * from " +
+                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
+                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
+                    " x + 10 as lng2," +
+                    " rnd_geohash(5) as geo1," +
+                    " rnd_geohash(10) as geo2," +
+                    " rnd_geohash(25) as geo4," +
+                    " rnd_geohash(40) as geo8" +
+                    " from long_sequence(5))", sqlExecutionContext);
+
+            executeUpdate("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
+
+            assertSql("up", "ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
+                    "1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t\n" +
+                    "1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t\n" +
+                    "1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t\n" +
+                    "1970-01-01T18:00:00.000000Z\t1\t4\t\t\t\t\n" +
+                    "1970-01-02T00:00:00.000000Z\t1\t5\t\t\t\t\n" +
+                    "1970-01-02T06:00:00.000000Z\t1\t6\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-02T12:00:00.000000Z\t190232\t7\t\t\t\t\n" +
+                    "1970-01-02T18:00:00.000000Z\t\t8\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-03T00:00:00.000000Z\t15\t9\t\t\t\t\n" +
+                    "1970-01-03T06:00:00.000000Z\t\t10\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-07T22:40:00.000000Z\t\t11\tn\tpn\t2gjm2\t7qgcr0y6\n" +
+                    "1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz\n" +
+                    "1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0\n" +
+                    "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n");
+        });
+    }
+
+    @Test
     public void testUpdateGeohashToStringLiteral() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -1060,10 +1103,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts)", sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(3, fut.getAffectedRowsCount());
             }
@@ -1110,10 +1150,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             try {
                 CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                try (
-                        UpdateOperation op = cq.getUpdateOperation();
-                        OperationFuture fut = cq.getDispatcher().execute(op, roExecutionContext, null)
-                ) {
+                try (OperationFuture fut = cq.execute(null)) {
                     fut.await();
                     Assert.fail();
                 }
@@ -1423,52 +1460,6 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateGeohashColumnWithColumnTop() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table up as" +
-                    " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
-                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
-                    " x as lng2" +
-                    " from long_sequence(10)" +
-                    " )" +
-                    " timestamp(ts) partition by DAY", sqlExecutionContext);
-
-            compile("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
-            compile("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
-            compile("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
-            compile("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
-            compile("insert into up select * from " +
-                    " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
-                    " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
-                    " x + 10 as lng2," +
-                    " rnd_geohash(5) as geo1," +
-                    " rnd_geohash(10) as geo2," +
-                    " rnd_geohash(25) as geo4," +
-                    " rnd_geohash(40) as geo8" +
-                    " from long_sequence(5))", sqlExecutionContext);
-
-            executeUpdate("UPDATE up SET geo1 = cast('q' as geohash(1c)), geo2 = 'qu', geo4='quest', geo8='questdb0' WHERE lng2 in (6, 8, 10, 12, 14)");
-
-            assertSql("up", "ts\tstr1\tlng2\tgeo1\tgeo2\tgeo4\tgeo8\n" +
-                    "1970-01-01T00:00:00.000000Z\t15\t1\t\t\t\t\n" +
-                    "1970-01-01T06:00:00.000000Z\t15\t2\t\t\t\t\n" +
-                    "1970-01-01T12:00:00.000000Z\t\t3\t\t\t\t\n" +
-                    "1970-01-01T18:00:00.000000Z\t1\t4\t\t\t\t\n" +
-                    "1970-01-02T00:00:00.000000Z\t1\t5\t\t\t\t\n" +
-                    "1970-01-02T06:00:00.000000Z\t1\t6\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-02T12:00:00.000000Z\t190232\t7\t\t\t\t\n" +
-                    "1970-01-02T18:00:00.000000Z\t\t8\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-03T00:00:00.000000Z\t15\t9\t\t\t\t\n" +
-                    "1970-01-03T06:00:00.000000Z\t\t10\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-07T22:40:00.000000Z\t\t11\tn\tpn\t2gjm2\t7qgcr0y6\n" +
-                    "1970-01-08T04:40:00.000000Z\t\t12\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-08T10:40:00.000000Z\t\t13\t8\t1y\tcd0fj\t5h18p8vz\n" +
-                    "1970-01-08T16:40:00.000000Z\t\t14\tq\tqu\tquest\tquestdb0\n" +
-                    "1970-01-08T22:40:00.000000Z\t\t15\t1\trc\t5vm2w\tz22qdyty\n");
-        });
-    }
-
-    @Test
     public void testUpdateSymbolWithNotEqualsInWhere() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -1478,10 +1469,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     " timestamp(ts)", sqlExecutionContext);
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(2, fut.getAffectedRowsCount());
             }
@@ -1999,10 +1987,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     "\t1970-01-01T00:00:04.000000Z\t5\n");
 
             CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(1, fut.getAffectedRowsCount());
             }
@@ -2015,7 +2000,7 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
-    private void applyUpdate(UpdateOperation updateOperation) throws SqlException {
+    private void applyUpdate(UpdateOperation updateOperation) {
         try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
             updateOperation.apply(tableWriter, false);
         }
@@ -2048,7 +2033,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
+        executeOperation(query, CompiledQuery.UPDATE);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {
@@ -2256,10 +2241,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
             barrier.await(); // table is locked
             CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
-            try (
-                    UpdateOperation op = cq.getUpdateOperation();
-                    OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-            ) {
+            try (OperationFuture fut = cq.execute(eventSubSequence)) {
                 Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
                 Assert.assertEquals(0, fut.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue

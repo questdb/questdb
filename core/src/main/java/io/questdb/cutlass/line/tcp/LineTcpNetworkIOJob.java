@@ -34,17 +34,18 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import static io.questdb.network.IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
 import static io.questdb.network.IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
 
 class LineTcpNetworkIOJob implements NetworkIOJob {
     private final static Log LOG = LogFactory.getLog(LineTcpNetworkIOJob.class);
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
-    private final int workerId;
+    private final long maintenanceInterval;
+    private final MillisecondClock millisecondClock;
+    private final LineTcpMeasurementScheduler scheduler;
     private final CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8 = new CharSequenceObjHashMap<>();
     private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
-    private final MillisecondClock millisecondClock;
-    private final long maintenanceInterval;
-    private final LineTcpMeasurementScheduler scheduler;
+    private final int workerId;
     // Context blocked on LineTcpMeasurementScheduler queue
     private LineTcpConnectionContext busyContext = null;
     private final IORequestProcessor<LineTcpConnectionContext> onRequest = this::onRequest;
@@ -72,6 +73,10 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     @Override
     public void close() {
+        if (busyContext != null) {
+            busyContext.getDispatcher().disconnect(busyContext, DISCONNECT_REASON_RETRY_FAILED);
+            busyContext = null;
+        }
         Misc.freeObjList(unusedSymbolCaches);
     }
 
@@ -96,6 +101,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         boolean busy = false;
         if (busyContext != null) {
             if (handleIO(busyContext)) {
+                // queue is still full
                 return true;
             }
             LOG.debug().$("context is no longer waiting on a full queue [fd=").$(busyContext.getFd()).$(']').$();

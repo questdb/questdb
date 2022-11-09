@@ -32,7 +32,10 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
@@ -70,12 +73,11 @@ public class IODispatcherTest {
             "{\"ddl\":\"OK\"}\n\r\n" +
             "00\r\n" +
             "\r\n";
-
-    private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
-    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
+    private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final Metrics metrics = Metrics.enabled();
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -110,6 +112,23 @@ public class IODispatcherTest {
             .build();
 
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+
+    public static HttpServer createHttpServer(
+            HttpServerConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            Metrics metrics
+    ) {
+        return Services.createHttpServer(
+                configuration,
+                cairoEngine,
+                workerPool,
+                workerPool.getWorkerCount(),
+                null,
+                null,
+                metrics
+        );
+    }
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -393,8 +412,7 @@ public class IODispatcherTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
-                        return null;
+                    public void close() {
                     }
 
                     @Override
@@ -404,7 +422,8 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public void close() {
+                    public HttpRequestProcessor select(CharSequence url) {
+                        return null;
                     }
                 };
 
@@ -787,7 +806,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -859,7 +878,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -1784,30 +1803,30 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(engine);
+                    public String getUrl() {
+                        return "/upload";
                     }
 
                     @Override
-                    public String getUrl() {
-                        return "/upload";
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(engine);
                     }
                 });
                 workerPool.start(LOG);
@@ -2292,22 +2311,27 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -2315,11 +2339,6 @@ public class IODispatcherTest {
                                 engine,
                                 workerPool.getWorkerCount()
                         );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -2899,22 +2918,27 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -2922,11 +2946,6 @@ public class IODispatcherTest {
                                 engine,
                                 workerPool.getWorkerCount()
                         );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -4123,22 +4142,27 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -4146,11 +4170,6 @@ public class IODispatcherTest {
                                 engine,
                                 workerPool.getWorkerCount()
                         );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -4351,32 +4370,32 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-
                     @Override
                     public String getUrl() {
                         return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -4426,33 +4445,33 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
                                 httpConfiguration.getJsonQueryProcessorConfiguration(),
                                 engine,
                                 workerPool.getWorkerCount());
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -4524,22 +4543,27 @@ public class IODispatcherTest {
                     // this is necessary to sufficiently fragment paged filter execution
                     return 10_000;
                 }
-            }, metrics);
+            }, metrics, 2);
                  HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
                 httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
                     @Override
                     public HttpRequestProcessor newInstance() {
                         return new JsonQueryProcessor(
@@ -4547,11 +4571,6 @@ public class IODispatcherTest {
                                 engine,
                                 workerPool.getWorkerCount()
                         );
-                    }
-
-                    @Override
-                    public String getUrl() {
-                        return "/query";
                     }
                 });
 
@@ -4843,8 +4862,7 @@ public class IODispatcherTest {
                 HttpRequestProcessorSelector selector =
                         new HttpRequestProcessorSelector() {
                             @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
+                            public void close() {
                             }
 
                             @Override
@@ -4853,7 +4871,8 @@ public class IODispatcherTest {
                             }
 
                             @Override
-                            public void close() {
+                            public HttpRequestProcessor select(CharSequence url) {
+                                return null;
                             }
                         };
 
@@ -5140,13 +5159,13 @@ public class IODispatcherTest {
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
@@ -5295,13 +5314,13 @@ public class IODispatcherTest {
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
@@ -5448,13 +5467,13 @@ public class IODispatcherTest {
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
                     }
 
                     @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
                     }
                 });
 
@@ -5685,6 +5704,15 @@ public class IODispatcherTest {
 
                         new HttpRequestProcessorSelector() {
                             @Override
+                            public void close() {
+                            }
+
+                            @Override
+                            public HttpRequestProcessor getDefaultProcessor() {
+                                return null;
+                            }
+
+                            @Override
                             public HttpRequestProcessor select(CharSequence url) {
                                 return new HttpRequestProcessor() {
                                     @Override
@@ -5702,15 +5730,6 @@ public class IODispatcherTest {
                                         requestReceivedLatch.countDown();
                                     }
                                 };
-                            }
-
-                            @Override
-                            public HttpRequestProcessor getDefaultProcessor() {
-                                return null;
-                            }
-
-                            @Override
-                            public void close() {
                             }
                         };
 
@@ -5854,8 +5873,7 @@ public class IODispatcherTest {
                         new HttpRequestProcessorSelector() {
 
                             @Override
-                            public HttpRequestProcessor select(CharSequence url) {
-                                return null;
+                            public void close() {
                             }
 
                             @Override
@@ -5883,7 +5901,8 @@ public class IODispatcherTest {
                             }
 
                             @Override
-                            public void close() {
+                            public HttpRequestProcessor select(CharSequence url) {
+                                return null;
                             }
                         };
 
@@ -6013,8 +6032,7 @@ public class IODispatcherTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                     @Override
-                    public HttpRequestProcessor select(CharSequence url) {
-                        return null;
+                    public void close() {
                     }
 
                     @Override
@@ -6037,7 +6055,8 @@ public class IODispatcherTest {
                     }
 
                     @Override
-                    public void close() {
+                    public HttpRequestProcessor select(CharSequence url) {
+                        return null;
                     }
                 };
 
@@ -6649,8 +6668,7 @@ public class IODispatcherTest {
                             HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                                 @Override
-                                public HttpRequestProcessor select(CharSequence url) {
-                                    return null;
+                                public void close() {
                                 }
 
                                 @Override
@@ -6659,7 +6677,8 @@ public class IODispatcherTest {
                                 }
 
                                 @Override
-                                public void close() {
+                                public HttpRequestProcessor select(CharSequence url) {
+                                    return null;
                                 }
                             };
 
@@ -6801,12 +6820,6 @@ public class IODispatcherTest {
         }
     }
 
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.asciiStrCpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
-
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
@@ -6842,6 +6855,12 @@ public class IODispatcherTest {
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
                 .execute(request, response);
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.asciiStrCpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
     private void assertColumn(CharSequence expected, int index) {
@@ -7265,13 +7284,13 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
-                public int getLimit() {
-                    return activeConnectionLimit;
+                public int getBindPort() {
+                    return port;
                 }
 
                 @Override
-                public int getBindPort() {
-                    return port;
+                public int getLimit() {
+                    return activeConnectionLimit;
                 }
 
                 @Override
@@ -7297,6 +7316,11 @@ public class IODispatcherTest {
                     }
 
                     @Override
+                    public IODispatcher<?> getDispatcher() {
+                        return dispatcher;
+                    }
+
+                    @Override
                     public long getFd() {
                         return fd;
                     }
@@ -7304,11 +7328,6 @@ public class IODispatcherTest {
                     @Override
                     public boolean invalid() {
                         return !serverConnectedFds.contains(fd);
-                    }
-
-                    @Override
-                    public IODispatcher<?> getDispatcher() {
-                        return dispatcher;
                     }
                 };
             };
@@ -7470,12 +7489,78 @@ public class IODispatcherTest {
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
+    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
+        private final byte[] bytes;
+        private final int len;
+
+        private ByteArrayResponse(byte[] bytes, int len) {
+            super();
+            this.bytes = bytes;
+            this.len = len;
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return bytes[index];
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return (char) bytes[index];
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+    }
+
+    private static class HelloContext implements IOContext {
+        private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+        private final SOCountDownLatch closeLatch;
+        private final IODispatcher<HelloContext> dispatcher;
+        private final long fd;
+
+        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+            this.fd = fd;
+            this.closeLatch = closeLatch;
+            this.dispatcher = dispatcher;
+        }
+
+        @Override
+        public void close() {
+            Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
+            closeLatch.countDown();
+        }
+
+        @Override
+        public IODispatcher<HelloContext> getDispatcher() {
+            return dispatcher;
+        }
+
+        @Override
+        public long getFd() {
+            return fd;
+        }
+
+        @Override
+        public boolean invalid() {
+            return false;
+        }
+    }
+
     private static class QueryThread extends Thread {
-        private final String[][] requests;
-        private final int count;
         private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
+        private final int count;
         private final AtomicInteger errorCounter;
+        private final CountDownLatch latch;
+        private final String[][] requests;
 
         public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
             this.requests = requests;
@@ -7511,90 +7596,7 @@ public class IODispatcherTest {
         }
     }
 
-    private static class HelloContext implements IOContext {
-        private final long fd;
-        private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-        private final SOCountDownLatch closeLatch;
-        private final IODispatcher<HelloContext> dispatcher;
-
-        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
-            this.fd = fd;
-            this.closeLatch = closeLatch;
-            this.dispatcher = dispatcher;
-        }
-
-        @Override
-        public void close() {
-            Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
-            closeLatch.countDown();
-        }
-
-        @Override
-        public long getFd() {
-            return fd;
-        }
-
-        @Override
-        public boolean invalid() {
-            return false;
-        }
-
-        @Override
-        public IODispatcher<HelloContext> getDispatcher() {
-            return dispatcher;
-        }
-    }
-
     static class Status {
         boolean valid;
-    }
-
-    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
-        private final byte[] bytes;
-        private final int len;
-
-        private ByteArrayResponse(byte[] bytes, int len) {
-            super();
-            this.bytes = bytes;
-            this.len = len;
-        }
-
-        @Override
-        public byte byteAt(int index) {
-            if (index >= len) {
-                throw new IndexOutOfBoundsException();
-            }
-            return bytes[index];
-        }
-
-        @Override
-        public int length() {
-            return len;
-        }
-
-        @Override
-        public char charAt(int index) {
-            if (index >= len) {
-                throw new IndexOutOfBoundsException();
-            }
-            return (char) bytes[index];
-        }
-    }
-
-    public static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
-        return Services.createHttpServer(
-                configuration,
-                cairoEngine,
-                workerPool,
-                workerPool.getWorkerCount(),
-                null,
-                null,
-                metrics
-        );
     }
 }

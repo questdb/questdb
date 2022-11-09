@@ -35,8 +35,8 @@ import org.jetbrains.annotations.NotNull;
 abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecordCursor {
 
     protected final DirectLongList rows;
-    private long index;
     protected boolean isOpen;
+    private long index;
 
     public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
         super(columnIndexes);
@@ -45,11 +45,10 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
-    public long size() {
-        return rows.size();
+    public void close() {
+        this.isOpen = false;
+        super.close();
     }
-
-    abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
 
     @Override
     public boolean hasNext() {
@@ -61,10 +60,21 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
         return false;
     }
 
+    public boolean isOpen() {
+        return isOpen;
+    }
+
+    @Override
+    public long size() {
+        return rows.size();
+    }
+
     @Override
     public void toTop() {
         index = rows.size() - 1;
     }
+
+    abstract protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException;
 
     @Override
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -75,15 +85,5 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
         buildTreeMap(executionContext);
         this.isOpen = true;
         index = rows.size() - 1;
-    }
-
-    public boolean isOpen() {
-        return isOpen;
-    }
-
-    @Override
-    public void close() {
-        this.isOpen = false;
-        super.close();
     }
 }

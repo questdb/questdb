@@ -31,13 +31,6 @@ import org.junit.Test;
 
 public class SqlExceptionTest extends AbstractCairoTest {
     @Test
-    public void testSinkable() {
-        sink.clear();
-        sink.put((Sinkable) SqlException.$(123, "hello"));
-        TestUtils.assertEquals("[123]: hello", sink);
-    }
-
-    @Test
     public void testDuplicateColumn() {
         TestUtils.assertEquals(
                 "[17] Duplicate column [name=COL-0]",
@@ -61,5 +54,12 @@ public class SqlExceptionTest extends AbstractCairoTest {
                 "[17] expected ',', or 'colName'",
                 SqlException.parserErr(17, null, "expected ',', or 'colName'").getMessage()
         );
+    }
+
+    @Test
+    public void testSinkable() {
+        sink.clear();
+        sink.put((Sinkable) SqlException.$(123, "hello"));
+        TestUtils.assertEquals("[123]: hello", sink);
     }
 }

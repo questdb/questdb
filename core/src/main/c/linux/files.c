@@ -36,6 +36,7 @@
 #include <sys/vfs.h>
 #include <fcntl.h>
 #include "../share/sysutil.h"
+#include <stdint.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
@@ -80,7 +81,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     while (len > 0) {
         ssize_t writtenLen;
         RESTARTABLE(sendfile(output, input, NULL, len > MAX_RW_COUNT ? MAX_RW_COUNT : len), writtenLen);
-        
+
         if (writtenLen <= 0) {
             break;
         }
@@ -90,7 +91,26 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     close(input);
     close(output);
 
-    return len == 0 ? 0 : -len;
+    return len == 0 ? 0 : -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong input, jlong output, jlong srcOffset, jlong length) {
+    size_t len = length > 0 ? length : SIZE_MAX;
+    off_t offset = srcOffset;
+
+    while (len > 0) {
+        ssize_t writtenLen = sendfile64((int)output, (int)input, &offset, len > MAX_RW_COUNT ? MAX_RW_COUNT : len);
+        if (writtenLen <= 0
+            // Signals should not interrupt sendfile on Linux but just to align with POSIX standards
+            && errno != EINTR) {
+            break;
+        }
+        len -= writtenLen;
+        // offset is already increased
+    }
+
+    return offset - srcOffset;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0

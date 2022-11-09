@@ -45,12 +45,12 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
+    public int errno() {
+        return Os.errno();
     }
 
     @Override
-    public int errno() {
-        return Os.errno();
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
     }
 }

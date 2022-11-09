@@ -43,32 +43,32 @@ import static io.questdb.cairo.TableUtils.DEFAULT_PARTITION_NAME;
 public final class PartitionBy {
 
     public static final int DAY = 0;
-    public static final int MONTH = 1;
-    public static final int YEAR = 2;
     public static final int HOUR = 4;
+    public static final int MONTH = 1;
     /**
      * Data is not partitioned at all,
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
-    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
-    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
-    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
-    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
+    public static final int YEAR = 2;
+    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
+    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
     private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
-    private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
+    private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
+    private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
+    private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
+    private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
     private static final PartitionFloorMethod FLOOR_DD = Timestamps::floorDD;
-    private static final PartitionAddMethod ADD_DD = Timestamps::addDays;
-    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final PartitionFloorMethod FLOOR_HH = Timestamps::floorHH;
-    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private static final PartitionFloorMethod FLOOR_MM = Timestamps::floorMM;
+    private static final PartitionFloorMethod FLOOR_YYYY = Timestamps::floorYYYY;
     private static final DateFormat fmtDay;
-    private static final DateFormat fmtMonth;
-    private static final DateFormat fmtYear;
     private final static DateFormat fmtDefault;
     private final static DateFormat fmtHour;
+    private static final DateFormat fmtMonth;
+    private static final DateFormat fmtYear;
+    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     private PartitionBy() {
     }
@@ -269,8 +269,8 @@ public final class PartitionBy {
     }
 
     @FunctionalInterface
-    public interface PartitionFloorMethod {
-        long floor(long timestamp);
+    public interface PartitionAddMethod {
+        long calculate(long timestamp, int increment);
     }
 
     @FunctionalInterface
@@ -280,8 +280,8 @@ public final class PartitionBy {
     }
 
     @FunctionalInterface
-    public interface PartitionAddMethod {
-        long calculate(long timestamp, int increment);
+    public interface PartitionFloorMethod {
+        long floor(long timestamp);
     }
 
     static {

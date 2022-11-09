@@ -34,6 +34,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -53,6 +54,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.lessThan;
 
 public class FilesTest {
+    private static final String EOL = System.lineSeparator();
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -579,29 +581,89 @@ public class FilesTest {
     }
 
     @Test
+    public void testSendFileOver2GBWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (
+                    Path path1 = new Path().of(temp.getAbsolutePath());
+                    Path path2 = new Path().of(temp.getAbsolutePath())
+            ) {
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2").$();
+                long fd2 = Files.openRW(path2);
+
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long fileSize = (2L << 30) + 2 * 4096;
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, fileSize - 8);
+
+                    // Check copy call works
+                    int offset = 2058;
+                    long copiedLen = Files.copyData(fd1, fd2, offset, -1);
+
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long long1 = Files.readULong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+
+                    // Copy with set length
+                    Files.close(fd2);
+                    Files.remove(path2);
+                    fd2 = Files.openRW(path2.$());
+
+                    // Check copy call works
+                    offset = 3051;
+                    copiedLen = Files.copyData(fd1, fd2, offset, fileSize - offset);
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long1 = Files.readULong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Files.close(fd2);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path1);
+                    Files.remove(path2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSoftLinkAsciiName() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("some_column.d");
     }
 
     @Test
-    public void testSoftLinkNonAsciiName() throws Exception {
-        assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
-    }
-
-    @Test
     public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";
             try (
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$();
+                    Path softLinkFilePath = new Path().of(tmpFolder.getAbsolutePath()).concat(fileName).put(".1").$()
             ) {
                 Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
 
                 // check that when listing it we can actually find it
                 File link = new File(softLinkFilePath.toString());
-                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                File[] fileArray = link.getParentFile().listFiles();
+                Assert.assertNotNull(fileArray);
+                List<File> files = Arrays.asList(fileArray);
                 Assert.assertEquals(fileName + ".1", files.get(0).getName());
 
                 // however
@@ -613,6 +675,12 @@ public class FilesTest {
                 temporaryFolder.delete();
             }
         });
+    }
+
+    @Test
+    public void testSoftLinkNonAsciiName() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertSoftLinkDoesNotPreserveFileContent("いくつかの列.d");
     }
 
     @Test
@@ -633,6 +701,49 @@ public class FilesTest {
                 } finally {
                     Files.close(fd);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testUnlink() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            File tmpFolder = temporaryFolder.newFolder("unlink");
+            final String fileName = "いくつかの列.d";
+            final String fileContent = "**unlink** deletes a name from the filesystem." + EOL +
+                    "If the name IS a symbolic link, the link is removed." + EOL +
+                    "If the name is the last link to the file, and no processes have" + EOL +
+                    "the file open, the file is deleted and the space it was using is " + EOL +
+                    "made available for reuse. Otherwise, if any process maintains the" + EOL +
+                    "file open, it will remain in existence until the last file descriptor" + EOL +
+                    "referring to it is closed." + EOL;
+
+
+            try (
+                    Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
+                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
+            ) {
+                createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
+
+                // create the soft link
+                createSoftLink(coldRoot, srcPath, linkPath);
+
+                // check contents are the same
+                assertEqualsFileContent(linkPath, fileContent);
+
+                // unlink soft link
+                Assert.assertEquals(0, Files.unlink(linkPath));
+
+                // check original file still exists and contents are the same
+                assertEqualsFileContent(srcPath, fileContent);
+
+                // however the link no longer exists
+                File link = new File(linkPath.toString());
+                Assert.assertFalse(link.exists());
+                Assert.assertFalse(link.canRead());
+                Assert.assertEquals(-1, Files.openRO(linkPath));
             }
         });
     }
@@ -717,85 +828,6 @@ public class FilesTest {
         });
     }
 
-    @Test
-    public void testUnlink() throws Exception {
-        assertMemoryLeak(() -> {
-            File tmpFolder = temporaryFolder.newFolder("unlink");
-            final String fileName = "いくつかの列.d";
-            final String fileContent = "**unlink** deletes a name from the filesystem." + EOL +
-                    "If the name IS a symbolic link, the link is removed." + EOL +
-                    "If the name is the last link to the file, and no processes have" + EOL +
-                    "the file open, the file is deleted and the space it was using is " + EOL +
-                    "made available for reuse. Otherwise, if any process maintains the" + EOL +
-                    "file open, it will remain in existence until the last file descriptor" + EOL +
-                    "referring to it is closed." + EOL;
-
-
-            try (
-                    Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
-                    Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$();
-            ) {
-                createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
-
-                // create the soft link
-                createSoftLink(coldRoot, srcPath, linkPath);
-
-                // check contents are the same
-                assertEqualsFileContent(linkPath, fileContent);
-
-                // unlink soft link
-                Assert.assertEquals(0, Files.unlink(linkPath));
-
-                // check original file still exists and contents are the same
-                assertEqualsFileContent(srcPath, fileContent);
-
-                // however the link no longer exists
-                File link = new File(linkPath.toString());
-                Assert.assertFalse(link.exists());
-                Assert.assertFalse(link.canRead());
-                Assert.assertEquals(-1, Files.openRO(linkPath));
-            }
-        });
-    }
-
-    private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
-        Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
-        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-        Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
-    }
-
-    private static void touch(File file) throws IOException {
-        FileOutputStream fos = new FileOutputStream(file);
-        fos.close();
-    }
-
-    private static void createTempFile(Path path, String fileName, String fileContent) {
-        final int buffSize = fileContent.length() * 3;
-        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        final byte[] bytes = fileContent.getBytes(Files.UTF_8);
-        long p = buffPtr;
-        for (int i = 0, n = bytes.length; i < n; i++) {
-            Unsafe.getUnsafe().putByte(p++, bytes[i]);
-        }
-        Unsafe.getUnsafe().putByte(p, (byte) 0);
-        long fd = -1L;
-        try {
-            fd = Files.openAppend(path.concat(fileName).$());
-            if (fd > -1L) {
-                Files.truncate(fd, 0);
-                Files.append(fd, buffPtr, bytes.length);
-                Files.sync();
-            }
-            Assert.assertTrue(Files.exists(fd));
-        } finally {
-            if (fd != -1L) {
-                Files.close(fd);
-            }
-            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -824,6 +856,43 @@ public class FilesTest {
             }
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
+        Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
+        Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
+        Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
+    }
+
+    private static void createTempFile(Path path, String fileName, String fileContent) {
+        final int buffSize = fileContent.length() * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        final byte[] bytes = fileContent.getBytes(Files.UTF_8);
+        long p = buffPtr;
+        for (int i = 0, n = bytes.length; i < n; i++) {
+            Unsafe.getUnsafe().putByte(p++, bytes[i]);
+        }
+        Unsafe.getUnsafe().putByte(p, (byte) 0);
+        long fd = -1L;
+        try {
+            fd = Files.openAppend(path.concat(fileName).$());
+            if (fd > -1L) {
+                Files.truncate(fd, 0);
+                Files.append(fd, buffPtr, bytes.length);
+                Files.sync();
+            }
+            Assert.assertTrue(Files.exists(fd));
+        } finally {
+            if (fd != -1L) {
+                Files.close(fd);
+            }
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void touch(File file) throws IOException {
+        FileOutputStream fos = new FileOutputStream(file);
+        fos.close();
     }
 
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
@@ -865,11 +934,16 @@ public class FilesTest {
                 assertEqualsFileContent(hardLinkFilePath, fileContent);
 
                 Files.remove(srcFilePath);
-                if (null != hardLinkFilePath) {
-                    Assert.assertTrue(Files.remove(hardLinkFilePath));
-                }
+                Assert.assertTrue(Files.remove(hardLinkFilePath));
             }
         });
+    }
+
+    private void assertLastModified(Path path, long t) throws IOException {
+        File f = temporaryFolder.newFile();
+        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
+        Assert.assertTrue(Files.setLastModified(path, t));
+        Assert.assertEquals(t, Files.getLastModified(path));
     }
 
     private void assertSoftLinkDoesNotPreserveFileContent(String fileName) throws Exception {
@@ -888,7 +962,7 @@ public class FilesTest {
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
                     Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$();
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 
@@ -918,7 +992,9 @@ public class FilesTest {
 
                 // check that when listing the folder where the link is, we can actually find it
                 File link = new File(softLinkRenamedFilePath.toString());
-                List<File> files = Arrays.asList(link.getParentFile().listFiles());
+                File[] fileArray = link.getParentFile().listFiles();
+                Assert.assertNotNull(fileArray);
+                List<File> files = Arrays.asList(fileArray);
                 Assert.assertEquals(fileName, files.get(0).getName());
 
                 // however, OS checks do check the existence of the file pointed to
@@ -929,13 +1005,4 @@ public class FilesTest {
             }
         });
     }
-
-    private void assertLastModified(Path path, long t) throws IOException {
-        File f = temporaryFolder.newFile();
-        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
-        Assert.assertTrue(Files.setLastModified(path, t));
-        Assert.assertEquals(t, Files.getLastModified(path));
-    }
-
-    private static final String EOL = System.lineSeparator();
 }

@@ -54,6 +54,10 @@ public class LogBenchmark {
     }
 
     @Benchmark
+    public void testBaseline() {
+    }
+
+    @Benchmark
     public void testLogOneInt() {
         LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
     }
@@ -66,10 +70,6 @@ public class LogBenchmark {
     @Benchmark
     public void testLogOneIntDisabled() {
         LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testBaseline() {
     }
 
     static {

@@ -34,15 +34,13 @@ import java.io.Closeable;
 public class MemoryPages implements Closeable, Mutable, Reopenable {
 
     private static final Log LOG = LogFactory.getLog(MemoryPages.class);
-
-    private final long pageSize;
-    private final long mask;
     private final int bits;
-
+    private final long mask;
+    private final int maxPages;
+    private final long pageSize;
     private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
-    private final int maxPages;
 
     public MemoryPages(long pageSize, int maxPages) {
         this.pageSize = Numbers.ceilPow2(pageSize);
@@ -86,6 +84,12 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         cachePageHi = 0;
     }
 
+    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
+    public long countNumberOf(int chunkSize) {
+        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages
+                (cachePageLo & mask) / chunkSize; //last page
+    }
+
     @Override
     public void reopen() {
         allocate0(0);
@@ -111,11 +115,5 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
 
         cachePageLo = index << bits;
         cachePageHi = cachePageLo + pageSize;
-    }
-
-    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
-    public long countNumberOf(int chunkSize) {
-        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages 
-                (cachePageLo & mask) / chunkSize; //last page
     }
 }

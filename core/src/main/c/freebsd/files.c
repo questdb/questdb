@@ -72,6 +72,63 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
+size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
+    char buf[4096*4]; // 16K
+    size_t read_sz;
+    off_t rd_off = fromOffset;
+    off_t wrt_off = 0;
+    off_t len;
+
+    if (length < 0) {
+        len = LONG_MAX - fromOffset;
+    } else {
+        len = length;
+    }
+    off_t hi = fromOffset + len;
+
+    for (;;) {
+        RESTARTABLE(pread(inFd, buf, sizeof buf, rd_off), read_sz);
+        if (read_sz <= 0) {
+            break;
+        }
+        char *out_ptr = buf;
+
+        if (rd_off + read_sz > hi) {
+            read_sz = hi - rd_off;
+        }
+
+        long wrtn;
+        do {
+            RESTARTABLE(pwrite(outFd, out_ptr, read_sz, wrt_off), wrtn);
+            if (wrtn >= 0) {
+                read_sz -= wrtn;
+                out_ptr += wrtn;
+                wrt_off += wrtn;
+            } else {
+                break;
+            }
+        } while (read_sz > 0);
+
+        if (read_sz > 0) {
+            // error
+            return -1;
+        }
+
+        rd_off += wrtn;
+        if (rd_off >= hi) {
+            /* Success! */
+            break;
+        }
+    }
+
+    return rd_off - fromOffset;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length) {
+    return copyData0((int)srcFd, (int)dstFd, srcOffset, length);
+}
+
 #if defined(__APPLE__)
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
@@ -121,10 +178,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     const char* from = (const char *) lpszFrom;
     const char* to = (const char *) lpszTo;
 
-    char buf[4096];
-    size_t read_sz;
-    off_t wrt_off = 0;
-
     const int input = open(from, O_RDONLY);
     if (-1 ==  (input)) {
         return -1;
@@ -136,40 +189,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         return -1;
     }
 
-    for (;;) {
-        RESTARTABLE(pread(input, buf, sizeof buf, wrt_off), read_sz);
-        if (read_sz <= 0) {
-            break;
-        }
-        char *out_ptr = buf;
-        long wrtn;
+    int result = copyData0(input, output, 0, -1);
+    close(input);
+    close(output);
 
-        do {
-            RESTARTABLE(pwrite(output, out_ptr, read_sz, wrt_off), wrtn);
-            if (wrtn < 0) {
-                break;
-            }
-            read_sz -= wrtn;
-            out_ptr += wrtn;
-            wrt_off += wrtn;
-        } while (read_sz > 0);
-
-        if (read_sz > 0) {
-            // error
-            close(input);
-            close(output);
-
-            return -1;
-        }
-    }
-
-    if (read_sz == 0) {
-        close(input);
-        close(output);
-
-        /* Success! */
-        return 1;
-    }
+    return result;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

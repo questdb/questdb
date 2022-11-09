@@ -35,9 +35,9 @@ public interface RostiAllocFacade {
 
     void free(long pRosti);
 
+    long getSize(long pRosti);
+
     boolean reset(long pRosti, int toSize);
 
     void updateMemoryUsage(long pRosti, long oldSize);
-
-    long getSize(long pRosti);
 }

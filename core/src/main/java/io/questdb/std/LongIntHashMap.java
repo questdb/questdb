@@ -53,6 +53,16 @@ public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
         putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(LongIntHashMap other) {
+        long[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != other.noEntryKeyValue) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public void putAt(int index, long key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
@@ -65,30 +75,8 @@ public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
         }
     }
 
-    public void putAll(LongIntHashMap other) {
-        long[] otherKeys = other.keys;
-        int[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != other.noEntryKeyValue) {
-                put(otherKeys[i], otherValues[i]);
-            }
-        }
-    }
-
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : NO_ENTRY_VALUE;
-    }
-
-    @Override
-    protected void erase(int index) {
-        keys[index] = this.noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
     }
 
     private void rehash() {
@@ -113,5 +101,17 @@ public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }

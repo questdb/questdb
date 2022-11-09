@@ -25,8 +25,8 @@
 package io.questdb.tasks;
 
 public class O3PartitionPurgeTask {
-    private String tableName;
     private int partitionBy;
+    private String tableName;
 
     public int getPartitionBy() {
         return partitionBy;

@@ -37,21 +37,6 @@ import org.junit.Test;
 public class LatestByTest extends AbstractGriffinTest {
 
     @Test
-    public void testSymbolInPredicate_singleElement() throws Exception {
-        assertMemoryLeak(() -> {
-            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
-            compiler.compile(createStmt, sqlExecutionContext);
-            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
-            String expected = "symbol\tside\ttimestamp\n" +
-                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
-            String query = "SELECT * FROM trades\n" +
-                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
-                    "LATEST ON timestamp PARTITION BY symbol;";
-            assertSql(query, expected);
-        });
-    }
-
-    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -317,6 +302,16 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestWithJoinIndexed() throws Exception {
+        testLatestByWithJoin(true);
+    }
+
+    @Test
+    public void testLatestWithJoinNonIndexed() throws Exception {
+        testLatestByWithJoin(false);
+    }
+
+    @Test
     public void testLatestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -384,13 +379,35 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestWithJoinNonIndexed() throws Exception {
-        testLatestByWithJoin(false);
+    public void testSymbolInPredicate_singleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
+            compiler.compile(createStmt, sqlExecutionContext);
+            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            String expected = "symbol\tside\ttimestamp\n" +
+                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
+            String query = "SELECT * FROM trades\n" +
+                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
+                    "LATEST ON timestamp PARTITION BY symbol;";
+            assertSql(query, expected);
+        });
     }
 
-    @Test
-    public void testLatestWithJoinIndexed() throws Exception {
-        testLatestByWithJoin(true);
+    private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
+        StringSink sink = new StringSink();
+        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                int i = 0;
+                while (cursor.hasNext()) {
+                    if (i++ > 0) {
+                        sink.put(',');
+                    }
+                    sink.put('\'').put(record.getSym(0)).put('\'');
+                }
+            }
+        }
+        return sink.toString();
     }
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {
@@ -420,22 +437,5 @@ public class LatestByTest extends AbstractGriffinTest {
                 );
             }
         });
-    }
-
-    private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
-        StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                int i = 0;
-                while (cursor.hasNext()) {
-                    if (i++ > 0) {
-                        sink.put(',');
-                    }
-                    sink.put('\'').put(record.getSym(0)).put('\'');
-                }
-            }
-        }
-        return sink.toString();
     }
 }

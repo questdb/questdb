@@ -31,10 +31,10 @@ public class JoinContext implements Mutable {
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;
 
     public final IntList aIndexes = new IntList();
-    public final IntList bIndexes = new IntList();
     public final ObjList<CharSequence> aNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
-    public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<ExpressionNode> aNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
+    public final IntList bIndexes = new IntList();
+    public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<ExpressionNode> bNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     // indexes of parent join clauses
     public final IntHashSet parents = new IntHashSet(4);

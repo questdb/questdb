@@ -48,6 +48,16 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -66,16 +76,6 @@ public class CountLongGroupByFunction extends LongFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     public void toSink(CharSink sink) {

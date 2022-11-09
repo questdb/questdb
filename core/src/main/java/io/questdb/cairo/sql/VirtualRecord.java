@@ -31,8 +31,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public class VirtualRecord implements ColumnTypes, Record {
-    private final ObjList<? extends Function> functions;
     private final int columnCount;
+    private final ObjList<? extends Function> functions;
     private Record base;
 
     public VirtualRecord(ObjList<? extends Function> functions) {
@@ -70,6 +70,16 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return getFunction(columnIndex).getType();
+    }
+
+    @Override
     public long getDate(int col) {
         return getFunction(col).getDate(base);
     }
@@ -84,6 +94,30 @@ public class VirtualRecord implements ColumnTypes, Record {
         return getFunction(col).getFloat(base);
     }
 
+    public ObjList<? extends Function> getFunctions() {
+        return functions;
+    }
+
+    @Override
+    public byte getGeoByte(int col) {
+        return getFunction(col).getGeoByte(base);
+    }
+
+    @Override
+    public int getGeoInt(int col) {
+        return getFunction(col).getGeoInt(base);
+    }
+
+    @Override
+    public long getGeoLong(int col) {
+        return getFunction(col).getGeoLong(base);
+    }
+
+    @Override
+    public short getGeoShort(int col) {
+        return getFunction(col).getGeoShort(base);
+    }
+
     @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
@@ -92,6 +126,16 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getLong(int col) {
         return getFunction(col).getLong(base);
+    }
+
+    @Override
+    public long getLong128Hi(int col) {
+        return getFunction(col).getLong128Hi(base);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return getFunction(col).getLong128Lo(base);
     }
 
     @Override
@@ -110,16 +154,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public long getLong128Hi(int col) {
-        return getFunction(col).getLong128Hi(base);
-    }
-
-    @Override
-    public long getLong128Lo(int col) {
-        return getFunction(col).getLong128Lo(base);
-    }
-
-    @Override
     public Record getRecord(int col) {
         return getFunction(col).getRecord(base);
     }
@@ -127,11 +161,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getRowId() {
         return base.getRowId();
-    }
-
-    @Override
-    public long getUpdateRowId() {
-        return base.getUpdateRowId();
     }
 
     @Override
@@ -175,37 +204,8 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public byte getGeoByte(int col) {
-        return getFunction(col).getGeoByte(base);
-    }
-
-    @Override
-    public short getGeoShort(int col) {
-        return getFunction(col).getGeoShort(base);
-    }
-
-    @Override
-    public int getGeoInt(int col) {
-        return getFunction(col).getGeoInt(base);
-    }
-
-    @Override
-    public long getGeoLong(int col) {
-        return getFunction(col).getGeoLong(base);
-    }
-
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return getFunction(columnIndex).getType();
-    }
-
-    public ObjList<? extends Function> getFunctions() {
-        return functions;
+    public long getUpdateRowId() {
+        return base.getUpdateRowId();
     }
 
     public void of(Record record) {

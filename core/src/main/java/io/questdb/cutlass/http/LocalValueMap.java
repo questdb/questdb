@@ -32,22 +32,14 @@ import java.io.Closeable;
 public class LocalValueMap implements Closeable, Mutable {
 
     private static final int INITIAL_CAPACITY = 32;
-    private Entry[] table;
     private int size;
+    private Entry[] table;
     private int threshold;
 
     public LocalValueMap() {
         table = new Entry[INITIAL_CAPACITY];
         size = 0;
         setThreshold(INITIAL_CAPACITY);
-    }
-
-    private static int nextIndex(int i, int mod) {
-        return ((i + 1 < mod) ? i + 1 : 0);
-    }
-
-    private static int prevIndex(int i, int mod) {
-        return ((i - 1 > -1) ? i - 1 : mod - 1);
     }
 
     @Override
@@ -106,6 +98,14 @@ public class LocalValueMap implements Closeable, Mutable {
         if (!removeNullKeys(i, sz) && sz >= threshold) {
             rehash();
         }
+    }
+
+    private static int nextIndex(int i, int mod) {
+        return ((i + 1 < mod) ? i + 1 : 0);
+    }
+
+    private static int prevIndex(int i, int mod) {
+        return ((i - 1 > -1) ? i - 1 : mod - 1);
     }
 
     @SuppressWarnings("unchecked")
@@ -269,9 +269,8 @@ public class LocalValueMap implements Closeable, Mutable {
     }
 
     static class Entry {
-        Object value;
-
         LocalValue<?> k;
+        Object value;
 
         Entry(LocalValue<?> k, Object v) {
             value = v;

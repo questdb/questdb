@@ -35,17 +35,20 @@ import io.questdb.network.NetworkFacadeImpl;
 public class LineTcpSender extends AbstractLineSender {
 
     /**
+     * @param ip             IP address of a server
+     * @param port           port where a server is listening
+     * @param bufferCapacity capacity of an internal buffer in bytes
      * @deprecated use {@link #newSender(int, int, int)} instead.
      * <br>
      * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
-     *
-     * @param ip IP address of a server
-     * @param port port where a server is listening
-     * @param bufferCapacity capacity of an internal buffer in bytes
      */
     @Deprecated
     public LineTcpSender(int ip, int port, int bufferCapacity) {
         super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity);
+    }
+
+    public LineTcpSender(LineChannel channel, int bufferCapacity) {
+        super(channel, bufferCapacity);
     }
 
     /**
@@ -56,8 +59,8 @@ public class LineTcpSender extends AbstractLineSender {
      * This is meant to be used for testing only, it's not something most users want to use.
      * See {@link Sender} instead
      *
-     * @param ip IP address of a server
-     * @param port port where a server is listening
+     * @param ip             IP address of a server
+     * @param port           port where a server is listening
      * @param bufferCapacity capacity of an internal buffer in bytes
      * @return LineTcpSender instance of LineTcpSender
      */
@@ -69,10 +72,6 @@ public class LineTcpSender extends AbstractLineSender {
             channel.close();
             throw t;
         }
-    }
-
-    public LineTcpSender(LineChannel channel, int bufferCapacity) {
-        super(channel, bufferCapacity);
     }
 
     @Override

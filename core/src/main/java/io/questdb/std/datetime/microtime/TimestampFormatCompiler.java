@@ -32,175 +32,117 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
 
 public class TimestampFormatCompiler {
-    static final int OP_ERA = 1;
-    static final int OP_YEAR_ONE_DIGIT = 2;
-    static final int OP_YEAR_TWO_DIGITS = 3;
-    static final int OP_YEAR_THREE_DIGITS = 148;
-    static final int OP_YEAR_FOUR_DIGITS = 4;
-    static final int OP_YEAR_ISO_FOUR_DIGITS = 41;
-    static final int OP_MONTH_ONE_DIGIT = 5;
-    static final int OP_MONTH_TWO_DIGITS = 6;
-    static final int OP_MONTH_SHORT_NAME = 7;
-    static final int OP_MONTH_LONG_NAME = 8;
-    static final int OP_DAY_ONE_DIGIT = 9;
-    static final int OP_DAY_TWO_DIGITS = 10;
-    static final int OP_DAY_NAME_SHORT = 11;
+    static final int OP_AM_PM = 14;
+    static final int OP_DAY_GREEDY = 139;
     static final int OP_DAY_NAME_LONG = 12;
+    static final int OP_DAY_NAME_SHORT = 11;
     static final int OP_DAY_OF_WEEK = 13;
     static final int OP_DAY_OF_YEAR = 36;
-    static final int OP_WEEK_OF_YEAR = 37;
-    static final int OP_ISO_WEEK_OF_YEAR = 38;
-    static final int OP_AM_PM = 14;
-    static final int OP_HOUR_24_ONE_DIGIT = 15;
-    static final int OP_HOUR_24_TWO_DIGITS = 32;
-    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
-    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_DAY_ONE_DIGIT = 9;
+    static final int OP_DAY_TWO_DIGITS = 10;
+    static final int OP_ERA = 1;
+    static final int OP_HOUR_12_GREEDY = 142;
+    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
     static final int OP_HOUR_12_ONE_DIGIT = 17;
-    static final int OP_HOUR_12_TWO_DIGITS = 34;
     static final int OP_HOUR_12_ONE_DIGIT_ONE_BASED = 18;
+    static final int OP_HOUR_12_TWO_DIGITS = 34;
     static final int OP_HOUR_12_TWO_DIGITS_ONE_BASED = 35;
-    static final int OP_MINUTE_ONE_DIGIT = 19;
-    static final int OP_MINUTE_TWO_DIGITS = 29;
-    static final int OP_SECOND_ONE_DIGIT = 20;
-    static final int OP_SECOND_TWO_DIGITS = 30;
+    static final int OP_HOUR_24_GREEDY = 140;
+    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
+    static final int OP_HOUR_24_ONE_DIGIT = 15;
+    static final int OP_HOUR_24_ONE_DIGIT_ONE_BASED = 16;
+    static final int OP_HOUR_24_TWO_DIGITS = 32;
+    static final int OP_HOUR_24_TWO_DIGITS_ONE_BASED = 33;
+    static final int OP_ISO_WEEK_OF_YEAR = 38;
+    static final int OP_MICROS_GREEDY3 = 149;
+    static final int OP_MICROS_GREEDY6 = 51;
+    static final int OP_MICROS_ONE_DIGIT = 39;
+    static final int OP_MICROS_THREE_DIGITS = 49;
+    static final int OP_MILLIS_GREEDY = 146;
     static final int OP_MILLIS_ONE_DIGIT = 21;
     static final int OP_MILLIS_THREE_DIGITS = 31;
+    static final int OP_MINUTE_GREEDY = 144;
+    static final int OP_MINUTE_ONE_DIGIT = 19;
+    static final int OP_MINUTE_TWO_DIGITS = 29;
+    static final int OP_MONTH_GREEDY = 135;
+    static final int OP_MONTH_LONG_NAME = 8;
+    static final int OP_MONTH_ONE_DIGIT = 5;
+    static final int OP_MONTH_SHORT_NAME = 7;
+    static final int OP_MONTH_TWO_DIGITS = 6;
+    static final int OP_NANOS_GREEDY = 147;
+    static final int OP_NANOS_GREEDY9 = 52;
+    static final int OP_NANOS_ONE_DIGIT = 40;
+    static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_SECOND_GREEDY = 145;
+    static final int OP_SECOND_ONE_DIGIT = 20;
+    static final int OP_SECOND_TWO_DIGITS = 30;
     static final int OP_TIME_ZONE_GMT_BASED = 22;
-    static final int OP_TIME_ZONE_SHORT = 23;
-    static final int OP_TIME_ZONE_LONG = 24;
-    static final int OP_TIME_ZONE_RFC_822 = 25;
     static final int OP_TIME_ZONE_ISO_8601_1 = 26;
     static final int OP_TIME_ZONE_ISO_8601_2 = 27;
     static final int OP_TIME_ZONE_ISO_8601_3 = 28;
-    static final int OP_MICROS_ONE_DIGIT = 39;
-    static final int OP_MICROS_THREE_DIGITS = 49;
-    static final int OP_NANOS_ONE_DIGIT = 40;
-    static final int OP_NANOS_THREE_DIGITS = 50;
-    static final int OP_NANOS_GREEDY9 = 52;
-    static final int OP_MICROS_GREEDY3 = 149;
-    static final int OP_MICROS_GREEDY6 = 51;
+    static final int OP_TIME_ZONE_LONG = 24;
+    static final int OP_TIME_ZONE_RFC_822 = 25;
+    static final int OP_TIME_ZONE_SHORT = 23;
+    static final int OP_WEEK_OF_YEAR = 37;
+    static final int OP_YEAR_FOUR_DIGITS = 4;
     static final int OP_YEAR_GREEDY = 132;
-    static final int OP_MONTH_GREEDY = 135;
-    static final int OP_DAY_GREEDY = 139;
-    static final int OP_HOUR_24_GREEDY = 140;
-    static final int OP_HOUR_24_GREEDY_ONE_BASED = 141;
-    static final int OP_HOUR_12_GREEDY = 142;
-    static final int OP_HOUR_12_GREEDY_ONE_BASED = 143;
-    static final int OP_MINUTE_GREEDY = 144;
-    static final int OP_SECOND_GREEDY = 145;
-    static final int OP_MILLIS_GREEDY = 146;
-    static final int OP_NANOS_GREEDY = 147;
-    static final CharSequenceIntHashMap opMap;
+    static final int OP_YEAR_ISO_FOUR_DIGITS = 41;
+    static final int OP_YEAR_ONE_DIGIT = 2;
+    static final int OP_YEAR_THREE_DIGITS = 148;
+    static final int OP_YEAR_TWO_DIGITS = 3;
     static final ObjList<String> opList;
-    private static final int FA_LOCAL_DATETIME = 1;
-    private static final int FA_LOCAL_SINK = 5;
-    private static final int FA_LOCAL_LOCALE = 3;
-    private static final int FA_LOCAL_TIMEZONE = 4;
-    private static final int FA_SECOND_MILLIS = 1;
-    private static final int FA_SECOND = 2;
-    private static final int FA_MINUTE = 3;
-    private static final int FA_HOUR = 4;
+    static final CharSequenceIntHashMap opMap;
     private static final int FA_DAY = 5;
-    private static final int FA_MONTH = 6;
-    private static final int FA_YEAR = 7;
-    private static final int FA_LEAP = 8;
-    private static final int FA_ISO_YEAR = 9;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_DAY_OF_YEAR = 14;
-    private static final int FA_WEEK_OF_YEAR = 12;
+    private static final int FA_HOUR = 4;
     private static final int FA_ISO_WEEK_OF_YEAR = 13;
+    private static final int FA_ISO_YEAR = 9;
+    private static final int FA_LEAP = 8;
+    private static final int FA_LOCAL_DATETIME = 1;
+    private static final int FA_LOCAL_LOCALE = 3;
+    private static final int FA_LOCAL_SINK = 5;
+    private static final int FA_LOCAL_TIMEZONE = 4;
     private static final int FA_MILLIS_MICROS = 11;
+    private static final int FA_MINUTE = 3;
+    private static final int FA_MONTH = 6;
+    private static final int FA_SECOND = 2;
     private static final int FA_SECOND_MICROS = 15;
-    private static final int P_INPUT_STR = 1;
-    private static final int P_LO = 2;
-    private static final int P_HI = 3;
-    private static final int P_LOCALE = 4;
+    private static final int FA_SECOND_MILLIS = 1;
+    private static final int FA_WEEK_OF_YEAR = 12;
+    private static final int FA_YEAR = 7;
+    private static final int FORMAT_METHOD_STACK_START = 6;
     private static final int LOCAL_DAY = 5;
-    private static final int LOCAL_MONTH = 6;
-    private static final int LOCAL_YEAR = 7;
+    private static final int LOCAL_ERA = 19;
     private static final int LOCAL_HOUR = 8;
-    private static final int LOCAL_MINUTE = 9;
-    private static final int LOCAL_SECOND = 10;
+    private static final int LOCAL_HOUR_TYPE = 18;
+    private static final int LOCAL_MICROS = 20;
     private static final int LOCAL_MILLIS = 11;
+    private static final int LOCAL_MINUTE = 9;
+    private static final int LOCAL_MONTH = 6;
+    private static final int LOCAL_OFFSET = 16;
     private static final int LOCAL_POS = 12;
+    private static final int LOCAL_SECOND = 10;
     private static final int LOCAL_TEMP_LONG = 13;
     private static final int LOCAL_TIMEZONE = 15;
-    private static final int LOCAL_OFFSET = 16;
-    private static final int LOCAL_HOUR_TYPE = 18;
-    private static final int LOCAL_ERA = 19;
-    private static final int LOCAL_MICROS = 20;
     private static final int LOCAL_WEEK = 21;
-    private static final int FORMAT_METHOD_STACK_START = 6;
-
-    static {
-        opMap = new CharSequenceIntHashMap();
-        opList = new ObjList<>();
-
-        addOp("G", OP_ERA);
-        addOp("y", OP_YEAR_ONE_DIGIT);
-        addOp("yy", OP_YEAR_TWO_DIGITS);
-        addOp("yyy", OP_YEAR_THREE_DIGITS);
-        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
-        addOp("YYYY", OP_YEAR_ISO_FOUR_DIGITS);
-        addOp("M", OP_MONTH_ONE_DIGIT);
-        addOp("MM", OP_MONTH_TWO_DIGITS);
-        addOp("MMM", OP_MONTH_SHORT_NAME);
-        addOp("MMMM", OP_MONTH_LONG_NAME);
-        addOp("d", OP_DAY_ONE_DIGIT);
-        addOp("dd", OP_DAY_TWO_DIGITS);
-        addOp("E", OP_DAY_NAME_SHORT);
-        addOp("EE", OP_DAY_NAME_LONG);
-        addOp("u", OP_DAY_OF_WEEK);
-        addOp("D", OP_DAY_OF_YEAR);
-        addOp("w", OP_WEEK_OF_YEAR);
-        addOp("ww", OP_ISO_WEEK_OF_YEAR);
-        addOp("a", OP_AM_PM);
-        addOp("H", OP_HOUR_24_ONE_DIGIT);
-        addOp("HH", OP_HOUR_24_TWO_DIGITS);
-        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
-        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
-        addOp("K", OP_HOUR_12_ONE_DIGIT);
-        addOp("KK", OP_HOUR_12_TWO_DIGITS);
-        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
-        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
-        addOp("m", OP_MINUTE_ONE_DIGIT);
-        addOp("mm", OP_MINUTE_TWO_DIGITS);
-        addOp("s", OP_SECOND_ONE_DIGIT);
-        addOp("ss", OP_SECOND_TWO_DIGITS);
-        addOp("S", OP_MILLIS_ONE_DIGIT);
-        addOp("SSS", OP_MILLIS_THREE_DIGITS);
-        addOp("N", OP_NANOS_ONE_DIGIT);
-        addOp("NNN", OP_NANOS_THREE_DIGITS);
-        addOp("z", OP_TIME_ZONE_SHORT);
-        addOp("zz", OP_TIME_ZONE_GMT_BASED);
-        addOp("zzz", OP_TIME_ZONE_LONG);
-        addOp("Z", OP_TIME_ZONE_RFC_822);
-        addOp("x", OP_TIME_ZONE_ISO_8601_1);
-        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
-        addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
-        addOp("U", OP_MICROS_ONE_DIGIT);
-        addOp("UUU", OP_MICROS_THREE_DIGITS);
-        addOp("U+", OP_MICROS_GREEDY6);
-        addOp("N+", OP_NANOS_GREEDY9);
-    }
-
-    private final GenericLexer lexer = new GenericLexer(2048);
+    private static final int LOCAL_YEAR = 7;
+    private static final int P_HI = 3;
+    private static final int P_INPUT_STR = 1;
+    private static final int P_LO = 2;
+    private static final int P_LOCALE = 4;
     private final BytecodeAssembler asm = new BytecodeAssembler();
-    private final IntList ops = new IntList();
-    private final ObjList<String> delimiters = new ObjList<>();
     private final IntList delimiterIndexes = new IntList();
-    private final LongList frameOffsets = new LongList();
+    private final ObjList<String> delimiters = new ObjList<>();
     private final int[] fmtAttributeIndex = new int[32];
+    private final LongList frameOffsets = new LongList();
+    private final GenericLexer lexer = new GenericLexer(2048);
+    private final IntList ops = new IntList();
 
     public TimestampFormatCompiler() {
         for (int i = 0, n = opList.size(); i < n; i++) {
             lexer.defineSymbol(opList.getQuick(i));
         }
-    }
-
-    private static void addOp(String op, int opDayTwoDigits) {
-        opMap.put(op, opDayTwoDigits);
-        opList.add(op);
     }
 
     public DateFormat compile(CharSequence pattern) {
@@ -249,6 +191,11 @@ public class TimestampFormatCompiler {
         // make last operation "greedy"
         makeLastOpGreedy(ops);
         return generic ? new GenericTimestampFormat(ops, delimiters) : compile(ops, delimiters);
+    }
+
+    private static void addOp(String op, int opDayTwoDigits) {
+        opMap.put(op, opDayTwoDigits);
+        opList.add(op);
     }
 
     private void addTempToPos(int decodeLenIndex) {
@@ -1389,7 +1336,7 @@ public class TimestampFormatCompiler {
 
                     if ((ss & (1 << LOCAL_WEEK)) == 0) {
                         asm.putITEM_Integer();
-                    } else{
+                    } else {
                         asm.putITEM_Top();
                     }
 
@@ -1613,7 +1560,7 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_MICROS_THREE_DIGITS:
                     attributes |= (1 << FA_MILLIS_MICROS);
                     break;
-                 // formatting method for MICROS6 and NANOS9 is the same
+                // formatting method for MICROS6 and NANOS9 is the same
                 case TimestampFormatCompiler.OP_MICROS_GREEDY6:
                 case TimestampFormatCompiler.OP_NANOS_GREEDY9:
                     attributes |= (1 << FA_SECOND_MICROS);
@@ -1912,7 +1859,7 @@ public class TimestampFormatCompiler {
         asm.iinc(LOCAL_POS, digitCount);
         asm.iload(LOCAL_POS);
         asm.invokeStatic(parseIntIndex);
-        if(target > -1) {
+        if (target > -1) {
             asm.istore(target);
         } else {
             asm.pop();
@@ -1951,5 +1898,57 @@ public class TimestampFormatCompiler {
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));
         asm.setJmp(branch, p);
+    }
+
+    static {
+        opMap = new CharSequenceIntHashMap();
+        opList = new ObjList<>();
+
+        addOp("G", OP_ERA);
+        addOp("y", OP_YEAR_ONE_DIGIT);
+        addOp("yy", OP_YEAR_TWO_DIGITS);
+        addOp("yyy", OP_YEAR_THREE_DIGITS);
+        addOp("yyyy", OP_YEAR_FOUR_DIGITS);
+        addOp("YYYY", OP_YEAR_ISO_FOUR_DIGITS);
+        addOp("M", OP_MONTH_ONE_DIGIT);
+        addOp("MM", OP_MONTH_TWO_DIGITS);
+        addOp("MMM", OP_MONTH_SHORT_NAME);
+        addOp("MMMM", OP_MONTH_LONG_NAME);
+        addOp("d", OP_DAY_ONE_DIGIT);
+        addOp("dd", OP_DAY_TWO_DIGITS);
+        addOp("E", OP_DAY_NAME_SHORT);
+        addOp("EE", OP_DAY_NAME_LONG);
+        addOp("u", OP_DAY_OF_WEEK);
+        addOp("D", OP_DAY_OF_YEAR);
+        addOp("w", OP_WEEK_OF_YEAR);
+        addOp("ww", OP_ISO_WEEK_OF_YEAR);
+        addOp("a", OP_AM_PM);
+        addOp("H", OP_HOUR_24_ONE_DIGIT);
+        addOp("HH", OP_HOUR_24_TWO_DIGITS);
+        addOp("k", OP_HOUR_24_ONE_DIGIT_ONE_BASED);
+        addOp("kk", OP_HOUR_24_TWO_DIGITS_ONE_BASED);
+        addOp("K", OP_HOUR_12_ONE_DIGIT);
+        addOp("KK", OP_HOUR_12_TWO_DIGITS);
+        addOp("h", OP_HOUR_12_ONE_DIGIT_ONE_BASED);
+        addOp("hh", OP_HOUR_12_TWO_DIGITS_ONE_BASED);
+        addOp("m", OP_MINUTE_ONE_DIGIT);
+        addOp("mm", OP_MINUTE_TWO_DIGITS);
+        addOp("s", OP_SECOND_ONE_DIGIT);
+        addOp("ss", OP_SECOND_TWO_DIGITS);
+        addOp("S", OP_MILLIS_ONE_DIGIT);
+        addOp("SSS", OP_MILLIS_THREE_DIGITS);
+        addOp("N", OP_NANOS_ONE_DIGIT);
+        addOp("NNN", OP_NANOS_THREE_DIGITS);
+        addOp("z", OP_TIME_ZONE_SHORT);
+        addOp("zz", OP_TIME_ZONE_GMT_BASED);
+        addOp("zzz", OP_TIME_ZONE_LONG);
+        addOp("Z", OP_TIME_ZONE_RFC_822);
+        addOp("x", OP_TIME_ZONE_ISO_8601_1);
+        addOp("xx", OP_TIME_ZONE_ISO_8601_2);
+        addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
+        addOp("U", OP_MICROS_ONE_DIGIT);
+        addOp("UUU", OP_MICROS_THREE_DIGITS);
+        addOp("U+", OP_MICROS_GREEDY6);
+        addOp("N+", OP_NANOS_GREEDY9);
     }
 }

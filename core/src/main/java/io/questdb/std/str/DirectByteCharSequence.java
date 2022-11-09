@@ -32,8 +32,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence {
     public static final Factory FACTORY = new Factory();
-    private long lo;
     private long hi;
+    private long lo;
 
     @Override
     public byte byteAt(int index) {
@@ -41,8 +41,17 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     }
 
     @Override
+    public char charAt(int index) {
+        return (char) byteAt(index);
+    }
+
+    @Override
     public void clear() {
         this.lo = this.hi = 0;
+    }
+
+    public void decHi() {
+        this.hi--;
     }
 
     public long getHi() {
@@ -58,9 +67,10 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         return (int) (hi - lo);
     }
 
-    @Override
-    public char charAt(int index) {
-        return (char) byteAt(index);
+    public DirectByteCharSequence of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+        return this;
     }
 
     public void shl(long delta) {
@@ -68,25 +78,9 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         this.hi -= delta;
     }
 
-    public DirectByteCharSequence of(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
-        return this;
-    }
-
-    public void decHi() {
-        this.hi--;
-    }
-
     public void squeeze() {
         this.lo++;
         this.hi--;
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return Chars.stringFromUtf8Bytes(lo, hi);
     }
 
     @Override
@@ -95,6 +89,12 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;
         return seq;
+    }
+
+    @NotNull
+    @Override
+    public String toString() {
+        return Chars.stringFromUtf8Bytes(lo, hi);
     }
 
     public static final class Factory implements ObjectFactory<DirectByteCharSequence> {

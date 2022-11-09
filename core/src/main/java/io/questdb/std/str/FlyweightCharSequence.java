@@ -31,8 +31,13 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
     public static final ObjectFactory<FlyweightCharSequence> FACTORY = FlyweightCharSequence::new;
 
     private CharSequence delegate;
-    private int lo;
     private int len = -1;
+    private int lo;
+
+    @Override
+    public char charAt(int index) {
+        return delegate.charAt(index + lo);
+    }
 
     @Override
     public void clear() {
@@ -42,11 +47,6 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
     @Override
     public int length() {
         return len;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return delegate.charAt(index + lo);
     }
 
     public FlyweightCharSequence of(CharSequence delegate) {

@@ -333,16 +333,20 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         throw new UnsupportedOperationException();
     }
 
+    public void toSink(CharSink sink) {
+        if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
+            Chars.utf8Decode(ptr, wptr - 1, sink);
+        } else {
+            Chars.utf8Decode(ptr, wptr, sink);
+        }
+    }
+
     @Override
     @NotNull
     public String toString() {
         if (ptr != 0) {
             final CharSink b = Misc.getThreadLocalBuilder();
-            if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
-                Chars.utf8Decode(ptr, wptr - 1, b);
-            } else {
-                Chars.utf8Decode(ptr, wptr, b);
-            }
+            toSink(b);
             return b.toString();
         }
         return "";

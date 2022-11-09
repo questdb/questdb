@@ -41,19 +41,19 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
-    private final LineTcpMeasurementScheduler scheduler;
+    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
+    private final boolean disconnectOnError;
     private final Metrics metrics;
     private final MillisecondClock milliClock;
-    private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser;
-    private final boolean disconnectOnError;
-    protected long recvBufStart;
+    private final LineTcpMeasurementScheduler scheduler;
+    protected boolean peerDisconnected;
     protected long recvBufEnd;
     protected long recvBufPos;
-    protected boolean peerDisconnected;
+    protected long recvBufStart;
     protected long recvBufStartOfMeasurement;
-    private long lastQueueFullLogMillis = 0;
     private boolean goodMeasurement;
+    private long lastQueueFullLogMillis = 0;
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         nf = configuration.getNetworkFacade();
@@ -89,6 +89,45 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
         return false;
     }
 
+    private void doHandleDisconnectEvent() {
+        if (parser.getBufferAddress() == recvBufEnd) {
+            LOG.error().$('[').$(fd).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
+            return;
+        }
+
+        if (peerDisconnected) {
+            // Peer disconnected, we have now finished disconnect our end
+            if (recvBufPos != recvBufStart) {
+                LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
+            } else {
+                LOG.info().$('[').$(fd).$("] peer disconnected").$();
+            }
+        }
+    }
+
+    private void logParseError() {
+        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+        assert position >= 0;
+        LOG.error()
+                .$('[').$(fd)
+                .$("] could not parse measurement, ").$(parser.getErrorCode())
+                .$(" at ").$(position)
+                .$(", line (may be mangled due to partial parsing): '")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'")
+                .$();
+    }
+
+    private void startNewMeasurement() {
+        parser.startNextMeasurement();
+        recvBufStartOfMeasurement = parser.getBufferAddress();
+        // we ran out of buffer, move to start and start parsing new data from socket
+        if (recvBufStartOfMeasurement == recvBufPos) {
+            recvBufPos = recvBufStart;
+            parser.of(recvBufStart);
+            recvBufStartOfMeasurement = recvBufStart;
+        }
+    }
+
     /**
      * Moves incompletely received measurement to start of the receive buffer. Also updates the state of the
      * context and protocol parser such that all pointers that point to the incomplete measurement will remain
@@ -116,22 +155,6 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
             return true;
         }
         return false;
-    }
-
-    private void doHandleDisconnectEvent() {
-        if (parser.getBufferAddress() == recvBufEnd) {
-            LOG.error().$('[').$(fd).$("] buffer overflow [line.tcp.msg.buffer.size=").$(recvBufEnd - recvBufStart).$(']').$();
-            return;
-        }
-
-        if (peerDisconnected) {
-            // Peer disconnected, we have now finished disconnect our end
-            if (recvBufPos != recvBufStart) {
-                LOG.info().$('[').$(fd).$("] peer disconnected with partial measurement, ").$(recvBufPos - recvBufStart).$(" unprocessed bytes").$();
-            } else {
-                LOG.info().$('[').$(fd).$("] peer disconnected").$();
-            }
-        }
     }
 
     IOContextResult handleIO(NetworkIOJob netIoJob) {
@@ -207,29 +230,6 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                 metrics.health().incrementUnhandledErrors();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
-        }
-    }
-
-    private void logParseError() {
-        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
-        assert position >= 0;
-        LOG.error()
-                .$('[').$(fd)
-                .$("] could not parse measurement, ").$(parser.getErrorCode())
-                .$(" at ").$(position)
-                .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'")
-                .$();
-    }
-
-    private void startNewMeasurement() {
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            recvBufPos = recvBufStart;
-            parser.of(recvBufStart);
-            recvBufStartOfMeasurement = recvBufStart;
         }
     }
 

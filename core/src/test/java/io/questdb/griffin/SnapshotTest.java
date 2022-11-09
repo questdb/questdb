@@ -63,398 +63,18 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSnapshotPrepare() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 'a'; i < 'f'; i++) {
-                compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            }
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
+    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
+        testRecoverSnapshot(null, null, false);
     }
 
     @Test
-    public void testSnapshotPrepareOnEmptyDatabase() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
+    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
+        testRecoverSnapshot("id1", null, false);
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(false, false);
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, false);
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
-    }
-
-    private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-
-                String tableName = "t";
-                compile("create table " + tableName + " (a STRING, b LONG)");
-
-                // Bump truncate version by truncating non-empty table
-                compile("insert into " + tableName + " VALUES('abasd', 1L)");
-                compile("truncate table " + tableName);
-
-                compile("insert into " + tableName +
-                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
-                if (generateColTops) {
-                    compile("alter table " + tableName + " add column c int", sqlExecutionContext);
-                }
-                if (dropColumns) {
-                    compile("alter table " + tableName + " drop column a", sqlExecutionContext);
-                }
-
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-
-                path.concat(tableName);
-                int tableNameLen = path.length();
-                FilesFacade ff = configuration.getFilesFacade();
-                try (TableReader tableReader = new TableReader(configuration, "t")) {
-                    try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
-
-                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
-                            // Assert _meta contents.
-                            path.concat(TableUtils.META_FILE_NAME).$();
-                            metadata.deferredInit(path, ColumnType.VERSION);
-
-                            Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
-                            Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
-                            Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
-                            Assert.assertEquals(metadata0.getVersion(), metadata.getVersion());
-                            Assert.assertEquals(metadata0.getId(), metadata.getId());
-                            Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
-                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
-                            Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
-
-                            for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
-                                TableColumnMetadata columnMetadata0 = metadata0.getColumnQuick(i);
-                                TableColumnMetadata columnMetadata1 = metadata0.getColumnQuick(i);
-                                Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
-                                Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
-                                Assert.assertEquals(columnMetadata0.getHash(), columnMetadata1.getHash());
-                                Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
-                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
-                                Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
-                            }
-
-                            // Assert _txn contents.
-                            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-                            try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata.getPartitionBy())) {
-                                    TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-
-                                    Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
-                                    Assert.assertEquals(txReader0.getTransientRowCount(), txReader1.getTransientRowCount());
-                                    Assert.assertEquals(txReader0.getFixedRowCount(), txReader1.getFixedRowCount());
-                                    Assert.assertEquals(txReader0.getMinTimestamp(), txReader1.getMinTimestamp());
-                                    Assert.assertEquals(txReader0.getMaxTimestamp(), txReader1.getMaxTimestamp());
-                                    Assert.assertEquals(txReader0.getStructureVersion(), txReader1.getStructureVersion());
-                                    Assert.assertEquals(txReader0.getDataVersion(), txReader1.getDataVersion());
-                                    Assert.assertEquals(txReader0.getPartitionTableVersion(), txReader1.getPartitionTableVersion());
-                                    Assert.assertEquals(1, txReader0.getTruncateVersion());
-                                    Assert.assertEquals(txReader0.getTruncateVersion(), txReader1.getTruncateVersion());
-                                    for (int i = 0; i < txReader0.getSymbolColumnCount(); i++) {
-                                        Assert.assertEquals(txReader0.getSymbolValueCount(i), txReader1.getSymbolValueCount(i));
-                                    }
-                                    for (int i = 0; i < txReader0.getPartitionCount(); i++) {
-                                        Assert.assertEquals(txReader0.getPartitionNameTxn(i), txReader1.getPartitionNameTxn(i));
-                                        Assert.assertEquals(txReader0.getPartitionSize(i), txReader1.getPartitionSize(i));
-                                        Assert.assertEquals(txReader0.getPartitionTimestamp(i), txReader1.getPartitionTimestamp(i));
-                                        Assert.assertEquals(txReader0.getPartitionColumnVersion(i), txReader1.getPartitionColumnVersion(i));
-                                    }
-                                }
-                            }
-
-                            // Assert _cv contents.
-                            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                            try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
-                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
-                                    cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-
-                                    Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
-                                    TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
-                                }
-                            }
-                        }
-                    }
-                }
-
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol, b double, c long)",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareEmptyFolder() throws Exception {
-        final String tableName = "test";
-        path.of(configuration.getRoot()).concat("empty_folder").slash$();
-        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
-
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
-        );
-
-        // Assert snapshot folder exists
-        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).slash$())
-        );
-        // But snapshot/db folder does not
-        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                "alter table " + tableName + " drop column c",
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " as " +
-                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-                null,
-                tableName
-        );
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
-        final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
-                null,
-                tableName
-        );
-    }
-
-    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path(); Path copyPath = new Path()) {
-                path.of(configuration.getRoot());
-                copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-
-                compile(ddl, sqlExecutionContext);
-                if (ddl2 != null) {
-                    compile(ddl2, sqlExecutionContext);
-                }
-
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-
-                path.concat(tableName);
-                int tableNameLen = path.length();
-                copyPath.concat(tableName);
-                int copyTableNameLen = copyPath.length();
-
-                // _meta
-                path.concat(TableUtils.META_FILE_NAME).$();
-                copyPath.concat(TableUtils.META_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-                // _txn
-                path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-                // _cv
-                path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile(null);
-    }
-
-    @Test
-    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile("foobar");
-    }
-
-    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            try (Path path = new Path()) {
-                compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                FilesFacade ff = configuration.getFilesFacade();
-                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-
-                    CharSequence expectedId = configuration.getSnapshotInstanceId();
-                    CharSequence actualId = mem.getStr(0);
-                    Assert.assertTrue(Chars.equals(actualId, expectedId));
-                }
-
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
-        assertMemoryLeak(() -> {
-            path.trimTo(rootLen);
-            FilesFacade ff = configuration.getFilesFacade();
-            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
-            Assert.assertEquals(0, rc);
-
-            // Create a test file.
-            path.trimTo(rootLen).concat("test.txt").$();
-            Assert.assertTrue(Files.touch(path));
-
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            // The test file should be deleted by SNAPSHOT PREPARE.
-            Assert.assertFalse(ff.exists(path));
-
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-
-            path.trimTo(rootLen).slash$();
-            Assert.assertFalse(configuration.getFilesFacade().exists(path));
-        });
-    }
-
-    @Test
-    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            // Verify that SNAPSHOT COMPLETE doesn't return errors.
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
-            } finally {
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotUnknownSubOptionFails() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-            try {
-                compiler.compile("snapshot commit", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
-            }
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
-
-            testFilesFacade.errorOnSync = true;
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
-            }
-
-            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
-            testFilesFacade.errorOnSync = false;
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            compiler.compile("snapshot complete", sqlExecutionContext);
-        });
-    }
-
-    @Test
-    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "t";
-            compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
-
-            // Corrupt the table by removing _txn file.
-            FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
-
-            try {
-                compiler.compile("snapshot prepare", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                Assert.assertTrue(ex.getMessage().contains("Cannot append. File does not exist"));
-            }
-        });
+    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
+        testRecoverSnapshot(null, "id1", false);
     }
 
     @Test
@@ -471,63 +91,6 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testRecoverSnapshotForEqualInstanceIds() throws Exception {
         testRecoverSnapshot("id1", "id1", false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshot(null, null, false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
-        testRecoverSnapshot(null, "id1", false);
-    }
-
-    @Test
-    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
-        testRecoverSnapshot("id1", null, false);
-    }
-
-    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
-        assertMemoryLeak(() -> {
-            snapshotInstanceId = snapshotId;
-
-            final String nonPartitionedTable = "npt";
-            compile("create table " + nonPartitionedTable + " as " +
-                    "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
-                    sqlExecutionContext);
-            final String partitionedTable = "pt";
-            compile("create table " + partitionedTable + " as " +
-                    "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
-                    sqlExecutionContext);
-
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-
-            compile("insert into " + nonPartitionedTable +
-                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
-            compile("insert into " + partitionedTable +
-                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            snapshotAgent.clear();
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            snapshotInstanceId = restartedId;
-
-            DatabaseSnapshotAgent.recoverSnapshot(engine);
-
-            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
-            int expectedCount = expectRecovery ? 20 : 40;
-            assertSql("select count() from " + nonPartitionedTable, "count\n" +
-                    expectedCount + "\n");
-            assertSql("select count() from " + partitionedTable, "count\n" +
-                    expectedCount + "\n");
-
-            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
-            path.trimTo(rootLen).slash$();
-            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
-        });
     }
 
     @Test
@@ -601,6 +164,440 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Dropped column should be there.
             assertSql("select * from " + tableName, expectedAllColumns);
+        });
+    }
+
+    @Test
+    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+
+            path.trimTo(rootLen).slash$();
+            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+        });
+    }
+
+    @Test
+    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            // Verify that SNAPSHOT COMPLETE doesn't return errors.
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepare() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 'a'; i < 'f'; i++) {
+                compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            }
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile(null);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
+        testSnapshotPrepareCheckMetadataFile("foobar");
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(false, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " as " +
+                        " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                "alter table " + tableName + " drop column c",
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
+        final String tableName = "test";
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName +
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
+                null,
+                tableName
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, false);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    @Test
+    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
+        testSnapshotPrepareCheckTableMetadata(true, true);
+    }
+
+    @Test
+    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
+        assertMemoryLeak(() -> {
+            path.trimTo(rootLen);
+            FilesFacade ff = configuration.getFilesFacade();
+            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
+            Assert.assertEquals(0, rc);
+
+            // Create a test file.
+            path.trimTo(rootLen).concat("test.txt").$();
+            Assert.assertTrue(Files.touch(path));
+
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // The test file should be deleted by SNAPSHOT PREPARE.
+            Assert.assertFalse(ff.exists(path));
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareEmptyFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+
+        // Assert snapshot folder exists
+        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).slash$())
+        );
+        // But snapshot/db folder does not
+        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
+        );
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "t";
+            compile("create table " + tableName + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            // Corrupt the table by removing _txn file.
+            FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertTrue(ff.remove(path.of(root).concat(tableName).concat(TableUtils.TXN_FILE_NAME).$()));
+
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("Cannot append. File does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            testFilesFacade.errorOnSync = true;
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getMessage().contains("Could not sync"));
+            }
+
+            // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
+            testFilesFacade.errorOnSync = false;
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareOnEmptyDatabase() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotUnknownSubOptionFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            try {
+                compiler.compile("snapshot commit", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
+            }
+        });
+    }
+
+    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean expectRecovery) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            final String nonPartitionedTable = "npt";
+            compile("create table " + nonPartitionedTable + " as " +
+                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
+                    sqlExecutionContext);
+            final String partitionedTable = "pt";
+            compile("create table " + partitionedTable + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour",
+                    sqlExecutionContext);
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            compile("insert into " + nonPartitionedTable +
+                    " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)", sqlExecutionContext);
+            compile("insert into " + partitionedTable +
+                    " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)", sqlExecutionContext);
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            snapshotInstanceId = restartedId;
+
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
+            int expectedCount = expectRecovery ? 20 : 40;
+            assertSql("select count() from " + nonPartitionedTable, "count\n" +
+                    expectedCount + "\n");
+            assertSql("select count() from " + partitionedTable, "count\n" +
+                    expectedCount + "\n");
+
+            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
+            path.trimTo(rootLen).slash$();
+            Assert.assertEquals(!expectRecovery, configuration.getFilesFacade().exists(path));
+        });
+    }
+
+    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+
+            try (Path path = new Path()) {
+                compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+
+                    CharSequence expectedId = configuration.getSnapshotInstanceId();
+                    CharSequence actualId = mem.getStr(0);
+                    Assert.assertTrue(Chars.equals(actualId, expectedId));
+                }
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+
+                String tableName = "t";
+                compile("create table " + tableName + " (a STRING, b LONG)");
+
+                // Bump truncate version by truncating non-empty table
+                compile("insert into " + tableName + " VALUES('abasd', 1L)");
+                compile("truncate table " + tableName);
+
+                compile("insert into " + tableName +
+                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
+                if (generateColTops) {
+                    compile("alter table " + tableName + " add column c int", sqlExecutionContext);
+                }
+                if (dropColumns) {
+                    compile("alter table " + tableName + " drop column a", sqlExecutionContext);
+                }
+
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.concat(tableName);
+                int tableNameLen = path.length();
+                FilesFacade ff = configuration.getFilesFacade();
+                try (TableReader tableReader = new TableReader(configuration, "t")) {
+                    try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
+                        path.concat(TableUtils.META_FILE_NAME).$();
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                            metadata.load(path);
+                            // Assert _meta contents.
+
+                            Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
+                            Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
+                            Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
+                            Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
+                            Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
+                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
+                            Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
+
+                            for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
+                                TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
+                                TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
+                                Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
+                                Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
+                                Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
+                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
+                                Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
+                            }
+
+                            // Assert _txn contents.
+                            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                            try (TxReader txReader0 = tableReader.getTxFile()) {
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata.getPartitionBy())) {
+                                    TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+
+                                    Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
+                                    Assert.assertEquals(txReader0.getTransientRowCount(), txReader1.getTransientRowCount());
+                                    Assert.assertEquals(txReader0.getFixedRowCount(), txReader1.getFixedRowCount());
+                                    Assert.assertEquals(txReader0.getMinTimestamp(), txReader1.getMinTimestamp());
+                                    Assert.assertEquals(txReader0.getMaxTimestamp(), txReader1.getMaxTimestamp());
+                                    Assert.assertEquals(txReader0.getStructureVersion(), txReader1.getStructureVersion());
+                                    Assert.assertEquals(txReader0.getDataVersion(), txReader1.getDataVersion());
+                                    Assert.assertEquals(txReader0.getPartitionTableVersion(), txReader1.getPartitionTableVersion());
+                                    Assert.assertEquals(1, txReader0.getTruncateVersion());
+                                    Assert.assertEquals(txReader0.getTruncateVersion(), txReader1.getTruncateVersion());
+                                    for (int i = 0; i < txReader0.getSymbolColumnCount(); i++) {
+                                        Assert.assertEquals(txReader0.getSymbolValueCount(i), txReader1.getSymbolValueCount(i));
+                                    }
+                                    for (int i = 0; i < txReader0.getPartitionCount(); i++) {
+                                        Assert.assertEquals(txReader0.getPartitionNameTxn(i), txReader1.getPartitionNameTxn(i));
+                                        Assert.assertEquals(txReader0.getPartitionSize(i), txReader1.getPartitionSize(i));
+                                        Assert.assertEquals(txReader0.getPartitionTimestamp(i), txReader1.getPartitionTimestamp(i));
+                                        Assert.assertEquals(txReader0.getPartitionColumnVersion(i), txReader1.getPartitionColumnVersion(i));
+                                    }
+                                }
+                            }
+
+                            // Assert _cv contents.
+                            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                            try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
+                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
+                                    cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+
+                                    Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
+                                    TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path(); Path copyPath = new Path()) {
+                path.of(configuration.getRoot());
+                copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+
+                compile(ddl, sqlExecutionContext);
+                if (ddl2 != null) {
+                    compile(ddl2, sqlExecutionContext);
+                }
+
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+
+                path.concat(tableName);
+                int tableNameLen = path.length();
+                copyPath.concat(tableName);
+                int copyTableNameLen = copyPath.length();
+
+                // _meta
+                path.concat(TableUtils.META_FILE_NAME).$();
+                copyPath.concat(TableUtils.META_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _txn
+                path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+                // _cv
+                path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
         });
     }
 

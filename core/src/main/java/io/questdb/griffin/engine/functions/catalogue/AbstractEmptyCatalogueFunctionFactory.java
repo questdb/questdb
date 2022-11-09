@@ -35,8 +35,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionFactory {
-    private final String signature;
     private final RecordMetadata metadata;
+    private final String signature;
 
     public AbstractEmptyCatalogueFunctionFactory(String signature, RecordMetadata metadata) {
         this.signature = signature;

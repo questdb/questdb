@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -37,17 +37,15 @@ import io.questdb.std.Misc;
 public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor {
 
     private final LimitedSizeLongTreeChain chain;
-    private final RecordComparator comparator;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
-
-    private RecordCursor base;
-    private Record baseRecord;
-
+    private final RecordComparator comparator;
     private final long limit; //<0 - limit disabled ; =0 means don't fetch any rows ; >0 - apply limit
     private final long skipFirst; //skip first N rows
     private final long skipLast;  //skip last N rows
-    private long rowsLeft;
+    private RecordCursor base;
+    private Record baseRecord;
     private boolean isOpen;
+    private long rowsLeft;
 
     public LimitedSizeSortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
@@ -75,23 +73,18 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
-    public long size() {
-        return Math.max(chain.size() - skipFirst - skipLast, 0);
-    }
-
-    @Override
     public Record getRecord() {
         return baseRecord;
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return base.getRecordB();
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return base.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -104,25 +97,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
-    public Record getRecordB() {
-        return base.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
-    }
-
-    @Override
-    public void toTop() {
-        chainCursor.toTop();
-
-        long skipLeft = skipFirst;
-        while (skipLeft-- > 0 && chainCursor.hasNext()) {
-            chainCursor.next();
-        }
-
-        rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -154,6 +130,28 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         }
 
         toTop();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public long size() {
+        return Math.max(chain.size() - skipFirst - skipLast, 0);
+    }
+
+    @Override
+    public void toTop() {
+        chainCursor.toTop();
+
+        long skipLeft = skipFirst;
+        while (skipLeft-- > 0 && chainCursor.hasNext()) {
+            chainCursor.next();
+        }
+
+        rowsLeft = Math.max(chain.size() - skipFirst - skipLast, 0);
     }
 }
 

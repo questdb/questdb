@@ -36,20 +36,6 @@ public class CompiledFilter implements Closeable {
 
     private long fnAddress;
 
-    public void compile(MemoryCARW filter, int options) throws SqlException {
-        final long filterSize = filter.getAppendOffset();
-        final long filterAddress = filter.getPageAddress(0);
-
-        FiltersCompiler.JitError error = tlJitError.get();
-        error.reset();
-        fnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options, error);
-        if (error.errorCode() != 0) {
-            throw SqlException.position(0)
-                    .put("JIT compilation failed [errorCode").put(error.errorCode())
-                    .put(", msg=").put(error.message()).put("]");
-        }
-    }
-
     public long call(long colsAddress, long colsSize, long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
         return FiltersCompiler.callFunction(
                 fnAddress,
@@ -68,6 +54,20 @@ public class CompiledFilter implements Closeable {
         if (fnAddress > 0) {
             FiltersCompiler.freeFunction(fnAddress);
             fnAddress = 0;
+        }
+    }
+
+    public void compile(MemoryCARW filter, int options) throws SqlException {
+        final long filterSize = filter.getAppendOffset();
+        final long filterAddress = filter.getPageAddress(0);
+
+        FiltersCompiler.JitError error = tlJitError.get();
+        error.reset();
+        fnAddress = FiltersCompiler.compileFunction(filterAddress, filterSize, options, error);
+        if (error.errorCode() != 0) {
+            throw SqlException.position(0)
+                    .put("JIT compilation failed [errorCode").put(error.errorCode())
+                    .put(", msg=").put(error.message()).put("]");
         }
     }
 }

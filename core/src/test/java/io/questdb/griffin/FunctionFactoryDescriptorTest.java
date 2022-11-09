@@ -94,14 +94,6 @@ public class FunctionFactoryDescriptorTest {
         assertType(descriptor, 1);
     }
 
-    private static boolean isArray(FunctionFactoryDescriptor descriptor, int argIndex) {
-        return FunctionFactoryDescriptor.isArray(descriptor.getArgTypeMask(argIndex));
-    }
-
-    private static boolean isConstant(FunctionFactoryDescriptor descriptor, int argIndex) {
-        return FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(argIndex));
-    }
-
     private static void assertType(FunctionFactoryDescriptor descriptor, int argIndex) {
         Assert.assertEquals(ColumnType.STRING, FunctionFactoryDescriptor.toType(descriptor.getArgTypeMask(argIndex)));
     }
@@ -118,5 +110,13 @@ public class FunctionFactoryDescriptorTest {
                 throw new UnsupportedOperationException();
             }
         });
+    }
+
+    private static boolean isArray(FunctionFactoryDescriptor descriptor, int argIndex) {
+        return FunctionFactoryDescriptor.isArray(descriptor.getArgTypeMask(argIndex));
+    }
+
+    private static boolean isConstant(FunctionFactoryDescriptor descriptor, int argIndex) {
+        return FunctionFactoryDescriptor.isConstant(descriptor.getArgTypeMask(argIndex));
     }
 }

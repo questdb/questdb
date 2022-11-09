@@ -48,10 +48,10 @@ public class QMapReadSequentialKeyBenchmark {
 
     private static final int N = 300_000;
     private static final double loadFactor = 0.5;
-    private static final Rnd rnd = new Rnd();
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
     private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final Rnd rnd = new Rnd();
     private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
@@ -65,14 +65,14 @@ public class QMapReadSequentialKeyBenchmark {
         new Runner(opt).run();
     }
 
-    @Setup(Level.Iteration)
-    public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
-    }
-
     @Benchmark
     public int baseline() {
         return rnd.nextInt(N);
+    }
+
+    @Setup(Level.Iteration)
+    public void reset() {
+        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
     }
 
     @Benchmark
@@ -85,17 +85,17 @@ public class QMapReadSequentialKeyBenchmark {
     }
 
     @Benchmark
+    public Long testHashMap() {
+        return hmap.get(String.valueOf(rnd.nextInt(N)));
+    }
+
+    @Benchmark
     public MapValue testQMap() {
         MapKey key = qmap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(N));
         key.putStr(sink);
         return key.findValue();
-    }
-
-    @Benchmark
-    public Long testHashMap() {
-        return hmap.get(String.valueOf(rnd.nextInt(N)));
     }
 
     static {

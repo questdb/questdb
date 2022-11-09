@@ -36,6 +36,18 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
     }
 
     @Override
+    public void clear() {
+        setBarrier(OpenBarrier.INSTANCE);
+        value = -1;
+        cache = -1;
+    }
+
+    @Override
+    public Barrier getBarrier() {
+        return barrier;
+    }
+
+    @Override
     public long nextBully() {
         long cursor;
 
@@ -44,6 +56,22 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
         }
 
         return cursor;
+    }
+
+    @Override
+    public Barrier root() {
+        return barrier != OpenBarrier.INSTANCE ? barrier.root() : this;
+    }
+
+    @Override
+    public void setBarrier(Barrier barrier) {
+        this.barrier = barrier;
+    }
+
+    @Override
+    public Barrier then(Barrier barrier) {
+        barrier.setBarrier(this);
+        return barrier;
     }
 
     @Override
@@ -57,34 +85,6 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence {
             waitStrategy.await();
         }
         return r;
-    }
-
-    @Override
-    public void clear() {
-        setBarrier(OpenBarrier.INSTANCE);
-        value = -1;
-        cache = -1;
-    }
-
-    @Override
-    public Barrier root() {
-        return barrier != OpenBarrier.INSTANCE ? barrier.root() : this;
-    }
-
-    @Override
-    public Barrier getBarrier() {
-        return barrier;
-    }
-
-    @Override
-    public void setBarrier(Barrier barrier) {
-        this.barrier = barrier;
-    }
-
-    @Override
-    public Barrier then(Barrier barrier) {
-        barrier.setBarrier(this);
-        return barrier;
     }
 
     private void bully() {

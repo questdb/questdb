@@ -453,6 +453,16 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentForwardCursorReadBreadth() throws Exception {
+        testConcurrentForwardCursor(1000000, 1024);
+    }
+
+    @Test
+    public void testConcurrentForwardCursorReadHeight() throws Exception {
+        testConcurrentForwardCursor(1000000, 10000);
+    }
+
+    @Test
     public void testConcurrentWriterAndBackwardReadBreadth() throws Exception {
         testConcurrentBackwardRW(10000000, 1024);
     }
@@ -470,16 +480,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndForwardReadHeight() throws Exception {
         testConcurrentForwardRW(100000, 10000);
-    }
-
-    @Test
-    public void testConcurrentForwardCursorReadBreadth() throws Exception {
-        testConcurrentForwardCursor(1000000, 1024);
-    }
-
-    @Test
-    public void testConcurrentForwardCursorReadHeight() throws Exception {
-        testConcurrentForwardCursor(1000000, 10000);
     }
 
     @Test
@@ -788,10 +788,43 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyBackwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyConcurrentForwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
+            }
+        });
+    }
+
+    @Test
     public void testEmptyCursor() {
         RowCursor cursor = new EmptyRowCursor();
         Assert.assertFalse(cursor.hasNext());
         Assert.assertEquals(0, cursor.next());
+    }
+
+    @Test
+    public void testEmptyForwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
+            }
+        });
     }
 
     @Test
@@ -1034,76 +1067,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyBackwardCursor() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(configuration, path.trimTo(plen), "x", 128);
-
-            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertEmptyCursor(reader);
-            }
-        });
-    }
-
-    @Test
-    public void testLimitForwardCursor() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(configuration, path.trimTo(plen), "x", 128);
-
-            int N = 265;
-            writeTripleValues(N);
-
-            LongList tmp = new LongList();
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
-                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
-                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
-                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0, true);
-                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0, true);
-                Assert.assertFalse(reader.getCursor(true, 0, 266, Long.MAX_VALUE).hasNext());
-                Assert.assertFalse(reader.getCursor(true, 0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
-            }
-        });
-    }
-
-    @Test
-    public void testLimitForwardCursorWithNulls() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(configuration, path.trimTo(plen), "x", 128);
-
-            int N = 265;
-            int nullsN = 3;
-            writeTripleValues(N);
-
-            LongList tmp = new LongList();
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
-                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
-            }
-        });
-    }
-
-    @Test
-    public void testEmptyForwardCursor() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            create(configuration, path.trimTo(plen), "x", 128);
-
-            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertEmptyCursor(reader);
-            }
-        });
-    }
-
-    @Test
-    public void testNullMemDoesNotCauseInfiniteLoops() {
-        try {
-            BitmapIndexUtils.searchValueBlock(new NullMemoryMR(), 0L, 63L, 1L);
-            Assert.fail();
-        } catch (CairoException e) {
-            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
-        }
-    }
-
-    @Test
     public void testLimitConcurrentForwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
@@ -1175,14 +1138,51 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyConcurrentForwardCursor() throws Exception {
+    public void testLimitForwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             create(configuration, path.trimTo(plen), "x", 128);
 
-            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertEmptyCursor(reader);
+            int N = 265;
+            writeTripleValues(N);
+
+            LongList tmp = new LongList();
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
+                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
+                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0, true);
+                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0, true);
+                Assert.assertFalse(reader.getCursor(true, 0, 266, Long.MAX_VALUE).hasNext());
+                Assert.assertFalse(reader.getCursor(true, 0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
             }
         });
+    }
+
+    @Test
+    public void testLimitForwardCursorWithNulls() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            int N = 265;
+            int nullsN = 3;
+            writeTripleValues(N);
+
+            LongList tmp = new LongList();
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testNullMemDoesNotCauseInfiniteLoops() {
+        try {
+            BitmapIndexUtils.searchValueBlock(new NullMemoryMR(), 0L, 63L, 1L);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
+        }
     }
 
     @Test
@@ -1458,25 +1458,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void writeTripleValues(int N) {
-        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
-            for (int i = 0; i < N; i++) {
-                if (i % 3 == 0) {
-                    continue;
-                }
-                writer.add(0, i);
-                writer.add(0, i);
-                writer.add(0, i);
-            }
-        }
-    }
-
-    private void assertEmptyCursor(AbstractIndexReader reader) {
-        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
-        Assert.assertFalse(cursor.hasNext());
-        Assert.assertEquals(0, cursor.next());
-    }
-
     private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, int min, int max, LongList tmp, int nExpectedNulls, boolean cached) {
         tmp.clear();
         RowCursor cursor = reader.getCursor(cached, 0, min, max);
@@ -1507,6 +1488,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
         } catch (CairoException e) {
             Assert.assertTrue(Chars.contains(e.getMessage(), contains));
         }
+    }
+
+    private void assertEmptyCursor(AbstractIndexReader reader) {
+        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+        Assert.assertFalse(cursor.hasNext());
+        Assert.assertEquals(0, cursor.next());
     }
 
     private void assertForwardCursorLimit(AbstractIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls, boolean cached) {
@@ -1697,117 +1684,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
-    private void testConcurrentForwardRW(int N, int maxKeys) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
-
-            IntList keys = new IntList();
-            IntObjHashMap<LongList> lists = new IntObjHashMap<>();
-
-            // populate model for both reader and writer
-            for (int i = 0; i < N; i++) {
-                int key = rnd.nextPositiveInt() % maxKeys;
-
-                LongList list = lists.get(key);
-                if (list == null) {
-                    lists.put(key, list = new LongList());
-                    keys.add(key);
-                }
-                list.add(i);
-            }
-
-            final int threadCount = 3;
-            CountDownLatch stopLatch = new CountDownLatch(threadCount);
-            CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
-            AtomicInteger errors = new AtomicInteger();
-
-            // create empty index
-            create(configuration, path.trimTo(plen), "x", 1024);
-
-            new Thread(() -> {
-                try {
-                    startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
-                        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
-                            int pass = 0;
-                            while (true) {
-                                boolean added = false;
-                                for (int i = 0, n = keys.size(); i < n; i++) {
-                                    int key = keys.getQuick(i);
-                                    LongList values = lists.get(key);
-                                    if (pass < values.size()) {
-                                        writer.add(key, values.getQuick(pass));
-                                        added = true;
-                                    }
-                                }
-                                pass++;
-                                if (!added) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } catch (Throwable e) {
-                    e.printStackTrace();
-                    errors.incrementAndGet();
-                } finally {
-                    stopLatch.countDown();
-                }
-            }).start();
-
-            class MyReader implements Runnable {
-                @Override
-                public void run() {
-                    try {
-                        startBarrier.await();
-                        try (Path path = new Path().of(configuration.getRoot())) {
-                            try (BitmapIndexFwdReader reader1 = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
-                                LongList tmp = new LongList();
-                                while (true) {
-                                    boolean keepGoing = false;
-                                    for (int i = keys.size() - 1; i > -1; i--) {
-                                        int key = keys.getQuick(i);
-                                        LongList values = lists.get(key);
-                                        RowCursor cursor = reader1.getCursor(true, key, 0, Long.MAX_VALUE);
-
-                                        tmp.clear();
-                                        while (cursor.hasNext()) {
-                                            tmp.add(cursor.next());
-                                        }
-
-                                        int sz = tmp.size();
-                                        for (int k = 0; k < sz; k++) {
-                                            Assert.assertEquals(values.getQuick(k), tmp.getQuick(k));
-                                        }
-
-                                        if (sz < values.size()) {
-                                            keepGoing = true;
-                                        }
-                                    }
-
-                                    if (!keepGoing) {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    } catch (Throwable e) {
-                        errors.incrementAndGet();
-                        e.printStackTrace();
-                    } finally {
-                        stopLatch.countDown();
-                    }
-                }
-            }
-
-            new Thread(new MyReader()).start();
-            new Thread(new MyReader()).start();
-
-            Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
-            Assert.assertEquals(0, errors.get());
-        });
-    }
-
     private void testConcurrentForwardCursor(int N, int maxKeys) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -1940,5 +1816,129 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 Misc.free(reader);
             }
         });
+    }
+
+    private void testConcurrentForwardRW(int N, int maxKeys) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+
+            IntList keys = new IntList();
+            IntObjHashMap<LongList> lists = new IntObjHashMap<>();
+
+            // populate model for both reader and writer
+            for (int i = 0; i < N; i++) {
+                int key = rnd.nextPositiveInt() % maxKeys;
+
+                LongList list = lists.get(key);
+                if (list == null) {
+                    lists.put(key, list = new LongList());
+                    keys.add(key);
+                }
+                list.add(i);
+            }
+
+            final int threadCount = 3;
+            CountDownLatch stopLatch = new CountDownLatch(threadCount);
+            CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
+            AtomicInteger errors = new AtomicInteger();
+
+            // create empty index
+            create(configuration, path.trimTo(plen), "x", 1024);
+
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    try (Path path = new Path().of(configuration.getRoot())) {
+                        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                            int pass = 0;
+                            while (true) {
+                                boolean added = false;
+                                for (int i = 0, n = keys.size(); i < n; i++) {
+                                    int key = keys.getQuick(i);
+                                    LongList values = lists.get(key);
+                                    if (pass < values.size()) {
+                                        writer.add(key, values.getQuick(pass));
+                                        added = true;
+                                    }
+                                }
+                                pass++;
+                                if (!added) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
+                }
+            }).start();
+
+            class MyReader implements Runnable {
+                @Override
+                public void run() {
+                    try {
+                        startBarrier.await();
+                        try (Path path = new Path().of(configuration.getRoot())) {
+                            try (BitmapIndexFwdReader reader1 = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
+                                LongList tmp = new LongList();
+                                while (true) {
+                                    boolean keepGoing = false;
+                                    for (int i = keys.size() - 1; i > -1; i--) {
+                                        int key = keys.getQuick(i);
+                                        LongList values = lists.get(key);
+                                        RowCursor cursor = reader1.getCursor(true, key, 0, Long.MAX_VALUE);
+
+                                        tmp.clear();
+                                        while (cursor.hasNext()) {
+                                            tmp.add(cursor.next());
+                                        }
+
+                                        int sz = tmp.size();
+                                        for (int k = 0; k < sz; k++) {
+                                            Assert.assertEquals(values.getQuick(k), tmp.getQuick(k));
+                                        }
+
+                                        if (sz < values.size()) {
+                                            keepGoing = true;
+                                        }
+                                    }
+
+                                    if (!keepGoing) {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                }
+            }
+
+            new Thread(new MyReader()).start();
+            new Thread(new MyReader()).start();
+
+            Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    private void writeTripleValues(int N) {
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+            for (int i = 0; i < N; i++) {
+                if (i % 3 == 0) {
+                    continue;
+                }
+                writer.add(0, i);
+                writer.add(0, i);
+                writer.add(0, i);
+            }
+        }
     }
 }

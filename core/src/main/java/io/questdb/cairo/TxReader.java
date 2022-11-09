@@ -31,38 +31,40 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
-    protected static final int PARTITION_TS_OFFSET = 0;
-    protected static final int PARTITION_SIZE_OFFSET = 1;
-    protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
+    protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
+    protected static final int PARTITION_NAME_TX_OFFSET = 2;
+    protected static final int PARTITION_SIZE_OFFSET = 1;
+    protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
-    private final IntList symbolCountSnapshot = new IntList();
+    protected final AtomicLong structureVersion = new AtomicLong();
     private final FilesFacade ff;
-    protected long minTimestamp;
-    protected long maxTimestamp;
-    protected long txn;
-    protected int symbolColumnCount;
-    protected long truncateVersion;
-    protected long dataVersion;
-    protected long structureVersion;
-    protected long fixedRowCount;
-    protected long transientRowCount;
-    protected int partitionBy;
-    protected long partitionTableVersion;
+    private final IntList symbolCountSnapshot = new IntList();
     protected int attachedPartitionsSize = 0;
     protected long columnVersion;
-    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
-    private MemoryMR roTxMemBase;
+    protected long dataVersion;
+    protected long fixedRowCount;
+    protected long maxTimestamp;
+    protected long minTimestamp;
+    protected int partitionBy;
+    protected long partitionTableVersion;
+    protected long seqTxn;
+    protected int symbolColumnCount;
+    protected long transientRowCount;
+    protected long truncateVersion;
+    protected long txn;
     private int baseOffset;
-    private long size;
-    private long version;
-    private int symbolsSize;
+    private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
+    private MemoryMR roTxMemBase;
+    private long size;
+    private int symbolsSize;
+    private long version;
 
     public TxReader(FilesFacade ff) {
         this.ff = ff;
@@ -97,11 +99,12 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
         mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
-        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -225,8 +228,12 @@ public class TxReader implements Closeable, Mutable {
         return transientRowCount + fixedRowCount;
     }
 
+    public long getSeqTxn() {
+        return seqTxn;
+    }
+
     public long getStructureVersion() {
-        return structureVersion;
+        return structureVersion.get();
     }
 
     public int getSymbolColumnCount() {
@@ -284,17 +291,16 @@ public class TxReader implements Closeable, Mutable {
             this.minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
             this.maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
             this.dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            this.structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+            this.structureVersion.set(getLong(TX_OFFSET_STRUCT_VERSION_64));
             final long prevPartitionTableVersion = this.partitionTableVersion;
             this.partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
             final long prevColumnVersion = this.columnVersion;
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+            this.seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             this.symbolColumnCount = this.symbolsSize / 8;
-
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
                 return true;
@@ -343,12 +349,12 @@ public class TxReader implements Closeable, Mutable {
         return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));
     }
 
-    public long unsafeReadVersion() {
-        return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);
+    public long unsafeReadTxn() {
+        return unsafeReadVersion();
     }
 
-    static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
-        return TX_RECORD_HEADER_SIZE + 4 + bytesSymbols + 4 + bytesPartitions;
+    public long unsafeReadVersion() {
+        return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);
     }
 
     private void clearData() {
@@ -359,15 +365,11 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.clear();
         version = -1;
         txn = -1;
+        seqTxn = -1;
     }
 
     private int findAttachedPartitionIndex(long ts) {
         return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
-    }
-
-    int findAttachedPartitionIndexByLoTimestamp(long ts) {
-        // Start from the end, usually it will be last partition searched / appended
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
     }
 
     private int getInt(long readOffset) {
@@ -378,17 +380,6 @@ public class TxReader implements Closeable, Mutable {
     private long getLong(long readOffset) {
         assert readOffset + 8 <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getLong(baseOffset + readOffset);
-    }
-
-    protected long getPartitionTimestampLo(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
-    }
-
-    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn, long columnVersion) {
-        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
-        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
-        attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
-        attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -403,31 +394,18 @@ public class TxReader implements Closeable, Mutable {
         throw CairoException.critical(ff.errno()).put("Cannot append. File does not exist: ").put(path);
     }
 
-    protected void switchRecord(int readBaseOffset, long readRecordSize) {
-        baseOffset = readBaseOffset;
-        size = readRecordSize;
-    }
-
-    protected long unsafeGetRawMemory() {
-        return roTxMemBase.getPageAddress(0);
-    }
-
-    protected long unsafeGetRawMemorySize() {
-        return this.size + this.baseOffset;
-    }
-
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
-                    unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
+                    unsafeLoadPartitions0(0, txAttachedPartitionsSize);
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
-                                txAttachedPartitionsSize,
-                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0)
+                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),
+                                txAttachedPartitionsSize
                         );
                     }
                 }
@@ -435,6 +413,7 @@ public class TxReader implements Closeable, Mutable {
                         txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET,
                         transientRowCount
                 );
+                attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;
                 attachedPartitions.clear();
@@ -446,12 +425,12 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
-    private void unsafeLoadPartitions0(int txAttachedPartitionsSize, int max) {
-        attachedPartitions.setPos(txAttachedPartitionsSize);
-        for (int i = max; i < txAttachedPartitionsSize; i++) {
+    private void unsafeLoadPartitions0(int lo, int hi) {
+        attachedPartitions.setPos(hi);
+        for (int i = lo; i < hi; i++) {
             attachedPartitions.setQuick(i, getLong(TableUtils.getPartitionTableIndexOffset(symbolColumnCount, i)));
         }
-        attachedPartitionsSize = txAttachedPartitionsSize;
+        attachedPartitionsSize = hi;
     }
 
     private void unsafeLoadSymbolCounts(int symbolMapCount) {
@@ -461,6 +440,39 @@ public class TxReader implements Closeable, Mutable {
         for (int i = 0; i < symbolMapCount; i++) {
             symbolCountSnapshot.add(getInt(TableUtils.getSymbolWriterIndexOffset(i)));
         }
+    }
+
+    static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
+        return TX_RECORD_HEADER_SIZE + 4 + bytesSymbols + 4 + bytesPartitions;
+    }
+
+    int findAttachedPartitionIndexByLoTimestamp(long ts) {
+        // Start from the end, usually it will be last partition searched / appended
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+    }
+
+    protected long getPartitionTimestampLo(long timestamp) {
+        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
+    }
+
+    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn, long columnVersion) {
+        attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
+        attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
+        attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
+        attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
+    }
+
+    protected void switchRecord(int readBaseOffset, long readRecordSize) {
+        baseOffset = readBaseOffset;
+        size = readRecordSize;
+    }
+
+    protected long unsafeGetRawMemory() {
+        return roTxMemBase.getPageAddress(0);
+    }
+
+    protected long unsafeGetRawMemorySize() {
+        return this.size + this.baseOffset;
     }
 
     protected long unsafeReadFixedRowCount() {

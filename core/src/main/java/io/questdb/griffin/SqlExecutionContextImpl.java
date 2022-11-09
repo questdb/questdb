@@ -43,24 +43,25 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
-    private final IntStack timestampRequiredStack = new IntStack();
-    private final int workerCount;
-    private final int sharedWorkerCount;
+    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final MicrosecondClock clock;
-    private final AnalyticContextImpl analyticContext = new AnalyticContextImpl();
+    private final int sharedWorkerCount;
     private final RingQueue<TelemetryTask> telemetryQueue;
-    private Sequence telemetryPubSeq;
-    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private final IntStack timestampRequiredStack = new IntStack();
+    private final int workerCount;
     private BindVariableService bindVariableService;
     private CairoSecurityContext cairoSecurityContext;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private boolean cloneSymbolTables = false;
+    private int jitMode;
+    private long now;
     private Rnd random;
     private long requestFd = -1;
-    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-    private long now;
-    private int jitMode;
-    private boolean cloneSymbolTables = false;
+    private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
+    private Sequence telemetryPubSeq;
+    private boolean walApplication;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -78,85 +79,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
+        walApplication = false;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
-       this(cairoEngine, workerCount, workerCount);
+        this(cairoEngine, workerCount, workerCount);
     }
 
     @Override
-    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-        return QueryFutureUpdateListener.EMPTY;
-    }
-
-    @Override
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
-    }
-
-    @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return cairoSecurityContext;
-    }
-
-    @Override
-    public boolean isTimestampRequired() {
-        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
-    }
-
-    @Override
-    public void popTimestampRequiredFlag() {
-        timestampRequiredStack.pop();
-    }
-
-    @Override
-    public void pushTimestampRequiredFlag(boolean flag) {
-        timestampRequiredStack.push(flag ? 1 : 0);
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return workerCount;
-    }
-
-    @Override
-    public int getSharedWorkerCount() {
-        return sharedWorkerCount;
-    }
-
-    @Override
-    public Rnd getRandom() {
-        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
-    }
-
-    @Override
-    public void setRandom(Rnd rnd) {
-        this.random = rnd;
-    }
-
-    @Override
-    public @NotNull CairoEngine getCairoEngine() {
-        return cairoEngine;
-    }
-
-    @Override
-    public long getRequestFd() {
-        return requestFd;
-    }
-
-    @Override
-    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
-    }
-
-    @Override
-    public void storeTelemetry(short event, short origin) {
-        telemetryMethod.store(event, origin);
-    }
-
-    @Override
-    public AnalyticContext getAnalyticContext() {
-        return analyticContext;
+    public void clearAnalyticContext() {
+        analyticContext.clear();
     }
 
     @Override
@@ -177,18 +109,33 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void clearAnalyticContext() {
-        analyticContext.clear();
+    public AnalyticContext getAnalyticContext() {
+        return analyticContext;
     }
 
     @Override
-    public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     @Override
-    public long getNow() {
-        return now;
+    public @NotNull CairoEngine getCairoEngine() {
+        return cairoEngine;
+    }
+
+    @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+        return cairoSecurityContext;
+    }
+
+    @Override
+    public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return cloneSymbolTables;
     }
 
     @Override
@@ -197,8 +144,78 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getNow() {
+        return now;
+    }
+
+    @Override
+    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+        return QueryFutureUpdateListener.EMPTY;
+    }
+
+    @Override
+    public Rnd getRandom() {
+        return random != null ? random : SharedRandom.getRandom(cairoConfiguration);
+    }
+
+    @Override
+    public long getRequestFd() {
+        return requestFd;
+    }
+
+    @Override
+    public int getSharedWorkerCount() {
+        return sharedWorkerCount;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return workerCount;
+    }
+
+    @Override
+    public void initNow() {
+        now = cairoConfiguration.getMicrosecondClock().getTicks();
+    }
+
+    @Override
+    public boolean isTimestampRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+    }
+
+    @Override
+    public boolean isWalApplication() {
+        return walApplication;
+    }
+
+    @Override
+    public void popTimestampRequiredFlag() {
+        timestampRequiredStack.pop();
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag) {
+        timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setRandom(Rnd rnd) {
+        this.random = rnd;
+    }
+
+    @Override
+    public void storeTelemetry(short event, short origin) {
+        telemetryMethod.store(event, origin);
     }
 
     public SqlExecutionContextImpl with(
@@ -209,12 +226,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        walApplication = false;
         return this;
-    }
-
-    @Override
-    public void setCloneSymbolTables(boolean cloneSymbolTables) {
-        this.cloneSymbolTables = cloneSymbolTables;
     }
 
     public SqlExecutionContextImpl with(
@@ -236,6 +249,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        walApplication = false;
+        return this;
+    }
+
+    public SqlExecutionContext withWalApplication() {
+        walApplication = true;
         return this;
     }
 
@@ -244,10 +263,5 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void storeTelemetryNoop(short event, short origin) {
-    }
-
-    @Override
-    public boolean getCloneSymbolTables() {
-        return cloneSymbolTables;
     }
 }

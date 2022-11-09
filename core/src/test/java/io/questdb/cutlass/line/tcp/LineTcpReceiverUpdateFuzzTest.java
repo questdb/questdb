@@ -32,7 +32,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -41,6 +41,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -55,11 +56,15 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
     private final ConcurrentLinkedQueue<String> updatesQueue = new ConcurrentLinkedQueue<>();
-    private int numOfUpdates;
-    private SOCountDownLatch updatesDone;
-    private int numOfUpdateThreads;
     private SqlCompiler[] compilers;
     private SqlExecutionContext[] executionContexts;
+    private int numOfUpdateThreads;
+    private int numOfUpdates;
+    private SOCountDownLatch updatesDone;
+
+    public LineTcpReceiverUpdateFuzzTest(WalMode walMode) {
+        super(walMode);
+    }
 
     @BeforeClass
     public static void setUpStatic() {
@@ -103,10 +108,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
             try {
                 LOG.info().$(sql).$();
                 final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-                try (
-                        AbstractOperation op = cc.getOperation();
-                        OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, waitSequence)
-                ) {
+                try (OperationFuture fut = cc.execute(waitSequence)) {
                     if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
                         throw SqlException.$(0, "update query timeout");
                     }
@@ -120,39 +122,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 }
                 throw new RuntimeException(ex);
             }
-        }
-    }
-
-    @Override
-    protected Log getLog() {
-        return LOG;
-    }
-
-    @Override
-    protected CharSequence pickTableName(int threadId) {
-        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), false);
-    }
-
-    @Override
-    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
-        super.startThread(threadId, socket, threadPushFinished);
-        while (numOfUpdateThreads-- > 0) {
-            startUpdateThread(numOfUpdateThreads, updatesDone);
-        }
-    }
-
-    @Override
-    protected void waitDone() {
-        // wait for update threads to finish
-        updatesDone.await();
-
-        // Repeat all updates after all lines are guaranteed to be landed in the tables
-        super.waitDone();
-
-        final SqlCompiler compiler = compilers[0];
-        final SqlExecutionContext executionContext = executionContexts[0];
-        for (String sql: updatesQueue) {
-            executeUpdate(compiler, executionContext, sql, null);
         }
     }
 
@@ -183,7 +152,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         executionContexts = new SqlExecutionContext[numOfUpdateThreads];
         for (int i = 0; i < numOfUpdateThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
-            executionContexts[i] = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
+            BindVariableServiceImpl bindService = new BindVariableServiceImpl(configuration);
+            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, bindService, null);
+            executionContexts[i] = sqlExecutionContext;
         }
     }
 
@@ -226,7 +198,42 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 throw new RuntimeException(e);
             } finally {
                 updatesDone.countDown();
+                Path.clearThreadLocals();
             }
         }).start();
+    }
+
+    @Override
+    protected Log getLog() {
+        return LOG;
+    }
+
+    @Override
+    protected CharSequence pickTableName(int threadId) {
+        return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), false);
+    }
+
+    @Override
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
+        super.startThread(threadId, socket, threadPushFinished);
+        while (numOfUpdateThreads-- > 0) {
+            startUpdateThread(numOfUpdateThreads, updatesDone);
+        }
+    }
+
+    @Override
+    protected void waitDone() {
+        // wait for update threads to finish
+        updatesDone.await();
+
+        // Repeat all updates after all lines are guaranteed to be landed in the tables
+        super.waitDone();
+
+        final SqlCompiler compiler = compilers[0];
+        final SqlExecutionContext executionContext = executionContexts[0];
+        for (String sql : updatesQueue) {
+            executeUpdate(compiler, executionContext, sql, null);
+        }
+        mayDrainWalQueue();
     }
 }

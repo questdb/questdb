@@ -48,12 +48,12 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 }

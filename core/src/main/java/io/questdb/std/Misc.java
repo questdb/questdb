@@ -32,11 +32,20 @@ import java.io.IOException;
 import java.util.Arrays;
 
 public final class Misc {
-    public static final String EOL = "\r\n";
     public static final int CACHE_LINE_SIZE = 64;
+    public static final String EOL = "\r\n";
     private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
 
     private Misc() {
+    }
+
+    public static void clearObjList(ObjList<? extends Mutable> args) {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            Mutable m = args.getQuick(i);
+            if (m != null) {
+                m.clear();
+            }
+        }
     }
 
     public static <T extends Closeable> T free(T object) {
@@ -48,6 +57,14 @@ public final class Misc {
             }
         }
         return null;
+    }
+
+    public static <T extends Closeable> void free(T[] list) {
+        if (list != null) {
+            for (int i = 0, n = list.length; i < n; i++) {
+                list[i] = Misc.free(list[i]);
+            }
+        }
     }
 
     //same as free() but can be used when input object type is not guaranteed to be Closeable
@@ -62,34 +79,9 @@ public final class Misc {
         return null;
     }
 
-    public static StringSink getThreadLocalBuilder() {
-        StringSink b = tlBuilder.get();
-        b.clear();
-        return b;
-    }
-
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
-        }
-    }
-
-    //same as freeObjList() but can be used when input object type is not guaranteed to be Closeable   
-    public static <T> void freeObjListIfCloseable(ObjList<T> list) {
-        if (list != null) {
-            freeObjList0(list);
-        }
-    }
-
-    public static int[] getWorkerAffinity(int workerCount) {
-        int[] res = new int[workerCount];
-        Arrays.fill(res, -1);
-        return res;
-    }
-
-    private static <T> void freeObjList0(ObjList<T> list) {
-        for (int i = 0, n = list.size(); i < n; i++) {
-            list.setQuick(i, freeIfCloseable(list.getQuick(i)));
         }
     }
 
@@ -102,14 +94,6 @@ public final class Misc {
         }
     }
 
-    public static <T extends Closeable> void free(T[] list) {
-        if (list != null) {
-            for (int i = 0, n = list.length; i < n; i++) {
-                list[i] = Misc.free(list[i]);
-            }
-        }
-    }
-
     public static <T extends Closeable> void freeObjListAndKeepObjects(ObjList<T> list) {
         if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
@@ -118,12 +102,28 @@ public final class Misc {
         }
     }
 
-    public static void clearObjList(ObjList<? extends Mutable> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            Mutable m = args.getQuick(i);
-            if (m != null) {
-                m.clear();
-            }
+    //same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
+    public static <T> void freeObjListIfCloseable(ObjList<T> list) {
+        if (list != null) {
+            freeObjList0(list);
+        }
+    }
+
+    public static StringSink getThreadLocalBuilder() {
+        StringSink b = tlBuilder.get();
+        b.clear();
+        return b;
+    }
+
+    public static int[] getWorkerAffinity(int workerCount) {
+        int[] res = new int[workerCount];
+        Arrays.fill(res, -1);
+        return res;
+    }
+
+    private static <T> void freeObjList0(ObjList<T> list) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            list.setQuick(i, freeIfCloseable(list.getQuick(i)));
         }
     }
 }

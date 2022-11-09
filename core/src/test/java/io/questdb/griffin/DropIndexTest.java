@@ -224,9 +224,9 @@ public class DropIndexTest extends AbstractGriffinTest {
             try {
                 compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
-            } catch (SqlException expected) {
-                TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
-                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(
                         PartitionBy.HOUR,
@@ -267,8 +267,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             assertFailure(
                     "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     null,
-                    12,
-                    "Column is not indexed [name=колонка][errno=-100]"
+                    36,
+                    "Column is not indexed [name=колонка]"
             );
         });
     }
@@ -407,7 +407,6 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop index thread
             new Thread(() -> {
-                Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
                 try {
                     CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();
@@ -417,8 +416,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                 } catch (Throwable e) {
                     concurrentDropIndexFailure.set(e);
                 } finally {
-                    Misc.free(path2);
                     engine.releaseAllWriters();
+                    Path.clearThreadLocals();
                     endLatch.countDown();
                 }
             }).start();
@@ -432,16 +431,18 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Throwable fail = concurrentDropIndexFailure.get();
                 Assert.assertNotNull(fail);
                 if (fail instanceof EntryUnavailableException) {
-                    TestUtils.assertContains(fail.getMessage(), "table busy [reason=Alter table execute]");
+                    // reason can be Alter table execute or Engine cleanup (unknown)
+                    TestUtils.assertContains(fail.getMessage(), "table busy [reason=");
                 } else if (fail instanceof SqlException) {
                     TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
                 }
             } catch (EntryUnavailableException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=Alter table execute]");
+                // reason can be Alter table execute or Engine cleanup (unknown)
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
-            } catch (SqlException ex) {
+            } catch (SqlException | CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Column is not indexed");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
@@ -481,8 +482,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             assertSql(tableName, expected);
             executeOperation(
                     dropIndexStatement(),
-                    CompiledQuery.ALTER,
-                    CompiledQuery::getAlterOperation
+                    CompiledQuery.ALTER
             );
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
