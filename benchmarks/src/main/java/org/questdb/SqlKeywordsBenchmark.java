@@ -51,22 +51,22 @@ public class SqlKeywordsBenchmark {
     }
 
     @Benchmark
-    public boolean testEqualsLowerCaseAsciiSelectKeyword() {
-        return Chars.equalsLowerCaseAscii("SELECT", "select");
-    }
-
-    @Benchmark
-    public boolean testIsSelectKeyword() {
-        return SqlKeywords.isSelectKeyword("SELECT");
-    }
-
-    @Benchmark
     public boolean testEqualsLowerCaseAsciiInsertKeyword() {
         return Chars.equalsLowerCaseAscii("insert", "insert");
     }
 
     @Benchmark
+    public boolean testEqualsLowerCaseAsciiSelectKeyword() {
+        return Chars.equalsLowerCaseAscii("SELECT", "select");
+    }
+
+    @Benchmark
     public boolean testIsInsertKeyword() {
         return SqlKeywords.isInsertKeyword("insert");
+    }
+
+    @Benchmark
+    public boolean testIsSelectKeyword() {
+        return SqlKeywords.isSelectKeyword("SELECT");
     }
 }

@@ -57,12 +57,12 @@ public class JNIBenchmark {
     }
 
     @Benchmark
-    public long testJNINoop() {
-        return Files.noop();
+    public long testBaseline() {
+        return 0;
     }
 
     @Benchmark
-    public long testBaseline() {
-        return 0;
+    public long testJNINoop() {
+        return Files.noop();
     }
 }
