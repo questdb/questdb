@@ -194,6 +194,10 @@ public class TableUpdateDetails implements Closeable {
                 .I$();
     }
 
+    public boolean isClosed() {
+        return writerThreadId != Integer.MIN_VALUE;
+    }
+
     public void setAssignedToJob(boolean assignedToJob) {
         this.assignedToJob = assignedToJob;
     }

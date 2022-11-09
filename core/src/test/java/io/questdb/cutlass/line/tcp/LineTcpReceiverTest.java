@@ -224,6 +224,65 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testSenderIsSendingWhileReceiverIsShuttingDown() throws Exception {
+        String tableName = "tab";
+        this.minIdleMsBeforeWriterRelease = 100;
+        try {
+            Files.enableFdTracing();
+            assertMemoryLeak(() -> {
+                try {
+                    final SOCountDownLatch finished = new SOCountDownLatch(1);
+                    LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool);
+                    O3Utils.setupWorkerPool(sharedWorkerPool, engine, null, null);
+                    sharedWorkerPool.start(LOG);
+                    try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                        send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                            for (int i = 0; i < 1000; i++) {
+                                sender.metric(tableName)
+                                        .field("id", i)
+                                        .$(i * 10_000_000L);
+                                if (i == 500) {
+                                    sender.flush();
+                                }
+                            }
+                        });
+
+                        new Thread(() -> {
+                            try {
+                                sharedWorkerPool.halt();
+                                receiver.close();
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                            } finally {
+                                finished.countDown();
+                            }
+                        }).start();
+
+                        send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                            for (int i = 1000; i < 2000; i++) {
+                                sender.metric(tableName)
+                                        .field("id", i)
+                                        .$(i * 10_000_000L);
+                                sender.flush();
+                                if (i == 1500) {
+                                    finished.await();
+                                }
+                            }
+                            sender.flush();
+                        });
+                    }
+                    //Assert.fail("Expected LineSenderException");
+                } catch (Throwable err) {
+                    LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
+                    throw err;
+                }
+            });
+        } finally {
+            Files.disableFdTracing();
+        }
+    }
+
+    @Test
     public void testCrossingSymbolBoundary() throws Exception {
         String tableName = "punk";
         int count = 2100;
