@@ -128,7 +128,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return readOffset - offset;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readInt
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readInt
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {
