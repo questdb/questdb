@@ -68,10 +68,6 @@ public class SendAndReceiveRequestBuilder {
     private int requestCount = 1;
     private long statementTimeout = -1L;
 
-    public static String responseWithCode(String code) {
-        return ResponseHeaders.replace("200 OK", code);
-    }
-
     public long connectAndSendRequest(String request) {
         final long fd = nf.socketTcp(true);
         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
