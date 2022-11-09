@@ -515,6 +515,7 @@ public abstract class AbstractCairoTest {
         backupDir = null;
         backupDirTimestampFormat = null;
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        mangleTableSystemName = true;
     }
 
     @Before
