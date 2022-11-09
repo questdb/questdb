@@ -46,9 +46,9 @@ public class TableNameRegistry implements Closeable {
     private static final String TABLE_DROPPED_MARKER = "TABLE_DROPPED_MARKER:..";
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
     private final boolean mangleDefaultTableNames;
-    private final ConcurrentHashMap<String> nonWalSystemTableNames = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String> reverseNonWalTableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String> reverseTableNameCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String> reverseWalTableNameRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String> systemTableNameCache = new ConcurrentHashMap<>();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final ConcurrentHashMap<String> walSystemTableNameRegistry = new ConcurrentHashMap<>();
 
@@ -61,16 +61,19 @@ public class TableNameRegistry implements Closeable {
     public void close() {
         walSystemTableNameRegistry.clear();
         reverseWalTableNameRegistry.clear();
-        nonWalSystemTableNames.clear();
-        reverseNonWalTableNameRegistry.clear();
+        systemTableNameCache.clear();
+        reverseTableNameCache.clear();
         Misc.free(tableNameMemory);
     }
 
     public String getDefaultSystemTableName(CharSequence tableName) {
-        String defaultSystemName = nonWalSystemTableNames.get(tableName);
+        String defaultSystemName = systemTableNameCache.get(tableName);
         if (defaultSystemName == null) {
-            defaultSystemName = mangleDefaultTableNames ? tableName.toString() + TableUtils.SYSTEM_TABLE_NAME_SUFFIX : Chars.toString(tableName);
-            nonWalSystemTableNames.put(tableName, defaultSystemName);
+            defaultSystemName = Chars.toString(tableName);
+            if (mangleDefaultTableNames) {
+                defaultSystemName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            }
+            systemTableNameCache.put(tableName, defaultSystemName);
         }
         return defaultSystemName;
     }
@@ -82,11 +85,11 @@ public class TableNameRegistry implements Closeable {
     public String getTableNameBySystemName(CharSequence systemTableName) {
         String tableName = reverseWalTableNameRegistry.get(systemTableName);
         if (tableName == null) {
-            tableName = reverseNonWalTableNameRegistry.get(systemTableName);
+            tableName = reverseTableNameCache.get(systemTableName);
             if (tableName == null) {
                 tableName = TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
                 if (tableName != null) {
-                    reverseNonWalTableNameRegistry.putIfAbsent(systemTableName, tableName);
+                    reverseTableNameCache.putIfAbsent(systemTableName, tableName);
                 }
             }
         }
@@ -215,9 +218,7 @@ public class TableNameRegistry implements Closeable {
     }
 
     @TestOnly
-    public void reset(CairoConfiguration configuration) {
-        walSystemTableNameRegistry.clear();
-        reverseWalTableNameRegistry.clear();
+    public void resetMemory(CairoConfiguration configuration) {
         tableNameMemory.jumpTo(0L);
         try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$()) {
             tableNameMemory.close();

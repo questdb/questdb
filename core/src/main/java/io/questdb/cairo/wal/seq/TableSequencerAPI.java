@@ -303,8 +303,8 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @TestOnly
-    public void resetNameRegistry() {
-        tableNameRegistry.reset(configuration);
+    public void resetNameRegistryMemory() {
+        tableNameRegistry.resetMemory(configuration);
     }
 
     @TestOnly

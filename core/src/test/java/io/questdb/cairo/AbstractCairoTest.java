@@ -623,7 +623,7 @@ public abstract class AbstractCairoTest {
                 engine.releaseInactive();
                 engine.releaseInactiveCompilers();
                 engine.releaseInactiveTableSequencers();
-                engine.getTableSequencerAPI().resetNameRegistry();
+                engine.getTableSequencerAPI().resetNameRegistryMemory();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
