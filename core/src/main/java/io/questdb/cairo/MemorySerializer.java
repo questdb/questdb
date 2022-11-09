@@ -24,13 +24,8 @@
 
 package io.questdb.cairo;
 
-<<<<<<<< HEAD:core/src/main/java/io/questdb/cairo/MemorySerializer.java
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
-========
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.wal.WalWriter;
->>>>>>>> f69a8297902cb8d2502368624be8ef971615be3d:core/src/main/java/io/questdb/cairo/pool/WalWriterSource.java
 
 public interface MemorySerializer {
     void fromSink(Object instance, MemoryCR memory, long offset);
