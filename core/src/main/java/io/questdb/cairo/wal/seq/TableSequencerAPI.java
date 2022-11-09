@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.wal.TableNameRecord;
 import io.questdb.cairo.wal.TableNameRegistry;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -87,24 +88,27 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
-        for (CharSequence systemTableName : tableNameRegistry.getWalTableSystemNames()) {
-            long lastTxn;
-            int tableId;
-            try {
-                try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
-                    lastTxn = sequencer.lastTxn();
-                    tableId = sequencer.getTableId();
+        for (CharSequence systemTableName : tableNameRegistry.getTableSystemNames()) {
+            if (tableNameRegistry.isWalSystemTableName(systemTableName) || tableNameRegistry.isWalTableDropped(systemTableName)) {
+                long lastTxn;
+                int tableId;
+
+                try {
+                    try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
+                        lastTxn = sequencer.lastTxn();
+                        tableId = sequencer.getTableId();
+                    } catch (CairoException e) {
+                        LOG.critical().$("could not open sequencer for table [name=").utf8(systemTableName)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", error=").$(e.getFlyweightMessage()).I$();
+                        continue;
+                    }
+                    callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
                 } catch (CairoException e) {
-                    LOG.critical().$("could not open sequencer for table [name=").utf8(systemTableName)
+                    LOG.error().$("failed process WAL table [name=").utf8(systemTableName)
                             .$(", errno=").$(e.getErrno())
                             .$(", error=").$(e.getFlyweightMessage()).I$();
-                    continue;
                 }
-                callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
-            } catch (CairoException e) {
-                LOG.error().$("failed process WAL table [name=").utf8(systemTableName)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", error=").$(e.getFlyweightMessage()).I$();
             }
         }
     }
@@ -119,11 +123,6 @@ public class TableSequencerAPI implements QuietCloseable {
             }
             return cursor;
         }
-    }
-
-    @NotNull
-    public String getDefaultTableName(CharSequence tableName) {
-        return tableNameRegistry.getDefaultSystemTableName(tableName);
     }
 
     public @NotNull TableMetadataChangeLog getMetadataChangeLogCursor(final String systemTableName, long structureVersionLo) {
@@ -150,13 +149,12 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public String getSystemTableNameOrDefault(final CharSequence tableName) {
-        final String systemName = tableNameRegistry.getSystemName(tableName);
-        if (systemName != null) {
-            return systemName;
-        }
+    public String getSystemName(final CharSequence tableName) {
+        return tableNameRegistry.getSystemName(tableName);
+    }
 
-        return getDefaultTableName(tableName);
+    public TableNameRecord getTableNameRecord(final CharSequence tableName) {
+        return tableNameRegistry.getTableNameRecord(tableName);
     }
 
     public void getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
@@ -173,10 +171,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return tableNameRegistry.getTableNameBySystemName(systemTableName);
     }
 
-    public String getWalSystemTableName(CharSequence tableName) {
-        return tableNameRegistry.getWalTableSystemName(tableName);
-    }
-
     @TestOnly
     public boolean isSuspended(final String systemTableName) {
         try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
@@ -191,11 +185,15 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public boolean isWalSystemName(String systemTableName) {
-        return tableNameRegistry.isWalSystemName(systemTableName);
+        return tableNameRegistry.isWalSystemTableName(systemTableName);
     }
 
     public boolean isWalTableDropped(String systemTableName) {
         return tableNameRegistry.isWalTableDropped(systemTableName);
+    }
+
+    public boolean isWalTableName(CharSequence tableName) {
+        return tableNameRegistry.isWalTableName(tableName);
     }
 
     public long lastTxn(final String tableName) {
@@ -250,9 +248,8 @@ public class TableSequencerAPI implements QuietCloseable {
 
     @Nullable
     public String registerTableName(CharSequence tableName, int tableId) {
-        String str = tableNameRegistry.getWalTableSystemName(tableName);
-        if (str != null) {
-            return str;
+        if (tableNameRegistry.isWalTableName(tableName)) {
+            return null;
         }
 
         String systemTableName = Chars.toString(tableName) + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + tableId;

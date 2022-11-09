@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -2166,7 +2167,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (mapCount++ > 5) {
+                if (mapCount++ == 6) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -2186,7 +2187,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "), cast(a as STRING)";
 
         final FilesFacade ff = new FilesFacadeImpl() {
-            int mapCount = 0;
+            private long metaFd;
+            private int metaMapCount;
+            private long txnFd;
 
             @Override
             public long getMapPageSize() {
@@ -2194,14 +2197,47 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean close(long fd) {
+                if (fd == metaFd) {
+                    metaFd = -1;
+                }
+                if (fd == txnFd) {
+                    txnFd = -1;
+                }
+                return super.close(fd);
+            }
+
+            @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
-                if (mapCount++ > 6) {
+                if (fd == metaFd) {
+                    metaMapCount++;
+                    return -1;
+                }
+                if (metaMapCount > 0 && fd == txnFd) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                    metaFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
+                if (Chars.endsWith(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
+                    txnFd = fd;
+                }
+                return fd;
             }
         };
 
@@ -2533,7 +2569,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             // number of rows we are appending
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (count-- > 0) {
+                if (count-- != 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
                 return -1;

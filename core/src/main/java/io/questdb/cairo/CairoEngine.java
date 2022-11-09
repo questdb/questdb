@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.TableNameRecord;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -440,7 +441,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public String getSystemTableName(final CharSequence tableName) {
-        return tableSequencerAPI.getSystemTableNameOrDefault(tableName);
+        return tableSequencerAPI.getSystemName(tableName);
     }
 
     public IDGenerator getTableIdGenerator() {
@@ -463,12 +464,13 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
-        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
-        if (systemTableName != null) {
-            return walWriterPool.get(systemTableName);
+        TableNameRecord tableNameRecord = tableSequencerAPI.getTableNameRecord(tableName);
+        if (tableNameRecord != null && tableNameRecord.isWal) {
+            return walWriterPool.get(tableNameRecord.systemTableName);
         }
 
-        return writerPool.get(tableSequencerAPI.getDefaultTableName(tableName), lockReason);
+        String systemTableName = tableNameRecord != null ? tableNameRecord.systemTableName : getSystemTableName(tableName);
+        return writerPool.get(systemTableName, lockReason);
     }
 
     public Sequence getTelemetryPubSequence() {
@@ -500,10 +502,10 @@ public class CairoEngine implements Closeable, WriterSource {
             int segmentId,
             long walRowCount
     ) {
-        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
-        if (systemTableName != null) {
+        TableNameRecord tableNameRecord = tableSequencerAPI.getTableNameRecord(tableName);
+        if (tableNameRecord != null && tableNameRecord.isWal) {
             // This is WAL table because sequencer exists
-            return new WalReader(configuration, tableName, systemTableName, walName, segmentId, walRowCount);
+            return new WalReader(configuration, tableName, tableNameRecord.systemTableName, walName, segmentId, walRowCount);
         }
 
         throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableName);
@@ -546,7 +548,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean isWalTable(final CharSequence tableName) {
-        return tableSequencerAPI.getWalSystemTableName(tableName) != null;
+        return tableSequencerAPI.isWalTableName(tableName);
     }
 
     public boolean isWalTableDropped(String systemTableName) {
@@ -678,12 +680,12 @@ public class CairoEngine implements Closeable, WriterSource {
         checkTableName(tableName);
         checkTableName(newName);
 
-        String systemTableName = tableSequencerAPI.getWalSystemTableName(tableName);
-        if (systemTableName != null) {
+        TableNameRecord tableNameRecord = tableSequencerAPI.getTableNameRecord(tableName);
+        if (tableNameRecord != null && tableNameRecord.isWal) {
             // WAL table
-            tableSequencerAPI.rename(tableName, newName, Chars.toString(systemTableName));
+            tableSequencerAPI.rename(tableName, newName, Chars.toString(tableNameRecord.systemTableName));
         } else {
-            systemTableName = getSystemTableName(tableName);
+            String systemTableName = tableSequencerAPI.getSystemName(tableName);
             String lockedReason = lock(securityContext, systemTableName, "renameTable");
             if (null == lockedReason) {
                 try {

@@ -47,10 +47,8 @@ public class TableNameRegistry implements Closeable {
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
     private final boolean mangleDefaultTableNames;
     private final ConcurrentHashMap<String> reverseTableNameCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String> reverseWalTableNameRegistry = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String> systemTableNameCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<TableNameRecord> systemTableNameCache = new ConcurrentHashMap<>();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
-    private final ConcurrentHashMap<String> walSystemTableNameRegistry = new ConcurrentHashMap<>();
 
     public TableNameRegistry(boolean mangleDefaultTableNames) {
 
@@ -59,38 +57,30 @@ public class TableNameRegistry implements Closeable {
 
     @Override
     public void close() {
-        walSystemTableNameRegistry.clear();
-        reverseWalTableNameRegistry.clear();
         systemTableNameCache.clear();
         reverseTableNameCache.clear();
         Misc.free(tableNameMemory);
     }
 
-    public String getDefaultSystemTableName(CharSequence tableName) {
-        String defaultSystemName = systemTableNameCache.get(tableName);
-        if (defaultSystemName == null) {
-            defaultSystemName = Chars.toString(tableName);
+    public String getSystemName(CharSequence tableName) {
+        TableNameRecord nameRecord = systemTableNameCache.get(tableName);
+        if (nameRecord == null) {
+            String defaultSystemName = Chars.toString(tableName);
             if (mangleDefaultTableNames) {
                 defaultSystemName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             }
-            systemTableNameCache.put(tableName, defaultSystemName);
+            nameRecord = new TableNameRecord(defaultSystemName, false);
+            systemTableNameCache.putIfAbsent(tableName, nameRecord);
         }
-        return defaultSystemName;
-    }
-
-    public String getSystemName(CharSequence tableName) {
-        return walSystemTableNameRegistry.get(tableName);
+        return nameRecord.systemTableName;
     }
 
     public String getTableNameBySystemName(CharSequence systemTableName) {
-        String tableName = reverseWalTableNameRegistry.get(systemTableName);
+        String tableName = reverseTableNameCache.get(systemTableName);
         if (tableName == null) {
-            tableName = reverseTableNameCache.get(systemTableName);
-            if (tableName == null) {
-                tableName = TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
-                if (tableName != null) {
-                    reverseTableNameCache.putIfAbsent(systemTableName, tableName);
-                }
+            tableName = TableUtils.toTableNameFromSystemName(Chars.toString(systemTableName));
+            if (tableName != null) {
+                reverseTableNameCache.putIfAbsent(systemTableName, tableName);
             }
         }
 
@@ -102,33 +92,49 @@ public class TableNameRegistry implements Closeable {
         return tableName;
     }
 
-    public String getWalTableSystemName(CharSequence tableName) {
-        return walSystemTableNameRegistry.get(tableName);
+    public TableNameRecord getTableNameRecord(CharSequence tableName) {
+        return systemTableNameCache.get(tableName);
     }
 
-    public ConcurrentHashMap.KeySetView<String> getWalTableSystemNames() {
-        return reverseWalTableNameRegistry.keySet();
+    public ConcurrentHashMap.KeySetView<String> getTableSystemNames() {
+        return reverseTableNameCache.keySet();
     }
 
-    public boolean isWalSystemName(String systemTableName) {
-        String tableName = reverseWalTableNameRegistry.get(systemTableName);
-        //noinspection StringEquality
-        if (tableName == null || tableName == TABLE_DROPPED_MARKER) {
-            return false;
+    public boolean isWalSystemTableName(CharSequence systemTableName) {
+        String tableName = reverseTableNameCache.get(systemTableName);
+        if (tableName != null) {
+            return isWalTableName(tableName);
         }
-        return walSystemTableNameRegistry.get(tableName) != null;
+        return false;
     }
 
     public boolean isWalTableDropped(CharSequence systemTableName) {
         //noinspection StringEquality
-        return reverseWalTableNameRegistry.get(systemTableName) == TABLE_DROPPED_MARKER;
+        return reverseTableNameCache.get(systemTableName) == TABLE_DROPPED_MARKER;
+    }
+
+    public boolean isWalTableName(CharSequence tableName) {
+        TableNameRecord nameRecord = systemTableNameCache.get(tableName);
+        return nameRecord != null && nameRecord.isWal;
     }
 
     public String registerName(String tableName, String systemTableName) {
-        String str = walSystemTableNameRegistry.putIfAbsent(tableName, systemTableName);
-        if (str == null) {
+        TableNameRecord newNameRecord = new TableNameRecord(systemTableName, true);
+        TableNameRecord registeredRecord = systemTableNameCache.putIfAbsent(tableName, newNameRecord);
+        if (registeredRecord != null && !registeredRecord.isWal) {
+            // Replace non-Wal with Wal record.
+            while (!systemTableNameCache.replace(tableName, registeredRecord, newNameRecord)) {
+                registeredRecord = systemTableNameCache.get(tableName);
+                if (registeredRecord.isWal) {
+                    return null;
+                }
+            }
+            registeredRecord = null;
+        }
+
+        if (registeredRecord == null) {
             appendEntry(tableName, systemTableName);
-            reverseWalTableNameRegistry.put(systemTableName, tableName);
+            reverseTableNameCache.put(systemTableName, tableName);
             return systemTableName;
         } else {
             return null;
@@ -137,9 +143,9 @@ public class TableNameRegistry implements Closeable {
 
     public synchronized void reloadTableNameCache(CairoConfiguration configuration) {
         LOG.info().$("reloading table to system name mappings").$();
-        walSystemTableNameRegistry.clear();
-        reverseWalTableNameRegistry.clear();
         final FilesFacade ff = configuration.getFilesFacade();
+        systemTableNameCache.clear();
+        reverseTableNameCache.clear();
 
         try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$()) {
             tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
@@ -160,57 +166,60 @@ public class TableNameRegistry implements Closeable {
 
                 if (operation == OPERATION_REMOVE) {
                     // remove from registry
-                    walSystemTableNameRegistry.remove(tableNameStr);
-                    reverseWalTableNameRegistry.remove(systemName);
+                    systemTableNameCache.remove(tableNameStr);
+                    reverseTableNameCache.remove(systemName);
                     deletedRecordsFound++;
                 } else {
-                    boolean systemNameExists = reverseWalTableNameRegistry.get(systemName) != null;
-                    walSystemTableNameRegistry.put(tableNameStr, systemName);
+                    boolean systemNameExists = reverseTableNameCache.get(systemName) != null;
+                    systemTableNameCache.put(tableNameStr, new TableNameRecord(systemName, true));
                     if (systemNameExists) {
                         // This table is renamed, log system to real table name mapping
                         LOG.advisory().$("renamed WAL table system name [table=").utf8(tableNameStr).$(", systemTableName=").utf8(systemName).$();
                     }
-                    reverseWalTableNameRegistry.put(systemName, tableNameStr);
+                    reverseTableNameCache.put(systemName, tableNameStr);
                     currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
                 }
             }
             tableNameMemory.jumpTo(currentOffset);
 
             // compact the memory, remove deleted entries
+            // TODO: make this rewrite power cut stable
             if (deletedRecordsFound > 0) {
                 tableNameMemory.jumpTo(Long.BYTES);
 
-                for (CharSequence tableName : walSystemTableNameRegistry.keySet()) {
-                    String systemName = walSystemTableNameRegistry.get(tableName);
+                for (CharSequence tableName : systemTableNameCache.keySet()) {
+                    String systemName = systemTableNameCache.get(tableName).systemTableName;
                     appendEntry(tableName, systemName);
                 }
-                tableNameMemory.putLong(0, walSystemTableNameRegistry.size());
+                tableNameMemory.putLong(0, systemTableNameCache.size());
             }
 
         }
     }
 
     public boolean removeName(CharSequence tableName, String systemTableName) {
-        if (walSystemTableNameRegistry.remove(tableName, systemTableName)) {
+        TableNameRecord nameRecord = systemTableNameCache.get(tableName);
+        if (nameRecord != null && nameRecord.systemTableName.equals(systemTableName) && systemTableNameCache.remove(tableName, nameRecord)) {
             removeEntry(tableName, systemTableName);
-            reverseWalTableNameRegistry.put(systemTableName, TABLE_DROPPED_MARKER);
+            reverseTableNameCache.put(systemTableName, TABLE_DROPPED_MARKER);
             return true;
         }
         return false;
     }
 
     public void removeTableSystemName(CharSequence systemTableName) {
-        reverseWalTableNameRegistry.remove(systemTableName);
+        reverseTableNameCache.remove(systemTableName);
     }
 
     public String rename(CharSequence oldName, CharSequence newName, String systemTableName) {
-        if (walSystemTableNameRegistry.putIfAbsent(newName, systemTableName) == null) {
+        TableNameRecord tableRecord = systemTableNameCache.get(oldName);
+        String newTableNameStr = Chars.toString(newName);
+
+        if (systemTableNameCache.putIfAbsent(newTableNameStr, tableRecord) == null) {
             removeEntry(oldName, systemTableName);
             appendEntry(newName, systemTableName);
-
-            String newTableNameStr = Chars.toString(newName);
-            reverseWalTableNameRegistry.put(systemTableName, newTableNameStr);
-            walSystemTableNameRegistry.remove(oldName, systemTableName);
+            reverseTableNameCache.put(systemTableName, newTableNameStr);
+            systemTableNameCache.remove(oldName, tableRecord);
             return newTableNameStr;
         } else {
             throw CairoException.nonCritical().put("table '").put(newName).put("' already exists");

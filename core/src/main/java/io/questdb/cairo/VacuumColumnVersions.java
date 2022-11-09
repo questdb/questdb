@@ -78,11 +78,11 @@ public class VacuumColumnVersions implements Closeable {
 
         CairoConfiguration configuration = engine.getConfiguration();
 
-        CharSequence fsTableName = reader.getSystemTableName();
+        CharSequence systemTableName = reader.getSystemTableName();
         Path path = Path.getThreadLocal(configuration.getRoot());
-        path.concat(fsTableName);
+        path.concat(systemTableName);
         tablePathLen = path.length();
-        path2 = Path.getThreadLocal2(configuration.getRoot()).concat(fsTableName);
+        path2 = Path.getThreadLocal2(configuration.getRoot()).concat(systemTableName);
 
         this.tableReader = reader;
         partitionBy = reader.getPartitionedBy();
