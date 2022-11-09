@@ -138,11 +138,11 @@ public class Mig656Test {
 
         // check migrated _txn content
         try (
-                final TableReaderMetadata metaReader = new TableReaderMetadata(ff);
+                final TableReaderMetadata metaReader = new TableReaderMetadata(new DefaultCairoConfiguration(dbRoot));
                 final TxReader txReader = new TxReader(ff);
                 final Path path = new Path().of(dbRoot).concat(TableUtils.META_FILE_NAME).$()
         ) {
-            metaReader.deferredInit(path, currentVersion + 1);
+            metaReader.load0(path, currentVersion + 1);
             txReader.ofRO(path.parent().concat(TableUtils.TXN_FILE_NAME).$(), metaReader.getPartitionBy());
             txReader.unsafeLoadAll();
             Assert.assertEquals(2, txReader.getSymbolColumnCount());
