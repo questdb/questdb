@@ -51,6 +51,7 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
 
     @Override
     public void close() {
+        clear();
         if (pageAddress != 0) {
             ff.munmap(pageAddress, size, memoryTag);
             LOG.debug().$("unmapped [pageAddress=").$(pageAddress)

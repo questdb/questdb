@@ -40,6 +40,7 @@ class TxFileStruct {
     public long TX_OFFSET_MAX_TIMESTAMP;
     public long TX_OFFSET_MIN_TIMESTAMP;
     public long TX_OFFSET_PARTITION_TABLE_VERSION;
+    public long TX_OFFSET_SEQ_TXN;
     public long TX_OFFSET_STRUCT_VERSION;
     public long TX_OFFSET_TRANSIENT_ROW_COUNT;
     public long TX_OFFSET_TRUNCATE_VERSION;

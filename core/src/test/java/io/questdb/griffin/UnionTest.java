@@ -284,7 +284,9 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
-        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
+        });
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 2; i++) {
@@ -314,7 +316,9 @@ public class UnionTest extends AbstractGriffinTest {
                 "#SET# " +
                 "select 2 from t ";
 
-        assertMemoryLeak(() -> compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext));
+        assertMemoryLeak(() -> {
+            compiler.compile("create table t as (select x, 's' || x from long_sequence(1) )", sqlExecutionContext);
+        });
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 1; i++) {

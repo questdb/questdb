@@ -24,13 +24,14 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryFR;
 
 /**
  * Fixed page memory implementation. It augments a pointer of fixed size with accessor methods without
  * owning the pointer. Therefore, memory cannot be extended.
  */
-public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR {
+public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryCR {
 
     @Override
     public void close() {

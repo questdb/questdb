@@ -25,11 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.ops.*;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DoneOperationFuture;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import org.jetbrains.annotations.Nullable;
@@ -44,6 +48,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private InsertOperation insertOperation;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
+    private CharSequence sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
     private TextLoader textLoader;
@@ -51,19 +56,37 @@ public class CompiledQueryImpl implements CompiledQuery {
     private UpdateOperation updateOperation;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
+        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
+            @Override
+            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
+                return writerAPI.apply(operation);
+            }
+        };
+
+        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
+            @Override
+            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
+                return writerAPI.apply(operation, true);
+            }
+        };
     }
 
     @Override
     public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
+        return execute(sqlExecutionContext, eventSubSeq, true);
+    }
+
+    @Override
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOperation.execute(sqlExecutionContext);
             case UPDATE:
-                throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
+                updateOperation.withSqlStatement(sqlStatement);
+                return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
-                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq);
+                alterOperation.withSqlStatement(sqlStatement);
+                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
             default:
                 return doneFuture.of(0);
         }
@@ -79,37 +102,9 @@ public class CompiledQueryImpl implements CompiledQuery {
         return alterOperation;
     }
 
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
-        switch (type) {
-            case ALTER:
-                return (OperationDispatcher<T>) alterOperationDispatcher;
-            case UPDATE:
-                return (OperationDispatcher<T>) updateOperationDispatcher;
-            default:
-                return null;
-        }
-    }
-
     @Override
     public InsertOperation getInsertOperation() {
         return insertOperation;
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> T getOperation() {
-        switch (type) {
-            case INSERT:
-                return (T) insertOperation;
-            case UPDATE:
-                return (T) updateOperation;
-            case ALTER:
-                return (T) alterOperation;
-            default:
-                return null;
-        }
     }
 
     @Override
@@ -159,6 +154,11 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        return this;
+    }
+
+    public CompiledQueryImpl withSqlStatement(CharSequence sqlStatement) {
+        this.sqlStatement = sqlStatement;
         return this;
     }
 

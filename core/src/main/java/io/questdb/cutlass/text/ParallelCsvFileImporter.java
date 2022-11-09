@@ -29,6 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -207,8 +208,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("Table remove failed [tableName=").put(tableName).put("]");
+                        LOG.error().$("could not overwrite table [tableName='").utf8(tableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -904,11 +905,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         int queuedCount = 0;
         int collectedCount = 0;
-        TableWriterMetadata metadata = writer.getMetadata();
+        TableRecordMetadata tableMetadata = writer.getMetadata();
 
-        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
+        for (int columnIndex = 0, size = tableMetadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            if (ColumnType.isSymbol(tableMetadata.getColumnType(columnIndex))) {
+                final CharSequence symbolColumnName = tableMetadata.getColumnName(columnIndex);
                 int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
 
                 while (true) {
@@ -959,16 +960,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata tableMetadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
 
                     if (partitionSize == 0) {
                         continue;
                     }
 
-                    for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
-                        if (ColumnType.isSymbol(metadata.getColumnType(c))) {
-                            final CharSequence symbolColumnName = metadata.getColumnName(c);
+                    for (int c = 0, size = tableMetadata.getColumnCount(); c < size; c++) {
+                        if (ColumnType.isSymbol(tableMetadata.getColumnType(c))) {
+                            final CharSequence symbolColumnName = tableMetadata.getColumnName(c);
                             final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
 
                             while (true) {
@@ -1375,15 +1376,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    int tableId = (int) cairoEngine.getTableIdGenerator().getNextId();
                     createTable(
                             ff,
                             configuration.getMkDirMode(),
                             configuration.getRoot(),
                             tableName,
                             targetTableStructure,
-                            (int) cairoEngine.getTableIdGenerator().getNextId(),
+                            tableId,
                             configuration
                     );
+                    if (targetTableStructure.isWalEnabled()) {
+                        cairoEngine.getTableSequencerAPI().registerTable(tableId, targetTableStructure);
+                    }
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
@@ -1521,11 +1526,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
-        }
-
-        @Override
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }
@@ -1601,8 +1601,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return false;
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         public void of(final CharSequence tableName,

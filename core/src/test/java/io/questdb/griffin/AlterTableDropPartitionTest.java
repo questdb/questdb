@@ -65,8 +65,8 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                     try {
                         compile("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
                         Assert.fail();
-                    } catch (SqlException e) {
-                        Assert.assertEquals(19, e.getPosition());
+                    } catch (CairoException e) {
+                        Assert.assertEquals(34, e.getPosition());
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not remove partition");
                     }
                 }

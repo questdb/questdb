@@ -37,7 +37,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private static final int COLUMN_FLAG_INDEXED = 2;
     private final LongList columnBits = new LongList();
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
-    private final LongList columnHashes = new LongList();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long commitLag;
@@ -53,11 +52,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private CreateTableModel() {
     }
 
-    public void addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
-        addColumn(0, name, type, symbolCapacity, columnHash);
+    public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
+        addColumn(0, name, type, symbolCapacity);
     }
 
-    public void addColumn(int position, CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+    public void addColumn(int position, CharSequence name, int type, int symbolCapacity) throws SqlException {
         if (!columnNameIndexMap.put(name, columnNames.size())) {
             throw SqlException.duplicateColumn(position, name);
         }
@@ -66,7 +65,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                 Numbers.encodeLowHighInts(type, symbolCapacity),
                 Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
         );
-        columnHashes.add(columnHash);
     }
 
     public boolean addColumnCastModel(ColumnCastModel model) {
@@ -95,7 +93,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         name = null;
         columnBits.clear();
         columnNames.clear();
-        columnHashes.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
     }
@@ -107,11 +104,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getColumnCount() {
         return columnNames.size();
-    }
-
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return columnHashes.get(columnIndex);
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -207,7 +199,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public boolean isWallEnabled() {
+    public boolean isWalEnabled() {
         return walEnabled;
     }
 
