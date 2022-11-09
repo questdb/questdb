@@ -633,7 +633,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
                     assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                            File.separatorChar + tableName + ":1" +
+                            File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                             File.separatorChar + walName +
                             File.separatorChar + "2" +
                             File.separatorChar + TableUtils.META_FILE_NAME + "]"));
@@ -1907,7 +1907,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     MatcherAssert.assertThat(
                             e.getMessage(),
                             CoreMatchers.endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
-                                    File.separatorChar + tableName + ":1" +
+                                    File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                                     File.separatorChar + walName +
                                     File.separatorChar + "1" +
                                     File.separatorChar + TableUtils.META_FILE_NAME + "]")
