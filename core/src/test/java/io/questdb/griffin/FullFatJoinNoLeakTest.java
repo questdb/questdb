@@ -58,8 +58,6 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                     return method.invoke(ourConfig, args);
                 }
         );
-        // free engine from the superclass
-        Misc.free(engine);
         engine = new CairoEngine(configuration, metrics, 2);
         compiler = new SqlCompiler(engine, null, null);
         compiler.setFullFatJoins(true);
@@ -69,6 +67,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
     @AfterClass
     public static void tearDownStatic() {
         AbstractCairoTest.tearDownStatic();
+        engine = Misc.free(engine);
         compiler.close();
     }
 
@@ -95,7 +94,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(102, 3);");
             TestUtils.insert(compiler, sqlExecutionContext, "insert into bids values(103, 5);");
 
-            engine.releaseInactive();
+            releaseInactive(engine);
         } catch (SqlException e) {
             Assert.fail(e.getMessage());
         }
@@ -124,6 +123,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                    } finally {
+                        releaseInactive(engine);
                     }
                 });
     }
@@ -151,6 +152,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                    } finally {
+                        releaseInactive(engine);
                     }
                 });
     }

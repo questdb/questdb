@@ -315,19 +315,20 @@ public abstract class AbstractCairoTest {
             AbstractCairoTest.ff = ff2;
             try {
                 code.run();
-                forEachNode(node -> {
-                    final CairoEngine engine = node.getEngine();
-                    engine.releaseInactive();
-                    engine.releaseInactiveCompilers();
-                    engine.releaseInactiveTableSequencers();
-                    Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
-                    Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
-                });
+                forEachNode(node -> releaseInactive(node.getEngine()));
             } finally {
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
         });
+    }
+
+    protected static void releaseInactive(CairoEngine engine) {
+        engine.releaseInactive();
+        engine.releaseInactiveCompilers();
+        engine.releaseInactiveTableSequencers();
+        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
 
     protected static void configureForBackups() throws IOException {
