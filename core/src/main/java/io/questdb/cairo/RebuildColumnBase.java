@@ -259,7 +259,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         if (columnIndex == REBUILD_ALL_COLUMNS) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (isSupportedColumn(metadata, i)) {
-                    isIndexed=true;
+                    isIndexed = true;
                     reindexColumn(
                             columnVersionReader,
                             metadata,
