@@ -344,7 +344,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 }
                 return sequencer;
             }
-            try (lastTxnReader) {
+            try (LastWalTxnReader ignore = lastTxnReader) {
                 lastTxnReader.open(path, rootLen);
                 tableInfo.tableId = lastTxnReader.getTableId();
                 tableInfo.lastTxn = lastTxnReader.lastTxn();
