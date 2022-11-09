@@ -271,7 +271,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                     );
                 }
             }
-            //To validate if the table has any index or not
             if (!isIndexed) {
                 throw CairoException.nonCritical().put(unsupportedTableMessage);
             }
