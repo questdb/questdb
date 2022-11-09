@@ -61,6 +61,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private TelemetryTask.TelemetryMethod telemetryMethod = this::storeTelemetryNoop;
     private Sequence telemetryPubSeq;
+    private boolean walApplication;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount, int sharedWorkerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -78,6 +79,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             this.telemetryPubSeq = cairoEngine.getTelemetryPubSequence();
             this.telemetryMethod = this::doStoreTelemetry;
         }
+        walApplication = false;
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -182,6 +184,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isWalApplication() {
+        return walApplication;
+    }
+
+    @Override
     public void popTimestampRequiredFlag() {
         timestampRequiredStack.pop();
     }
@@ -219,6 +226,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cairoSecurityContext = cairoSecurityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        walApplication = false;
         return this;
     }
 
@@ -241,6 +249,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = null == circuitBreaker ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
+        walApplication = false;
+        return this;
+    }
+
+    public SqlExecutionContext withWalApplication() {
+        walApplication = true;
         return this;
     }
 

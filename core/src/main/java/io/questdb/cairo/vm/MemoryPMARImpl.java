@@ -49,18 +49,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     public MemoryPMARImpl() {
     }
 
-    @Override
-    public final void close(boolean truncate) {
-        this.close(truncate, Vm.TRUNCATE_TO_PAGE);
-    }
-
     public final void close(boolean truncate, byte truncateMode) {
-        long sz = getAppendOffset();
+        long sz = truncate ? getAppendOffset() : -1L;
         releaseCurrentPage();
         super.close();
         if (fd != -1) {
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncate, sz, truncateMode);
+                Vm.bestEffortClose(ff, LOG, fd, sz, truncateMode);
             } finally {
                 fd = -1;
             }
@@ -103,6 +98,11 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        of(ff, name, extendSegmentSize, memoryTag, opts);
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         close();
         this.memoryTag = memoryTag;
@@ -112,6 +112,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         setExtendSegmentSize(extendSegmentSize);
         fd = TableUtils.openFileRWOrFail(ff, name, opts);
         LOG.debug().$("open ").$(name).$(" [fd=").$(fd).$(", extendSegmentSize=").$(extendSegmentSize).$(']').$();
+    }
+
+    @Override
+    public void switchTo(long fd, long offset, byte truncateMode) {
+        close(true, truncateMode);
+        this.fd = fd;
+        jumpTo(offset);
     }
 
     public void sync(boolean async) {

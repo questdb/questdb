@@ -43,6 +43,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     protected int errno;
     private boolean cacheable;
     private boolean interruption; // used when a query times out
+    private int messagePosition;
 
     public static CairoException critical(int errno) {
         CairoException ex = tlException.get();
@@ -108,9 +109,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     @Override
+    public int getPosition() {
+        return messagePosition;
+    }
+
+    @Override
     public StackTraceElement[] getStackTrace() {
         StackTraceElement[] result = EMPTY_STACK_TRACE;
-        // This is to have correct stack trace reported in CI 
+        // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
     }
@@ -125,6 +131,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isInterruption() {
         return interruption;
+    }
+
+    // logged and skipped by WAL applying code
+    public boolean isWALTolerable() {
+        return !isCritical() || errno == METADATA_VALIDATION;
+    }
+
+    public CairoException position(int position) {
+        this.messagePosition = position;
+        return this;
     }
 
     public CairoException put(long value) {

@@ -58,11 +58,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
-    }
-
-    @Override
     public CharSequence getColumnName(int columnIndex) {
         assert columnIndex < getColumnCount();
         if (columnIndex == getTimestampIndex()) {
@@ -134,8 +129,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isWallEnabled() {
-        return cairoConfiguration.getWallEnabledDefault();
+    public boolean isWalEnabled() {
+        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {

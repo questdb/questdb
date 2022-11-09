@@ -26,10 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -78,6 +75,97 @@ public class ConcurrentTest {
 
         latch.await();
         Assert.assertEquals(threads * iterations, doneCount.get());
+    }
+
+    @Test
+    public void testDoneMemBarrier() throws InterruptedException {
+        int cycle = 128;
+        RingQueue<TwoLongMsg> pingQueue = new RingQueue<>(TwoLongMsg::new, cycle);
+        MCSequence sub = new MCSequence(cycle);
+        MPSequence pub = new MPSequence(cycle);
+
+        pub.then(sub).then(pub);
+        final int total = 100_000;
+        int subThreads = 4;
+
+        CyclicBarrier latch = new CyclicBarrier(subThreads + 1);
+
+        Thread pubTh = new Thread(() -> {
+            try {
+                latch.await();
+            } catch (InterruptedException | BrokenBarrierException e) {
+                throw new RuntimeException(e);
+            }
+
+            for (int i = 0; i < total; i++) {
+                long seq;
+                while (true) {
+                    seq = pub.next();
+                    if (seq > -1) {
+                        TwoLongMsg msg = pingQueue.get(seq);
+
+                        msg.f4 = i + 3;
+                        msg.f3 = i + 2;
+                        msg.f2 = i + 1;
+                        msg.f1 = i;
+
+                        pub.done(seq);
+
+                        break;
+                    }
+                }
+            }
+        });
+        pubTh.start();
+
+        AtomicLong anomalies = new AtomicLong();
+        ObjList<Thread> threads = new ObjList<>();
+        AtomicBoolean done = new AtomicBoolean(false);
+
+        for (int th = 0; th < subThreads; th++) {
+            Thread subTh = new Thread(() -> {
+                try {
+                    latch.await();
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    throw new RuntimeException(e);
+                }
+
+                for (int i = 0; i < total; i++) {
+                    long seq;
+                    while (!done.get()) {
+                        seq = sub.next();
+                        if (seq > -1) {
+                            TwoLongMsg msg = pingQueue.get(seq);
+                            long f1 = msg.f1;
+                            long f2 = msg.f2;
+                            long f3 = msg.f3;
+                            long f4 = msg.f4;
+
+                            sub.done(seq);
+
+                            if (f2 != f1 + 1 ||
+                                    f3 != f1 + 2 ||
+                                    f4 != f1 + 3) {
+                                anomalies.incrementAndGet();
+                                return;
+                            }
+                            break;
+                        }
+                    }
+                }
+            });
+            subTh.start();
+            threads.add(subTh);
+        }
+
+        pubTh.join();
+        done.set(true);
+        for (int i = 0; i < threads.size(); i++) {
+            Thread subTh = threads.get(i);
+            subTh.join();
+        }
+
+        Assert.assertEquals("Anomalies detected", 0, anomalies.get());
     }
 
     @Test
@@ -926,6 +1014,13 @@ public class ConcurrentTest {
 
     private static class LongMsg {
         public long correlationId;
+    }
+
+    private static class TwoLongMsg {
+        public long f1;
+        public int f2;
+        public long f3;
+        public int f4;
     }
 
     private static class WaitingConsumer extends Thread {

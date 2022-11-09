@@ -113,6 +113,8 @@ public final class Files {
         return copy(from.address(), to.address());
     }
 
+    public static native long copyData(long srcFd, long destFd, long offsetSrc, long length);
+
     /**
      * close(fd) should be used instead of this method in most cases
      * unless you don't need close sys call to happen.

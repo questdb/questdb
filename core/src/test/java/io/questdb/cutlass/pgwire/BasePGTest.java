@@ -50,7 +50,7 @@ import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
 
-public class BasePGTest extends AbstractGriffinTest {
+public abstract class BasePGTest extends AbstractGriffinTest {
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,

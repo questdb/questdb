@@ -25,11 +25,10 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.wal.MetadataChangeSPI;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
@@ -39,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
 
-    public final static String CMD_NAME = "UPDATE";
+    public static final String CMD_NAME = "UPDATE";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -53,6 +52,15 @@ public class UpdateOperation extends AbstractOperation {
             String tableName,
             int tableId,
             long tableVersion,
+            int tableNamePosition
+    ) {
+        this(tableName, tableId, tableVersion, tableNamePosition, null);
+    }
+
+    public UpdateOperation(
+            String tableName,
+            int tableId,
+            long tableVersion,
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
@@ -61,7 +69,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
+    public long apply(MetadataChangeSPI tableWriter, boolean contextAllowsAnyStructureChanges) {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
@@ -96,6 +104,11 @@ public class UpdateOperation extends AbstractOperation {
 
     public RecordCursorFactory getFactory() {
         return factory;
+    }
+
+    @Override
+    public boolean isStructureChange() {
+        return false;
     }
 
     public boolean isWriterClosePending() {
@@ -135,6 +148,6 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
-        this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
+        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
     }
 }

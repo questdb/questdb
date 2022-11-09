@@ -276,6 +276,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return 60_000;
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return -10000;
     }
@@ -318,6 +323,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return 1000;
+    }
+
+    @Override
+    public int getMetadataPoolCapacity() {
+        return getSqlModelPoolCapacity();
     }
 
     @Override
@@ -477,7 +487,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlAnalyticStorePageSize() {
-        return 4 * 1024;
+        return 1024 * 1024;
     }
 
     @Override
@@ -748,8 +758,28 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
+    public boolean getWalEnabledDefault() {
         return false;
+    }
+
+    @Override
+    public long getWalPurgeInterval() {
+        return 30_000;
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return 3;
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return 200000;
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return 4096;
     }
 
     @Override
@@ -829,5 +859,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isWalSupported() {
+        return false;
     }
 }
