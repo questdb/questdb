@@ -406,23 +406,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testComplexNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0(
-                    "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'",
-                    "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereIntervalTest0(
+                "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'",
+                "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
     }
 
     @Test
     public void testComplexNowWithInclusive() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1399,13 +1391,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testNowWithNotIn() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
-                            "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
+                        "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
@@ -1526,35 +1514,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
-                    "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
+                "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereCompareToModelTest("timestamp = now()",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereCompareToModelTest("timestamp = now()",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
-                    "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-            Assert.assertNull(m.filter);
-        } finally {
-            currentMicros = -1;
-        }
+        IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
+        Assert.assertNull(m.filter);
     }
 
     @Test
@@ -1640,35 +1616,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTimestampNotEqualsFunctionOfNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0("timestamp != dateadd('d', 2, now())",
-                    "[{lo=, hi=1970-01-03T23:59:59.999999Z},{lo=1970-01-04T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereIntervalTest0("timestamp != dateadd('d', 2, now())",
+                "[{lo=, hi=1970-01-03T23:59:59.999999Z},{lo=1970-01-04T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNow() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereIntervalTest0("timestamp != now()",
-                    "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-        } finally {
-            currentMicros = -1;
-        }
+        runWhereIntervalTest0("timestamp != now()",
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNowAndSymbolsNotInList() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            IntrinsicModel m = runWhereIntervalTest0("timestamp != now() and sym not in (1, 2, 3)",
-                    "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-            Assert.assertNull(m.filter);
-        } finally {
-            currentMicros = -1;
-        }
+        IntrinsicModel m = runWhereIntervalTest0("timestamp != now() and sym not in (1, 2, 3)",
+                "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+        Assert.assertNull(m.filter);
     }
 
     @Test

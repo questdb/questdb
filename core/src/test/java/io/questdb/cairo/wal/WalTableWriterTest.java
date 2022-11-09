@@ -53,12 +53,6 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         currentMicros = 0L;
     }
 
-    @After
-    public void tearDown() {
-        super.tearDown();
-        currentMicros = -1L;
-    }
-
     @Test
     public void testNonStructuralAlterViaWal() throws Exception {
         assertMemoryLeak(() -> {

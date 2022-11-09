@@ -57,17 +57,6 @@ import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
 
-    @Before
-    public void setUp() {
-        super.setUp();
-    }
-
-    @After
-    public void tearDown() {
-        super.tearDown();
-        currentMicros = -1L;
-    }
-
     @Test
     public void tesWalWritersUnknownTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1314,8 +1303,6 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testLargeSegmentRollover() throws Exception {
-        currentMicros = -1;  // Don't mock MicrosecondClock.
-
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             // Schema with 8 columns, 8 bytes each = 64 bytes per row

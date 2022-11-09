@@ -41,8 +41,18 @@ import io.questdb.test.tools.TestUtils;
 import java.io.IOException;
 
 public class QuestDBNode {
+    private final int nodeId;
+
     private Cairo cairo;
     private Griffin griffin;
+
+    public QuestDBNode(int nodeId) {
+        this.nodeId = nodeId;
+    }
+
+    public int getId() {
+        return nodeId;
+    }
 
     public void closeCairo() {
         cairo.close();

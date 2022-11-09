@@ -105,7 +105,6 @@ public abstract class AbstractCairoTest {
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBNode node1;
-    protected static QuestDBNode node2;
     protected static ObjList<QuestDBNode> nodes = new ObjList<>();
     protected static int pageFrameMaxRows = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
@@ -200,13 +199,9 @@ public abstract class AbstractCairoTest {
         // created mid-test
         LOG.info().$("begin").$();
 
-        node1 = new QuestDBNode();
-        node1.initCairo("dbRoot");
-        nodes.add(node1);
-
-        node2 = new QuestDBNode();
-        node2.initCairo("dbRoot2");
-        nodes.add(node2);
+        node1 = newNode(1, "dbRoot");
+        newNode(2);
+        newNode(3);
 
         root = node1.getRoot();
         configuration = node1.getConfiguration();
@@ -214,6 +209,17 @@ public abstract class AbstractCairoTest {
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
         messageBus = node1.getMessageBus();
+    }
+
+    private static QuestDBNode newNode(int nodeId) {
+        return newNode(nodeId, "dbRoot" + nodeId);
+    }
+
+    private static QuestDBNode newNode(int nodeId, String dbRoot) {
+        final QuestDBNode node = new QuestDBNode(nodeId);
+        node.initCairo(dbRoot);
+        nodes.add(node);
+        return node;
     }
 
     public static void snapshotMemoryUsage() {

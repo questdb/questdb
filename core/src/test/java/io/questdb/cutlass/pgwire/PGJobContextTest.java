@@ -4895,8 +4895,6 @@ nodejs code:
                     try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
                     }
-                } finally {
-                    currentMicros = -1;
                 }
             }
         });
