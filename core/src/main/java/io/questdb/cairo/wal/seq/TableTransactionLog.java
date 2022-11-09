@@ -61,7 +61,7 @@ public class TableTransactionLog implements Closeable {
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
-    private long maxTxn;
+    private volatile long maxTxn;
 
     TableTransactionLog(FilesFacade ff) {
         this.ff = ff;

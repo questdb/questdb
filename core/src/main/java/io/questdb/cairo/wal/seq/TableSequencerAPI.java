@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,9 +40,13 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.Closeable;
 import java.util.function.Function;
 
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.SEQ_META_TABLE_ID;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
@@ -72,30 +78,31 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
-    public void forAllWalTables(final RegisteredTable callback) {
+    public void forAllWalTables(RegisteredTable callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
 
         // this will be replaced with table name registry when drop WAL table implemented
-        try (Path path = new Path().of(root).slash$()) {
+        try (
+                Path path = new Path().of(root).slash$();
+                LastWalTxnReader walTxnReader = new LastWalTxnReader(configuration.getFilesFacade())
+        ) {
+            final WalTableInfo info = new WalTableInfo();
             final StringSink nameSink = new StringSink();
             int rootLen = path.length();
             ff.iterateDir(path, (name, type) -> {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
-                        long lastTxn;
-                        int tableId;
-                        try (TableSequencer tableSequencer = openSequencerLocked(nameSink, SequencerLockType.NONE)) {
-                            lastTxn = tableSequencer.lastTxn();
-                            tableId = tableSequencer.getTableId();
+                        try {
+                            readWalTableInfo(nameSink, info, walTxnReader, path, rootLen);
                         } catch (CairoException ex) {
-                            LOG.critical().$("could not open table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
+                            LOG.critical().$("could not read WAL table metadata [table=").$(nameSink).$(", errno=").$(ex.getErrno())
                                     .$(", error=").$((Throwable) ex).I$();
                             return;
                         }
                         try {
-                            callback.onTable(tableId, nameSink, lastTxn);
+                            callback.onTable(info.tableId, nameSink, info.lastTxn);
                         } catch (CairoException ex) {
                             LOG.critical().$("could not process table sequencer [table=").$(nameSink).$(", errno=").$(ex.getErrno())
                                     .$(", error=").$((Throwable) ex).I$();
@@ -319,6 +326,40 @@ public class TableSequencerAPI implements QuietCloseable {
         return getTableSequencerEntry(Chars.toString(tableName), lock, this.openSequencerInstanceLambda);
     }
 
+    private void readWalTableInfo(
+            CharSequence tableName,
+            WalTableInfo tableInfo,
+            LastWalTxnReader lastTxnReader,
+            Path path,
+            int rootLen
+    ) {
+        tableInfo.reset();
+        // Fast path.
+        // We don't need to allocate a String for the table name here since we don't create a new map entry.
+        seqRegistry.compute(tableName, (name, sequencer) -> {
+            if (sequencer != null) {
+                if (!sequencer.isDistressed() && !sequencer.isClosed()) {
+                    tableInfo.tableId = sequencer.getTableId();
+                    tableInfo.lastTxn = sequencer.lastTxn();
+                }
+                return sequencer;
+            }
+            try (lastTxnReader) {
+                lastTxnReader.open(path, rootLen);
+                tableInfo.tableId = lastTxnReader.getTableId();
+                tableInfo.lastTxn = lastTxnReader.lastTxn();
+            }
+            return null;
+        });
+        // Slow path.
+        if (tableInfo.tableId == -1) {
+            try (TableSequencer tableSequencer = openSequencerLocked(tableName, SequencerLockType.NONE)) {
+                tableInfo.lastTxn = tableSequencer.lastTxn();
+                tableInfo.tableId = tableSequencer.getTableId();
+            }
+        }
+    }
+
     private boolean releaseEntries(long deadline) {
         if (seqRegistry.size() == 0) {
             // nothing to release
@@ -341,7 +382,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return removed;
     }
 
-
     private void throwIfClosed() {
         if (closed) {
             LOG.info().$("is closed").$();
@@ -362,6 +402,57 @@ public class TableSequencerAPI implements QuietCloseable {
     @FunctionalInterface
     public interface RegisteredTable {
         void onTable(int tableId, final CharSequence tableName, long lastTxn);
+    }
+
+    /**
+     * Reads table id and last txn from both sequencer metadata and table transaction log.
+     * Used to avoid creating a TableSequencer in {@link #forAllWalTables}.
+     */
+    private static class LastWalTxnReader implements Closeable {
+        private final FilesFacade ff;
+        private final MemoryMR roMetaMem;
+        private final MemoryMR roTxnMem;
+        private long maxTxn;
+        private int tableId;
+
+        public LastWalTxnReader(FilesFacade ff) {
+            this.ff = ff;
+            roMetaMem = Vm.getMRInstance();
+            roTxnMem = Vm.getMRInstance();
+        }
+
+        @Override
+        public void close() {
+            reset();
+            Misc.free(roMetaMem);
+            Misc.free(roTxnMem);
+        }
+
+        public int getTableId() {
+            return tableId;
+        }
+
+        public void open(Path path, int pathLen) {
+            reset();
+            openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+            openSmallFile(ff, path, pathLen, roTxnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+
+            tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+            maxTxn = roTxnMem.getLong(MAX_TXN_OFFSET);
+
+            // close early
+            roMetaMem.close();
+            roTxnMem.close();
+        }
+
+        private void reset() {
+            tableId = -1;
+            maxTxn = -1;
+        }
+
+        long lastTxn() {
+            return maxTxn;
+        }
     }
 
     private static class TableSequencerEntry extends TableSequencerImpl {
@@ -389,6 +480,16 @@ public class TableSequencerAPI implements QuietCloseable {
             } else {
                 super.close();
             }
+        }
+    }
+
+    private static class WalTableInfo {
+        long lastTxn;
+        int tableId;
+
+        void reset() {
+            lastTxn = -1;
+            tableId = -1;
         }
     }
 }
