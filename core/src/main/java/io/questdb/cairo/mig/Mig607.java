@@ -113,7 +113,7 @@ final class Mig607 {
                         }
                         TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
                     } finally {
-                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                     }
                 }
             }
@@ -300,7 +300,7 @@ final class Mig607 {
                                 }
                             }
                         } finally {
-                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                         }
                         denseSymbolCount++;
                     }

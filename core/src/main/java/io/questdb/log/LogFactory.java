@@ -271,6 +271,26 @@ public class LogFactory implements Closeable {
         );
     }
 
+    @TestOnly
+    public void flushJobs() {
+        pauseThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+            }
+        }
+        startThread();
+    }
+
     public int getQueueDepth() {
         return queueDepth;
     }
@@ -502,6 +522,13 @@ public class LogFactory implements Closeable {
     private void haltThread() {
         if (running.compareAndSet(true, false)) {
             workerPool.halt();
+        }
+    }
+
+    @TestOnly
+    private void pauseThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.pause();
         }
     }
 

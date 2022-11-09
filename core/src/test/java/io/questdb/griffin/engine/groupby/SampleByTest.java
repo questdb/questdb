@@ -2532,10 +2532,10 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            groupByMeta.add(new TableColumnMetadata("col1", 1, ColumnType.STRING, false, 0, false, null));
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, null));
 
             GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(new TableColumnMetadata("col1", 2, ColumnType.LONG, false, 0, false, null));
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null));
 
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
@@ -2567,7 +2567,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            TableColumnMetadata column = new TableColumnMetadata("col1", 1, ColumnType.LONG, false, 0, false, null);
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null);
             groupByMeta.add(column);
 
             GenericRecordMetadata meta = new GenericRecordMetadata();

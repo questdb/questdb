@@ -396,11 +396,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
-        }
-
-        @Override
         public CharSequence getColumnName(int columnIndex) {
             return names.getQuick(columnIndex);
         }
@@ -461,8 +456,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return configuration.getWallEnabledDefault();
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {

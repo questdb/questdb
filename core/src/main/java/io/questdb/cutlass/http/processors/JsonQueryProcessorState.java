@@ -71,7 +71,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
-    private QuietCloseable asyncOperation;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
@@ -178,7 +177,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void freeAsyncOperation() {
-        asyncOperation = Misc.free(asyncOperation);
         operationFuture = Misc.free(operationFuture);
     }
 
@@ -250,8 +248,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.compilerNanos = compilerNanos;
     }
 
-    public void setOperationFuture(QuietCloseable op, OperationFuture fut) {
-        asyncOperation = op;
+    public void setOperationFuture(OperationFuture fut) {
         operationFuture = fut;
     }
 

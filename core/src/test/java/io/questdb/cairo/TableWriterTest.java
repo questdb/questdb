@@ -192,6 +192,8 @@ public class TableWriterTest extends AbstractCairoTest {
             int totalColAddCount = 1000;
             writerCommandQueueCapacity = Numbers.ceilPow2(2 * totalColAddCount);
             int tableId = 11;
+            // Reduce disk space by for the test run.
+            dataAppendPageSize = 1 << 20; // 1MB
 
             String tableName = "testAddColumnConcurrentWithDataUpdates";
             try (Path path = new Path()) {
@@ -239,7 +241,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, tableName, tableId)
-                                .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOperation = alterOperationBuilder.build();
                         try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
                             if (writer != null) {

@@ -495,27 +495,24 @@ public class SnapshotTest extends AbstractGriffinTest {
                 FilesFacade ff = configuration.getFilesFacade();
                 try (TableReader tableReader = new TableReader(configuration, "t")) {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
-
-                        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
+                        path.concat(TableUtils.META_FILE_NAME).$();
+                        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                            metadata.load(path);
                             // Assert _meta contents.
-                            path.concat(TableUtils.META_FILE_NAME).$();
-                            metadata.deferredInit(path, ColumnType.VERSION);
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
                             Assert.assertEquals(metadata0.getPartitionBy(), metadata.getPartitionBy());
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
-                            Assert.assertEquals(metadata0.getVersion(), metadata.getVersion());
-                            Assert.assertEquals(metadata0.getId(), metadata.getId());
+                            Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
                             Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
-                                TableColumnMetadata columnMetadata0 = metadata0.getColumnQuick(i);
-                                TableColumnMetadata columnMetadata1 = metadata0.getColumnQuick(i);
+                                TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
+                                TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
                                 Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
                                 Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
-                                Assert.assertEquals(columnMetadata0.getHash(), columnMetadata1.getHash());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
                                 Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());

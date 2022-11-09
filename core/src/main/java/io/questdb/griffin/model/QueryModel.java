@@ -394,6 +394,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByOffset = null;
     }
 
+    public boolean containsJoin() {
+        QueryModel current = this;
+        do {
+            if (current.getJoinModels().size() > 1) {
+                return true;
+            }
+        } while ((current = current.getNestedModel()) != null);
+        return false;
+    }
+
     public void copyBottomToTopColumns() {
         topDownColumns.clear();
         topDownNameSet.clear();

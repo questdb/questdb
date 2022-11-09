@@ -41,7 +41,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.AttachDetachStatus.*;
+import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
@@ -50,7 +50,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public TestName testName = new TestName();
     private Path other;
     private Path path;
-
 
     @Override
     @Before
@@ -131,7 +130,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // update a row toward the end of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             txn++;
 
@@ -156,7 +155,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // update a row toward the beginning of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
 
             // verify content
@@ -415,7 +414,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // execute an update directly on the cold storage partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -646,8 +645,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -666,8 +665,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -700,8 +699,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -813,7 +812,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-02");
                         Assert.fail();
-                    } catch (SqlException e) {
+                    } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column, invalid key");
                     }
                 }
@@ -871,9 +870,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[2] could not open read-only"
+                            "could not open read-only"
                     );
                     TestUtils.assertContains(e.getFlyweightMessage(),
                             "ts1.d"
@@ -1234,8 +1233,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
                             "Symbol index value file does not exist"
                     );
                 }
@@ -1280,8 +1279,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "Symbol index key file does not exist");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Symbol index key file does not exist");
                 }
             }
         });
@@ -1313,8 +1312,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': " + ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -1559,7 +1558,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try {
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
                 Assert.fail("Expected exception with '" + errorMessage + "' message");
-            } catch (SqlException e) {
+            } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
             Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
@@ -1759,7 +1758,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2020-01-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException | SqlException e) {
                     for (String error : errorContains) {
                         TestUtils.assertContains(e.getFlyweightMessage(), error);
                     }

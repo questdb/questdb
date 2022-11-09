@@ -124,4 +124,10 @@ public interface MessageBus extends Closeable {
     RingQueue<VectorAggregateTask> getVectorAggregateQueue();
 
     Sequence getVectorAggregateSubSeq();
+
+    Sequence getWalTxnNotificationPubSequence();
+
+    RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
+
+    Sequence getWalTxnNotificationSubSequence();
 }
