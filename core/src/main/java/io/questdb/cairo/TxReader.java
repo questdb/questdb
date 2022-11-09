@@ -31,6 +31,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 
@@ -56,6 +57,7 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_TS_OFFSET = 0;
     protected final LongList attachedPartitions = new LongList();
+    protected final AtomicLong structureVersion = new AtomicLong();
     private final FilesFacade ff;
     private final IntList symbolCountSnapshot = new IntList();
     protected int attachedPartitionsSize = 0;
@@ -66,7 +68,7 @@ public class TxReader implements Closeable, Mutable {
     protected long minTimestamp;
     protected int partitionBy;
     protected long partitionTableVersion;
-    protected long structureVersion;
+    protected long seqTxn;
     protected int symbolColumnCount;
     protected long transientRowCount;
     protected long truncateVersion;
@@ -112,11 +114,12 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
         mem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, minTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, maxTimestamp);
+        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion.get());
         mem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, dataVersion);
-        mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
+        mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -260,8 +263,12 @@ public class TxReader implements Closeable, Mutable {
         return transientRowCount + fixedRowCount;
     }
 
+    public long getSeqTxn() {
+        return seqTxn;
+    }
+
     public long getStructureVersion() {
-        return structureVersion;
+        return structureVersion.get();
     }
 
     public int getSymbolColumnCount() {
@@ -319,17 +326,16 @@ public class TxReader implements Closeable, Mutable {
             minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
             maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
             dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+            structureVersion.set(getLong(TX_OFFSET_STRUCT_VERSION_64));
             final long prevPartitionTableVersion = partitionTableVersion;
             partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
-            final long prevColumnVersion = columnVersion;
+            final long prevColumnVersion = this.columnVersion;
             columnVersion = unsafeReadColumnVersion();
             truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+            seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
             symbolColumnCount = symbolsSize / Long.BYTES;
-
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
                 return true;
@@ -378,6 +384,10 @@ public class TxReader implements Closeable, Mutable {
         return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));
     }
 
+    public long unsafeReadTxn() {
+        return unsafeReadVersion();
+    }
+
     public long unsafeReadVersion() {
         return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);
     }
@@ -390,6 +400,7 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.clear();
         version = -1L;
         txn = -1L;
+        seqTxn = -1L;
     }
 
     private int findAttachedPartitionIndex(long ts) {
@@ -424,12 +435,12 @@ public class TxReader implements Closeable, Mutable {
             if (txAttachedPartitionsSize > 0) {
                 if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
-                    unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
+                    unsafeLoadPartitions0(0, txAttachedPartitionsSize);
                 } else {
                     if (attachedPartitionsSize < txAttachedPartitionsSize) {
                         unsafeLoadPartitions0(
-                                txAttachedPartitionsSize,
-                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0)
+                                Math.max(attachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION, 0),
+                                txAttachedPartitionsSize
                         );
                     }
                 }
@@ -437,6 +448,7 @@ public class TxReader implements Closeable, Mutable {
                         txAttachedPartitionsSize - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET,
                         transientRowCount
                 );
+                attachedPartitions.setPos(txAttachedPartitionsSize);
             } else {
                 attachedPartitionsSize = 0;
                 attachedPartitions.clear();
@@ -448,14 +460,13 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
-    private void unsafeLoadPartitions0(int txAttachedPartitionsSize, int max) {
-        attachedPartitions.setPos(txAttachedPartitionsSize);
-
+    private void unsafeLoadPartitions0(int lo, int hi) {
+        attachedPartitions.setPos(hi);
         final long baseOffset = getPartitionTableSizeOffset(symbolColumnCount) + Integer.BYTES;
-        for (int i = max; i < txAttachedPartitionsSize; i++) {
+        for (int i = lo; i < hi; i++) {
             attachedPartitions.setQuick(i, getLong(baseOffset + i * Long.BYTES));
         }
-        attachedPartitionsSize = txAttachedPartitionsSize;
+        attachedPartitionsSize = hi;
     }
 
     private void unsafeLoadSymbolCounts(int symbolMapCount) {

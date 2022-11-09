@@ -882,6 +882,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public boolean isWalApplication() {
+            return sqlExecutionContext.isWalApplication();
+        }
+
+        @Override
         public void popTimestampRequiredFlag() {
             sqlExecutionContext.popTimestampRequiredFlag();
         }

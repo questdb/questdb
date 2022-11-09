@@ -43,8 +43,8 @@ public class PgProcFunctionFactory extends AbstractEmptyCatalogueFunctionFactory
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("proname", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("proname", ColumnType.STRING));
         METADATA = metadata;
     }
 }

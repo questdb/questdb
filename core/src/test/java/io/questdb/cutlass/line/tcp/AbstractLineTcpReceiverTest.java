@@ -87,6 +87,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+    protected int partitionByDefault = PartitionBy.DAY;
     protected boolean symbolAsFieldSupported;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
@@ -107,6 +108,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public double getCommitIntervalFraction() {
             return commitIntervalFraction;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return partitionByDefault;
         }
 
         @Override
@@ -195,6 +201,16 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     @After
     public void cleanup() {
         maxMeasurementSize = 256;
+        authKeyId = null;
+        msgBufferSize = 256 * 1024;
+        minIdleMsBeforeWriterRelease = 30000;
+        maintenanceInterval = 25;
+        commitIntervalFraction = 0.5;
+        commitIntervalDefault = 2000;
+        partitionByDefault = PartitionBy.DAY;
+        disconnectOnError = false;
+        symbolAsFieldSupported = false;
+        nf = NetworkFacadeImpl.INSTANCE;
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
@@ -266,12 +282,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected void send(LineTcpReceiver receiver, CharSequence tableName, int wait, Runnable sendToSocket) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(1);
-        final CharSequence t = tableName;
         switch (wait) {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
+                    if (Chars.equalsNc(tableName, name)) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                             releaseLatch.countDown();
                         }
                     }
@@ -279,7 +294,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
                 break;
             case WAIT_ILP_TABLE_RELEASE:
                 receiver.setSchedulerListener((tableName1, event) -> {
-                    if (Chars.equals(tableName1, tableName1)) {
+                    if (Chars.equalsNc(tableName, tableName1)) {
                         releaseLatch.countDown();
                     }
                 });

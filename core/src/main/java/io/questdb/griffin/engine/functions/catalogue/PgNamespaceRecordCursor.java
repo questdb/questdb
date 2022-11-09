@@ -97,10 +97,10 @@ class PgNamespaceRecordCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("nspname", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("oid", 2, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("xmin", 3, ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("nspowner", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("nspname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("xmin", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("nspowner", ColumnType.INT));
         METADATA = metadata;
     }
 }

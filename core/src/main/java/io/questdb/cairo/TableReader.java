@@ -111,7 +111,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$());
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             LOG.debug()
-                    .$("open [id=").$(metadata.getId())
+                    .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(this.tableName)
                     .I$();
             this.txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
@@ -745,28 +745,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private TableReaderMetadata openMetaFile() {
-        long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
-        TableReaderMetadata metadata = new TableReaderMetadata(ff);
-        path.concat(META_FILE_NAME).$();
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName);
         try {
-            boolean existenceChecked = false;
-            while (true) {
-                try {
-                    return metadata.deferredInit(path, ColumnType.VERSION);
-                } catch (CairoException ex) {
-                    if (!existenceChecked) {
-                        path.trimTo(rootLen).put(Files.SEPARATOR).$();
-                        if (!ff.exists(path)) {
-                            throw CairoException.nonCritical().put("table does not exist [table=").put(tableName).put(']');
-                        }
-                        path.trimTo(rootLen).concat(META_FILE_NAME).$();
-                    }
-                    existenceChecked = true;
-                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
+            metadata.load();
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
         }
     }
 
@@ -1101,7 +1086,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
+                TableUtils.handleMetadataLoadException(tableName, deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
                 continue;
             }
 

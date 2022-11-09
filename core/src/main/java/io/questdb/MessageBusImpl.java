@@ -33,6 +33,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MessageBusImpl implements MessageBus {
     private final MPSequence columnPurgePubSeq;
@@ -80,6 +81,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence vectorAggregatePubSeq;
     private final RingQueue<VectorAggregateTask> vectorAggregateQueue;
     private final MCSequence vectorAggregateSubSeq;
+    private final Sequence walTxnNotificationPubSequence;
+    private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
+    private final Sequence walTxnNotificationSubSequence;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -179,6 +183,11 @@ public class MessageBusImpl implements MessageBus {
         this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
         this.textImportRequestSubSeq = new SCSequence();
         textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+
+        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
+        walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
     }
 
     @Override
@@ -411,5 +420,32 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationPubSequence() {
+        return walTxnNotificationPubSequence;
+    }
+
+    @Override
+    public RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue() {
+        return walTxnNotificationQueue;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationSubSequence() {
+        return walTxnNotificationSubSequence;
+    }
+
+    @TestOnly
+    public void reset() {
+        clearQueue(walTxnNotificationSubSequence);
+    }
+
+    private void clearQueue(Sequence subSequence) {
+        long cursor;
+        while ((cursor = subSequence.next()) > -1) {
+            subSequence.done(cursor);
+        }
     }
 }

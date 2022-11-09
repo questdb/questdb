@@ -36,6 +36,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
 
@@ -187,6 +188,11 @@ public class LineTcpEventBuffer {
         return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
     }
 
+    public void addStructureVersion(long address, long structureVersion) {
+        checkCapacity(address, Long.BYTES);
+        Unsafe.getUnsafe().putLong(address, structureVersion);
+    }
+
     public long addSymbol(long address, DirectByteCharSequence value, boolean hasNonAsciiChars, SymbolLookup symbolLookup) {
         final int maxLen = 2 * value.length();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
@@ -225,8 +231,50 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
+    public long columnValueLength(byte entityType, long offset) {
+        CharSequence cs;
+        switch (entityType) {
+            case LineTcpParser.ENTITY_TYPE_TAG:
+            case LineTcpParser.ENTITY_TYPE_STRING:
+            case LineTcpParser.ENTITY_TYPE_LONG256:
+                cs = readUtf16Chars(offset);
+                return cs.length() * 2L + Integer.BYTES;
+            case LineTcpParser.ENTITY_TYPE_BYTE:
+            case LineTcpParser.ENTITY_TYPE_GEOBYTE:
+            case LineTcpParser.ENTITY_TYPE_BOOLEAN:
+                return Byte.BYTES;
+            case LineTcpParser.ENTITY_TYPE_SHORT:
+            case LineTcpParser.ENTITY_TYPE_GEOSHORT:
+                return Short.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CHAR:
+                return Character.BYTES;
+            case LineTcpParser.ENTITY_TYPE_CACHED_TAG:
+            case LineTcpParser.ENTITY_TYPE_INTEGER:
+            case LineTcpParser.ENTITY_TYPE_GEOINT:
+                return Integer.BYTES;
+            case LineTcpParser.ENTITY_TYPE_LONG:
+            case LineTcpParser.ENTITY_TYPE_GEOLONG:
+            case LineTcpParser.ENTITY_TYPE_DATE:
+            case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
+                return Long.BYTES;
+            case LineTcpParser.ENTITY_TYPE_FLOAT:
+                return Float.BYTES;
+            case LineTcpParser.ENTITY_TYPE_DOUBLE:
+                return Double.BYTES;
+            case ENTITY_TYPE_NULL:
+                return 0;
+            default:
+                throw new UnsupportedOperationException("entityType " + entityType + " is not implemented!");
+        }
+    }
+
     public long getAddress() {
         return bufLo;
+    }
+
+    public long getAddressAfterHeader() {
+        // The header contains structure version (long), timestamp (long) and number of columns (int).
+        return bufLo + 2 * Long.BYTES + Integer.BYTES;
     }
 
     public byte readByte(long address) {

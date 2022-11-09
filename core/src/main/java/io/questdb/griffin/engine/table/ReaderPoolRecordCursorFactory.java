@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,10 +64,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     private static class ReaderPoolCursor implements RecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private int allocationIndex = 0;
-        private Iterator<Map.Entry<CharSequence, ReaderPool.Entry>> iterator;
+        private Iterator<Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>>> iterator;
         private long owner;
-        private ReaderPool.Entry poolEntry;
-        private Map<CharSequence, ReaderPool.Entry> readerPoolEntries;
+        private AbstractMultiTenantPool.Entry<ReaderPool.R> poolEntry;
+        private Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries;
         private CharSequence tableName;
         private long timestamp;
         private long txn;
@@ -90,7 +91,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             return tryAdvance();
         }
 
-        public void of(Map<CharSequence, ReaderPool.Entry> readerPoolEntries) {
+        public void of(Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> readerPoolEntries) {
             this.readerPoolEntries = readerPoolEntries;
             toTop();
         }
@@ -122,7 +123,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     if (!iterator.hasNext()) {
                         return false;
                     }
-                    Map.Entry<CharSequence, ReaderPool.Entry> mapEntry = iterator.next();
+                    Map.Entry<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> mapEntry = iterator.next();
                     tableName = mapEntry.getKey();
                     poolEntry = mapEntry.getValue();
                     return true;
@@ -152,7 +153,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 // 'owner'. So what's the point of volatile read? It ensures we don't read arbitrary stale data.
                 owner = poolEntry.getOwnerVolatile(allocationIndex);
                 timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);
-                reader = poolEntry.getReader(allocationIndex);
+                reader = poolEntry.getTenant(allocationIndex);
                 allocationIndex++;
             } while (reader == null);
             txn = reader.getTxn();
@@ -196,10 +197,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", 1, ColumnType.STRING))
-                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", 1, ColumnType.LONG))
-                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", 1, ColumnType.TIMESTAMP))
-                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", 1, ColumnType.LONG));
+        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", ColumnType.STRING))
+                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", ColumnType.LONG))
+                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP))
+                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", ColumnType.LONG));
         METADATA = metadata;
     }
 }
