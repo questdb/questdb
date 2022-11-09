@@ -136,7 +136,7 @@ final class Mig607 {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
-                    if ((n = ff.readULong(fd, 0)) < 0) {
+                    if ((n = ff.readLong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
                             throw CairoException.critical(Os.errno())
                                     .put("could not read top of column [file=").put(path)

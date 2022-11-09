@@ -191,7 +191,24 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readInt
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    DWORD count;
+    jint result;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+        if (count != 4) {
+            return -1;
+        }
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readLong
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {

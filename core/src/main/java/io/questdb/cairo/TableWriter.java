@@ -4712,8 +4712,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         dFile(path, columnName, COLUMN_NAME_TXN_NONE);
         final long fd = TableUtils.openRO(ff, path, LOG);
         try {
-            attachMinTimestamp = ff.readULong(fd, 0);
-            attachMaxTimestamp = ff.readULong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
+            attachMinTimestamp = ff.readLong(fd, 0);
+            attachMaxTimestamp = ff.readLong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
             if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot read min, max timestamp from the column [path=").put(path)

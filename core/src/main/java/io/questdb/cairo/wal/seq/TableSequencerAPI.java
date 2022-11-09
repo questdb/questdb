@@ -24,13 +24,8 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -40,10 +35,10 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
 import java.util.function.Function;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.SEQ_META_TABLE_ID;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
@@ -83,10 +78,8 @@ public class TableSequencerAPI implements QuietCloseable {
         final FilesFacade ff = configuration.getFilesFacade();
 
         // this will be replaced with table name registry when drop WAL table implemented
-        try (
-                Path path = new Path().of(root).slash$();
-                LastWalTxnReader walTxnReader = new LastWalTxnReader(configuration.getFilesFacade())
-        ) {
+        try (Path path = new Path().of(root).slash$()) {
+            final LastWalTxnReader walTxnReader = new LastWalTxnReader(configuration.getFilesFacade());
             final WalTableInfo info = new WalTableInfo();
             final StringSink nameSink = new StringSink();
             int rootLen = path.length();
@@ -344,11 +337,9 @@ public class TableSequencerAPI implements QuietCloseable {
                 }
                 return sequencer;
             }
-            try (LastWalTxnReader ignore = lastTxnReader) {
-                lastTxnReader.open(path, rootLen);
-                tableInfo.tableId = lastTxnReader.getTableId();
-                tableInfo.lastTxn = lastTxnReader.lastTxn();
-            }
+            lastTxnReader.reload(path, rootLen);
+            tableInfo.tableId = lastTxnReader.getTableId();
+            tableInfo.lastTxn = lastTxnReader.lastTxn();
             return null;
         });
         // Slow path.
@@ -408,41 +399,45 @@ public class TableSequencerAPI implements QuietCloseable {
      * Reads table id and last txn from both sequencer metadata and table transaction log.
      * Used to avoid creating a TableSequencer in {@link #forAllWalTables}.
      */
-    private static class LastWalTxnReader implements Closeable {
+    private static class LastWalTxnReader {
         private final FilesFacade ff;
-        private final MemoryMR roMetaMem;
-        private final MemoryMR roTxnMem;
         private long maxTxn;
         private int tableId;
 
         public LastWalTxnReader(FilesFacade ff) {
             this.ff = ff;
-            roMetaMem = Vm.getMRInstance();
-            roTxnMem = Vm.getMRInstance();
-        }
-
-        @Override
-        public void close() {
-            reset();
-            Misc.free(roMetaMem);
-            Misc.free(roTxnMem);
         }
 
         public int getTableId() {
             return tableId;
         }
 
-        public void open(Path path, int pathLen) {
+        public void reload(Path path, int rootLen) {
             reset();
-            openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-            openSmallFile(ff, path, pathLen, roTxnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
 
-            tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-            maxTxn = roTxnMem.getLong(MAX_TXN_OFFSET);
+            final long fdMeta = openFileRO(ff, path, rootLen, META_FILE_NAME);
+            final long fdTxn = openFileRO(ff, path, rootLen, TXNLOG_FILE_NAME);
 
-            // close early
-            roMetaMem.close();
-            roTxnMem.close();
+            try {
+                tableId = ff.readInt(fdMeta, SEQ_META_TABLE_ID);
+                maxTxn = ff.readLong(fdTxn, MAX_TXN_OFFSET);
+            } finally {
+                if (fdMeta > -1) {
+                    ff.close(fdMeta);
+                }
+                if (fdTxn > -1) {
+                    ff.close(fdTxn);
+                }
+            }
+        }
+
+        private static long openFileRO(FilesFacade ff, Path path, int rootLen, CharSequence fileName) {
+            path.concat(fileName).$();
+            try {
+                return TableUtils.openRO(ff, path, LOG);
+            } finally {
+                path.trimTo(rootLen);
+            }
         }
 
         private void reset() {
