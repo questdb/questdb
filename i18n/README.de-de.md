@@ -29,7 +29,7 @@ Daten, Echtzeitanalysen, Dashboards und Infrastrukturüberwachung.
 
 QuestDB implementiert ANSI SQL mit nativer Timeseries-SQL-Semantik. Diese SQL
 Semantik macht es einfach, Daten aus mehreren Quellen zu korrelieren mit
-relationale und Zeitreihen-Joins. Wir erreichen eine hohe Leistung, indem wir a
+relationalen und Timeseries-Joins. Wir erreichen eine hohe Performance durch
 spaltenorientiertes Speichermodell, parallelisierte Vektorausführung, SIMD-Anweisungen,
 und Low-Latency-Techniken. Die gesamte Codebasis ist von Grund auf neu aufgebaut
 Java und C++, ohne Abhängigkeiten und ohne Garbage Collection.
