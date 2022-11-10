@@ -257,7 +257,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteSegmentDirectory(CharSequence tableName, int walId, int segmentId) {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL segment directory [table=").$(tableName)
+        LOG.info().$("deleting WAL segment directory [table=").utf8(tableName)
                 .$(", walId=").$(walId)
                 .$(", segmentId=").$(segmentId).$(']').$();
         if (deleteFile(setSegmentLockPath(tableName, walId, segmentId))) {
@@ -267,7 +267,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteTableSequencerFiles(CharSequence systemTableName) {
         setTableSequencerPath(systemTableName);
-        LOG.info().$("table is dropped, deleting sequencer files [table=").$(systemTableName).$(']').$();
+        LOG.info().$("table is dropped, deleting sequencer files [table=").utf8(systemTableName).$(']').$();
         recursiveDelete(path);
     }
 
@@ -295,7 +295,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void deleteWalDirectory() {
         mayLogDebugInfo();
-        LOG.info().$("deleting WAL directory [table=").$(tableName)
+        LOG.info().$("deleting WAL directory [table=").utf8(tableName)
                 .$(", walId=").$(walId).$(']').$();
         if (deleteFile(setWalLockPath(tableName, walId))) {
             recursiveDelete(setWalPath(tableName, walId));
@@ -324,7 +324,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void mayLogDebugInfo() {
         if (debugBuffer.length() > 0) {
-            LOG.info().$(debugBuffer).$();
+            LOG.info().utf8(debugBuffer).$();
             debugBuffer.clear();
         }
     }

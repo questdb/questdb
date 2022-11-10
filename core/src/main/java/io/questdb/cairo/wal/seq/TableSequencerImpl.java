@@ -26,7 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -191,6 +190,10 @@ public class TableSequencerImpl implements TableSequencer {
         return distressed;
     }
 
+    public boolean isDropped() {
+        return metadata.isDropped();
+    }
+
     @Override
     public boolean isSuspended() {
         return metadata.isSuspended();
@@ -298,6 +301,12 @@ public class TableSequencerImpl implements TableSequencer {
         metadata.syncToMetaFile();
     }
 
+    private void checkDropped() {
+        if (metadata.isDropped()) {
+            throw CairoException.nonCritical().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
+        }
+    }
+
     private boolean closeLocked() {
         if (!closed) {
             closed = true;
@@ -308,12 +317,6 @@ public class TableSequencerImpl implements TableSequencer {
             return true;
         }
         return false;
-    }
-
-    private void checkDropped() {
-        if (metadata.isDropped()) {
-            throw CairoException.nonCritical().put("table is dropped [systemTableName=").put(metadata.getSystemTableName()).put(']');
-        }
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {

@@ -381,7 +381,7 @@ public class TableSequencerAPI implements QuietCloseable {
                 assert tableNameStr.equals(sequencer.getTableName());
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
-                    LOG.info().$("releasing idle table sequencer [table=").$(tableSystemName).I$();
+                    LOG.info().$("releasing idle table sequencer [table=").utf8(tableSystemName).I$();
                     seqRegistry.remove(tableNameStr, sequencer);
                     removed = true;
                 }
@@ -425,10 +425,10 @@ public class TableSequencerAPI implements QuietCloseable {
         @Override
         public void close() {
             if (!pool.closed) {
-                if (!isDistressed()) {
+                if (!isDistressed() && !isDropped()) {
                     releaseTime = pool.configuration.getMicrosecondClock().getTicks();
                 } else {
-                    // Sequencer is distressed, close before removing from the pool.
+                    // Sequencer is distressed or dropped, close before removing from the pool.
                     // Remove from registry only if this thread closed the instance.
                     if (checkClose()) {
                         LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).$();

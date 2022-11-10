@@ -816,34 +816,33 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    @SuppressWarnings("resource")
     private void checkTableFilesDropped(String sysTableName, String partition, String fileName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
         sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(COLUMN_VERSION_FILE_NAME);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat("sym.c");
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
         sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(partition).concat(fileName);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
     }
 
-    @SuppressWarnings("resource")
     private void checkWalFilesRemoved(String sysTableName) {
         Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(true));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
 
+        engine.getTableSequencerAPI().releaseInactive();
         try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
             job.run(0);
         }
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
         sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.SEQ_DIR);
-        MatcherAssert.assertThat(Files.exists(sysPath.$()), Matchers.is(false));
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
     }
 }

@@ -795,7 +795,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     @Override
     public void close() {
-        if (isOpen() && lifecycleManager.close()) {
+        if (lifecycleManager.close() && isOpen()) {
             doClose(true);
         }
     }
@@ -824,53 +824,62 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     public void destroy() {
+        distressed = true;
         LOG.info().$("dropping table [name=").utf8(tableName).$(", systemName=").utf8(systemTableName).I$();
-        path.trimTo(rootLen).concat(META_FILE_NAME).$();
-        ff.remove(path);
-        path.trimTo(rootLen).concat(TXN_FILE_NAME).$();
-        ff.remove(path);
-        path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
-        ff.remove(path);
-        path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$();
-        ff.remove(path);
 
-        // remove all partitions
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-                long timestamp = txWriter.getPartitionTimestamp(i);
-                setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
-                txnPartitionConditionally(path, txWriter.getPartitionNameTxn(i));
-                LOG.debug().$("removing partition data [path=").$(path).I$();
-                long errno = ff.rmdir(path.$());
-                if (errno == 0 || errno == -1) {
-                    LOG.debug().$("purged [path=").$(path).I$();
-                } else {
-                    LOG.info()
-                            .$("could not purge partition on drop table [path=")
-                            .$(other)
-                            .$(", errno=").$(errno).I$();
+        doClose(false);
+
+        // path is closed, allocate special path for this occasion
+        try (Path path = new Path()) {
+            path.of(configuration.getRoot()).concat(systemTableName);
+
+            // remove all partitions
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                // even though txWriter object is closed it still have in-memory partition list
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    long timestamp = txWriter.getPartitionTimestamp(i);
+                    setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
+                    txnPartitionConditionally(path, txWriter.getPartitionNameTxn(i));
+                    LOG.debug().$("removing partition data [path=").$(path).I$();
+                    long errno = ff.rmdir(path.$());
+                    if (errno == 0 || errno == -1) {
+                        LOG.debug().$("purged [path=").$(path).I$();
+                    } else {
+                        LOG.info()
+                                .$("could not purge partition on drop table [path=")
+                                .$(other)
+                                .$(", errno=").$(errno).I$();
+                    }
+                }
+            } else {
+                path.trimTo(rootLen).concat(DEFAULT_PARTITION_NAME);
+                ff.rmdir(path);
+            }
+
+            // remove symbol tables
+            for (int columnIndex = 0, n = metadata.columnCount; columnIndex < n; columnIndex++) {
+                if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
+                    String columnName = metadata.getColumnName(columnIndex);
+                    long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
+
+                    removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                    removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                    removeFileAndOrLog(ff, keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
+                    removeFileAndOrLog(ff, valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
                 }
             }
-        } else {
-            path.trimTo(rootLen).concat(DEFAULT_PARTITION_NAME);
-            ff.rmdir(path);
+
+            path.trimTo(rootLen).concat(META_FILE_NAME).$();
+            ff.remove(path);
+            path.trimTo(rootLen).concat(TXN_FILE_NAME).$();
+            ff.remove(path);
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+            ff.remove(path);
+            path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$();
+            ff.remove(path);
+
+            LOG.info().$("table data deleted [name=").utf8(tableName).$(", path=").$(path.trimTo(rootLen)).I$();
         }
-
-        // remove symbol tables
-        for (int columnIndex = 0, n = metadata.columnCount; columnIndex < n; columnIndex++) {
-            if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
-                String columnName = metadata.getColumnName(columnIndex);
-                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-
-                removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeFileAndOrLog(ff, keyFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-                removeFileAndOrLog(ff, valueFileName(path.trimTo(rootLen), columnName, columnNameTxn));
-            }
-        }
-
-        LOG.info().$("table data deleted [name=").utf8(tableName).$(", path=").$(path.trimTo(rootLen)).I$();
-        distressed = true;
     }
 
     public AttachDetachStatus detachPartition(long timestamp) {
@@ -2858,6 +2867,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void doClose(boolean truncate) {
+        // destroy() may already closed everything
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();

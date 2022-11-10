@@ -540,6 +540,7 @@ public abstract class AbstractCairoTest {
         snapshotAgent.clear();
         engine.getTableIdGenerator().close();
         engine.clear();
+        engine.getTableSequencerAPI().close();
         if (removeDir) {
             TestUtils.removeTestPath(root);
         }
