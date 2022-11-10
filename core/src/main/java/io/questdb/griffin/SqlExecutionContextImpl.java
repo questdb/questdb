@@ -55,6 +55,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private CairoSecurityContext cairoSecurityContext;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean cloneSymbolTables = false;
+    private boolean columnPreTouchEnabled = true;
     private int jitMode;
     private long now;
     private Rnd random;
@@ -179,6 +180,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isColumnPreTouchEnabled() {
+        return columnPreTouchEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -201,6 +207,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
+    }
+
+    @Override
+    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+        this.columnPreTouchEnabled = columnPreTouchEnabled;
     }
 
     @Override
