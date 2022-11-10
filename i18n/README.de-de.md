@@ -114,7 +114,7 @@ Ergebnisse unter Verwendung des Anwendungsfalls "nur CPU" mit 6 Arbeitern auf ei
   </a>
 </div>
 
-Die folgende Tabelle zeigt die Abfrageausführungszeit von einer Milliarde Zeilen, die auf a ausgeführt werden
+Die folgende Tabelle zeigt die Abfrageausführungszeit von einer Milliarde Zeilen, die auf einer
 `c5.metal`-Instanz mit 16 der 96 verfügbaren Threads:
 
 | Query                                                        | Runtime    |
