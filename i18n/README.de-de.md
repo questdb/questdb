@@ -28,7 +28,7 @@ QuestDB ist gut geeignet für Finanzmarktdaten, Applikationsdaten, Sensoren
 Daten, Echtzeitanalysen, Dashboards und Infrastrukturüberwachung.
 
 QuestDB implementiert ANSI SQL mit nativer Timeseries-SQL-Semantik. Diese SQL
-Semantik macht es einfach, Daten aus mehreren Quellen zu korrelieren
+Semantik macht es einfach, Daten aus mehreren Quellen zu korrelieren mit
 relationale und Zeitreihen-Joins. Wir erreichen eine hohe Leistung, indem wir a
 spaltenorientiertes Speichermodell, parallelisierte Vektorausführung, SIMD-Anweisungen,
 und Low-Latency-Techniken. Die gesamte Codebasis ist von Grund auf neu aufgebaut
