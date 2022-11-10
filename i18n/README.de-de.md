@@ -27,7 +27,7 @@ für Bulk Importe und Exporte.
 QuestDB ist gut geeignet für Finanzmarktdaten, Applikationsdaten, Sensoren
 Daten, Echtzeitanalysen, Dashboards und Infrastrukturüberwachung.
 
-QuestDB implementiert ANSI SQL mit nativer Zeitreihen-SQL-Semantik. Diese SQL
+QuestDB implementiert ANSI SQL mit nativer Timeseries-SQL-Semantik. Diese SQL
 Semantik macht es einfach, Daten aus mehreren Quellen zu korrelieren
 relationale und Zeitreihen-Joins. Wir erreichen eine hohe Leistung, indem wir a
 spaltenorientiertes Speichermodell, parallelisierte Vektorausführung, SIMD-Anweisungen,
