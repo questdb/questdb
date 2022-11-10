@@ -70,7 +70,7 @@ questdb stop  // To stop questdb
 ```
 
 Die [QuestDB-Downloadseite](https://questdb.io/get-questdb/) bietet direkte
-Downloads für Binärdateien und enthält Details für andere Installationen und Bereitstellungen
+Downloads für Binärdateien und enthält Details für andere Installationen und
 Methoden.
 
 ### Verbinden Sie sich mit QuestDB
