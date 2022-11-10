@@ -87,7 +87,7 @@ Sie können mit QuestDB über die folgenden Schnittstellen interagieren:
 
 ### Daten einfügen
 
-Nachfolgend finden Sie unsere offiziellen InfluxDB-Leitungsprotokollclients für beliebte Programmierung
+Nachfolgend finden Sie unsere offiziellen InfluxDB-Leitungsprotokollclients für beliebte Programmier-
 Sprachen:
 
 - [.NET](https://github.com/questdb/net-questdb-client)
