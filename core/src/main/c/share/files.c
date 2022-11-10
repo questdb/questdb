@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include "sysutil.h"
 
 #ifdef __APPLE__
 
@@ -56,12 +57,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
 
     do {
         size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
-        written = pwrite((int) fd, (void *) (address), count, writeOffset);
-        if (written < 0
-            // Signals should not interrupt pwrite on Linux but just to align with POSIX standards
-            && errno != EINTR) {
-            // If process interrupted, do another spin.
-            // Negative means error. Return negative.
+        RESTARTABLE(pwrite((int) fd, (void *) (address), count, writeOffset), written);
+        if (written < 0) {
             return written;
         }
         len -= written;
@@ -95,7 +92,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append
          jlong fd,
          jlong address,
          jlong len) {
-    return write((int) fd, (void *) (address), (size_t) len);
+    ssize_t res;
+    RESTARTABLE(write((int) fd, (void *) (address), (size_t) len), res);
+    return res;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
@@ -110,12 +109,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 
     do {
         size_t count = len > MAX_RW_COUNT ? MAX_RW_COUNT : len;
-        read = pread((int) fd, (void *) (address), count, readOffset);
-        if (read < 0
-            // Signals should not interrupt pread on Linux but just to align with POSIX standards
-            && errno != EINTR) {
-            // If process interrupted, do another spin.
-            // Negative means error. Return negative.
+        RESTARTABLE(pread((int) fd, (void *) (address), count, readOffset), read);
+        if (read < 0) {
             return read;
         }
         len -= read;
@@ -133,7 +128,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
          jlong fd,
          jlong offset) {
     jlong result;
-    ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset);
+    ssize_t readLen;
+    RESTARTABLE(pread((int) fd, (void *) &result, (size_t) 8, (off_t) offset), readLen);
     if (readLen != 8) {
         return -1;
     }
