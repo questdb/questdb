@@ -24,7 +24,7 @@ schnelle SQL-Abfragen mit einfacher Anwendung. Es unterstützt Schema agnostisch
 Ingestion mit dem InfluxDB line protocol, PostgreSQL wire protocol und REST API
 für Bulk Importe und Exporte.
 
-QuestDB ist gut geeignet für Finanzmarktdaten, Anwendungsmetriken, Sensoren
+QuestDB ist gut geeignet für Finanzmarktdaten, Applikationsdaten, Sensoren
 Daten, Echtzeitanalysen, Dashboards und Infrastrukturüberwachung.
 
 QuestDB implementiert ANSI SQL mit nativer Zeitreihen-SQL-Semantik. Diese SQL
