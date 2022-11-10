@@ -243,9 +243,9 @@ public class TableTransactionLog implements Closeable {
             this.ff = ff;
             this.serializer = serializer;
             try {
-                txnMetaOffset = ff.readLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
+                txnMetaOffset = ff.readNonNegativeLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
                 if (txnMetaOffset > -1L) {
-                    txnMetaOffsetHi = ff.readLong(fdTxn, TXN_META_SIZE_OFFSET);
+                    txnMetaOffsetHi = ff.readNonNegativeLong(fdTxn, TXN_META_SIZE_OFFSET);
                     if (txnMetaOffsetHi > txnMetaOffset) {
                         txnMetaAddress = ff.mmap(
                                 fdTxnMeta,
@@ -330,7 +330,7 @@ public class TableTransactionLog implements Closeable {
                 return true;
             }
 
-            final long newTxnCount = ff.readLong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
                 final long oldSize = getMappedLen();
                 txnCount = newTxnCount;
@@ -359,7 +359,7 @@ public class TableTransactionLog implements Closeable {
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            this.txnCount = ff.readLong(fd, MAX_TXN_OFFSET);
+            this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;

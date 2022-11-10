@@ -281,12 +281,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int readInt(long fd, long offset) {
+    public int readNonNegativeInt(long fd, long offset) {
         return Files.readInt(fd, offset);
     }
 
     @Override
-    public long readLong(long fd, long offset) {
+    public long readNonNegativeLong(long fd, long offset) {
         return Files.readLong(fd, offset);
     }
 

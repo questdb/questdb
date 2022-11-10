@@ -328,20 +328,14 @@ public class TableSequencerAPI implements QuietCloseable {
     ) {
         tableInfo.reset();
         // Fast path.
-        // We don't need to allocate a String for the table name here since we don't create a new map entry.
-        seqRegistry.compute(tableName, (name, sequencer) -> {
-            if (sequencer != null) {
-                if (!sequencer.isDistressed() && !sequencer.isClosed()) {
-                    tableInfo.tableId = sequencer.getTableId();
-                    tableInfo.lastTxn = sequencer.lastTxn();
-                    return sequencer;
-                }
-            }
+        if (!seqRegistry.containsKey(tableName)) {
+            // This call is racy, i.e. there might be a sequencer modifying both metadata and log concurrently.
+            // It's ok since we iterate through the WAL tables periodically, so eventually we should see the updates.
             lastTxnReader.reload(path, rootLen);
             tableInfo.tableId = lastTxnReader.getTableId();
             tableInfo.lastTxn = lastTxnReader.lastTxn();
-            return null;
-        });
+            return;
+        }
         // Slow path.
         if (tableInfo.tableId == -1) {
             try (TableSequencer tableSequencer = openSequencerLocked(tableName, SequencerLockType.NONE)) {
@@ -419,8 +413,8 @@ public class TableSequencerAPI implements QuietCloseable {
             final long fdTxn = openFileRO(ff, path, rootLen, TXNLOG_FILE_NAME);
 
             try {
-                tableId = ff.readInt(fdMeta, SEQ_META_TABLE_ID);
-                maxTxn = ff.readLong(fdTxn, MAX_TXN_OFFSET);
+                tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
+                maxTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
             } finally {
                 if (fdMeta > -1) {
                     ff.close(fdMeta);

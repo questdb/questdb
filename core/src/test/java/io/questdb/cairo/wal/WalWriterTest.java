@@ -1456,7 +1456,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testOverlappingStructureChangeMissing() throws Exception {
         final FilesFacade ff = new FilesFacadeImpl() {
             @Override
-            public long readLong(long fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {

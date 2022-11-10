@@ -182,7 +182,7 @@ public class Mig620 {
                 final long fd = openRO(ff, path);
                 try {
                     long n;
-                    if ((n = ff.readLong(fd, 0)) < 0) {
+                    if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {
                         return 0L;
                     }
                     return n;

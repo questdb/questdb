@@ -112,9 +112,9 @@ public interface FilesFacade {
 
     long read(long fd, long buf, long size, long offset);
 
-    int readInt(long fd, long offset);
+    int readNonNegativeInt(long fd, long offset);
 
-    long readLong(long fd, long offset);
+    long readNonNegativeLong(long fd, long offset);
 
     boolean remove(LPSZ name);
 
