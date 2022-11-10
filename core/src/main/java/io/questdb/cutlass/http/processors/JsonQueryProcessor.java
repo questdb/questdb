@@ -81,10 +81,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             @Nullable FunctionFactoryCache functionFactoryCache,
             @Nullable DatabaseSnapshotAgent snapshotAgent
     ) {
-        this(configuration,
+        this(
+                configuration,
                 engine,
                 new SqlCompiler(engine, functionFactoryCache, snapshotAgent),
-                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount));
+                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
+        );
     }
 
     public JsonQueryProcessor(
@@ -439,7 +441,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         executeSelect(
                 state,
                 factory,
-                keepAliveHeader);
+                keepAliveHeader
+        );
     }
 
     private void executeSelect(
