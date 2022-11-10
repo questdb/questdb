@@ -87,11 +87,17 @@ public class TableSequencerAPI implements QuietCloseable {
                 if (Files.isDir(name, type, nameSink)) {
                     path.trimTo(rootLen);
                     if (isWalTable(nameSink, path, ff)) {
+                        path.trimTo(rootLen);
                         try {
-                            readWalTableInfo(nameSink, info, walTxnReader, path, rootLen);
+                            readWalTableInfo(nameSink, info, walTxnReader, path);
                         } catch (CairoException ex) {
                             LOG.critical().$("could not read WAL table metadata [table=").$(nameSink).$(", errno=").$(ex.getErrno())
                                     .$(", error=").$((Throwable) ex).I$();
+                            return;
+                        }
+                        if (info.tableId < 0 || info.lastTxn < 0) {
+                            LOG.critical().$("could not read WAL table metadata [table=").$(nameSink).$(", tableId=").$(info.tableId)
+                                    .$(", lastTxn=").$(info.lastTxn).I$();
                             return;
                         }
                         try {
@@ -323,16 +329,16 @@ public class TableSequencerAPI implements QuietCloseable {
             CharSequence tableName,
             WalTableInfo tableInfo,
             LastWalTxnReader lastTxnReader,
-            Path path,
-            int rootLen
+            Path path
     ) {
         tableInfo.reset();
         // Fast path.
         if (!seqRegistry.containsKey(tableName)) {
+            path.concat(tableName).concat(SEQ_DIR);
             // This call is racy, i.e. there might be a sequencer modifying both metadata and log
             // concurrently as we make the call. It's ok since we iterate through the WAL tables
             // periodically, so eventually we should see the updates.
-            lastTxnReader.reload(path, rootLen);
+            lastTxnReader.reload(path);
             tableInfo.tableId = lastTxnReader.getTableId();
             tableInfo.lastTxn = lastTxnReader.lastTxn();
             return;
@@ -405,14 +411,14 @@ public class TableSequencerAPI implements QuietCloseable {
             return tableId;
         }
 
-        public void reload(Path path, int rootLen) {
+        public void reload(Path path) {
             reset();
 
             long fdMeta = -1;
             long fdTxn = -1;
             try {
-                fdMeta = openFileRO(ff, path, rootLen, META_FILE_NAME);
-                fdTxn = openFileRO(ff, path, rootLen, TXNLOG_FILE_NAME);
+                fdMeta = openFileRO(ff, path, META_FILE_NAME);
+                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
 
                 tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
                 maxTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
@@ -426,7 +432,8 @@ public class TableSequencerAPI implements QuietCloseable {
             }
         }
 
-        private static long openFileRO(FilesFacade ff, Path path, int rootLen, CharSequence fileName) {
+        private static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+            final int rootLen = path.length();
             path.concat(fileName).$();
             try {
                 return TableUtils.openRO(ff, path, LOG);
