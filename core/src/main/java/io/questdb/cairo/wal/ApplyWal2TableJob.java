@@ -286,11 +286,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             switch (cmdType) {
                 case CMD_ALTER_TABLE:
                     AlterOperation alterOperation = compileAlter(tableWriter, sqlToOperation, sql, seqTxn);
-                    tableWriter.apply(alterOperation, seqTxn);
+                    try {
+                        tableWriter.apply(alterOperation, seqTxn);
+                    } finally {
+                        Misc.free(alterOperation);
+                    }
                     break;
                 case CMD_UPDATE_TABLE:
                     UpdateOperation updateOperation = compileUpdate(tableWriter, sqlToOperation, sql, seqTxn);
-                    tableWriter.apply(updateOperation, seqTxn);
+                    try {
+                        tableWriter.apply(updateOperation, seqTxn);
+                    } finally {
+                        Misc.free(updateOperation);
+                    }
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);

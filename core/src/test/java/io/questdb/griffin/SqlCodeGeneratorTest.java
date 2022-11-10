@@ -3542,6 +3542,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 public FilesFacade getFilesFacade() {
                     return ff;
                 }
+
+                @Override
+                public boolean mangleTableSystemNames() {
+                    return AbstractCairoTest.configuration.mangleTableSystemNames();
+                }
             };
 
             try (CairoEngine engine = new CairoEngine(configuration);
