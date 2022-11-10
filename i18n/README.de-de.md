@@ -140,7 +140,7 @@ Die folgende Tabelle zeigt die Abfrageausführungszeit von einer Milliarde Zeile
   Fragen und treffen Sie andere Benutzer!
 - [GitHub-Probleme:](https://github.com/questdb/questdb/issues) Fehler melden oder
   Probleme mit QuestDB.
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) suchen
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) suchen Sie
   allgemeine Lösungen zur Fehlerbehebung.
 
 ### 🚢 Stellen Sie QuestDB bereit
