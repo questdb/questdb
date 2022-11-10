@@ -1465,7 +1465,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                         return -1;
                     }
                 }
-                return Files.readLong(fd, offset);
+                return Files.readNonNegativeLong(fd, offset);
             }
         };
 

@@ -496,9 +496,9 @@ public class FilesTest {
                     // Check read call works
                     // Check written data
                     Assert.assertEquals(size2Gb, Files.read(fd1, mem, size2Gb, 0));
-                    long long1 = Files.readLong(fd1, 0L);
+                    long long1 = Files.readNonNegativeLong(fd1, 0L);
                     Assert.assertEquals(testValue, long1);
-                    long long2 = Files.readLong(fd1, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd1, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -559,9 +559,9 @@ public class FilesTest {
                     MatcherAssert.assertThat(result, greaterThanOrEqualTo(0));
 
                     fd2 = Files.openRO(path2.$());
-                    long long1 = Files.readLong(fd2, 0L);
+                    long long1 = Files.readNonNegativeLong(fd2, 0L);
                     Assert.assertEquals(testValue, long1);
-                    long long2 = Files.readLong(fd2, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {
@@ -611,7 +611,7 @@ public class FilesTest {
 
                     MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
 
-                    long long1 = Files.readLong(fd2, fileSize - offset - 8);
+                    long long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
 
                     // Copy with set length
@@ -624,7 +624,7 @@ public class FilesTest {
                     copiedLen = Files.copyData(fd1, fd2, offset, fileSize - offset);
                     MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
 
-                    long1 = Files.readLong(fd2, fileSize - offset - 8);
+                    long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
                     Assert.assertEquals(testValue, long1);
                 } finally {
                     // Release mem, fd
@@ -807,10 +807,10 @@ public class FilesTest {
 
                     // Check written data
                     Assert.assertEquals(size2Gb, Files.write(fd2, mmap, size2Gb, 0));
-                    long long1 = Files.readLong(fd2, 0L);
+                    long long1 = Files.readNonNegativeLong(fd2, 0L);
                     Assert.assertEquals(testValue, long1);
 
-                    long long2 = Files.readLong(fd2, size2Gb - 8);
+                    long long2 = Files.readNonNegativeLong(fd2, size2Gb - 8);
                     Assert.assertEquals(testValue, long2);
 
                 } finally {

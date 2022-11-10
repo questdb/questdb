@@ -191,7 +191,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return -1;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readInt
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {
@@ -208,7 +208,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readInt
     return -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readLong
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {
