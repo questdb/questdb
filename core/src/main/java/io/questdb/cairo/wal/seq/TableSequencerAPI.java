@@ -408,10 +408,12 @@ public class TableSequencerAPI implements QuietCloseable {
         public void reload(Path path, int rootLen) {
             reset();
 
-            final long fdMeta = openFileRO(ff, path, rootLen, META_FILE_NAME);
-            final long fdTxn = openFileRO(ff, path, rootLen, TXNLOG_FILE_NAME);
-
+            long fdMeta = -1;
+            long fdTxn = -1;
             try {
+                fdMeta = openFileRO(ff, path, rootLen, META_FILE_NAME);
+                fdTxn = openFileRO(ff, path, rootLen, TXNLOG_FILE_NAME);
+
                 tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
                 maxTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
             } finally {

@@ -236,13 +236,17 @@ public class TableTransactionLog implements Closeable {
             // deallocates current state
             close();
 
-            final long fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            final long fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
-            final long fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
-
             this.ff = ff;
             this.serializer = serializer;
+
+            long fdTxn = -1;
+            long fdTxnMeta = -1;
+            long fdTxnMetaIndex = -1;
             try {
+                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
+                fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
+
                 txnMetaOffset = ff.readNonNegativeLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
                 if (txnMetaOffset > -1L) {
                     txnMetaOffsetHi = ff.readNonNegativeLong(fdTxn, TXN_META_SIZE_OFFSET);
