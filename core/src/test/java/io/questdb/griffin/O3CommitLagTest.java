@@ -155,6 +155,11 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     @Test
+    public void testRollbackFuzzContended() throws Exception {
+        executeWithPool(2, this::testRollbackFuzz);
+    }
+
+    @Test
     public void testContinuousBatchedCommitParallel() throws Exception {
         executeWithPool(2, this::testContinuousBatchedCommit0);
     }
@@ -982,6 +987,100 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
         LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
 
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        Rnd rnd = sqlExecutionContext.getRandom();
+        for (int i = 0; i < 50; i++) {
+            final int nTotalRows = rnd.nextInt(79000);
+            final long microsBetweenRows = rnd.nextLong(3090985);
+            final double fraction = rnd.nextDouble();
+            testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
+            compiler.compile("drop table x", sqlExecutionContext);
+            compiler.compile("drop table y", sqlExecutionContext);
+            compiler.compile("drop table z", sqlExecutionContext);
+        }
+    }
+
+    private void testRollbackFuzz0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            int nTotalRows,
+            int lim,
+            long microsBetweenRows
+    ) throws SqlException {
+        // table "x" is in order
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(" + nTotalRows + ")" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+        // table "z" is out of order - reshuffled "x"
+        compiler.compile("create table z as (select * from x order by f)", sqlExecutionContext);
+        // table "z" is our target table, where we exercise O3 and rollbacks
+        compiler.compile("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "test")) {
+
+            insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim, w);
+
+            w.ic();
+
+            final long o3Uncommitted = w.getO3RowCount();
+
+            w.rollback();
+
+            // actual
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "y",
+                    sink
+            );
+
+            // expected
+            // take the rows we inserted, order them by timestamp and then take all, but last "uncommitted" rows
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "(z limit " + lim + ") order by ts limit " + (lim - o3Uncommitted),
+                    sink2
+            );
+
+            TestUtils.assertEquals(sink2, sink);
+
+            sink.clear();
+            sink2.clear();
+
+            // insert remaining data (that we did not try to insert yet)
+            insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim + ", " + nTotalRows, w);
+            w.ic();
+
+            // insert data that we rolled back
+            insertUncommitted(compiler, sqlExecutionContext, "(z limit " + lim + ") order by ts limit -" + o3Uncommitted, w);
+            w.ic();
+
+            w.commit();
+        }
         assertXY(compiler, sqlExecutionContext);
     }
 

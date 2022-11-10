@@ -3223,7 +3223,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     if (lagError > 0) {
                         o3EffectiveLag += lagError * 1.5;
-                        o3EffectiveLag = Math.max(o3EffectiveLag, o3MaxLag);
+                        o3EffectiveLag = Math.min(o3EffectiveLag, o3MaxLag);
                     } else {
                         // avoid using negative effective o3MaxLag
                         o3EffectiveLag += Math.max(0, lagError * 0.5);
@@ -3272,7 +3272,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
                 }
 
-                LOG.info().$("o3 commit o3MaxLag [table=").utf8(tableName)
+                LOG.info().$("o3 commit [table=").utf8(tableName)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
                         .$(", o3TimestampMin=").$ts(o3TimestampMin)
                         .$(", o3TimestampMax=").$ts(o3TimestampMax)
@@ -3288,7 +3288,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             } else {
                 LOG.info()
-                        .$("o3 commit no o3MaxLag [table=").utf8(tableName)
+                        .$("o3 commit [table=").utf8(tableName)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
                 srcOooMax = o3RowCount;
