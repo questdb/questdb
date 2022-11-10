@@ -4884,7 +4884,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // If table is removed / renamed this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errno == 2) {
+            if (ex.errnoPathDoesNotExist()) {
                 throw CairoException.nonCritical().put("table does not exist [table=").put(this.tableName).put(']');
             }
             throw ex;

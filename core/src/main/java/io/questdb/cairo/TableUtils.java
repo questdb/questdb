@@ -1220,8 +1220,7 @@ public final class TableUtils {
     }
 
     private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
+        return ex.errnoPathDoesNotExist();
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

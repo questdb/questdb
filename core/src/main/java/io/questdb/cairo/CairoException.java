@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Os;
 import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -34,6 +35,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
+    public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
     public static final int ILLEGAL_OPERATION = -101;
     public static final int METADATA_VALIDATION = -100;
     public static final int NON_CRITICAL = -1;
@@ -92,6 +94,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException nonCritical() {
         return critical(NON_CRITICAL);
+    }
+
+    public boolean errnoPathDoesNotExist() {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
     public int getErrno() {

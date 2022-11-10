@@ -182,6 +182,7 @@ public class SecurityTest extends AbstractGriffinTest {
         //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();
+        memoryRestrictedEngine.getTableSequencerAPI().close();
         super.tearDown();
     }
 

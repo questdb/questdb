@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1407,6 +1406,9 @@ public class SqlCompiler implements Closeable {
             );
         } catch (CairoException e) {
             LOG.error().$("could not create table [error=").$((Throwable) e).$(']').$();
+            // Close writer, directory will be removed
+            writerAPI = Misc.free(writerAPI);
+            writer = null;
             if (e.isInterruption()) {
                 throw e;
             }
