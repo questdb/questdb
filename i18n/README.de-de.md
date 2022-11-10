@@ -131,7 +131,7 @@ Die folgende Tabelle zeigt die Abfrageausführungszeit von einer Milliarde Zeile
   zum Ausführen und Konfigurieren von QuestDB.
 - [Tutorials:](https://questdb.io/tutorial/) Erfahren Sie, was mit QuestDB möglich ist
   Schritt für Schritt.
-- [Produkt-Roadmap:](https://github.com/questdb/questdb/projects) sehen Sie sich unsere an
+- [Produkt-Roadmap:](https://github.com/questdb/questdb/projects) sehen Sie sich unsere Roadmap an
   Planen Sie für kommende Veröffentlichungen.
 
 ### ❓ Holen Sie sich Unterstützung
