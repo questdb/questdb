@@ -864,7 +864,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            String newTableName = testName.getMethodName() + "_new";
+            String newTableName = testName.getMethodName() + "_new中";
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
@@ -877,14 +877,20 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             String table2SystemName = Chars.toString(engine.getSystemTableName(tableName));
             compile("rename table " + tableName + " to " + newTableName);
+            compile("insert into " + newTableName + "(x, ts) values (100, '2022-02-25')");
 
             String newTableSystemName = Chars.toString(engine.getSystemTableName(newTableName));
             Assert.assertEquals(table2SystemName, newTableSystemName);
 
             drainWalQueue();
 
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, newTableName, "test")) {
+                Assert.assertEquals(newTableName, writer.getTableName());
+            }
+
             assertSql(newTableName, "x\tsym2\tts\n" +
-                    "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+                    "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                    "100\t\t2022-02-25T00:00:00.000000Z\n");
 
             assertSql("select name from tables() order by name", "name\n" +
                     newTableName + "\n");
@@ -896,11 +902,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
                 Assert.assertEquals(newTableSystemName, newTableSystemName2);
                 assertSql(newTableName, "x\tsym2\tts\n" +
-                        "1\tDE\t2022-02-24T00:00:00.000000Z\n");
+                        "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
+                        "100\t\t2022-02-25T00:00:00.000000Z\n");
             }
 
-            assertSql("select name from tables() order by name", "name\n" +
-                    newTableName + "\n");
+            assertSql("select name, systemName from tables() order by name", "name\tsystemName\n" +
+                    newTableName + "\t" + newTableSystemName + "\n");
             assertSql("select table from all_tables()", "table\n" +
                     newTableName + "\n");
             assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +

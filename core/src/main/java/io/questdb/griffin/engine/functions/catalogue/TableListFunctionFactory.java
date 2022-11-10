@@ -51,6 +51,7 @@ public class TableListFunctionFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int partitionByColumn;
     private static final int writeModeColumn;
+    private static final int systemNameColumn;
 
     @Override
     public String getSignature() {
@@ -219,6 +220,9 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return tableReaderMetadata.getColumnName(tableReaderMetadata.getTimestampIndex());
                         }
                     }
+                    if (col == systemNameColumn) {
+                        return engine.getSystemTableName(tableName);
+                    }
                     return null;
                 }
 
@@ -289,6 +293,8 @@ public class TableListFunctionFactory implements FunctionFactory {
         commitLagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("systemName", ColumnType.STRING));
+        systemNameColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }

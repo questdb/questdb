@@ -705,7 +705,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected boolean isWalTable(CharSequence tableName) {
-        return engine.isWalTable(tableName);
+        return engine.getTableSequencerAPI().isWalTableName(tableName);
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {

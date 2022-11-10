@@ -286,12 +286,15 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void rename(CharSequence tableName, CharSequence newTableName, String systemTableName) {
         String newTableNameStr = tableNameRegistry.rename(tableName, newTableName, systemTableName);
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
-            tableSequencer.rename(newTableNameStr);
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
+            try {
+                tableSequencer.rename(newTableNameStr);
+            } finally {
+                tableSequencer.unlockWrite();
+            }
         }
-        LOG.advisoryW().$("renamed wal table [table=")
-                .utf8(tableName).$(", newName").utf8(newTableName).$(", systemTableName=").utf8(systemTableName).$();
-
+        LOG.advisory().$("renamed wal table [table=")
+                .utf8(tableName).$(", newName=").utf8(newTableName).$(", systemTableName=").utf8(systemTableName).I$();
     }
 
     public void reopen() {

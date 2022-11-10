@@ -192,10 +192,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // never recorded and tracked by the sequencer for that table.
             deleteOutstandingWalDirectories();
 
-            if (engine.isWalTableDropped(tableName)) {
+            TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+            if (tableSequencerAPI.isWalTableDropped(tableName)) {
                 // Delete sequencer files
                 deleteTableSequencerFiles(tableName);
-                engine.removeTableSystemName(tableName);
+                tableSequencerAPI.removeTableSystemName(tableName);
             }
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableName)
@@ -331,7 +332,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private void populateWalInfoDataFrame() {
         setTxnPath(tableName);
-        if (!engine.isWalTableDropped(tableName)) {
+        if (!engine.getTableSequencerAPI().isWalTableDropped(tableName)) {
             try {
                 txReader.ofRO(path, PartitionBy.NONE);
                 TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);

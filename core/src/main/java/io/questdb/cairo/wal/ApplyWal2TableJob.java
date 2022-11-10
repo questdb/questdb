@@ -82,7 +82,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             do {
                 // security context is checked on writing to the WAL and can be ignored here
-                if (engine.isWalTableDropped(systemTableName)) {
+                if (engine.getTableSequencerAPI().isWalTableDropped(systemTableName)) {
                     // table was dropped, clean up the table directory.
                     tryDestroyDroppedTable(systemTableName, null, engine, tempPath);
                     return Long.MAX_VALUE;
@@ -267,7 +267,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
 
                             if (hasNext) {
-
                                 structuralChangeCursor.next().apply(writer, true);
                                 writer.setSeqTxn(seqTxn);
                             } else {
@@ -285,6 +284,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         case DROP_TABLE_WALID:
                             tryDestroyDroppedTable(systemTableName, writer, engine, tempPath);
                             return;
+
+                        case RENAME_TABLE_WALID:
+                            writer.changeTableName(seqTxn, transactionLogCursor.getTableName());
+                            break;
 
                         case 0:
                             throw CairoException.critical(0)

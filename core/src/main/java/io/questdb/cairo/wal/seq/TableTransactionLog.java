@@ -136,15 +136,15 @@ public class TableTransactionLog implements Closeable {
         return maxTxn;
     }
 
-    TransactionLogCursor getCursor(long txnLo) {
+    TransactionLogCursor getCursor(String tableName, long txnLo) {
         final Path path = Path.PATH.get().of(rootPath);
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, txnLo, path);
+            cursor = new TransactionLogCursorImpl(ff, tableName, txnLo, path);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
-        return cursor.of(ff, txnLo, path);
+        return cursor.of(ff, tableName, txnLo, path);
     }
 
     @NotNull
@@ -290,17 +290,20 @@ public class TableTransactionLog implements Closeable {
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private static final long WAL_ID_OFFSET = 0;
+        // @formatter:off
         private static final long SEGMENT_ID_OFFSET = WAL_ID_OFFSET + Integer.BYTES;
         private static final long SEGMENT_TXN_OFFSET = SEGMENT_ID_OFFSET + Integer.BYTES;
+        // @formatter:on
         private long address;
         private long fd;
         private FilesFacade ff;
+        private String tableName;
         private long txn;
         private long txnCount;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
-            of(ff, txnLo, path);
+        public TransactionLogCursorImpl(FilesFacade ff, String tableName, long txnLo, final Path path) {
+            of(ff, tableName, txnLo, path);
         }
 
         @Override
@@ -319,6 +322,11 @@ public class TableTransactionLog implements Closeable {
         @Override
         public long getSegmentTxn() {
             return Unsafe.getUnsafe().getLong(address + txnOffset + SEGMENT_TXN_OFFSET);
+        }
+
+        @Override
+        public String getTableName() {
+            return tableName;
         }
 
         @Override
@@ -363,7 +371,8 @@ public class TableTransactionLog implements Closeable {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
+        private TransactionLogCursorImpl of(FilesFacade ff, String tableName, long txnLo, Path path) {
+            this.tableName = tableName;
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
             this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);

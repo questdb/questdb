@@ -37,6 +37,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
+import static io.questdb.cairo.wal.WalUtils.RENAME_TABLE_WALID;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class TableSequencerImpl implements TableSequencer {
@@ -179,7 +180,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public TransactionLogCursor getTransactionLogCursor(long seqTxn) {
         checkDropped();
-        return tableTransactionLog.getCursor(seqTxn);
+        return tableTransactionLog.getCursor(tableName, seqTxn);
     }
 
     public boolean isClosed() {
@@ -282,8 +283,14 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void rename(String newTableName) {
+    public long rename(String newTableName) {
+        checkDropped();
         tableName = newTableName;
+        long txn = tableTransactionLog.addEntry(RENAME_TABLE_WALID, 0, 0);
+        if (!metadata.isSuspended()) {
+            engine.notifyWalTxnCommitted(metadata.getTableId(), systemTableName, txn);
+        }
+        return txn;
     }
 
     @TestOnly

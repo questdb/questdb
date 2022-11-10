@@ -264,7 +264,7 @@ public class CairoEngine implements Closeable, WriterSource {
         checkTableName(tableName);
         String systemTableName = getSystemTableName(tableName);
 
-        if (isWalTable(tableName)) {
+        if (tableSequencerAPI.isWalTableName(tableName)) {
             tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
         } else {
             CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
@@ -547,14 +547,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(systemTableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
-    public boolean isWalTable(final CharSequence tableName) {
-        return tableSequencerAPI.isWalTableName(tableName);
-    }
-
-    public boolean isWalTableDropped(String systemTableName) {
-        return tableSequencerAPI.isWalTableDropped(systemTableName);
-    }
-
     public String lock(
             CairoSecurityContext securityContext,
             String systemTableName,
@@ -650,7 +642,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void releaseReadersBySystemName(CharSequence systemTableName) {
-        // TODO: release readers at the same time
         readerPool.unlock(systemTableName);
     }
 
@@ -658,10 +649,6 @@ public class CairoEngine implements Closeable, WriterSource {
         path.of(configuration.getRoot()).concat(dir);
         final FilesFacade ff = configuration.getFilesFacade();
         return ff.rmdir(path.slash$());
-    }
-
-    public void removeTableSystemName(CharSequence tableName) {
-        tableSequencerAPI.removeTableSystemName(tableName);
     }
 
     public void rename(

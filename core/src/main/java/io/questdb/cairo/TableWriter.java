@@ -145,7 +145,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final String systemTableName;
-    private final String tableName;
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
@@ -201,6 +200,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
+    private String tableName;
     private LongConsumer timestampSetter;
     private long todoTxn;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
@@ -772,6 +772,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             return;
         }
         updateMetaStructureVersion();
+    }
+
+    public void changeTableName(long seqTxn, String tableName) {
+        // This is change of the logical name of WAL table used for logging.
+        // System Table Name and all paths remains the same.
+        this.tableName = tableName;
+        markSeqTxnCommitted(seqTxn);
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
