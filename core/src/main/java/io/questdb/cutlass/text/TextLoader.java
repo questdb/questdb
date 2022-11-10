@@ -241,8 +241,8 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
-    public void setCommitLag(long commitLag) {
-        textWriter.setCommitLag(commitLag);
+    public void setO3MaxLag(long o3MaxLagUs) {
+        textWriter.setO3MaxLag(o3MaxLagUs);
     }
 
     public void setDelimiter(byte delimiter) {

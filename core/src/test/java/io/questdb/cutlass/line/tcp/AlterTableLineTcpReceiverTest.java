@@ -355,7 +355,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
                 TableReaderMetadata meta = reader.getMetadata();
                 Assert.assertEquals(1, meta.getMaxUncommittedRows());
-                Assert.assertEquals(20 * 1_000_000L, meta.getCommitLag());
+                Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
                 Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
             }
         });

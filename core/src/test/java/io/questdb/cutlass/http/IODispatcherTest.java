@@ -372,7 +372,7 @@ public class IODispatcherTest {
                 PartitionBy.DAY,
                 3_600_000_000L, // 1 hour, micro precision
                 1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -2495,7 +2495,7 @@ public class IODispatcherTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        HttpQueryTestBuilder builder = testJsonQuery(
+        testJsonQuery(
                 10,
                 "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
@@ -4956,7 +4956,7 @@ public class IODispatcherTest {
                 final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < 10; i++) {
-                        testMaxConnections0(dispatcher, sockAddr, activeConnectionLimit, openFds, buf);
+                        testMaxConnections0(dispatcher, sockAddr, openFds, buf);
                     }
                 } finally {
                     Net.freeSockAddr(sockAddr);
@@ -6826,7 +6826,7 @@ public class IODispatcherTest {
                 PartitionBy.NONE,
                 180_000_000,
                 1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -6838,7 +6838,7 @@ public class IODispatcherTest {
                 PartitionBy.DAY,
                 -1,
                 -1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -6937,15 +6937,17 @@ public class IODispatcherTest {
         }
     }
 
-    private void assertMetadataAndData(String tableName,
-                                       long expectedCommitLag,
-                                       int expectedMaxUncommittedRows,
-                                       int expectedImportedRows,
-                                       String expectedData) {
+    private void assertMetadataAndData(
+            String tableName,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows,
+            int expectedImportedRows,
+            String expectedData
+    ) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             Assert.assertEquals(0, expectedImportedRows - reader.size());
@@ -7010,13 +7012,15 @@ public class IODispatcherTest {
         return httpConfiguration;
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableExists(boolean overwrite,
-                                                                     boolean durable,
-                                                                     int partitionBy,
-                                                                     long commitLag,
-                                                                     int maxUncommittedRows,
-                                                                     long expectedCommitLag,
-                                                                     int expectedMaxUncommittedRows) throws Exception {
+    private void importWithCommitLagAndMaxUncommittedRowsTableExists(
+            boolean overwrite,
+            boolean durable,
+            int partitionBy,
+            long commitLag,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows
+    ) throws Exception {
         final AtomicInteger msyncCallCount = new AtomicInteger();
         final String baseDir = temp.getRoot().getAbsolutePath();
         CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
@@ -7105,10 +7109,11 @@ public class IODispatcherTest {
 
         assertMetadataAndData(
                 tableName,
-                expectedCommitLag,
+                expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 1,
-                "2021-01-01T00:01:00.000000Z\t1\n");
+                "2021-01-01T00:01:00.000000Z\t1\n"
+        );
     }
 
     private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
@@ -7232,8 +7237,8 @@ public class IODispatcherTest {
         }, telemetry);
     }
 
-    private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
-        return testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
     }
 
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
@@ -7262,7 +7267,6 @@ public class IODispatcherTest {
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            int activeConnectionLimit,
             LongList openFds,
             long buf
     ) {
@@ -7270,7 +7274,7 @@ public class IODispatcherTest {
         // the same amount to put onto the backlog. Backlog and active connection count are the same.
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
-        for (int i = 0; i < activeConnectionLimit; i++) {
+        for (int i = 0; i < 400; i++) {
             long fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
@@ -7300,7 +7304,7 @@ public class IODispatcherTest {
         long mem = TestUtils.toMemory(request);
 
         try {
-            for (int i = 0; i < activeConnectionLimit; i++) {
+            for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
                 long fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
@@ -7325,7 +7329,7 @@ public class IODispatcherTest {
                 Os.pause();
             }
 
-            for (int j = 1; j < activeConnectionLimit; j++) {
+            for (int j = 1; j < 400; j++) {
                 Net.close(openFds.getQuick(j));
             }
 

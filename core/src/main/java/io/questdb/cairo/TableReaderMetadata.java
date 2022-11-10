@@ -37,7 +37,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final FilesFacade ff;
     private final String tableName;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private long commitLag;
+    private long o3MaxLag;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
     private int partitionBy;
@@ -81,7 +81,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         long offset = TableUtils.getColumnNameOffset(columnCount);
 
@@ -164,7 +164,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         partitionBy = metadata.partitionBy;
         tableId = metadata.tableId;
         maxUncommittedRows = metadata.maxUncommittedRows;
-        commitLag = metadata.commitLag;
+        o3MaxLag = metadata.o3MaxLag;
         structureVersion = metadata.structureVersion;
         walEnabled = metadata.walEnabled;
         path.of(metadata.path);
@@ -222,8 +222,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     @Override
@@ -292,7 +292,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-            this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+            this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
             this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
             this.columnMetadata.clear();

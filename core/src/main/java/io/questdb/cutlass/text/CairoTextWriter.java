@@ -51,7 +51,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private long _size;
     private int atomicity;
-    private long commitLag = -1;
+    private long o3MaxLag = -1;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private boolean durable;
@@ -185,8 +185,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
-    public void setCommitLag(long commitLag) {
-        this.commitLag = commitLag;
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -195,7 +195,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkMaxAndCommitLag() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.commitWithLag(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
+            writer.intermediateCommit(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
     }
 
@@ -362,9 +362,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
         if (canUpdateMetadata) {
             if (PartitionBy.isPartitioned(partitionBy)) {
-                if (commitLag > -1) {
-                    writer.setMetaCommitLag(commitLag);
-                    LOG.info().$("updating metadata attribute commitLag to ").$(commitLag).$(", table=").utf8(tableName).$();
+                if (o3MaxLag > -1) {
+                    writer.setMetaO3MaxLag(o3MaxLag);
+                    LOG.info().$("updating metadata attribute commitLag to ").$(o3MaxLag).$(", table=").utf8(tableName).$();
                 }
                 if (maxUncommittedRows > -1) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
@@ -406,8 +406,8 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override

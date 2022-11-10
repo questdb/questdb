@@ -50,15 +50,15 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         assertSql(
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by id desc",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t0\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t0\n"
+                        "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n"
         );
     }
 
     @Test
     public void testMetadataQueryDefaultHysterisysParams() throws Exception {
         configOverrideMaxUncommittedRows = 83737;
-        configOverrideCommitLagMicros = 28291;
+        configOverrideO3MaxLag = 28291;
 
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {
             tm1.col("abc", ColumnType.STRING);
@@ -96,7 +96,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         assertSql(
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t0\n"
+                        "2\ttable2\tts2\tNONE\t1000\t300000000\n"
         );
     }
 
@@ -115,7 +115,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         assertSql(
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'table1'",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t0\n"
+                        "1\ttable1\tts1\tDAY\t1000\t300000000\n"
         );
     }
 

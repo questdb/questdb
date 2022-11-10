@@ -1955,7 +1955,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             }
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getCommitLag());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }
             recvBuffer =
                     table + ",location=us-midwest temperature=82 1465839830100400200\n" +
@@ -1981,7 +1981,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             assertTable(expected, table);
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
                 Assert.assertEquals(3, reader.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(250_000, reader.getMetadata().getCommitLag());
+                Assert.assertEquals(250_000, reader.getMetadata().getO3MaxLag());
             }
         });
     }

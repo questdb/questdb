@@ -85,7 +85,7 @@ public abstract class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
-    protected static long configOverrideCommitLagMicros = -1;
+    protected static long configOverrideO3MaxLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static CairoConfiguration configuration;
     protected static Boolean copyPartitionOnAttach = null;
@@ -268,8 +268,8 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public long getCommitLag() {
-                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
+            public long getO3MaxLag() {
+                return configOverrideO3MaxLag >= 0 ? configOverrideO3MaxLag : super.getO3MaxLag();
             }
 
             @Override
@@ -537,7 +537,7 @@ public abstract class AbstractCairoTest {
             TestUtils.removeTestPath(root);
         }
         configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLagMicros = -1;
+        configOverrideO3MaxLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;

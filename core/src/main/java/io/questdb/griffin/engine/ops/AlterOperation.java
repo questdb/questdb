@@ -358,7 +358,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyParamCommitLag(MetadataChangeSPI tableWriter) {
         long commitLag = longList.get(0);
         try {
-            tableWriter.setMetaCommitLag(commitLag);
+            tableWriter.setMetaO3MaxLag(commitLag);
         } catch (CairoException e) {
             LOG.error().$("could not change commit lag [table=").$(tableName)
                     .$(", errno=").$(e.getErrno())

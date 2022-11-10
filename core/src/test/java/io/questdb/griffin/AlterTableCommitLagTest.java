@@ -50,7 +50,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 assertSql("SELECT commitLag FROM tables() WHERE name = '" + tableName + "'",
                         "commitLag\n111000000\n");
                 rdr.reload();
-                Assert.assertEquals(111000000L, rdr.getMetadata().getCommitLag());
+                Assert.assertEquals(111000000L, rdr.getMetadata().getO3MaxLag());
             }
             assertX(tableName);
         });
@@ -126,12 +126,12 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                                 "11111\t1000000\n");
                 rdr.reload();
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(1000000, rdr.getMetadata().getCommitLag());
+                Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
             }
             engine.releaseAllReaders();
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(1000000, rdr.getMetadata().getCommitLag());
+                Assert.assertEquals(1000000, rdr.getMetadata().getO3MaxLag());
             }
 
             try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -145,7 +145,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                                 "0\t0\n");
                 rdr.reload();
                 Assert.assertEquals(0, rdr.getMetadata().getMaxUncommittedRows());
-                Assert.assertEquals(0, rdr.getMetadata().getCommitLag());
+                Assert.assertEquals(0, rdr.getMetadata().getO3MaxLag());
             }
 
             assertX(tableName);
@@ -411,7 +411,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                             "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t0\n"
+                                    "1\tx1\tts\tDAY\t150\t300000000\n"
                     );
 
                     // test open table writer
@@ -425,7 +425,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                             "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'x1'",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                                    "1\tx1\tts\tDAY\t150\t0\n"
+                                    "1\tx1\tts\tDAY\t150\t300000000\n"
                     );
                 }
         );

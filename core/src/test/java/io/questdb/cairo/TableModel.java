@@ -92,8 +92,8 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public long getCommitLag() {
-        return configuration.getCommitLag();
+    public long getO3MaxLag() {
+        return configuration.getO3MaxLag();
     }
 
     public CairoConfiguration getConfiguration() {

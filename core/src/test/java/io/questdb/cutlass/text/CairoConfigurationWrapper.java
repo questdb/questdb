@@ -138,8 +138,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getCommitLag() {
-        return conf.getCommitLag();
+    public long getO3MaxLag() {
+        return conf.getO3MaxLag();
     }
 
     @Override
@@ -360,6 +360,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return conf.getO3PurgeDiscoveryQueueCapacity();
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return conf.getO3MinLag();
     }
 
     @Override

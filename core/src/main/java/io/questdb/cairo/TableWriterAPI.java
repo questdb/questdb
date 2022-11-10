@@ -40,9 +40,9 @@ public interface TableWriterAPI extends Closeable {
 
     long commit();
 
-    long commitWithLag();
+    void intermediateCommit();
 
-    long commitWithLag(long commitLag);
+    void intermediateCommit(long o3MaxLag);
 
     TableRecordMetadata getMetadata();
 

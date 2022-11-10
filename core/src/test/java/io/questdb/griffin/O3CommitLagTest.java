@@ -134,13 +134,13 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testCommitLagStaggeringPartitionsContended() throws Exception {
-        executeWithPool(0, this::testCommitLagStaggeringPartitions0);
+    public void testCommitLagStaggeredPartitionsContended() throws Exception {
+        executeWithPool(0, this::testCommitLagStaggeredPartitions0);
     }
 
     @Test
-    public void testCommitLagStaggeringPartitionsParallel() throws Exception {
-        executeWithPool(2, this::testCommitLagStaggeringPartitions0);
+    public void testCommitLagStaggeredPartitionsParallel() throws Exception {
+        executeWithPool(2, this::testCommitLagStaggeredPartitions0);
     }
 
     @Test
@@ -276,7 +276,7 @@ public class O3CommitLagTest extends AbstractO3Test {
 
                         Assert.assertEquals(i + 1, writer.size());
                         if (writer.getMetadata().getMaxUncommittedRows() < writer.getUncommittedRowCount()) {
-                            writer.commitWithLag(CommitMode.NOSYNC);
+                            writer.intermediateCommit(CommitMode.NOSYNC);
                         }
                         Assert.assertEquals(i + 1, writer.size());
                     }
@@ -432,9 +432,9 @@ public class O3CommitLagTest extends AbstractO3Test {
                 });
     }
 
-    private void appendRows(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
+    private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
-            long timestamp = IntervalUtils.parseFloorPartialTimestamp(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             row.putStr(0, "cc");
@@ -443,7 +443,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             row.putLong(4, 22222L);
             row.append();
 
-            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp(ts2));
+            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("1970-01-02T11:00:00.000000Z"));
             row.putStr(0, "cc");
             row.putLong(2, 333333L);
             row.putStr(3, "dd");
@@ -452,9 +452,9 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
     }
 
-    private void appendRowsWithDroppedColumn(String ts1, String ts2, TableWriter tw, int count, Rnd rnd) throws NumericException {
+    private void appendRowsWithDroppedColumn(TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
-            long timestamp = IntervalUtils.parseFloorPartialTimestamp(ts1) + rnd.nextLong(Timestamps.DAY_MICROS);
+            long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
             row.putStr(0, "cc");
@@ -463,7 +463,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             row.putLong(5, 22222L);
             row.append();
 
-            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp(ts2));
+            row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("1970-01-02T10:00:01.000000Z"));
             row.putStr(0, "cc");
             row.putLong(2, 333333L);
             row.putStr(4, "dd");
@@ -624,7 +624,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
     }
 
-    private void testCommitLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -659,22 +659,11 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
+            writer.intermediateCommit();
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
+            writer.intermediateCommit();
             writer.commit();
         }
 
@@ -683,7 +672,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, NumericException {
+    private void testCommitLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -718,22 +707,10 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
+            writer.intermediateCommit();
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
+            writer.intermediateCommit();
             writer.commit();
         }
 
@@ -779,9 +756,9 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
-            minTimestamp = maxTimestamp - commitLag;
-            writer.commitWithLag(commitLag);
+            long maxO3Lag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-07T00:00:00.000Z");
+            minTimestamp = maxTimestamp - maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<='1970-01-07T00:00:00.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -793,9 +770,9 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
+            maxO3Lag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=185 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -851,9 +828,9 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
-            minTimestamp = maxTimestamp - commitLag;
-            writer.commitWithLag(commitLag);
+            long maxO3Lag = maxTimestamp - TimestampFormatUtils.parseTimestamp("1970-01-06T23:59:59.000Z");
+            minTimestamp = maxTimestamp - maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<='1970-01-06T23:59:59.000Z'", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -864,9 +841,9 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
+            maxO3Lag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=184 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -879,7 +856,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagStaggeringPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testCommitLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -899,41 +876,88 @@ public class O3CommitLagTest extends AbstractO3Test {
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
                 " rnd_char() t" +
-                " from long_sequence(500)" +
+                " from long_sequence(150)" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x) timestamp(ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>150 and i<200 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
+        // "x1" is overlapping "x", timestamp is offset by 1us to prevent nondeterministic
+        // behaviour of ordering identical timestamp values
+        sql = "create table x1 as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L + 120 * 100000000L + 1,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(50)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
 
-            sql = "select * from x where i>=200 order by f";
+        // "x2" us is overlapping "x1" timestamp is offset by 2us to prevent nondeterministic
+        //        // behaviour of ordering identical timestamp values
+        sql = "create table x2 as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L + 170 * 100000000L + 2,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(50)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x1 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
+            writer.intermediateCommit();
+            Assert.assertTrue(writer.hasO3());
+
+            sql = "select * from x2 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.intermediateCommit();
 
             writer.commit();
         }
 
-        assertXY(compiler, sqlExecutionContext);
+        TestUtils.printSql(compiler, sqlExecutionContext, "(select * from x union all x1 union all x2) order by ts", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all x1 union all x2)", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
     }
 
     private void testCommitLagStaggeringPartitionsWithRollback0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -971,9 +995,9 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>150 and i<200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
+            long maxO3Lag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -984,9 +1008,9 @@ public class O3CommitLagTest extends AbstractO3Test {
 
             sql = "select * from x where i>=200 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
+            maxO3Lag = (maxTimestamp - minTimestamp) / 2;
+            maxTimestamp -= maxO3Lag;
+            writer.intermediateCommit(maxO3Lag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp) and (i<=175 or i>=200)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1035,10 +1059,8 @@ public class O3CommitLagTest extends AbstractO3Test {
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             sql = "select * from x where i>=300 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
+            writer.intermediateCommit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
@@ -1082,13 +1104,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 or (i>50 and i<100) order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
+            writer.intermediateCommit();
             writer.commit();
         }
 
@@ -1129,13 +1145,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>490 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) / 2;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
+            writer.intermediateCommit();
             writer.commit();
         }
         assertXY(compiler, sqlExecutionContext);
@@ -1173,11 +1183,12 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            // we need overlap of new and old data in order to have non-synthetic "lag"
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             long commitLag = (maxTimestamp - minTimestamp) / 2;
             maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
+            writer.intermediateCommit(commitLag);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
             TestUtils.assertEquals(sink, sink2);
@@ -1209,7 +1220,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         int maxBatchedRows = 10;
         int maxConcurrentBatches = 4;
         int nRowsPerCommit = 100;
-        long commitLag = microsBetweenRows * (nRowsPerCommit / 2);
+        long maxO3Lag = microsBetweenRows * (nRowsPerCommit / 2);
 
         String sql = "create table x as (" +
                 "select" +
@@ -1279,7 +1290,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 if (nRowsAppended >= nRowsPerCommit) {
                     LOG.info().$("committing with lag").$();
                     nRowsAppended = 0;
-                    writer.commitWithLag(commitLag);
+                    writer.intermediateCommit(maxO3Lag);
                     nCommitsWithLag++;
                 }
             }
@@ -1324,12 +1335,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x limit 400", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
+            writer.intermediateCommit();
             writer.commit();
         }
         assertXY(compiler, sqlExecutionContext);
@@ -1369,10 +1375,8 @@ public class O3CommitLagTest extends AbstractO3Test {
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
             sql = "select * from x where i>250 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            long commitLag = (maxTimestamp - minTimestamp) * 3 / 4;
-            maxTimestamp -= commitLag;
-            writer.commitWithLag(commitLag);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x where ts<=cast(" + maxTimestamp + " as timestamp)", sink);
+            writer.intermediateCommit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x", sink);
             TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
             TestUtils.assertEquals(sink, sink2);
 
@@ -1607,9 +1611,6 @@ public class O3CommitLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        final String ts1 = "1970-01-01T11:00:00.000000Z";
-        final String ts2 = "1970-01-02T11:00:00.000000Z";
-
         // We will not insert value 'aa' in str column. The count of rows with 'aa' is our invariant
         int aaCount = 2 * (initialCount + additionalCount);
         TestUtils.assertSql(
@@ -1622,8 +1623,8 @@ public class O3CommitLagTest extends AbstractO3Test {
 
         try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
             int halfCount = appendCount / 2;
-            appendRows(ts1, ts2, tw, halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
+            appendRows(tw, halfCount, rnd);
+            tw.intermediateCommit(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(
                     compiler,
@@ -1632,8 +1633,8 @@ public class O3CommitLagTest extends AbstractO3Test {
                     sink,
                     sink2);
 
-            appendRows(ts1, ts2, tw, appendCount - halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
+            appendRows(tw, appendCount - halfCount, rnd);
+            tw.intermediateCommit(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(
                     compiler,
@@ -1693,22 +1694,19 @@ public class O3CommitLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        final String ts1 = "1970-01-01";
-        final String ts2 = "1970-01-02T10:00:01.000000Z";
-
         Rnd rnd = new Rnd();
         try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
             int halfCount = appendCount / 2;
-            appendRowsWithDroppedColumn(ts1, ts2, tw, halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
+            appendRowsWithDroppedColumn(tw, halfCount, rnd);
+            tw.intermediateCommit(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
                             "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
 
-            appendRowsWithDroppedColumn(ts1, ts2, tw, appendCount - halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
+            appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
+            tw.intermediateCommit(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +

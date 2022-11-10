@@ -39,7 +39,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private long commitLag;
+    private long o3MaxLag;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
@@ -121,8 +121,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     @Override
@@ -203,8 +203,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return walEnabled;
     }
 
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
     public void setIgnoreIfExists(boolean flag) {

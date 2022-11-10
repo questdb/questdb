@@ -213,7 +213,7 @@ public class TableUpdateDetails implements Closeable {
             try {
                 LOG.debug().$("time-based commit " + (withLag ? "with lag " : "") + "[rows=").$(writerAPI.getUncommittedRowCount()).$(", table=").$(tableNameUtf16).I$();
                 if (withLag) {
-                    writerAPI.commitWithLag();
+                    writerAPI.intermediateCommit();
                 } else {
                     writerAPI.commit();
                 }
@@ -272,7 +272,7 @@ public class TableUpdateDetails implements Closeable {
         nextCommitTime = millisecondClock.getTicks() + getCommitInterval();
 
         try {
-            writerAPI.commitWithLag();
+            writerAPI.intermediateCommit();
         } catch (Throwable th) {
             LOG.error()
                     .$("could not commit line protocol measurement [tableName=").$(writerAPI.getTableName())

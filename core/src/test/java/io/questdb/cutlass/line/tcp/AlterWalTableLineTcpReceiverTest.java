@@ -375,7 +375,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
                 TableReaderMetadata meta = reader.getMetadata();
                 Assert.assertEquals(1, meta.getMaxUncommittedRows());
-                Assert.assertEquals(20 * 1_000_000L, meta.getCommitLag());
+                Assert.assertEquals(20 * 1_000_000L, meta.getO3MaxLag());
                 Assert.assertFalse(reader.getSymbolMapReader(meta.getColumnIndex("label")).isCached());
             }
         });
@@ -462,7 +462,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             // The outcome of this test is non-deterministic, i.e. watts column may or may not
             // be present in the table. But in any case we expect all rows to be inserted.
-            assertTableSize(rows + 1);
+            assertTableSize();
         });
     }
 
@@ -590,7 +590,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             // The outcome of this test is non-deterministic, i.e. watts column may or may not
             // be present in the table. But in any case we expect all rows to be inserted.
-            assertTableSize(rows + 1);
+            assertTableSize();
         });
     }
 
@@ -782,9 +782,9 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }
     }
 
-    protected void assertTableSize(long expectedSize) {
+    protected void assertTableSize() {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "plug")) {
-            Assert.assertEquals(expectedSize, reader.getCursor().size());
+            Assert.assertEquals(10001, reader.getCursor().size());
         }
     }
 }

@@ -28,8 +28,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.META_OFFSET_COMMIT_LAG;
 import static io.questdb.cairo.TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS;
+import static io.questdb.cairo.TableUtils.META_OFFSET_O3_MAX_LAG;
 
 final class Mig600 {
     static void migrate(MigrationContext migrationContext) {
@@ -51,8 +51,8 @@ final class Mig600 {
         TableUtils.writeLongOrFail(
                 ff,
                 fd,
-                META_OFFSET_COMMIT_LAG,
-                migrationContext.getConfiguration().getCommitLag(),
+                META_OFFSET_O3_MAX_LAG,
+                migrationContext.getConfiguration().getO3MaxLag(),
                 tempMem,
                 path
         );

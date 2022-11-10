@@ -98,7 +98,7 @@ public interface MetadataChangeSPI {
 
     void renameColumn(CharSequence columnName, CharSequence newName);
 
-    void setMetaCommitLag(long commitLag);
+    void setMetaO3MaxLag(long o3MaxLagUs);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

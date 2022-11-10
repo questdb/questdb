@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 public interface TableStructure extends TableDescriptor {
 
-    long getCommitLag();
+    long getO3MaxLag();
 
     int getIndexBlockCapacity(int columnIndex);
 

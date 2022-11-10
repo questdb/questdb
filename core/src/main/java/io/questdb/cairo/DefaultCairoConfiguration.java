@@ -156,8 +156,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getCommitLag() {
-        return 0;
+    public long getO3MaxLag() {
+        // 5 min
+        return 300_000_000L;
     }
 
     @Override
@@ -378,6 +379,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return 1_000_000;
     }
 
     @Override

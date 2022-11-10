@@ -79,8 +79,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
+    public long getO3MaxLag() {
+        return cairoConfiguration.getO3MaxLag();
     }
 
     @Override

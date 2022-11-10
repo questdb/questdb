@@ -2414,7 +2414,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 PartitionBy.NONE,
                 180_000_000,
                 721,
-                0,
+                300000000,
                 1000);
     }
 
@@ -2426,7 +2426,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 PartitionBy.DAY,
                 -1,
                 -1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -3169,9 +3169,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
     private void importWithCommitLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
                                                                      boolean overwrite,
                                                                      int partitionBy,
-                                                                     long commitLag,
+                                                                     long o3MaxLagUs,
                                                                      int maxUncommittedRows,
-                                                                     long expectedCommitLag,
+                                                                     long expectedO3MaxLag,
                                                                      int expectedMaxUncommittedRows) throws Exception {
         assertNoLeak(
                 textLoader -> {
@@ -3184,7 +3184,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             partitionBy
                     );
                     textLoader.setForceHeaders(true);
-                    textLoader.setCommitLag(commitLag);
+                    textLoader.setO3MaxLag(o3MaxLagUs);
                     textLoader.setMaxUncommittedRows(maxUncommittedRows);
                     playText(
                             engine,
@@ -3207,14 +3207,14 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
         );
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
-            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(1, reader.size());
         }
     }
 
     private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(
-            long commitLag,
+            long expectedO3MaxLag,
             int maxUncommittedRows,
             boolean durable,
             Set<String> expectedPartitionNames
@@ -3249,8 +3249,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getCommitLag() {
-                return commitLag;
+            public long getO3MaxLag() {
+                return expectedO3MaxLag;
             }
 
             @Override
@@ -3282,7 +3282,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 durable
                         );
                         textLoader.setForceHeaders(true);
-                        textLoader.setCommitLag(commitLag);
+                        textLoader.setO3MaxLag(expectedO3MaxLag);
                         textLoader.setMaxUncommittedRows(maxUncommittedRows);
                         playText(
                                 engine,
@@ -3312,7 +3312,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
-                Assert.assertEquals(commitLag, reader.getCommitLag());
+                Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
                 Assert.assertEquals(6, reader.size());
                 TestUtils.assertCursor("2021-01-01T00:01:00.000000Z	1\n2021-01-01T00:01:30.000000Z	2\n2021-01-01T00:04:00.000000Z	3\n2021-01-01T00:05:00.000000Z	4\n2021-01-02T00:00:30.000000Z	5\n2021-01-02T00:05:31.000000Z	6\n", reader.getCursor(), reader.getMetadata(), false, sink);
             }

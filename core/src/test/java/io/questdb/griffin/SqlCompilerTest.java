@@ -2612,7 +2612,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",
                                 sink);
                         Assert.assertEquals(10000, metadata.getMaxUncommittedRows());
-                        Assert.assertEquals(250000, metadata.getCommitLag());
+                        Assert.assertEquals(250000, metadata.getO3MaxLag());
                     }
                 }
         );

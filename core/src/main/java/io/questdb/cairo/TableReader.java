@@ -231,8 +231,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public long getCommitLag() {
-        return metadata.getCommitLag();
+    public long getO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     public TableReaderRecordCursor getCursor() {

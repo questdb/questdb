@@ -154,7 +154,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 try {
                     long commitLag = Numbers.parseLong(commitLagChars);
                     if (commitLag >= 0) {
-                        transientState.textLoader.setCommitLag(commitLag);
+                        transientState.textLoader.setO3MaxLag(commitLag);
                     }
                 } catch (NumericException e) {
                     sendErrorAndThrowDisconnect("invalid commitLag, must be a long");

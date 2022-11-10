@@ -67,7 +67,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             int rowsAdded = 1000;
 
             String tableName = "tbl_symcache_test";
-            createTable(tableName, PartitionBy.DAY);
+            createTable(tableName);
             Rnd rnd = new Rnd();
 
             Thread writerThread = new Thread(() -> {
@@ -628,11 +628,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         });
     }
 
-    private void createTable(String tableName, int partitionBy) {
+    private void createTable(String tableName) {
         try (Path path = new Path()) {
             try (
                     MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, partitionBy)
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
             ) {
                 model.timestamp();
                 TableUtils.createTable(
@@ -689,13 +689,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public long commitWithLag() {
-            return 0;
+        public void intermediateCommit() {
         }
 
         @Override
-        public long commitWithLag(long commitLag) {
-            return 0;
+        public void intermediateCommit(long o3MaxLag) {
         }
 
         @Override

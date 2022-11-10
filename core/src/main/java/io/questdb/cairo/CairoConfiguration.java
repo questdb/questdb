@@ -94,7 +94,7 @@ public interface CairoConfiguration {
      *
      * @return commit lag in microseconds
      */
-    long getCommitLag();
+    long getO3MaxLag();
 
     int getCommitMode();
 
@@ -378,6 +378,8 @@ public interface CairoConfiguration {
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
+
+    long getO3MinLag();
 
     int getWalRecreateDistressedSequencerAttempts();
 

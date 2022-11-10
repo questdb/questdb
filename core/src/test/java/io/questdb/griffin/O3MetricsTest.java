@@ -329,85 +329,36 @@ public class O3MetricsTest extends AbstractO3Test {
             Metrics metrics = engine.getMetrics();
 
             long rowCount = initRowCount;
-            long expectedPhysicallyWritten = initRowCount;
-            Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
+            Assert.assertEquals(rowCount, metrics.tableWriter().getPhysicallyWrittenRows());
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                 TableWriter.Row r = w.newRow(millenniumTimestamp(0));
                 r.putInt(0, 100);
                 r.append();
+                ++rowCount;
 
                 r = w.newRow(millenniumTimestamp(7));
                 r.putInt(0, 200);
                 r.append();
+                ++rowCount;
 
                 r = w.newRow(millenniumTimestamp(8));
                 r.putInt(0, 300);
                 r.append();
+                ++rowCount;
 
-                w.commitWithLag(30 * MICROS_IN_MINUTE);
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +  // new row
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n";  // new row
-                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                Assert.assertEquals(rowCount + 2, metrics.tableWriter().getCommittedRows());
-
-                // Partition rewritten with two new records.
-                expectedPhysicallyWritten += rowCount + 2;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
-
-                rowCount += 2;
+                w.intermediateCommit();
 
                 r = w.newRow(millenniumTimestamp(7, 45));
                 r.putInt(0, 400);
                 r.append();
-                w.commitWithLag(10 * MICROS_IN_MINUTE);
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n" +
-                            "400\t2000-01-01T07:45:00.000000Z\n";  // skipped due to lag.
-                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                // Appends one row.
-                Assert.assertEquals(rowCount + 1, metrics.tableWriter().getCommittedRows());
-                ++expectedPhysicallyWritten;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
                 ++rowCount;
+
+                w.intermediateCommit();
 
                 w.commit();
-
-                {
-                    printSqlResult(compiler, sqlExecutionContext, "x");
-                    final String expected = "i\tts\n" +
-                            "100\t2000-01-01T00:00:00.000000Z\n" +
-                            "1\t2000-01-01T05:00:00.000000Z\n" +
-                            "2\t2000-01-01T06:00:00.000000Z\n" +
-                            "200\t2000-01-01T07:00:00.000000Z\n" +
-                            "400\t2000-01-01T07:45:00.000000Z\n" +
-                            "300\t2000-01-01T08:00:00.000000Z\n"; // new row
-                    TestUtils.assertEquals(expected, sink);
-                }
-
-                Assert.assertEquals(rowCount + 1, metrics.tableWriter().getCommittedRows());
-                ++expectedPhysicallyWritten;
-                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().getPhysicallyWrittenRows());
-
-                ++rowCount;
+                Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());
+                Assert.assertEquals(rowCount + 2, metrics.tableWriter().getPhysicallyWrittenRows());
 
             }
         });

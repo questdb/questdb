@@ -243,7 +243,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = tableReaderMetadata.getTableId();
                         maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
-                        commitLag = tableReaderMetadata.getCommitLag();
+                        commitLag = tableReaderMetadata.getO3MaxLag();
                         partitionBy = tableReaderMetadata.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table

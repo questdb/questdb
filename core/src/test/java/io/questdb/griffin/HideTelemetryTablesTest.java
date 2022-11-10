@@ -45,7 +45,7 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
                     "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                     sink,
                     "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                            "1\ttest\t\tNONE\t1000\t0\n"
+                            "1\ttest\t\tNONE\t1000\t300000000\n"
             );
         });
     }
@@ -63,9 +63,9 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
                     "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by 2",
                     sink,
                     "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
-                            "2\ttelemetry\t\tNONE\t1000\t0\n" +
-                            "3\ttelemetry_config\t\tNONE\t1000\t0\n" +
-                            "1\ttest\t\tNONE\t1000\t0\n"
+                            "2\ttelemetry\t\tNONE\t1000\t300000000\n" +
+                            "3\ttelemetry_config\t\tNONE\t1000\t300000000\n" +
+                            "1\ttest\t\tNONE\t1000\t300000000\n"
             );
         });
     }

@@ -220,8 +220,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
-                null,
-                tableName
+                null
         );
     }
 
@@ -231,8 +230,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-                null,
-                tableName
+                null
         );
     }
 
@@ -241,8 +239,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                "alter table " + tableName + " drop column c",
-                tableName
+                "alter table " + tableName + " drop column c"
         );
     }
 
@@ -251,8 +248,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
+                null
         );
     }
 
@@ -262,8 +258,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
                         " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
-                null,
-                tableName
+                null
         );
     }
 
@@ -312,8 +307,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
+                null
         );
 
         // Assert snapshot folder exists
@@ -505,7 +499,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
                             Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
-                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
+                            Assert.assertEquals(metadata0.getO3MaxLag(), metadata.getO3MaxLag());
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
@@ -565,7 +559,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
+    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
                 path.of(configuration.getRoot());
@@ -578,9 +572,9 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.concat(tableName);
+                path.concat("test");
                 int tableNameLen = path.length();
-                copyPath.concat(tableName);
+                copyPath.concat("test");
                 int copyTableNameLen = copyPath.length();
 
                 // _meta

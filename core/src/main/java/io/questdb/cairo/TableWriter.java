@@ -56,6 +56,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
@@ -182,6 +183,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private DirectLongList o3ColumnTopSink;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private boolean o3InError = false;
+
+    private static final int WINDOW_SIZE = 4;
     private long o3MasterRef = -1;
     private ObjList<MemoryCARW> o3MemColumns;
     private ObjList<MemoryCARW> o3MemColumns2;
@@ -191,6 +194,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private ObjList<Runnable> o3NullSetters2;
     private DirectLongList o3PartitionUpdateSink;
     private long o3RowCount;
+    private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
+    private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
+    private long o3EffectiveLag = 0;
+
     private MemoryMAT o3TimestampMem;
     private final O3ColumnUpdateMethod o3MoveLagRef = this::o3MoveLag0;
     private final O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
@@ -323,6 +330,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
             walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
+            Arrays.fill(o3LastTimestampSpreads, 0);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -811,18 +819,17 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return commit(commitMode, 0);
     }
 
-    @Override
-    public long commitWithLag() {
-        return commit(defaultCommitMode, metadata.getCommitLag());
+    public boolean hasO3() {
+        return o3MasterRef > -1;
     }
 
     @Override
-    public long commitWithLag(long lagMicros) {
-        return commit(defaultCommitMode, lagMicros);
+    public void intermediateCommit(long o3MaxLag) {
+        commit(defaultCommitMode, o3MaxLag);
     }
 
-    public long commitWithLag(int commitMode) {
-        return commit(commitMode, metadata.getCommitLag());
+    public void intermediateCommit(int commitMode) {
+        commit(commitMode, metadata.getO3MaxLag());
     }
 
     @Override
@@ -1637,12 +1644,18 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
+    public void intermediateCommit() {
+        commit(defaultCommitMode, metadata.getO3MaxLag());
+    }
+
+    @Override
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").utf8(tableName).I$();
                 o3PartitionRemoveCandidates.clear();
+                o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
                     masterRef++;
                 }
@@ -1666,39 +1679,16 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
+    public void setLifecycleManager(LifecycleManager lifecycleManager) {
+        this.lifecycleManager = lifecycleManager;
+    }
+
     public void rollbackUpdate() {
         columnVersionWriter.readUnsafe();
     }
 
     public void setExtensionListener(ExtensionListener listener) {
         txWriter.setExtensionListener(listener);
-    }
-
-    public void setLifecycleManager(LifecycleManager lifecycleManager) {
-        this.lifecycleManager = lifecycleManager;
-    }
-
-    @Override
-    public void setMetaCommitLag(long commitLag) {
-        try {
-            commit();
-            long metaSize = copyMetadataAndUpdateVersion();
-            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
-            try {
-                ddlMem.jumpTo(META_OFFSET_COMMIT_LAG);
-                ddlMem.putLong(commitLag);
-                ddlMem.jumpTo(metaSize);
-            } finally {
-                ddlMem.close();
-            }
-
-            finishMetaSwapUpdate();
-            metadata.setCommitLag(commitLag);
-            commitInterval = calculateCommitInterval();
-            clearTodoLog();
-        } finally {
-            ddlMem.close();
-        }
     }
 
     @Override
@@ -2389,9 +2379,26 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         assert txWriter.getStructureVersion() == metadata.getStructureVersion();
     }
 
-    private long calculateCommitInterval() {
-        long commitIntervalMicros = (long) (metadata.getCommitLag() * commitIntervalFraction);
-        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
+    @Override
+    public void setMetaO3MaxLag(long o3MaxLagUs) {
+        try {
+            commit();
+            long metaSize = copyMetadataAndUpdateVersion();
+            openMetaSwapFileByIndex(ff, ddlMem, path, rootLen, this.metaSwapIndex);
+            try {
+                ddlMem.jumpTo(META_OFFSET_O3_MAX_LAG);
+                ddlMem.putLong(o3MaxLagUs);
+                ddlMem.jumpTo(metaSize);
+            } finally {
+                ddlMem.close();
+            }
+
+            finishMetaSwapUpdate();
+            metadata.setO3MaxLag(o3MaxLagUs);
+            clearTodoLog();
+        } finally {
+            ddlMem.close();
+        }
     }
 
     private void cancelRowAndBump() {
@@ -2456,61 +2463,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    /**
-     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
-     * <p>
-     * <b>Pending rows</b>
-     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
-     *
-     * @param commitMode commit durability mode.
-     * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
-     */
-    private long commit(int commitMode, long commitLag) {
-        checkDistressed();
-
-        if (o3InError) {
-            rollback();
-            return TableSequencer.NO_TXN;
-        }
-
-        if ((masterRef & 1) != 0) {
-            rowCancel();
-        }
-
-        if (inTransaction()) {
-            final boolean o3 = hasO3();
-            if (o3 && o3Commit(commitLag)) {
-                // Bookmark masterRef to track how many rows is in uncommitted state
-                this.committedMasterRef = masterRef;
-                return getTxn();
-            }
-
-            if (commitMode != CommitMode.NOSYNC) {
-                syncColumns(commitMode);
-            }
-
-            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
-            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
-
-            updateIndexes();
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(commitMode, denseSymbolMapWriters);
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
-            o3ProcessPartitionRemoveCandidates();
-
-            metrics.tableWriter().incrementCommits();
-            metrics.tableWriter().addCommittedRows(rowsAdded);
-            if (!o3) {
-                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
-                addPhysicallyWrittenRows(rowsAdded);
-            }
-
-            return getTxn();
-        }
-        return TableSequencer.NO_TXN;
+    private long calculateCommitInterval() {
+        long commitIntervalMicros = (long) (configuration.getO3MinLag() * commitIntervalFraction);
+        return commitIntervalMicros > 0 ? commitIntervalMicros / 1000 : commitIntervalDefault;
     }
 
     private void configureAppendPosition() {
@@ -2704,14 +2659,62 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return res;
     }
 
-    private void copyVersionAndLagValues() {
-        ddlMem.putInt(ColumnType.VERSION);
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
-        ddlMem.putLong(txWriter.getStructureVersion() + 1);
-        ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
-        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
+    /**
+     * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
+     * <p>
+     * <b>Pending rows</b>
+     * <p>This method will cancel pending rows by calling {@link #rowCancel()}. Data in partially appended row will be lost.</p>
+     *
+     * @param commitMode commit durability mode.
+     * @param o3MaxLag   if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
+     * @return commit transaction number or -1 if there was nothing to commit
+     */
+    private long commit(int commitMode, long o3MaxLag) {
+        checkDistressed();
+
+        if (o3InError) {
+            rollback();
+            return TableSequencer.NO_TXN;
+        }
+
+        if ((masterRef & 1) != 0) {
+            rowCancel();
+        }
+
+        if (inTransaction()) {
+            final boolean o3 = hasO3();
+            if (o3 && o3Commit(o3MaxLag)) {
+                // Bookmark masterRef to track how many rows is in uncommitted state
+                this.committedMasterRef = masterRef;
+                return getTxn();
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                syncColumns(commitMode);
+            }
+
+            final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
+            final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+
+            updateIndexes();
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            txWriter.commit(commitMode, denseSymbolMapWriters);
+
+            // Bookmark masterRef to track how many rows is in uncommitted state
+            this.committedMasterRef = masterRef;
+            o3ProcessPartitionRemoveCandidates();
+
+            metrics.tableWriter().incrementCommits();
+            metrics.tableWriter().addCommittedRows(rowsAdded);
+            if (!o3) {
+                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
+                addPhysicallyWrittenRows(rowsAdded);
+            }
+
+            return getTxn();
+        }
+        return TableSequencer.NO_TXN;
     }
 
     /**
@@ -2952,8 +2955,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    private long getO3RowCount0() {
-        return (masterRef - o3MasterRef + 1) / 2;
+    private void copyVersionAndLagValues() {
+        ddlMem.putInt(ColumnType.VERSION);
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+        ddlMem.putLong(metaMem.getLong(META_OFFSET_O3_MAX_LAG));
+        ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
+        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
     }
 
     private long getPartitionLo(long timestamp) {
@@ -2970,8 +2979,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    private boolean hasO3() {
-        return o3MasterRef > -1;
+    private long getO3RowCount0() {
+        return (masterRef - o3MasterRef + 1) / 2;
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
@@ -3143,12 +3152,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     /**
      * Commits O3 data. Lag is optional. When 0 is specified the entire O3 segment is committed.
      *
-     * @param lag interval in microseconds that determines the length of O3 segment that is not going to be
-     *            committed to disk. The interval starts at max timestamp of O3 segment and ends <i>lag</i>
-     *            microseconds before this timestamp.
+     * @param o3MaxLag interval in microseconds that determines the length of O3 segment that is not going to be
+     *                 committed to disk. The interval starts at max timestamp of O3 segment and ends <i>o3MaxLag</i>
+     *                 microseconds before this timestamp.
      * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
      */
-    private boolean o3Commit(long lag) {
+    private boolean o3Commit(long o3MaxLag) {
         o3RowCount = getO3RowCount0();
 
         long o3LagRowCount = 0;
@@ -3200,8 +3209,41 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // Safe check of the sort. No known way to reproduce
             assert o3TimestampMin <= o3TimestampMax;
 
-            if (lag > 0) {
-                long lagThresholdTimestamp = o3TimestampMax - lag;
+            if (o3MaxLag > 0) {
+                long lagError = 0;
+                if (getMaxTimestamp() != Long.MIN_VALUE) {
+
+                    // When table already has data we can calculate the overlap of the newly added
+                    // batch of records with existing data in the table. Positive value of the overlap
+                    // means that our o3MaxLag was undersized.
+
+                    lagError = getMaxTimestamp() - o3CommitBatchTimestampMin;
+
+                    int n = WINDOW_SIZE - 1;
+
+                    if (lagError > 0) {
+                        o3EffectiveLag += lagError * 1.5;
+                        o3EffectiveLag = Math.max(o3EffectiveLag, o3MaxLag);
+                    } else {
+                        // avoid using negative effective o3MaxLag
+                        o3EffectiveLag += Math.max(0, lagError * 0.5);
+                    }
+
+                    long max = Long.MIN_VALUE;
+                    for (int i = 0; i < n; i++) {
+                        // shift array left and find out max at the same time
+                        final long e = o3LastTimestampSpreads[i + 1];
+                        o3LastTimestampSpreads[i] = e;
+                        max = Math.max(e, max);
+                    }
+
+                    o3LastTimestampSpreads[n] = o3EffectiveLag;
+                    o3EffectiveLag = Math.max(o3EffectiveLag, max);
+                } else {
+                    o3EffectiveLag = o3MaxLag;
+                }
+
+                long lagThresholdTimestamp = o3TimestampMax - o3EffectiveLag;
                 if (lagThresholdTimestamp >= o3TimestampMin) {
                     final long lagThresholdRow = Vect.boundedBinarySearchIndexT(
                             sortedTimestampsAddr,
@@ -3219,9 +3261,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     }
                 } else {
                     o3LagRowCount = o3RowCount;
-                    // This is a scenario where "lag" and "maxUncommitted" values do not work with the data
-                    // in that the "lag" is larger than dictated "maxUncommitted". A simple plan here is to
-                    // commit half of the lag.
+                    // This is a scenario where "o3MaxLag" and "maxUncommitted" values do not work with the data
+                    // in that the "o3MaxLag" is larger than dictated "maxUncommitted". A simple plan here is to
+                    // commit half of the o3MaxLag.
                     if (o3LagRowCount > maxUncommittedRows) {
                         o3LagRowCount = maxUncommittedRows / 2;
                         srcOooMax = o3RowCount - o3LagRowCount;
@@ -3229,23 +3271,30 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         srcOooMax = 0;
                     }
                 }
-                LOG.info().$("o3 commit lag [table=").utf8(tableName)
+
+                LOG.info().$("o3 commit o3MaxLag [table=").utf8(tableName)
                         .$(", maxUncommittedRows=").$(maxUncommittedRows)
                         .$(", o3TimestampMin=").$ts(o3TimestampMin)
                         .$(", o3TimestampMax=").$ts(o3TimestampMax)
-                        .$(", lagUs=").$(lag)
+                        .$(", o3MaxLagUs=").$(o3MaxLag)
+                        .$(", o3EffectiveLagUs=").$(o3EffectiveLag)
+                        .$(", lagError=").$(lagError)
+                        .$(", o3SpreadUs=").$(o3TimestampMax - o3TimestampMin)
                         .$(", lagThresholdTimestamp=").$ts(lagThresholdTimestamp)
                         .$(", o3LagRowCount=").$(o3LagRowCount)
                         .$(", srcOooMax=").$(srcOooMax)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
+
             } else {
-                LOG.debug()
-                        .$("o3 commit no lag [table=").utf8(tableName)
+                LOG.info()
+                        .$("o3 commit no o3MaxLag [table=").utf8(tableName)
                         .$(", o3RowCount=").$(o3RowCount)
                         .I$();
                 srcOooMax = o3RowCount;
             }
+
+            o3CommitBatchTimestampMin = Long.MAX_VALUE;
 
             if (srcOooMax == 0) {
                 return true;
@@ -3255,7 +3304,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
 
 
-            // we are going to use this soon to avoid double-copying lag data
+            // we are going to use this soon to avoid double-copying o3MaxLag data
             // final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
             // reshuffle all columns according to timestamp index
@@ -3265,7 +3314,16 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     .$(", o3RowCount=").$(o3LagRowCount)
                     .I$();
 
-            processO3Block(o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin, o3TimestampMax, true, 0L);
+            processO3Block(
+                    o3LagRowCount,
+                    timestampIndex,
+                    sortedTimestampsAddr,
+                    srcOooMax,
+                    o3TimestampMin,
+                    o3TimestampMax,
+                    true,
+                    0L
+            );
         } finally {
             finishO3Append(o3LagRowCount);
         }
@@ -4101,6 +4159,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         // putLong128(hi, lo)
         // written in memory as lo then hi
         o3TimestampMem.putLongLong(timestamp, getO3RowCount0());
+        o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -4882,6 +4941,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType == -ColumnType.SYMBOL) {
                     // Scroll the cursor, don't apply, symbol is deleted
+                    // todo: optimise
                     while (symbolMapDiff.nextEntry() != null) ;
                     continue;
                 }

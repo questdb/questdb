@@ -28,8 +28,12 @@ public class PGFunctionsTest extends BasePGTest {
                     long openFilesBefore = FilesFacadeImpl.INSTANCE.getOpenFileCount();
                     try (PreparedStatement ps = connection.prepareStatement("select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()")) {
                         try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet("id[INTEGER],name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],commitLag[BIGINT]\n" +
-                                    "1,a,null,NONE,1000,0\n", sink, rs);
+                            assertResultSet(
+                                    "id[INTEGER],name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],commitLag[BIGINT]\n" +
+                                            "1,a,null,NONE,1000,300000000\n",
+                                    sink,
+                                    rs
+                            );
                         }
                     }
                     long openFilesAfter = FilesFacadeImpl.INSTANCE.getOpenFileCount();

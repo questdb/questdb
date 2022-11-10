@@ -497,7 +497,7 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
-        long commitLag = configuration.getCommitLag();
+        long o3MaxLag = configuration.getO3MaxLag();
 
         final int walNotSet = -1;
         final int walDisabled = 0;
@@ -547,7 +547,7 @@ public final class SqlParser {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
                         } else if (isCommitLagKeyword(expr.lhs.token)) {
-                            commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                            o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -563,7 +563,7 @@ public final class SqlParser {
         }
 
         model.setMaxUncommittedRows(maxUncommittedRows);
-        model.setCommitLag(commitLag);
+        model.setO3MaxLag(o3MaxLag);
         final boolean isWalEnabled =
                 configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
                         (walSetting == walNotSet && configuration.getWalEnabledDefault()) || walSetting == walEnabled
@@ -1226,7 +1226,7 @@ public final class SqlParser {
             tok = tok(lexer, "into or commitLag");
             if (SqlKeywords.isCommitLagKeyword(tok)) {
                 int pos = lexer.getPosition();
-                model.setCommitLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                model.setMaxO3Lag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "into");
             }
         }

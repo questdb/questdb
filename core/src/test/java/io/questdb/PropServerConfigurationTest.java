@@ -891,7 +891,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
             Assert.assertFalse(configuration.getCairoConfiguration().isIOURingEnabled());
 
-            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
+            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getO3MaxLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());

@@ -58,8 +58,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                0,
-                "indexes are supported only for SYMBOL columns: x"
+                0
         );
     }
 
@@ -69,8 +68,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                0,
-                "indexes are supported only for SYMBOL columns: x"
+                0
         );
     }
 
@@ -80,8 +78,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) x FROM long_sequence(1)" +
                         "), CAST(x as STRING), INDEX(x)",
-                82,
-                "indexes are supported only for SYMBOL columns: x"
+                82
         );
     }
 
@@ -161,7 +158,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableAsSelectWithMultipleIndexs() throws Exception {
+    public void testCreateTableAsSelectWithMultipleIndexes() throws Exception {
         assertCompile("create table old(s1 symbol,s2 symbol, s3 symbol)");
         assertQuery("s1\ts2\ts3\n", "select * from new", "create table new as (select * from old), index(s1), index(s2), index(s3)", null);
 
@@ -241,7 +238,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "a INT," +
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\tt\n", "select * from tab", "create table tab (like x)", "t");
-        assertPartitionAndTimestamp("tab", PartitionBy.MONTH, 1);
+        assertPartitionAndTimestamp();
     }
 
     @Test
@@ -321,7 +318,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 getColumnDefinitions(columnTypes) + ")"
         );
         assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
-        assertColumnTypes("tab", columnTypes);
+        assertColumnTypes(columnTypes);
     }
 
     @Test
@@ -336,16 +333,7 @@ public class CreateTableTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableLikeTableWithCachedSymbol() throws Exception {
-        boolean isSymbolCached = true;
-        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
-
-        assertCompile("create table x (" +
-                "a INT," +
-                "y SYMBOL " + symbolCacheParameterValue + "," +
-                "t timestamp) timestamp(t) partition by MONTH");
-        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
-        SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
-        assertSymbolParameters("tab", 1, parameters);
+        testCreateTableLikeTableWithCachedSymbol(true);
     }
 
     @Test
@@ -357,16 +345,21 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
         SymbolParameters parameters = new SymbolParameters(null, false, true, indexBlockCapacity);
-        assertSymbolParameters("tab", 1, parameters);
+        assertSymbolParameters(parameters);
     }
 
     @Test
     public void testCreateTableLikeTableWithMaxUncommittedRowsAndCommitLag() throws Exception {
         int maxUncommittedRows = 20;
-        int commitLag = 200;
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", commitLag = " + commitLag + "us");
+        int o3MaxLag = 200;
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", commitLag = " + o3MaxLag + "us");
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
-        assertWithClauseParameters("x", maxUncommittedRows, commitLag);
+        assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
+    }
+
+    @Test
+    public void testCreateTableLikeTableWithNotCachedSymbol() throws Exception {
+        testCreateTableLikeTableWithCachedSymbol(false);
     }
 
     @Test
@@ -379,7 +372,20 @@ public class CreateTableTest extends AbstractGriffinTest {
                 "t timestamp) timestamp(t) partition by MONTH");
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
         SymbolParameters parameters = new SymbolParameters(symbolCapacity, false, false, null);
-        assertSymbolParameters("tab", 1, parameters);
+        assertSymbolParameters(parameters);
+    }
+
+    private void assertColumnTypes(String[][] columnTypes) throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                for (int i = 0; i < columnTypes.length; i++) {
+                    String[] arr = columnTypes[i];
+                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
+                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                }
+            }
+        });
     }
 
     @Test
@@ -452,15 +458,14 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
     }
 
-    private void assertColumnTypes(String tableName, String[][] columnTypes) throws Exception {
+    private void assertFailure(String sql, int position) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                for (int i = 0; i < columnTypes.length; i++) {
-                    String[] arr = columnTypes[i];
-                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
-                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
-                }
+            try {
+                compile(sql, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
         });
     }
@@ -489,54 +494,42 @@ public class CreateTableTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertFailure(String sql, int position, String message) throws Exception {
+    private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                compile(sql, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+                Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
+                Assert.assertEquals(1, reader.getMetadata().getTimestampIndex());
             }
         });
     }
 
-    private void assertPartitionAndTimestamp(String tableName, int partitionIndex, int timestampIndex) throws Exception {
+    private void assertSymbolParameters(SymbolParameters parameters) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(partitionIndex, reader.getPartitionedBy());
-                Assert.assertEquals(timestampIndex, reader.getMetadata().getTimestampIndex());
-            }
-        });
-    }
-
-    private void assertSymbolParameters(String tableName, int colIndex, SymbolParameters parameters) throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
                 if (parameters.symbolCapacity != null) {
-                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(colIndex).getSymbolCapacity());
+                    Assert.assertEquals(parameters.symbolCapacity.intValue(), reader.getSymbolMapReader(1).getSymbolCapacity());
                 }
-                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(colIndex).isCached());
-                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(colIndex));
+                Assert.assertEquals(parameters.isCached, reader.getSymbolMapReader(1).isCached());
+                Assert.assertEquals(parameters.isIndexed, reader.getMetadata().isColumnIndexed(1));
                 if (parameters.indexBlockCapacity != null) {
-                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(colIndex));
+                    Assert.assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(1));
                 }
             }
         });
     }
 
-    private void assertWalEnabled(String tableName, boolean isWalEnabled) throws Exception {
+    private void assertWalEnabled(boolean isWalEnabled) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                 Assert.assertEquals(isWalEnabled, reader.getMetadata().isWalEnabled());
             }
         });
     }
 
-    private void assertWithClauseParameters(String tableName, int maxUncommittedRows, int commitLag) throws Exception {
+    private void assertWithClauseParameters(int maxUncommittedRows, int o3MaxLag) throws Exception {
         assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(commitLag, reader.getMetadata().getCommitLag());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x")) {
+                Assert.assertEquals(o3MaxLag, reader.getMetadata().getO3MaxLag());
                 Assert.assertEquals(maxUncommittedRows, reader.getMetadata().getMaxUncommittedRows());
             }
         });
@@ -547,7 +540,19 @@ public class CreateTableTest extends AbstractGriffinTest {
 
         assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY " + walParameterValue);
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
-        assertWalEnabled("x", isWalEnabled);
+        assertWalEnabled(isWalEnabled);
+    }
+
+    private void testCreateTableLikeTableWithCachedSymbol(boolean isSymbolCached) throws Exception {
+        String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
+
+        assertCompile("create table x (" +
+                "a INT," +
+                "y SYMBOL " + symbolCacheParameterValue + "," +
+                "t timestamp) timestamp(t) partition by MONTH");
+        assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
+        SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
+        assertSymbolParameters(parameters);
     }
 
     private String getColumnDefinitions(String[][] columnTypes) {

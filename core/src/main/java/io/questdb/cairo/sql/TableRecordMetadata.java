@@ -28,7 +28,7 @@ import io.questdb.std.QuietCloseable;
 
 public interface TableRecordMetadata extends RecordMetadata, QuietCloseable {
 
-    default long getCommitLag() {
+    default long getO3MaxLag() {
         return 0;
     }
 
