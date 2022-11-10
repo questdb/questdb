@@ -46,6 +46,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
     private final IntList preTouchColumnTypes;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd = new Rnd();
+    private boolean preTouchEnabled;
 
     public AsyncFilterAtom(
             @NotNull Function filter,
@@ -110,6 +111,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                 executionContext.setCloneSymbolTables(current);
             }
         }
+        preTouchEnabled = executionContext.isColumnPreTouchEnabled();
     }
 
     /**
@@ -120,7 +122,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
      * to do it later serially.
      */
     public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
-        if (preTouchColumnTypes == null) {
+        if (!preTouchEnabled || preTouchColumnTypes == null) {
             return;
         }
         // We use a LongAdder as a blackhole to make sure that the JVM JIT compiler keeps the load instructions in place.
