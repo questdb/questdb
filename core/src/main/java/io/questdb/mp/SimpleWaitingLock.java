@@ -78,12 +78,17 @@ public class SimpleWaitingLock {
         return lock.compareAndSet(false, true);
     }
 
-    public void unlock() {
-        Thread waiter = this.waiter;
-        this.waiter = null;
-        lock.set(false);
-        if (waiter != null) {
-            LockSupport.unpark(waiter);
+    // returns false if lock is not locked
+    public boolean unlock() {
+        if (lock.compareAndSet(true, false)) {
+            Thread waiter = this.waiter;
+            this.waiter = null;
+            lock.set(false);
+            if (waiter != null) {
+                LockSupport.unpark(waiter);
+            }
+            return true;
         }
+        return false;
     }
 }

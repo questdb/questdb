@@ -51,8 +51,8 @@ public class SimpleLockTest {
         Assert.assertFalse(lock.tryLock(10, TimeUnit.MILLISECONDS));
         Assert.assertTrue(lock.isLocked());
 
-        lock.unlock();
-        lock.unlock();
+        Assert.assertTrue(lock.unlock());
+        Assert.assertFalse(lock.unlock());
         Assert.assertFalse(lock.isLocked());
     }
 
