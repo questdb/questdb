@@ -127,7 +127,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         }
 
         @Override
-        public CharSequence subSequence(int start, int end) {
+        protected CharSequence _subSequence(int start, int end) {
             NameAssemblerCharSequence that = csPool.next();
             that.lo = lo + start;
             that.hi = lo + end;
