@@ -329,19 +329,18 @@ public class TableSequencerAPI implements QuietCloseable {
         tableInfo.reset();
         // Fast path.
         if (!seqRegistry.containsKey(tableName)) {
-            // This call is racy, i.e. there might be a sequencer modifying both metadata and log concurrently.
-            // It's ok since we iterate through the WAL tables periodically, so eventually we should see the updates.
+            // This call is racy, i.e. there might be a sequencer modifying both metadata and log
+            // concurrently as we make the call. It's ok since we iterate through the WAL tables
+            // periodically, so eventually we should see the updates.
             lastTxnReader.reload(path, rootLen);
             tableInfo.tableId = lastTxnReader.getTableId();
             tableInfo.lastTxn = lastTxnReader.lastTxn();
             return;
         }
         // Slow path.
-        if (tableInfo.tableId == -1) {
-            try (TableSequencer tableSequencer = openSequencerLocked(tableName, SequencerLockType.NONE)) {
-                tableInfo.lastTxn = tableSequencer.lastTxn();
-                tableInfo.tableId = tableSequencer.getTableId();
-            }
+        try (TableSequencer tableSequencer = openSequencerLocked(tableName, SequencerLockType.NONE)) {
+            tableInfo.lastTxn = tableSequencer.lastTxn();
+            tableInfo.tableId = tableSequencer.getTableId();
         }
     }
 
