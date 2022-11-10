@@ -33,7 +33,6 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
@@ -625,15 +624,6 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
         AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(writer.getTableName()), 0);
         addColumnC.addColumnToList(columnName, 29, ColumnType.INT, 0, false, false, 0);
         writer.apply(addColumnC.build(), true);
-    }
-
-    static class MicrosecondClockMock implements MicrosecondClock {
-        public long timestamp = 0;
-
-        @Override
-        public long getTicks() {
-            return timestamp;
-        }
     }
 
     static class TracingFilesFacade extends FilesFacadeImpl {

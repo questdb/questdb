@@ -27,10 +27,15 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.griffin.wal.WalPurgeJobTest;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import java.util.concurrent.CountDownLatch;
 
 public class SnapshotTest extends AbstractGriffinTest {
 
@@ -164,6 +169,54 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             // Dropped column should be there.
             assertSql("select * from " + tableName, expectedAllColumns);
+        });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+            CountDownLatch latch1 = new CountDownLatch(1);
+            CountDownLatch latch2 = new CountDownLatch(1);
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10000;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+
+            Thread t = new Thread(() -> {
+                lock.lock(); //emulate WalPurgeJob running with lock
+                latch2.countDown();
+                try {
+                    latch1.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    lock.unlock();
+                }
+            });
+
+            try {
+                t.start();
+                latch2.await();
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                latch1.countDown();
+                t.join();
+                Assert.assertFalse(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot command cancelled due to timeout"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+                circuitBreakerConfiguration = null;
+                snapshotAgent.setWalPurgeJobRunLock(null);
+            }
         });
     }
 
@@ -374,7 +427,82 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareOnEmptyDatabaseWithLock() throws Exception {
+        assertMemoryLeak(() -> {
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+            Assert.assertFalse(lock.isLocked());
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Assert.assertTrue(lock.isLocked());
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot command cancelled due to timeout"));
+            }
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+
+
+            //DB is empty
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+            lock.lock();
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+
+            circuitBreakerConfiguration = null;
+            snapshotAgent.setWalPurgeJobRunLock(null);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareSubsequentCallFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+            try {
+
+                Assert.assertFalse(lock.isLocked());
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.assertTrue(lock.isLocked());
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.assertTrue(lock.isLocked());
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+            } finally {
+                Assert.assertTrue(lock.isLocked());
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+
+                circuitBreakerConfiguration = null;
+                snapshotAgent.setWalPurgeJobRunLock(null);
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
@@ -399,6 +527,73 @@ public class SnapshotTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
             }
+        });
+    }
+
+    @Test
+    public void testSuspendResumeWalPurgeJob() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            WalPurgeJobTest.MicrosecondClockMock clock = new WalPurgeJobTest.MicrosecondClockMock();
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
+            FilesFacade ff = configuration.getFilesFacade();
+            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Thread controlThread1 = new Thread(() -> {
+                clock.timestamp = interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread1.start();
+            controlThread1.join();
+
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertWalExistence(true, tableName, 1);
+
+            engine.releaseInactive();
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Thread controlThread2 = new Thread(() -> {
+                clock.timestamp = 2 * interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread2.start();
+            controlThread2.join();
+
+            job.close();
+            snapshotAgent.setWalPurgeJobRunLock(null);
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
         });
     }
 

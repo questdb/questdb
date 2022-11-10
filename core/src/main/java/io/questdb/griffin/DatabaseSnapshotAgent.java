@@ -32,11 +32,14 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -50,6 +53,8 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
+
+    private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
         this.engine = engine;
@@ -223,6 +228,10 @@ public class DatabaseSnapshotAgent implements Closeable {
             // Release locked readers if any.
             unsafeReleaseReaders();
         } finally {
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                walPurgeJobRunLock.unlock();
+            }
             lock.unlock();
         }
     }
@@ -262,9 +271,18 @@ public class DatabaseSnapshotAgent implements Closeable {
                 final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();
+
+                    // Suspend the WalPurgeJob
+                    if (walPurgeJobRunLock != null) {
+                        final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
+                        if (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                            LOG.error().$("snapshot failed to acquire lock").$();
+                            throw SqlException.position(0).put("Snapshot command cancelled due to timeout");
+                        }
+                    }
+
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         // Copy metadata files for all tables.
-
                         while (cursor.hasNext()) {
                             CharSequence tableName = record.getStr(tableNameIndex);
                             if (
@@ -315,6 +333,10 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
+                        // Resume the WalPurgeJob
+                        if (walPurgeJobRunLock != null) {
+                            walPurgeJobRunLock.unlock();
+                        }
                         unsafeReleaseReaders();
                         LOG.error()
                                 .$("snapshot error [e=").$(e)
@@ -326,6 +348,10 @@ public class DatabaseSnapshotAgent implements Closeable {
         } finally {
             lock.unlock();
         }
+    }
+
+    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
+        this.walPurgeJobRunLock = walPurgeJobRunLock;
     }
 
     private void unsafeReleaseReaders() {
