@@ -41,6 +41,7 @@ import io.questdb.tasks.WalTxnNotificationTask;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -189,9 +190,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private static void tryDestroyDroppedTable(CharSequence systemTableName, TableWriter writer, CairoEngine engine, Path tempPath) {
+    private static void tryDestroyDroppedTable(String systemTableName, TableWriter writer, CairoEngine engine, Path tempPath) {
         if (engine.lockReadersBySystemName(systemTableName)) {
+            TableWriter writerToClose = null;
             try {
+                final CairoConfiguration configuration = engine.getConfiguration();
+                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), systemTableName) == TABLE_EXISTS) {
+                    try {
+                        writer = writerToClose = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON);
+                    } catch (CairoException ex) {
+                        // Ignore it, table can be half deleted.
+                    }
+                }
                 if (writer != null) {
                     // Force writer to close all the files.
                     writer.destroy();
@@ -200,6 +210,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     engine.notifyWalTxnRepublisher();
                 }
             } finally {
+                if (writerToClose != null) {
+                    writerToClose.close();
+                }
                 engine.releaseReadersBySystemName(systemTableName);
             }
         } else {

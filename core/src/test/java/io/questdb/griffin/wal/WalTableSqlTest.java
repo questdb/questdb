@@ -41,10 +41,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -425,6 +422,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             drainWalQueue();
 
             latch.set(false);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
+
             drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
@@ -506,6 +508,10 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                 checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", true);
             }
 
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
             drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
@@ -752,6 +758,12 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+                drainWalQueue();
+            }
+
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
             checkWalFilesRemoved(sysTableName1);
         });
@@ -776,6 +788,10 @@ public class WalTableSqlTest extends AbstractGriffinTest {
             engine.getTableSequencerAPI().releaseInactive();
             compile("drop table " + tableName);
 
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
             drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
