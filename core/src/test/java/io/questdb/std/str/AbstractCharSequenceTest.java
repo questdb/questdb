@@ -24,45 +24,30 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import org.jetbrains.annotations.NotNull;
+import org.junit.Test;
 
-public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
-    public static String getString(CharSequence cs) {
-        final CharSink b = Misc.getThreadLocalBuilder();
-        b.put(cs);
-        return b.toString();
-    }
+public class AbstractCharSequenceTest {
 
-    @Override
-    @SuppressWarnings("unchecked")
-    public <T> T copy() {
-        return (T) AbstractCharSequence.getString(this);
-    }
+    @Test
+    public void testSubsquenece_theWholeRangeReturnsTheSameObject() {
+        final CharSequence cs = new AbstractCharSequence() {
+            private static final String str = "abc";
 
-    @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
-    }
+            @Override
+            public char charAt(int index) {
+                return str.charAt(index);
+            }
 
-    @Override
-    public int hashCode() {
-        return Chars.hashCode(this);
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        if (start == 0 && end == length()) {
-            return this;
-        }
-        throw new UnsupportedOperationException();
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return getString(this);
+            @Override
+            public int length() {
+                return str.length();
+            }
+        };
+        CharSequence sub = cs.subSequence(0, cs.length());
+        assertSame(cs, sub);
+        assertEquals("abc", sub.toString());
     }
 }
