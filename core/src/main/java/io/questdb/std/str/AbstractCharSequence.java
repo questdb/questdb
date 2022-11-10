@@ -53,16 +53,20 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
+    public final CharSequence subSequence(int start, int end) {
         if (start == 0 && end == length()) {
             return this;
         }
-        throw new UnsupportedOperationException();
+        return _subSequence(start, end);
     }
 
     @NotNull
     @Override
     public String toString() {
         return getString(this);
+    }
+
+    protected CharSequence _subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 }
