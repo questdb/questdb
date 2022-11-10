@@ -30,7 +30,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -61,6 +60,7 @@ public class LogFactory implements Closeable {
     static boolean envEnabled = true;
     private static LogFactory INSTANCE;
     private static boolean overwriteWithSyncLogging = false;
+    private static String rootDir;
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -109,8 +109,8 @@ public class LogFactory implements Closeable {
         overwriteWithSyncLogging = false;
     }
 
-    public static synchronized void configureFromSystemProperties(@NotNull LogFactory logFactory, @Nullable String rootDir) {
-        configureFromSystemProperties(logFactory, rootDir, true);
+    public static void configureRootDir(String rootDir) {
+        LogFactory.rootDir = rootDir;
     }
 
     public static void configureSync() {
@@ -121,7 +121,7 @@ public class LogFactory implements Closeable {
         LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
             logFactory = new LogFactory();
-            configureFromSystemProperties(logFactory, null);
+            logFactory.init(rootDir);
             INSTANCE = logFactory;
         }
         return logFactory;
@@ -297,6 +297,73 @@ public class LogFactory implements Closeable {
 
     public int getRecordLength() {
         return recordLength;
+    }
+
+    public void init(@Nullable String rootDir) {
+        assert !closed.get() && !running.get();
+
+        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+
+        boolean initialized = false;
+        // prevent creating blank log dir from unit tests
+        String logDir = ".";
+        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            logDir = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdir()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            File f = new File(logPath);
+            if (f.isFile() && f.canRead()) {
+                System.err.printf("Reading log configuration from %s%n", logPath);
+                try (FileInputStream fis = new FileInputStream(logPath)) {
+                    Properties properties = new Properties();
+                    properties.load(fis);
+                    configureFromProperties(properties, logDir);
+                    initialized = true;
+                } catch (IOException e) {
+                    throw new LogError("Cannot read " + logPath, e);
+                }
+            }
+        }
+
+        if (!initialized) {
+            //in this order of initialization specifying -Dout might end up using internal jar resources ...
+            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
+                if (is != null) {
+                    Properties properties = new Properties();
+                    properties.load(is);
+                    configureFromProperties(properties, logDir);
+                    System.err.println("Log configuration loaded from default internal file.");
+                } else {
+                    File f = new File(conf);
+                    if (f.canRead()) {
+                        try (FileInputStream fis = new FileInputStream(f)) {
+                            Properties properties = new Properties();
+                            properties.load(fis);
+                            configureFromProperties(properties, logDir);
+                            System.err.printf("Log configuration loaded from: %s%n", conf);
+                        }
+                    } else {
+                        configureDefaultWriter();
+                        System.err.println("Log configuration loaded using factory defaults.");
+                    }
+                }
+            } catch (IOException e) {
+                if (!DEFAULT_CONFIG.equals(conf)) {
+                    throw new LogError("Cannot read " + conf, e);
+                } else {
+                    configureDefaultWriter();
+                }
+            }
+        }
+
+        startThread();
     }
 
     public void startThread() {
@@ -541,87 +608,6 @@ public class LogFactory implements Closeable {
     }
 
     @TestOnly
-    static void configureFromSystemProperties(LogFactory logFactory) {
-        configureFromSystemProperties(logFactory, null, false);
-    }
-
-    static synchronized void configureFromSystemProperties(
-            @NotNull LogFactory logFactory,
-            @Nullable String rootDir,
-            boolean replacePrevInstance
-    ) {
-        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
-        if (conf == null) {
-            conf = DEFAULT_CONFIG;
-        }
-
-        boolean initialized = false;
-        // prevent creating blank log dir from unit tests
-        String logDir = ".";
-        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toString();
-            File logDirFile = new File(logDir);
-            if (!logDirFile.exists() && logDirFile.mkdir()) {
-                System.err.printf("Created log directory: %s%n", logDir);
-            }
-
-            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
-            File f = new File(logPath);
-            if (f.isFile() && f.canRead()) {
-                System.err.printf("Reading log configuration from %s%n", logPath);
-                try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
-                    properties.load(fis);
-                    logFactory.configureFromProperties(properties, logDir);
-                    initialized = true;
-                } catch (IOException e) {
-                    throw new LogError("Cannot read " + logPath, e);
-                }
-            }
-        }
-
-        if (!initialized) {
-            //in this order of initialization specifying -Dout might end up using internal jar resources ...
-            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
-                if (is != null) {
-                    Properties properties = new Properties();
-                    properties.load(is);
-                    logFactory.configureFromProperties(properties, logDir);
-                    System.err.println("Log configuration loaded from default internal file.");
-                } else {
-                    File f = new File(conf);
-                    if (f.canRead()) {
-                        try (FileInputStream fis = new FileInputStream(f)) {
-                            Properties properties = new Properties();
-                            properties.load(fis);
-                            logFactory.configureFromProperties(properties, logDir);
-                            System.err.printf("Log configuration loaded from: %s%n", conf);
-                        }
-                    } else {
-                        logFactory.configureDefaultWriter();
-                        System.err.println("Log configuration loaded using factory defaults.");
-                    }
-                }
-            } catch (IOException e) {
-                if (!DEFAULT_CONFIG.equals(conf)) {
-                    throw new LogError("Cannot read " + conf, e);
-                } else {
-                    logFactory.configureDefaultWriter();
-                }
-            }
-        }
-
-        if (replacePrevInstance) {
-            LogFactory oldLogFactory = INSTANCE;
-            if (oldLogFactory != null) {
-                oldLogFactory.close();
-            }
-            INSTANCE = logFactory;
-        }
-        logFactory.startThread();
-    }
-
-    @TestOnly
     ObjHashSet<LogWriter> getJobs() {
         return jobs;
     }
@@ -692,7 +678,7 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = writerConfigs.size(); i < n; i++) {
                 LogWriterConfig c = writerConfigs.getQuick(i);
                 // the channels array has a guarantee that
-                // all bits in level mask will point to the same queue
+                // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);

@@ -58,7 +58,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
         try (LogFactory factory = new LogFactory()) {
             try {
-                LogFactory.configureFromSystemProperties(factory);
+                factory.init(null);
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
@@ -206,7 +206,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog2.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -222,7 +222,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -538,7 +538,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for queueDepth", e.getMessage());
@@ -559,7 +559,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for recordLength", e.getMessage());
@@ -585,7 +585,7 @@ public class LogFactoryTest {
             System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
 
             try (LogFactory factory = new LogFactory()) {
-                LogFactory.configureFromSystemProperties(factory);
+                factory.init(null);
 
                 Log log = factory.create("xyz");
 
@@ -621,7 +621,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Unknown property: w.file.avocado", e.getMessage());
@@ -633,7 +633,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -694,7 +694,7 @@ public class LogFactoryTest {
                 props.store(stream, "");
             }
 
-            LogFactory.configureFromSystemProperties(factory, temp.getRoot().getPath(), false);
+            factory.init(temp.getRoot().getPath());
 
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
