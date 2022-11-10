@@ -22,7 +22,7 @@
 QuestDB ist eine Open-Source-Timeseries Datenbank für die Ingestion mit hohem Datendurchlauf und
 schnelle SQL-Abfragen mit einfacher Anwendung. Es unterstützt Schema agnostische
 Aufnahme mit dem InfluxDB-Zeilenprotokoll, dem PostgreSQL-Drahtprotokoll und einem REST
-API für Massenimporte und -exporte.
+für Bulk Importe und Exporte.
 
 QuestDB ist gut geeignet für Finanzmarktdaten, Anwendungsmetriken, Sensoren
 Daten, Echtzeitanalysen, Dashboards und Infrastrukturüberwachung.
