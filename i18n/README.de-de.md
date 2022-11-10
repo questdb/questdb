@@ -19,7 +19,7 @@
 
 # QuestDB
 
-QuestDB ist eine Open-Source-Zeitreihendatenbank für die Aufnahme mit hohem Durchsatz und
+QuestDB ist eine Open-Source-Timeseries Datenbank für die Ingestion mit hohem Datendurchlauf und
 schnelle SQL-Abfragen mit einfacher Bedienung. Es unterstützt Schema-Agnostik
 Aufnahme mit dem InfluxDB-Zeilenprotokoll, dem PostgreSQL-Drahtprotokoll und einem REST
 API für Massenimporte und -exporte.
