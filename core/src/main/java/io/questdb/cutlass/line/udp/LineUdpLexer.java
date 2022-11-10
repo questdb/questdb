@@ -375,7 +375,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
 
         @Override
-        public @NotNull CharSequence subSequence(int start, int end) {
+        protected @NotNull CharSequence _subSequence(int start, int end) {
             FloatingCharSequence fcs = new FloatingCharSequence();
             fcs.lo = this.lo + start * 2L;
             fcs.hi = this.lo + end * 2L;

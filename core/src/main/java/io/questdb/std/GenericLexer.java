@@ -446,11 +446,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return cs0.length() + cs1.length() + (sep != NO_SEPARATOR ? 1 : 0);
         }
 
-        @Override
-        public CharSequence subSequence(int start, int end) {
-            throw new UnsupportedOperationException();
-        }
-
         @NotNull
         @Override
         public String toString() {
@@ -506,7 +501,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
 
         @Override
-        public CharSequence subSequence(int start, int end) {
+        protected final CharSequence _subSequence(int start, int end) {
             FloatingSequence that = csPool.next();
             that.lo = lo + start;
             that.hi = lo + end;
@@ -528,7 +523,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
 
         @Override
-        public CharSequence subSequence(int start, int end) {
+        protected CharSequence _subSequence(int start, int end) {
             FloatingSequence next = csPool.next();
             next.lo = _lo + start;
             next.hi = _lo + end;
