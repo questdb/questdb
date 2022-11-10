@@ -615,10 +615,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void notifyWalTxnFailed() {
-        unpublishedWalTxnCount.incrementAndGet();
-    }
-
     public void notifyWalTxnRepublisher() {
         unpublishedWalTxnCount.incrementAndGet();
     }

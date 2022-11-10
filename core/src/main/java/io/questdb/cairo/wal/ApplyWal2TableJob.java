@@ -35,9 +35,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
-import io.questdb.std.IntLongHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.WalTxnNotificationTask;
 
@@ -79,34 +77,43 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         long lastSeqTxn = -1;
         long lastAppliedSeqTxn = -1;
         Path tempPath = Path.PATH.get();
-        do {
-            if (TableUtils.exists(engine.getConfiguration().getFilesFacade(), tempPath, engine.getConfiguration().getRoot(), systemTableName) != TableUtils.TABLE_EXISTS) {
-                LOG.info().$("table '").utf8(systemTableName).$("' does not exist, skipping WAL application").$();
-                return Long.MAX_VALUE;
-            }
 
-            // security context is checked on writing to the WAL and can be ignored here
-            try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
-                assert writer.getMetadata().getTableId() == tableId;
-                applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, tempPath);
-                lastAppliedSeqTxn = writer.getSeqTxn();
-            } catch (EntryUnavailableException tableBusy) {
-                if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
-                    LOG.critical().$("unsolicited table lock [table=").utf8(systemTableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
-                    return WAL_APPLY_FAILED;
+        try {
+            do {
+                // security context is checked on writing to the WAL and can be ignored here
+                if (engine.isWalTableDropped(systemTableName)) {
+                    // table was dropped, clean up the table directory.
+                    tryDestroyDroppedTable(systemTableName, null, engine, tempPath);
+                    return Long.MAX_VALUE;
                 }
-                // This is good, someone else will apply the data
-                break;
-            } catch (CairoException ex) {
-                LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(systemTableName)
-                        .$(", error=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .I$();
-                return WAL_APPLY_FAILED;
-            }
 
-            lastSeqTxn = engine.getTableSequencerAPI().lastTxn(systemTableName);
-        } while (lastAppliedSeqTxn < lastSeqTxn);
+                if (!engine.getTableSequencerAPI().isWalSystemName(systemTableName)) {
+                    LOG.info().$("table '").utf8(systemTableName).$("' does not exist, skipping WAL application").$();
+                    return Long.MAX_VALUE;
+                }
+
+                try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
+                    assert writer.getMetadata().getTableId() == tableId;
+                    applyOutstandingWalTransactions(systemTableName, writer, engine, sqlToOperation, tempPath);
+                    lastAppliedSeqTxn = writer.getSeqTxn();
+                } catch (EntryUnavailableException tableBusy) {
+                    if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                        LOG.critical().$("unsolicited table lock [table=").utf8(systemTableName).$(", lock_reason=").$(tableBusy.getReason()).I$();
+                        // Don't suspend table. Perhaps writer will be unlocked with no transaction applied.
+                    }
+                    // This is good, someone else will apply the data
+                    break;
+                }
+
+                lastSeqTxn = engine.getTableSequencerAPI().lastTxn(systemTableName);
+            } while (lastAppliedSeqTxn < lastSeqTxn);
+        } catch (CairoException ex) {
+            LOG.critical().$("WAL apply job failed, table suspended [table=").utf8(systemTableName)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return WAL_APPLY_FAILED;
+        }
         assert lastAppliedSeqTxn == lastSeqTxn;
 
         return lastAppliedSeqTxn;
@@ -121,6 +128,47 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             useful = true;
         }
         return useful;
+    }
+
+    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, CharSequence systemTableName) {
+        // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
+        boolean allClean = true;
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        tempPath.of(engine.getConfiguration().getRoot()).concat(systemTableName);
+        int rootLen = tempPath.length();
+
+        long p = ff.findFirst(tempPath.$());
+        if (p > 0) {
+            try {
+                do {
+                    long pUtf8NameZ = ff.findName(p);
+                    int type = ff.findType(p);
+                    if (Files.isDir(pUtf8NameZ, type)) {
+                        tempPath.trimTo(rootLen);
+                        tempPath.concat(pUtf8NameZ).$();
+
+                        if (!Chars.endsWith(tempPath, SEQ_DIR) && !Chars.equals(tempPath, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
+                            if (ff.rmdir(tempPath) != 0) {
+                                allClean = false;
+                                LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
+                            }
+                        }
+
+                    } else if (type == Files.DT_FILE) {
+                        tempPath.trimTo(rootLen);
+                        tempPath.concat(pUtf8NameZ).$();
+                        if (!ff.remove(tempPath)) {
+                            allClean = false;
+                            LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
+                        }
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+            }
+        }
+
+        return allClean;
     }
 
     private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {
@@ -141,17 +189,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private static void tryDestroyDroppedTable(CharSequence systemTableName, TableWriter writer, CairoEngine engine) {
+    private static void tryDestroyDroppedTable(CharSequence systemTableName, TableWriter writer, CairoEngine engine, Path tempPath) {
         if (engine.lockReadersBySystemName(systemTableName)) {
             try {
-                writer.destroy();
+                if (writer != null) {
+                    // Force writer to close all the files.
+                    writer.destroy();
+                }
+                if (!cleanDroppedTableDirectory(engine, tempPath, systemTableName)) {
+                    engine.notifyWalTxnRepublisher();
+                }
             } finally {
                 engine.releaseReadersBySystemName(systemTableName);
             }
         } else {
             LOG.info().$("table '").utf8(systemTableName)
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
-            engine.notifyWalTxnFailed();
+            engine.notifyWalTxnRepublisher();
         }
     }
 
@@ -163,11 +217,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Path tempPath
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
-        if (engine.isWalTableDropped(systemTableName)) {
-            LOG.info().$("table '").utf8(systemTableName).$("' is dropped, skipping WAL application").$();
-            tryDestroyDroppedTable(systemTableName, writer, engine);
-            return;
-        }
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(systemTableName, writer.getSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -221,11 +270,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             break;
 
                         case DROP_TABLE_WALID:
-                            tryDestroyDroppedTable(systemTableName, writer, engine);
+                            tryDestroyDroppedTable(systemTableName, writer, engine, tempPath);
                             return;
-
-                        case RENAME_TABLE_WALID:
-                            break;
 
                         case 0:
                             throw CairoException.critical(0)
@@ -304,12 +350,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException ex) {
-            // This is fine, some syntax error, we should block WAL processing if SQL is not valid
+            // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
             LOG.error().$("error applying SQL to wal table [table=")
                     .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(ex.getFlyweightMessage()).I$();
         } catch (CairoException e) {
             if (e.isWALTolerable()) {
-                // This is fine, some syntax error, we should block WAL processing if SQL is not valid
+                // This is fine, some syntax error, we should not block WAL processing if SQL is not valid
                 LOG.error().$("error applying SQL to wal table [table=")
                         .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
             } else {

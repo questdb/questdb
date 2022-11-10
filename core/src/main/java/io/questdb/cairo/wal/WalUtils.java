@@ -32,7 +32,6 @@ public class WalUtils {
     public static final int DROP_TABLE_WALID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final int METADATA_WALID = -1;
-    public static final int RENAME_TABLE_WALID = -3;
     public static final String SEQ_DIR = "txn_seq";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
