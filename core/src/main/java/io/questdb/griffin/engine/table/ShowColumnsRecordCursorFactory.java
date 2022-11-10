@@ -105,7 +105,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
-            reader = executionContext.getCairoEngine().getReader(executionContext.getCairoSecurityContext(), tableName);
+            reader = executionContext.getReader(tableName);
             toTop();
             return this;
         }

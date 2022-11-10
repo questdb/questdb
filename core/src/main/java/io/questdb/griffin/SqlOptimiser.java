@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.model.*;
@@ -3578,10 +3579,10 @@ class SqlOptimiser {
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, metadata);
+        validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata) throws SqlException {
+    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try {
             tempList.clear(metadata.getColumnCount());
             tempList.setPos(metadata.getColumnCount());
@@ -3624,6 +3625,10 @@ class SqlOptimiser {
 
             // Save update table name as a String to not re-create string later on from CharSequence
             String tableName = engine.getTableNameBySystemName(metadata.getSystemTableName());
+            if (!sqlExecutionContext.isWalApplication() && !Chars.equals(tableName, updateQueryModel.getTableName().token)) {
+                // Table renamed
+                throw ReaderOutOfDateException.of(updateQueryModel.getTableName().token);
+            }
             updateQueryModel.setUpdateTableName(tableName);
         } catch (EntryLockedException e) {
             throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);

@@ -7433,6 +7433,9 @@ create table tab as (
                         connection.prepareStatement("rename table ts to ts2").execute();
                         try {
                             update.execute();
+                            if (isEnabledForWalRun()) {
+                                Assert.fail("Exception expected");
+                            }
                         } catch (PSQLException ex) {
                             TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
                         }
