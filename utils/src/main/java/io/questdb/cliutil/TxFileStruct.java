@@ -24,6 +24,8 @@
 
 package io.questdb.cliutil;
 
+import io.questdb.cairo.TableUtils;
+
 import java.util.ArrayList;
 
 import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
@@ -47,11 +49,15 @@ class TxFileStruct {
     public long TX_OFFSET_TXN;
 
     public long calculateFileSize() {
-        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * 4) + TX_BASE_HEADER_SIZE;
+        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION) + TX_BASE_HEADER_SIZE;
     }
 
     static class AttachedPartition {
+        long AVAILABLE0;
+        long AVAILABLE1;
+        long AVAILABLE2;
         long DATA_TX;
+        long MASK;
         long NAME_TX;
         long SIZE;
         long TS;

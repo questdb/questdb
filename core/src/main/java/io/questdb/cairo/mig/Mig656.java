@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mig;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -40,12 +41,13 @@ public class Mig656 {
         // now there are 8. The 5th is the partition mask, whose 64th bit flags
         // the partition as RO. Prior to version 427 all partitions were RW
 
-        MigrationActions.LOG.info().$("extending partition table on tx file [table=").$(context.getTablePath()).I$();
-
         final FilesFacade ff = context.getFf();
         final Path path = context.getTablePath();   // preloaded with tha table's path
         final int pathLen = path.length();
         final Path other = context.getTablePath2().of(path).trimTo(pathLen);
+
+        // make sure we are migrating from 426
+        assert 426 == TableUtils.readIntOrFail(ff, context.getMetadataFd(), META_OFFSET_VERSION, context.getTempMemory(Long.BYTES), path);
 
         // backup current _txn file to _txn.v426
         path.concat(TableUtils.TXN_FILE_NAME).$();
@@ -56,23 +58,24 @@ public class Mig656 {
         EngineMigration.backupFile(ff, path, other, TableUtils.TXN_FILE_NAME, 426);
 
         // open _txn file for RW
+        final int newPartitionSegmentSize;
         try (MemoryMARW txFile = context.createRwMemoryOf(ff, path)) {
 
             final long version = txFile.getLong(TX_BASE_OFFSET_VERSION_64);
-            boolean isA = (version & 1L) == 0L;
+            boolean isA = (version & 1L) == 0L; // formality for readability, as I know the version I expect and whether it is even/odd
             final long partitionSegmentSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
             final int partitionSegmentSize = txFile.getInt(partitionSegmentSizeOffset);
+            newPartitionSegmentSize = partitionSegmentSize * 2;
+
+            MigrationActions.LOG.info().$("extending partition table on tx file [table=").$(context.getTablePath())
+                    .$(", version=").$(version)
+                    .$(", from_size=").$(partitionSegmentSize)
+                    .$(", to_size=").$(newPartitionSegmentSize)
+                    .$(", from_partitions=").$(partitionSegmentSize / (4 * Long.BYTES)) // version 426 -> 4 longs
+                    .$(", to_partitions=").$(newPartitionSegmentSize / (8 * Long.BYTES)) // version 427 -> 8 longs
+                    .I$();
 
             if (partitionSegmentSize > 0) {
-
-                final int newPartitionSegmentSize = partitionSegmentSize * 2;
-
-                MigrationActions.LOG.info().$("extending partition table [table=").$(context.getTablePath())
-                        .$(", version=").$(version)
-                        .$(", from_size=").$(partitionSegmentSize)
-                        .$(", to_size=").$(newPartitionSegmentSize)
-                        .$(", partitions=").$(partitionSegmentSize / (4 * Long.BYTES)) // version 426 -> 4 longs
-                        .I$();
 
                 // read/extend current partition table
                 MemoryARW txFileUpdate = context.getTempVirtualMem();
@@ -102,6 +105,19 @@ public class Mig656 {
                     txFile.putBlockOfBytes(txFileUpdate.getPageAddress(pageId++), writeSize);
                     updateSize -= writeSize;
                 }
+            }
+        }
+
+        // read back the _txn file to verify it
+        try (MemoryMARW txFile = context.createRwMemoryOf(ff, path)) {
+            final long version = txFile.getLong(TX_BASE_OFFSET_VERSION_64);
+            boolean isA = (version & 1L) == 0L;
+            final long partitionSegmentSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
+            final int symbolsSize = txFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+            final int baseOffset = txFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
+            final long partitionSegmentOffset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + symbolsSize;
+            if (txFile.getInt(partitionSegmentSizeOffset) != newPartitionSegmentSize || txFile.getInt(partitionSegmentOffset) != newPartitionSegmentSize) {
+                throw CairoException.critical(0).put("could not extend partition table on tx file [table=").put(context.getTablePath()).put(']');
             }
         }
     }

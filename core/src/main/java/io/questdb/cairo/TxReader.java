@@ -36,7 +36,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
-
     protected static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected static final int PARTITION_AVAILABLE0_OFFSET = 5;
     protected static final int PARTITION_AVAILABLE1_OFFSET = 6;
