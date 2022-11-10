@@ -673,8 +673,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         boolean validateDataFiles = partitionSize < 0;
 
         boolean checkPassed = false;
+        boolean isSoftLink;
         try {
             if (ff.exists(detachedPath)) {
+
+                isSoftLink = ff.isSoftLink(detachedPath);
+
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
                 if (partitionSize > -1L) {
@@ -696,7 +700,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 // main columnVersionWriter is now aligned with the detached partition values read from partition _cv file
                 // in case of an error it has to be clean up
 
-                if (validateDataFiles && configuration.attachPartitionCopy()) {
+                if (validateDataFiles && configuration.attachPartitionCopy() && !isSoftLink) { // soft links are RO, no copy involved
                     // Copy partition if configured to do so and it's not CSV import
                     if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
                         LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
@@ -735,6 +739,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             txWriter.beginPartitionSizeUpdate();
             txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
+            if (isSoftLink) {
+                txWriter.setPartitionIsRO(timestamp, true);
+            }
             txWriter.bumpTruncateVersion();
 
             columnVersionWriter.commit();

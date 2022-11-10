@@ -279,19 +279,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setSeqTxn(long seqTxn) {
-        this.seqTxn = seqTxn;
+    public void setPartitionIsRO(long timestamp, boolean isRO) {
+        int index = findAttachedPartitionIndex(timestamp);
+        if (index > -1) {
+            int offset = index * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET;
+            long mask = attachedPartitions.getQuick(offset);
+            if (isRO) {
+                mask |= 1L << PARTITION_MASK_RO_BIT_OFFSET;
+            } else {
+                mask &= ~(1L << PARTITION_MASK_RO_BIT_OFFSET);
+            }
+            attachedPartitions.setQuick(offset, mask);
+        }
     }
 
-    public void setPartitionIsRO(int i, boolean isRO) {
-        int offset = i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET;
-        long mask = attachedPartitions.getQuick(offset);
-        if (isRO) {
-            mask |= 1L << PARTITION_MASK_RO_BIT_OFFSET;
-        } else {
-            mask &= ~(1L << PARTITION_MASK_RO_BIT_OFFSET);
-        }
-        attachedPartitions.setQuick(offset, mask);
+    public void setSeqTxn(long seqTxn) {
+        this.seqTxn = seqTxn;
     }
 
     public void switchPartitions(long timestamp) {

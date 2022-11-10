@@ -28,16 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -121,6 +119,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test426() throws IOException, SqlException {
+        Assume.assumeTrue(Os.type != Os.WINDOWS); // the zip file is not ok with windows, it was created in a mac
         doMigration("/migration/data_426.zip", false, false, false, false);
     }
 
@@ -136,10 +135,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         File dir = out.getParentFile();
         if (!dir.exists()) {
             Assert.assertTrue(dir.mkdirs());
-        } else if (out.exists()) {
-            Assert.assertTrue(out.delete());
         }
-        System.out.printf("copyInputStream [out.file=%s%n", out);
         try (FileOutputStream fos = new FileOutputStream(out)) {
             int n;
             while ((n = is.read(buffer, 0, buffer.length)) > 0) {

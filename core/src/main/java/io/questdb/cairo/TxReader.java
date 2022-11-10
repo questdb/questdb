@@ -402,10 +402,6 @@ public class TxReader implements Closeable, Mutable {
         seqTxn = -1L;
     }
 
-    private int findAttachedPartitionIndex(long ts) {
-        return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
-    }
-
     private int getInt(long readOffset) {
         assert readOffset + 4 <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);
@@ -479,6 +475,10 @@ public class TxReader implements Closeable, Mutable {
 
     static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
         return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
+    }
+
+    protected int findAttachedPartitionIndex(long ts) {
+        return findAttachedPartitionIndexByLoTimestamp(getPartitionTimestampLo(ts));
     }
 
     int findAttachedPartitionIndexByLoTimestamp(long ts) {

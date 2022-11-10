@@ -110,6 +110,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
 
+            // verify RO flag
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.getPartitionIsRO(0));
+                Assert.assertFalse(txFile.getPartitionIsRO(1));
+            }
+
             // verify content
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -209,6 +216,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
+            // verify RO flag
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.getPartitionIsRO(0));
+                Assert.assertFalse(txFile.getPartitionIsRO(1));
+            }
+
             // detach the partition which was attached via soft link will result in the link being removed
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -276,6 +290,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
 
+            // verify RO flag
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.getPartitionIsRO(0));
+                Assert.assertFalse(txFile.getPartitionIsRO(1));
+            }
+
             // drop the partition which was attached via soft link
             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -323,6 +344,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             "2022-11-04T00:00:17.279900Z\t2022-11-05T23:59:59.000000Z\t10000\n");
+
+            // verify RO flag
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.getPartitionIsRO(0));
+                Assert.assertFalse(txFile.getPartitionIsRO(1));
+            }
 
             try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 // drop the partition which was attached via soft link
@@ -1604,6 +1632,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             if (ts > timestamp) {
                 timestamp = ts;
             }
+        }
+
+        // verify RO flag
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, dst.getName())) {
+            TxReader txFile = reader.getTxFile();
+            Assert.assertFalse(txFile.getPartitionIsRO(0));
+            Assert.assertFalse(txFile.getPartitionIsRO(1));
         }
 
         // Check table is writable after partition attach

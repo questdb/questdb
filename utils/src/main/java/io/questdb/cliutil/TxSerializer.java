@@ -47,18 +47,18 @@ import java.util.ArrayList;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxSerializer {
-    static long TX_OFFSET_DATA_VERSION = TX_OFFSET_DATA_VERSION_64;
-    static long TX_OFFSET_FIXED_ROW_COUNT = TX_OFFSET_FIXED_ROW_COUNT_64;
-    static long TX_OFFSET_MAP_WRITER_COUNT = TX_OFFSET_MAP_WRITER_COUNT_32;
-    static long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MAX_TIMESTAMP_64;
-    static long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP_64;
-    static long TX_OFFSET_PARTITION_TABLE_VERSION = TX_OFFSET_PARTITION_TABLE_VERSION_64;
-    static long TX_OFFSET_SEQ_TXN = TX_OFFSET_SEQ_TXN_64;
-    static long TX_OFFSET_STRUCT_VERSION = TX_OFFSET_STRUCT_VERSION_64;
-    static long TX_OFFSET_TRANSIENT_ROW_COUNT = TX_OFFSET_TRANSIENT_ROW_COUNT_64;
-    static long TX_OFFSET_TRUNCATE_VERSION = TX_OFFSET_TRUNCATE_VERSION_64;
-    static long TX_OFFSET_TXN = TX_OFFSET_TXN_64;
-    static FilesFacade ff = new FilesFacadeImpl();
+    private static long TX_OFFSET_DATA_VERSION = TX_OFFSET_DATA_VERSION_64;
+    private static long TX_OFFSET_FIXED_ROW_COUNT = TX_OFFSET_FIXED_ROW_COUNT_64;
+    private static long TX_OFFSET_MAP_WRITER_COUNT = TX_OFFSET_MAP_WRITER_COUNT_32;
+    private static long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MAX_TIMESTAMP_64;
+    private static long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP_64;
+    private static long TX_OFFSET_PARTITION_TABLE_VERSION = TX_OFFSET_PARTITION_TABLE_VERSION_64;
+    private static long TX_OFFSET_SEQ_TXN = TX_OFFSET_SEQ_TXN_64;
+    private static long TX_OFFSET_STRUCT_VERSION = TX_OFFSET_STRUCT_VERSION_64;
+    private static long TX_OFFSET_TRANSIENT_ROW_COUNT = TX_OFFSET_TRANSIENT_ROW_COUNT_64;
+    private static long TX_OFFSET_TRUNCATE_VERSION = TX_OFFSET_TRUNCATE_VERSION_64;
+    private static long TX_OFFSET_TXN = TX_OFFSET_TXN_64;
+    private static FilesFacade ff = new FilesFacadeImpl();
 
     /*
      * Read _txn file and prints to std output JSON translation.
@@ -180,7 +180,7 @@ public class TxSerializer {
             if (!ff.exists(path)) {
                 System.out.println("error: " + txPath + " does not exist");
             }
-            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, 2 * ff.length(path), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
                 final boolean isA = (version & 1L) == 0L;
