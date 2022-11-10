@@ -140,13 +140,13 @@ public abstract class PurgingOperator {
                         updateTxn,
                         cleanupColumnVersionsAsync
                 );
-                log.info().$("column purge scheduled [table=").$(tableWriter.getTableName())
-                        .$(", column=").$(columnName)
+                log.info().$("column purge scheduled [table=").utf8(tableWriter.getTableName())
+                        .$(", column=").utf8(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();
             } else {
-                log.info().$("columns purged locally [table=").$(tableWriter.getTableName())
-                        .$(", column=").$(columnName)
+                log.info().$("columns purged locally [table=").utf8(tableWriter.getTableName())
+                        .$(", column=").utf8(columnName)
                         .$(", newColumnVersion=").$(updateTxn - 1).I$();
             }
         }
@@ -174,8 +174,8 @@ public abstract class PurgingOperator {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$(tableName)
-                        .$("\"' [columnName=").$(columnName)
+                log.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").utf8(tableName)
+                        .$("\"' [columnName=").utf8(columnName)
                         .$(", updateTxn=").$(updateTxn)
                         .I$();
                 return;

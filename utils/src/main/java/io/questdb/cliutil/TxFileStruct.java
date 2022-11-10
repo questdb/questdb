@@ -49,7 +49,7 @@ class TxFileStruct {
     public long TX_OFFSET_TXN;
 
     public long calculateFileSize() {
-        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION) + TX_BASE_HEADER_SIZE;
+        return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * Long.BYTES * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION) + TX_BASE_HEADER_SIZE;
     }
 
     static class AttachedPartition {

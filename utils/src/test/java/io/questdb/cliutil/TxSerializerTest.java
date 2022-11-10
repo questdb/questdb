@@ -205,7 +205,7 @@ public class TxSerializerTest {
         engine.releaseAllReaders();
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root + "/" + "xxx/_txn";
+        String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
         String json = serializer.toJson(txPath);
         serializer.serializeJson(json, txPath);
 
@@ -222,11 +222,9 @@ public class TxSerializerTest {
 
         if (oooSupports) {
             // Insert same records
-            compiler.compile("insert into xxx select * from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select * from xxx", sqlExecutionContext);
         } else {
-            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx",
-                    sqlExecutionContext);
+            compiler.compile("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx", sqlExecutionContext);
         }
         assertFirstColumnValueLong("select count() from xxx", 20);
         assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);

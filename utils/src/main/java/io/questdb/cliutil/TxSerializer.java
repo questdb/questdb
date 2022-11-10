@@ -27,6 +27,7 @@ package io.questdb.cliutil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -149,7 +150,7 @@ public class TxSerializer {
                 if (tx.ATTACHED_PARTITION_SIZE != 0) {
                     int ipart = 0;
                     for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
-                        long offset = baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, 4 * ipart++);
+                        long offset = baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, LONGS_PER_TX_ATTACHED_PARTITION * ipart++);
                         rwTxMem.putLong(offset, part.TS);
                         offset += Long.BYTES;
                         rwTxMem.putLong(offset, part.SIZE);
@@ -181,9 +182,9 @@ public class TxSerializer {
             }
             try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
-                long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
-                boolean isA = (version & 1L) == 0L;
-                long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
+                final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
+                final boolean isA = (version & 1L) == 0L;
+                final long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
                 tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN);
                 tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT);
                 tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT);
@@ -197,7 +198,7 @@ public class TxSerializer {
                 tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION);
                 tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN);
 
-                int symbolsCount = tx.TX_OFFSET_MAP_WRITER_COUNT;
+                final int symbolsCount = tx.TX_OFFSET_MAP_WRITER_COUNT;
                 tx.SYMBOLS = new ArrayList<>();
                 long offset = baseOffset + getSymbolWriterIndexOffset(0);
                 while (offset + 3 < Math.min(roTxMem.size(), baseOffset + getSymbolWriterIndexOffset(symbolsCount))) {
@@ -211,43 +212,47 @@ public class TxSerializer {
                     }
                 }
 
-                int txAttachedPartitionsSize = roTxMem.getInt(baseOffset + getPartitionTableSizeOffset(symbolsCount)) / Long.BYTES / LONGS_PER_TX_ATTACHED_PARTITION;
+                final long partitionTableSizeOffset = baseOffset + getPartitionTableSizeOffset(symbolsCount);
+                assert partitionTableSizeOffset == offset;
+                final int txAttachedPartitionsSizeInBytes = roTxMem.getInt(partitionTableSizeOffset);
+                final int txAttachedPartitionsSize = txAttachedPartitionsSizeInBytes / (Long.BYTES * LONGS_PER_TX_ATTACHED_PARTITION);
                 tx.ATTACHED_PARTITION_SIZE = txAttachedPartitionsSize;
-                tx.ATTACHED_PARTITIONS = new ArrayList<>();
-                offset = baseOffset + getPartitionTableIndexOffset(symbolsCount, 0);
+                tx.ATTACHED_PARTITIONS = new ArrayList<>(txAttachedPartitionsSize);
+                offset += 4;
 
-                while (offset + Long.BYTES - 1 < Math.min(roTxMem.size(), baseOffset + getPartitionTableIndexOffset(symbolsCount, txAttachedPartitionsSize * LONGS_PER_TX_ATTACHED_PARTITION))) {
+                final long maxOffset = partitionTableSizeOffset + 4 + txAttachedPartitionsSizeInBytes;
+                while (offset + 7 < Math.min(roTxMem.size(), maxOffset)) {
                     TxFileStruct.AttachedPartition partition = new TxFileStruct.AttachedPartition();
                     tx.ATTACHED_PARTITIONS.add(partition);
                     partition.TS = roTxMem.getLong(offset);
-                    offset += Long.BYTES;
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    offset += 8;
+                    if (offset + 7 < roTxMem.size()) {
                         partition.SIZE = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.NAME_TX = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.DATA_TX = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.MASK = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE0 = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE1 = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
-                    if (offset + Long.BYTES - 1 < roTxMem.size()) {
+                    if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE2 = roTxMem.getLong(offset);
-                        offset += Long.BYTES;
+                        offset += 8;
                     }
                 }
             }
