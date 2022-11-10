@@ -32,7 +32,7 @@ Semantik macht es einfach, Daten aus mehreren Quellen zu korrelieren mit
 relationalen und Timeseries-Joins. Wir erreichen eine hohe Performance durch
 spaltenorientiertes Speichermodell, parallelisierte Vektorausführung, SIMD-Anweisungen,
 und Low-Latency-Techniken. Die gesamte Codebasis ist von Grund auf neu aufgebaut
-Java und C++, ohne Abhängigkeiten und ohne Garbage Collection.
+in Java und C++, ohne Abhängigkeiten und ohne Garbage Collection.
 
 <div align="center">
   <a href="https://demo.questdb.io">
