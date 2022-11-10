@@ -101,7 +101,7 @@ Sprachen:
 ## Vergleich von QuestDB mit anderen Open-Source-TSDBs
 
 [Dieser Artikel](https://questdb.io/blog/2021/07/05/comparing-questdb-timescaledb-influxdb/)
-vergleicht QuestDB übergreifend mit anderen Open-Source-Zeitreihendatenbanken
+vergleicht QuestDB übergreifend mit anderen Open-Source-Timeseriesdatenbanken
 Funktionalität, Reife und Leistung.
 
 Hier sind hohe Kardinalität
