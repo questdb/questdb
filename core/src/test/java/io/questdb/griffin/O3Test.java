@@ -1677,7 +1677,7 @@ public class O3Test extends AbstractO3Test {
                 r.putSym(1, symbols[index]);
                 r.append();
             }
-            w.intermediateCommit();
+            w.ic();
 
             // now do out of order
             for (int i = 0; i < 100_000; i++) {
@@ -6417,7 +6417,7 @@ public class O3Test extends AbstractO3Test {
                     }
                 }
                 // Setting the lag is important since we want some rows to remain pending after each commit.
-                w.intermediateCommit(1_000L);
+                w.ic(1_000L);
             }
             // Commit pending O3 rows.
             w.commit();

@@ -824,11 +824,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
-    public void intermediateCommit(long o3MaxLag) {
+    public void ic(long o3MaxLag) {
         commit(defaultCommitMode, o3MaxLag);
     }
 
-    public void intermediateCommit(int commitMode) {
+    public void ic(int commitMode) {
         commit(commitMode, metadata.getO3MaxLag());
     }
 
@@ -1644,7 +1644,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     @Override
-    public void intermediateCommit() {
+    public void ic() {
         commit(defaultCommitMode, metadata.getO3MaxLag());
     }
 

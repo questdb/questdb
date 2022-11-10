@@ -243,12 +243,12 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public void intermediateCommit() {
+    public void ic() {
         commit();
     }
 
     @Override
-    public void intermediateCommit(long o3MaxLag) {
+    public void ic(long o3MaxLag) {
         commit();
     }
 

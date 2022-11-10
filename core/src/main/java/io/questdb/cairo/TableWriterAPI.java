@@ -40,9 +40,16 @@ public interface TableWriterAPI extends Closeable {
 
     long commit();
 
-    void intermediateCommit();
+    /**
+     * Intermediate commit. It provides the best effort guarantee to commit as much data from the RSS to storage.
+     * However, it also takes into account O3 data overlap from the previous intermediate commits and adjust
+     * the internal "lag" to absorb merges while data is in RSS rather than disk.
+     *
+     * When data is in order and O3 area is empty, ic() equals to commit().
+     */
+    void ic();
 
-    void intermediateCommit(long o3MaxLag);
+    void ic(long o3MaxLag);
 
     TableRecordMetadata getMetadata();
 

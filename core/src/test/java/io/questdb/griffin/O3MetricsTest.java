@@ -347,14 +347,14 @@ public class O3MetricsTest extends AbstractO3Test {
                 r.append();
                 ++rowCount;
 
-                w.intermediateCommit();
+                w.ic();
 
                 r = w.newRow(millenniumTimestamp(7, 45));
                 r.putInt(0, 400);
                 r.append();
                 ++rowCount;
 
-                w.intermediateCommit();
+                w.ic();
 
                 w.commit();
                 Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());

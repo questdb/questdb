@@ -689,11 +689,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void intermediateCommit() {
+        public void ic() {
         }
 
         @Override
-        public void intermediateCommit(long o3MaxLag) {
+        public void ic(long o3MaxLag) {
         }
 
         @Override

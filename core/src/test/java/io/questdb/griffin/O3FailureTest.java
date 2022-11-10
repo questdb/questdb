@@ -3780,7 +3780,7 @@ public class O3FailureTest extends AbstractO3Test {
                         r.append();
                     }
                     try {
-                        w.intermediateCommit();
+                        w.ic();
                     } catch (Throwable e) {
                         try {
                             w.rollback();

@@ -1300,7 +1300,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.intermediateCommit(maxO3Lag);
+                writer.ic(maxO3Lag);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1329,7 +1329,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.intermediateCommit(maxO3Lag);
+                writer.ic(maxO3Lag);
                 deadline = rowCount + batchSize;
             }
         }
