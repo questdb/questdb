@@ -42,7 +42,7 @@ in Java und C++, ohne Abhängigkeiten und ohne Garbage Collection.
 
 ## Probieren Sie QuestDB aus
 
-Wir stellen eine [Live-Demo](https://demo.questdb.io/) bereit, die mit den neuesten bereitgestellt wird
+Wir stellen eine [Live-Demo](https://demo.questdb.io/) bereit, die mit den neuesten QuestDB Release
 QuestDB-Release und Beispieldatensätze:
 
 - 10 Jahre Taxifahrten in NYC mit 1,6 Milliarden Reihen
