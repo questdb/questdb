@@ -134,7 +134,12 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private static void copyInputStream(byte[] buffer, File out, InputStream is) throws IOException {
         File dir = out.getParentFile();
-        Assert.assertTrue(dir.exists() || dir.mkdirs());
+        if (!dir.exists()) {
+            Assert.assertTrue(dir.mkdirs());
+        } else if (out.exists()) {
+            Assert.assertTrue(out.delete());
+        }
+        System.out.printf("copyInputStream [out.file=%s%n", out);
         try (FileOutputStream fos = new FileOutputStream(out)) {
             int n;
             while ((n = is.read(buffer, 0, buffer.length)) > 0) {
