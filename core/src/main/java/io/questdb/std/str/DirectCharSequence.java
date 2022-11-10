@@ -68,7 +68,7 @@ public class DirectCharSequence extends AbstractCharSequence implements Mutable 
     }
 
     @Override
-    public CharSequence subSequence(int start, int end) {
+    protected CharSequence _subSequence(int start, int end) {
         DirectCharSequence seq = new DirectCharSequence();
         seq.lo = this.lo + start;
         seq.hi = this.lo + end;

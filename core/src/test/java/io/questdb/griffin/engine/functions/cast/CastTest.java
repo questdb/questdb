@@ -4876,6 +4876,22 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrToDouble_doubleParserTakingSlowPath() throws Exception {
+        assertQuery(
+                "a\n",
+                "select cast(a as double) as a from tab",
+                "create table tab (a string)",
+                null,
+                "insert into tab values ('4.9E-324')",
+                "a\n" +
+                        "4.9E-324\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToFloat() throws Exception {
         assertQuery(
                 "a\n",
