@@ -79,7 +79,7 @@ Sie können mit QuestDB über die folgenden Schnittstellen interagieren:
 
 - [Web Console](https://questdb.io/docs/develop/web-console/) für interaktiv
   SQL-Editor auf Port `9000`
-- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) zum
+- [InfluxDB line protocol](https://questdb.io/docs/reference/api/influxdb/) zur
   Aufnahme mit hohem Durchsatz am Port `9009`
 - [REST API](https://questdb.io/docs/reference/api/rest/) am port `9000`
 - [PostgreSQL wire protocol](https://questdb.io/docs/reference/api/postgres/) am
