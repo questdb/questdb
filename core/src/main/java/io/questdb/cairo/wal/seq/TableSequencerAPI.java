@@ -31,15 +31,17 @@ import io.questdb.cairo.wal.TableNameRegistry;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.Function;
+
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.seq.TableTransactionLog.MAX_TXN_OFFSET;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
@@ -88,22 +90,61 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void forAllWalTables(final RegisteredTable callback) {
+        final CharSequence root = configuration.getRoot();
+        final FilesFacade ff = configuration.getFilesFacade();
+        Path path = Path.PATH.get();
+
         for (CharSequence systemTableName : tableNameRegistry.getTableSystemNames()) {
             if (tableNameRegistry.isWalSystemTableName(systemTableName) || tableNameRegistry.isWalTableDropped(systemTableName)) {
                 long lastTxn;
                 int tableId;
 
                 try {
-                    try (TableSequencerImpl sequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
-                        lastTxn = sequencer.lastTxn();
-                        tableId = sequencer.getTableId();
-                    } catch (CairoException e) {
-                        LOG.critical().$("could not open sequencer for table [name=").utf8(systemTableName)
-                                .$(", errno=").$(e.getErrno())
-                                .$(", error=").$(e.getFlyweightMessage()).I$();
-                        continue;
+                    try {
+                        if (!seqRegistry.containsKey(systemTableName)) {
+                            // Fast path.
+                            // The following calls are racy, i.e. there might be a sequencer modifying both
+                            // metadata and log concurrently as we read the values. It's ok since we iterate
+                            // through the WAL tables periodically, so eventually we should see the updates.
+                            path.of(root).concat(systemTableName).concat(SEQ_DIR);
+                            long fdMeta = -1;
+                            long fdTxn = -1;
+                            try {
+                                fdMeta = openFileRO(ff, path, META_FILE_NAME);
+                                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                                tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
+                                lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                            } finally {
+                                if (fdMeta > -1) {
+                                    ff.close(fdMeta);
+                                }
+                                if (fdTxn > -1) {
+                                    ff.close(fdTxn);
+                                }
+                            }
+                        } else {
+                            // Slow path.
+                            try (TableSequencer tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
+                                lastTxn = tableSequencer.lastTxn();
+                                tableId = tableSequencer.getTableId();
+                            }
+                        }
+                    } catch (CairoException ex) {
+                        LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
+                                .$(", error=").$((Throwable) ex).I$();
+                        return;
                     }
-                    callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
+                    if (tableId < 0 || lastTxn < 0) {
+                        LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", tableId=").$(tableId)
+                                .$(", lastTxn=").$(lastTxn).I$();
+                        return;
+                    }
+                    try {
+                        callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
+                    } catch (CairoException ex) {
+                        LOG.critical().$("could not process table sequencer [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
+                                .$(", error=").$((Throwable) ex).I$();
+                    }
                 } catch (CairoException e) {
                     LOG.error().$("failed process WAL table [name=").utf8(systemTableName)
                             .$(", errno=").$(e.getErrno())
@@ -328,6 +369,16 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    private static long openFileRO(FilesFacade ff, Path path, CharSequence fileName) {
+        final int rootLen = path.length();
+        path.concat(fileName).$();
+        try {
+            return TableUtils.openRO(ff, path, LOG);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     @NotNull
     private TableSequencerEntry getTableSequencerEntry(String systemTableName, SequencerLockType lock, Function<CharSequence, TableSequencerEntry> getSequencerLambda) {
         TableSequencerEntry entry;
@@ -392,7 +443,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
         return removed;
     }
-
 
     private void throwIfClosed() {
         if (closed) {
