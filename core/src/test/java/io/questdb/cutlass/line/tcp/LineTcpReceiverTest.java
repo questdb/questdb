@@ -432,7 +432,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testMetaDataSizeToHitExactly16K() throws Exception {
-        final String tableName = "weather";
+        final String tableName = "метеорологично_време";
         final int numOfColumns = 255;
         final Rnd rnd = new Rnd();
 
