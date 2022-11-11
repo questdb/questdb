@@ -22,9 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+#ifndef SYSUTIL_H
+#define SYSUTIL_H
 
-@FunctionalInterface
-public interface SymbolLookup {
-    int keyOf(CharSequence value);
-}
+#define RESTARTABLE(_cmd, _result) do { \
+    _result = _cmd; \
+  } while(((int)_result == -1) && (errno == EINTR))
+
+#endif //SYSUTIL_H

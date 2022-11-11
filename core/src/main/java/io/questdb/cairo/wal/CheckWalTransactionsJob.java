@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 public class CheckWalTransactionsJob extends SynchronizedJob {
     private final CharSequence dbRoot;
     private final CairoEngine engine;
-    private final MillisecondClock milliseconClock;
+    private final MillisecondClock millisecondClock;
     private final long spinLockTimeout;
     private final TxReader txReader;
     private final TableSequencerAPI.RegisteredTable callback = this::checkNotifyOutstandingTxnInWal;
@@ -47,7 +47,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         this.engine = engine;
         txReader = new TxReader(engine.getConfiguration().getFilesFacade());
         dbRoot = engine.getConfiguration().getRoot();
-        milliseconClock = engine.getConfiguration().getMillisecondClock();
+        millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
     }
 
@@ -59,7 +59,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         final Path rootPath = Path.PATH.get().of(dbRoot);
         rootPath.concat(tableName).concat(TableUtils.TXN_FILE_NAME).$();
         try (TxReader txReader = this.txReader.ofRO(rootPath, PartitionBy.NONE)) {
-            TableUtils.safeReadTxn(txReader, milliseconClock, spinLockTimeout);
+            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
             if (txReader.getSeqTxn() < txn && !engine.getTableSequencerAPI().isSuspended(tableName)) {
                 // table name should be immutable when in the notification message
                 final String tableNameStr = Chars.toString(tableName);

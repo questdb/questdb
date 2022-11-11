@@ -22,9 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.std.str;
 
-@FunctionalInterface
-public interface SymbolLookup {
-    int keyOf(CharSequence value);
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+
+public class AbstractCharSequenceTest {
+
+    @Test
+    public void testSubsquenece_theWholeRangeReturnsTheSameObject() {
+        final CharSequence cs = new AbstractCharSequence() {
+            private static final String str = "abc";
+
+            @Override
+            public char charAt(int index) {
+                return str.charAt(index);
+            }
+
+            @Override
+            public int length() {
+                return str.length();
+            }
+        };
+        CharSequence sub = cs.subSequence(0, cs.length());
+        assertSame(cs, sub);
+        assertEquals("abc", sub.toString());
+    }
 }
