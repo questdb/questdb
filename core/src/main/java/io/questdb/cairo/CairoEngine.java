@@ -162,7 +162,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             Path path,
             TableStructure struct
     ) {
-        checkTableName(struct.getTableName());
+        validNameOrThrow(struct.getTableName());
         String lockedReason = lock(securityContext, struct.getTableName(), "createTable");
         if (null == lockedReason) {
             boolean newTable = false;
@@ -292,7 +292,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             int tableId,
             long version
     ) {
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         TableReader reader = readerPool.get(tableName);
         if ((version > -1 && reader.getVersion() != version)
                 || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
@@ -309,7 +309,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     public TableReader getReaderWithRepair(CairoSecurityContext securityContext, CharSequence tableName) {
 
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
 
         try {
             return getReader(securityContext, tableName);
@@ -418,7 +418,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             String lockReason
     ) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         return writerPool.get(tableName, lockReason);
     }
 
@@ -428,7 +428,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @NotNull AsyncWriterCommand asyncWriterCommand
     ) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
@@ -440,7 +440,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         assert null != lockReason;
         securityContext.checkWritePermission();
 
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         String lockedReason = writerPool.lock(tableName, lockReason);
         if (lockedReason == null) { // not locked
             if (readerPool.lock(tableName)) {
@@ -458,13 +458,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public boolean lockReaders(CharSequence tableName) {
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         return readerPool.lock(tableName);
     }
 
     public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         return writerPool.lock(tableName, lockReason);
     }
 
@@ -528,7 +528,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             CharSequence tableName
     ) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
         if (null == lockedReason) {
             try {
@@ -561,8 +561,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     ) {
         securityContext.checkWritePermission();
 
-        checkTableName(tableName);
-        checkTableName(newName);
+        validNameOrThrow(tableName);
+        validNameOrThrow(newName);
 
         String lockedReason = lock(securityContext, tableName, "renameTable");
         if (null == lockedReason) {
@@ -589,7 +589,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable TableWriter writer,
             boolean newTable
     ) {
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer, newTable);
         metadataPool.unlock(tableName);
@@ -597,22 +597,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public void unlockReaders(CharSequence tableName) {
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         readerPool.unlock(tableName);
     }
 
     public void unlockWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         writerPool.unlock(tableName);
-    }
-
-    private void checkTableName(CharSequence tableName) {
-        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
-            throw CairoException.nonCritical()
-                    .put("invalid table name [table=").putAsPrintable(tableName)
-                    .put(']');
-        }
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {
@@ -657,6 +649,14 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                     .$("could not repair before reading [table=").$(tableName)
                     .$(" ,error=").$(th.getMessage()).I$();
             throw rethrow;
+        }
+    }
+
+    private void validNameOrThrow(CharSequence tableName) {
+        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
+            throw CairoException.nonCritical()
+                    .put("invalid table name [table=").putAsPrintable(tableName)
+                    .put(']');
         }
     }
 
