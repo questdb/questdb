@@ -712,7 +712,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public CharSequence getTableName() {
+        public String getTableName() {
             return null;
         }
 

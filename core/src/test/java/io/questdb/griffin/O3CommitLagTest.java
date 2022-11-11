@@ -32,9 +32,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.wal.fuzz.FuzzTransaction;
+import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
+import io.questdb.griffin.wal.fuzz.FuzzTransactionOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -155,7 +159,12 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testRollbackFuzzContended() throws Exception {
+    public void testFuzzParallel() throws Exception {
+        executeWithPool(0, this::testFuzz0);
+    }
+
+    @Test
+    public void testRollbackFuzzParallel() throws Exception {
         executeWithPool(2, this::testRollbackFuzz);
     }
 
@@ -1082,6 +1091,109 @@ public class O3CommitLagTest extends AbstractO3Test {
             w.commit();
         }
         assertXY(compiler, sqlExecutionContext);
+    }
+
+    private static void replayTransactions(Rnd rnd, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            FuzzTransaction tx = transactions.getQuick(i);
+            ObjList<FuzzTransactionOperation> ops = tx.operationList;
+            for (int j = 0, k = ops.size(); j < k; j++) {
+                ops.getQuick(j).apply(rnd, w, virtualTimestampIndex);
+            }
+            w.ic();
+        }
+    }
+
+    private void testFuzz0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        long microsBetweenRows = 1000000L;
+        int nTotalRows = 12000;
+        // create initial table "x"
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(" + nTotalRows + ")" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
+        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
+
+        try (
+                RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        ) {
+            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+        }
+
+
+        Rnd rnd = new Rnd();
+        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
+        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
+        int txCount = 23;
+        int rowCount = txCount * 120000;
+        try (
+                TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
+        ) {
+            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    w.getMetadata(),
+                    rnd,
+                    minTs,
+                    maxTs,
+                    rowCount,
+                    txCount,
+                    true,
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    0, // do not add columns
+                    0, // do not remove columns
+                    0, // do not rename columns
+                    1, // insert only
+                    5,
+                    new String[]{"ABC", "CDE", "XYZ"}
+            );
+
+            Rnd rnd1 = new Rnd();
+            replayTransactions(rnd1, w, transactions, -1);
+            w.commit();
+
+            Rnd rnd2 = new Rnd();
+            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
+            w2.commit();
+
+            try (
+                    RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                    RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+            ) {
+                TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+            }
+        }
     }
 
     private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

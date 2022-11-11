@@ -30,10 +30,8 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
+import io.questdb.std.ThreadLocal;
 
 import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
 
@@ -68,6 +66,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final String[] symbols;
     private final long timestamp;
 
+    private final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
+    private final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
+
     public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
         this.cancelRows = cancelRows;
         this.strLen = strLen;
@@ -81,12 +82,19 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();
 
+        final IntList tempList = tlIntList.get();
+        final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
+
         TableWriter.Row row = tableWriter.newRow(timestamp);
+        // this is hack for populating a table without designated timestamp
+        if (virtualTimestampIndex != -1) {
+            row.putTimestamp(virtualTimestampIndex, timestamp);
+        }
 
         int columnCount = metadata.getColumnCount();
         if (getZeroToOneDouble(rnd) < cancelRows) {
@@ -105,13 +113,17 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             index = index % tableColumnCount;
             tempList.setQuick(index, 1);
 
-            if (index != metadata.getTimestampIndex()) {
+            if (index != metadata.getTimestampIndex() && index != virtualTimestampIndex) {
                 int type = metadata.getColumnType(index);
                 if (type > 0) {
                     if (getZeroToOneDouble(rnd) > notSet) {
                         boolean isNull = getZeroToOneDouble(rnd) < nullSet;
 
                         switch (type) {
+                            case ColumnType.CHAR:
+                                row.putChar(index, rnd.nextChar());
+                                break;
+
                             case ColumnType.INT:
                                 row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
                                 break;

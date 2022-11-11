@@ -3311,7 +3311,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             o3Sort(sortedTimestampsAddr, timestampIndex, o3RowCount);
             LOG.info()
                     .$("sorted [table=").utf8(tableName)
-                    .$(", o3RowCount=").$(o3LagRowCount)
+                    .$(", o3RowCount=").$(o3RowCount)
                     .I$();
 
             processO3Block(
