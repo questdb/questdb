@@ -100,7 +100,8 @@ final class WhereClauseParser implements Mutable {
         return typeTag == ColumnType.TIMESTAMP
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
-                || typeTag == ColumnType.SYMBOL;
+                || typeTag == ColumnType.SYMBOL
+                || typeTag == ColumnType.LONG;
     }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
@@ -146,8 +147,12 @@ final class WhereClauseParser implements Mutable {
                 return IntervalUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NaN;
-        } catch (NumericException ignore) {
-            throw SqlException.invalidDate(lo.position);
+        } catch (NumericException e1) {
+            try {
+                return Numbers.parseLong(lo.token);
+            } catch (NumericException ignore) {
+                throw SqlException.invalidDate(lo.position);
+            }
         }
     }
 
