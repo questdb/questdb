@@ -124,7 +124,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     stmt.execute();
                 }
 
-                // setup a thread that will send ILP/TCP for today
+                // set up a thread that will send ILP/TCP for today
 
                 // today is deterministic
                 final String activePartitionName = "2022-10-19";

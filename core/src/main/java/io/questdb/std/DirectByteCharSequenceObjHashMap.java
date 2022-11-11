@@ -29,7 +29,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import java.util.Arrays;
 
 /**
- * A copy implementation of CharSequenceIntHashMap. It is there to work with concrete classes
+ * A copy implementation of CharSequenceObjHashMap. It is there to work with concrete classes
  * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
  * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
  * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
@@ -37,48 +37,45 @@ import java.util.Arrays;
  * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
  * no longer present in the async profiler.
  */
-public class DirectByteCharSequenceIntHashMap implements Mutable {
-    public static final int NO_ENTRY_VALUE = -1;
+public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<String> list;
     private final double loadFactor;
-    private final int noEntryValue;
     private int capacity;
     private int free;
     private String[] keys;
     private int mask;
-    private int[] values;
+    private V[] values;
 
-    public DirectByteCharSequenceIntHashMap() {
+    public DirectByteCharSequenceObjHashMap() {
         this(8);
     }
 
-    public DirectByteCharSequenceIntHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5, NO_ENTRY_VALUE);
+    public DirectByteCharSequenceObjHashMap(int initialCapacity) {
+        this(initialCapacity, 0.5);
     }
 
-    public DirectByteCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+    @SuppressWarnings("unchecked")
+    private DirectByteCharSequenceObjHashMap(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        this.free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
         int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
-        this.keys = new String[len];
-        this.mask = len - 1;
-        this.noEntryValue = noEntryValue;
-        this.list = new ObjList<>(capacity);
-        values = new int[keys.length];
+        keys = new String[len];
+        mask = len - 1;
+        list = new ObjList<>(capacity);
+        values = (V[]) new Object[keys.length];
         clear();
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
         Arrays.fill(keys, null);
         free = this.capacity;
         list.clear();
-        Arrays.fill(values, noEntryValue);
     }
 
     public boolean contains(DirectByteCharSequence key) {
@@ -89,19 +86,15 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return keyIndex(key) > -1;
     }
 
-    public boolean excludes(DirectByteCharSequence key, int lo, int hi) {
-        return keyIndex(key, lo, hi) > -1;
-    }
-
-    public int get(DirectByteCharSequence key) {
+    public V get(DirectByteCharSequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public int get(String key) {
+    public V get(String key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(DirectByteCharSequence key) {
+    public int keyIndex(CharSequence key) {
         int index = Hash.spread(Chars.hashCode(key)) & mask;
 
         if (keys[index] == null) {
@@ -129,39 +122,24 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return probe(key, index);
     }
 
-    public int keyIndex(DirectByteCharSequence key, int lo, int hi) {
-        int index = Hash.spread(Chars.hashCode(key, lo, hi)) & mask;
-
-        if (keys[index] == null) {
-            return index;
-        }
-        CharSequence cs = keys[index];
-        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
-            return -index - 1;
-        }
-        return probe(key, lo, hi, index);
-    }
-
     public ObjList<String> keys() {
         return list;
     }
 
-    public boolean put(String key, int value) {
+    public boolean put(String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, String key, int value) {
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
+    public boolean putAt(int index, String key, V value) {
+        assert value != null;
+        if (putAt0(index, key, value)) {
+            list.add(key);
+            return true;
         }
-
-        putAt0(index, key, value);
-        list.add(key);
-        return true;
+        return false;
     }
 
-    public int remove(DirectByteCharSequence key) {
+    public int remove(String key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
@@ -172,8 +150,14 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
 
     public void removeAt(int index) {
         if (index < 0) {
-            int index1 = -index - 1;
-            CharSequence key = keys[index1];
+            CharSequence key = keys[-index - 1];
+            removeAt0(index);
+            list.remove(key);
+        }
+    }
+
+    public void removeAt0(int index) {
+        if (index < 0) {
             int from = -index - 1;
             erase(from);
             free++;
@@ -187,15 +171,15 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    CharSequence k = keys[from];
-                    k != null;
-                    from = (from + 1) & mask, k = keys[from]
+                    CharSequence key = keys[from];
+                    key != null;
+                    from = (from + 1) & mask, key = keys[from]
             ) {
-                int idealHit = Hash.spread(Chars.hashCode(k)) & mask;
+                int idealHit = Hash.spread(Chars.hashCode(key)) & mask;
                 if (idealHit != from) {
                     int to;
                     if (keys[idealHit] != null) {
-                        to = probe(k, idealHit);
+                        to = probe(key, idealHit);
                     } else {
                         to = idealHit;
                     }
@@ -205,7 +189,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                     }
                 }
             }
-            list.remove(key);
         }
     }
 
@@ -213,24 +196,16 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return capacity - free;
     }
 
-    public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
+    public V valueAt(int index) {
+        return index < 0 ? valueAtQuick(index) : null;
     }
 
-    public int valueQuick(int index) {
-        return valueAt(keyIndex(list.getQuick(index)));
+    public V valueAtQuick(int index) {
+        return values[-index - 1];
     }
 
-    private void erase(int index) {
-        keys[index] = null;
-        values[index] = noEntryValue;
-    }
-
-    private void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public V valueQuick(int index) {
+        return get(list.getQuick(index));
     }
 
     private int probe(CharSequence key, int index) {
@@ -245,37 +220,36 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
-    private int probe(CharSequence key, int lo, int hi, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (keys[index] == null) {
-                return index;
+    private boolean putAt0(int index, String key, V value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        } else {
+            keys[index] = key;
+            values[index] = value;
+            if (--free == 0) {
+                rehash();
             }
-            CharSequence cs = keys[index];
-            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
-                return -index - 1;
-            }
-        } while (true);
-    }
-
-    private void putAt0(int index, String key, int value) {
-        keys[index] = key;
-        values[index] = value;
-        if (--free == 0) {
-            rehash();
+            return true;
         }
     }
 
+    @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int[] oldValues = values;
+        int size = size();
+        int newCapacity = capacity * 2;
+        free = capacity = newCapacity;
+        int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
+
+        V[] oldValues = values;
         String[] oldKeys = keys;
-        int size = capacity - free;
-        capacity = capacity * 2;
-        free = capacity - size;
-        mask = Numbers.ceilPow2((int) (capacity / loadFactor)) - 1;
-        this.keys = new String[mask + 1];
-        this.values = new int[mask + 1];
-        for (int i = oldKeys.length - 1; i > -1; i--) {
+        this.keys = new String[len];
+        this.values = (V[]) new Object[len];
+        Arrays.fill(keys, null);
+        mask = len - 1;
+
+        free -= size;
+        for (int i = oldKeys.length; i-- > 0; ) {
             String key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
@@ -283,5 +257,16 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    protected void erase(int index) {
+        keys[index] = null;
+        values[index] = null;
+    }
+
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -42,7 +43,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
@@ -545,10 +545,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testColumnConversion1() throws Exception {
         runInContext(() -> {
             try (
-                    @SuppressWarnings("resource")
-                    TableModel model = new TableModel(configuration, "t_ilp21",
-                            PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT).col("int1", ColumnType.INT)
-                            .col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
+                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE)
+                            .col("event", ColumnType.SHORT)
+                            .col("id", ColumnType.LONG256)
+                            .col("ts", ColumnType.TIMESTAMP)
+                            .col("float1", ColumnType.FLOAT)
+                            .col("int1", ColumnType.INT)
+                            .col("date1", ColumnType.DATE)
+                            .col("byte1", ColumnType.BYTE)
+                            .timestamp()
+            ) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -568,9 +574,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testColumnConversion2() throws Exception {
         runInContext(() -> {
             try (
-                    @SuppressWarnings("resource")
-                    TableModel model = new TableModel(configuration, "t_ilp21",
-                            PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                    TableModel model = new TableModel(configuration, "t_ilp21", PartitionBy.NONE).col("l", ColumnType.LONG)
+            ) {
                 CairoTestUtils.create(model);
             }
             microSecondTicks = 1465839830102800L;
@@ -1605,9 +1610,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
-        nWriterThreads = 5;
-        int nTables = 12;
-        int nIterations = 20_000;
+        nWriterThreads = 3;
+        int nTables = 5;
+        int nIterations = 10_000;
         testThreading(nTables, nIterations);
     }
 
@@ -1615,7 +1620,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
         nWriterThreads = 1;
         int nTables = 3;
-        int nIterations = 20_000;
+        int nIterations = 10_000;
         testThreading(nTables, nIterations);
     }
 
@@ -2105,7 +2110,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         }
         final double[] loadFactors = lf;
         final double accLoadFactors = loadFactors[nTables - 1];
-        Random random = new Random(0);
+        Rnd rnd = new Rnd();
         int[] countByTable = new int[nTables];
         long[] maxTimestampByTable = new long[nTables];
         final long initialTimestampNanos = 1465839830100400200L;
@@ -2115,14 +2120,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             int nTablesSelected = 0;
             int nTotalUpdates = 0;
             for (int nIter = 0; nIter < nIterations; nIter++) {
-                int nLines = random.nextInt(50) + 1;
+                int nLines = rnd.nextInt(50) + 1;
                 sink.clear();
                 for (int nLine = 0; nLine < nLines; nLine++) {
                     int nTable;
                     if (nTablesSelected < nTables) {
                         nTable = nTablesSelected++;
                     } else {
-                        double tableSelector = random.nextDouble() * accLoadFactors;
+                        double tableSelector = rnd.nextDouble() * accLoadFactors;
                         nTable = nTables;
                         while (--nTable > 0) {
                             if (tableSelector > loadFactors[nTable - 1]) {
@@ -2132,7 +2137,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     }
                     long timestamp = maxTimestampByTable[nTable];
                     maxTimestampByTable[nTable] += timestampIncrementInNanos;
-                    double temperature = 50.0 + (random.nextInt(500) / 10.0);
+                    double temperature = 50.0 + (rnd.nextInt(500) / 10.0);
                     sink.put("weather").put(nTable)
                             .put(",location=us-midwest temperature=").put(temperature)
                             .put(' ').put(timestamp).put('\n');
@@ -2142,7 +2147,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 recvBuffer = sink.toString();
                 do {
                     handleContextIO();
-                    // Assert.assertFalse(disconnected);
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();

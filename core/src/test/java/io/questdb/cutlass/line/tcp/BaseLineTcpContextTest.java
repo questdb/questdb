@@ -35,6 +35,7 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -48,7 +49,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
     protected final NetworkIOJob NO_NETWORK_IO_JOB = new NetworkIOJob() {
-        private final CharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new CharSequenceObjHashMap<>();
+        private final DirectByteCharSequenceObjHashMap<TableUpdateDetails> localTableUpdateDetailsByTableName = new DirectByteCharSequenceObjHashMap<>();
         private final ObjList<SymbolCache> unusedSymbolCaches = new ObjList<>();
 
         @Override
@@ -61,7 +62,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         }
 
         @Override
-        public TableUpdateDetails getLocalTableDetails(CharSequence tableName) {
+        public TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName) {
             return localTableUpdateDetailsByTableName.get(tableName);
         }
 
