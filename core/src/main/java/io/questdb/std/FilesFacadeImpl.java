@@ -61,6 +61,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+        return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
     public int copyRecursive(Path src, Path dst, int dirMode) {
         return runRecursive(src, dst, dirMode, copyFsOperation);
     }
@@ -276,8 +281,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long readULong(long fd, long offset) {
-        return Files.readULong(fd, offset);
+    public int readNonNegativeInt(long fd, long offset) {
+        return Files.readNonNegativeInt(fd, offset);
+    }
+
+    @Override
+    public long readNonNegativeLong(long fd, long offset) {
+        return Files.readNonNegativeLong(fd, offset);
     }
 
     @Override

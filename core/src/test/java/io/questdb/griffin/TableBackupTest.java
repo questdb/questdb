@@ -121,6 +121,11 @@ public class TableBackupTest {
             public FilesFacade getFilesFacade() {
                 return ff;
             }
+
+            @Override
+            public int getMetadataPoolCapacity() {
+                return 1;
+            }
         };
         mainEngine = new CairoEngine(mainConfiguration);
         mainCompiler = new SqlCompiler(mainEngine);

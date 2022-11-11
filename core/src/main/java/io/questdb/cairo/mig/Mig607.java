@@ -113,7 +113,7 @@ final class Mig607 {
                         }
                         TableUtils.writeLongOrFail(ff, fd, offset, dataOffset, mem, path);
                     } finally {
-                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                        Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                     }
                 }
             }
@@ -136,7 +136,7 @@ final class Mig607 {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
-                    if ((n = ff.readULong(fd, 0)) < 0) {
+                    if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {
                         if (failIfCouldNotRead) {
                             throw CairoException.critical(Os.errno())
                                     .put("could not read top of column [file=").put(path)
@@ -300,7 +300,7 @@ final class Mig607 {
                                 }
                             }
                         } finally {
-                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, true, offset + 8);
+                            Vm.bestEffortClose(ff, MigrationActions.LOG, fd, offset + 8);
                         }
                         denseSymbolCount++;
                     }

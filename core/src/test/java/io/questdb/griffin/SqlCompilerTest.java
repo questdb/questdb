@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -85,14 +86,10 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCannotCreateTable() throws Exception {
         assertFailure(
                 new FilesFacadeImpl() {
-                    int mkDirCount = 0;
 
                     @Override
                     public int mkdirs(Path path, int mode) {
-                        if (mkDirCount++ > 0) {
-                            return -1;
-                        }
-                        return super.mkdirs(path, mode);
+                        return -1;
                     }
                 },
                 "create table x (a int)",
@@ -2609,7 +2606,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE,
                             "x", "testing")) {
                         sink.clear();
-                        TableWriterMetadata metadata = writer.getMetadata();
+                        TableRecordMetadata metadata = writer.getMetadata();
                         metadata.toJson(sink);
                         TestUtils.assertEquals(
                                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"y\",\"type\":\"BOOLEAN\"}],\"timestampIndex\":1}",

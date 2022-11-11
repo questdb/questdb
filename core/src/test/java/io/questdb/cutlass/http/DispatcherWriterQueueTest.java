@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -82,7 +83,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddCacheAlterCache() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue("Column s must exist", columnIndex >= 0);
                     Assert.assertTrue(rdr.getSymbolMapReader(columnIndex).isCached());
@@ -95,7 +96,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddColumn() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
                     Assert.assertEquals(2, columnIndex);
                     Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
@@ -132,7 +133,7 @@ public class DispatcherWriterQueueTest {
 
         runAlterOnBusyTable((writer, rdr) -> {
                     // Wait command execution
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     for (int i = 0; i < 100 && !writer.getMetadata().isColumnIndexed(columnIndex); i++) {
                         writer.tick(true);
@@ -149,7 +150,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddIndex() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
                     Assert.assertEquals(2, columnIndex);
                     Assert.assertEquals(ColumnType.INT, metadata.getColumnType(columnIndex));
@@ -182,7 +183,7 @@ public class DispatcherWriterQueueTest {
                 });
 
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
                 },
@@ -217,7 +218,7 @@ public class DispatcherWriterQueueTest {
                 });
 
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue(metadata.isColumnIndexed(columnIndex));
                 },
@@ -230,7 +231,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddNocacheAlterCache() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("s");
                     Assert.assertTrue("Column s must exist", columnIndex >= 0);
                     Assert.assertFalse(rdr.getSymbolMapReader(columnIndex).isCached());
@@ -243,7 +244,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableAddRenameColumn() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndex("y");
                     Assert.assertTrue("Column y must exist", columnIndex > 0);
                     int columnIndex2 = metadata.getColumnIndex("s2");
@@ -260,7 +261,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndexQuiet("y");
                     int columnIndex2 = metadata.getColumnIndexQuiet("x");
 
@@ -276,7 +277,7 @@ public class DispatcherWriterQueueTest {
     @Test
     public void testCanReuseSameJsonContextForMultipleAlterRuns() throws Exception {
         runAlterOnBusyTable((writer, rdr) -> {
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata metadata = writer.getMetadata();
                     int columnIndex = metadata.getColumnIndexQuiet("y");
                     int columnIndex2 = metadata.getColumnIndexQuiet("x");
 

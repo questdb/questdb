@@ -24,14 +24,7 @@
 
 package io.questdb.cairo;
 
-public interface TableStructure {
-    int getColumnCount();
-
-    long getColumnHash(int columnIndex);
-
-    CharSequence getColumnName(int columnIndex);
-
-    int getColumnType(int columnIndex);
+public interface TableStructure extends TableDescriptor {
 
     long getCommitLag();
 
@@ -47,11 +40,9 @@ public interface TableStructure {
 
     CharSequence getTableName();
 
-    int getTimestampIndex();
-
     boolean isIndexed(int columnIndex);
 
     boolean isSequential(int columnIndex);
 
-    boolean isWallEnabled();
+    boolean isWalEnabled();
 }

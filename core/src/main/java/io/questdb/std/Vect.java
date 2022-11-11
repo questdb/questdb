@@ -84,6 +84,8 @@ public final class Vect {
         return " [" + base + "," + Vect.getSupportedInstructionSet() + "]";
     }
 
+    public static native void indexReshuffle128Bit(long pSrc, long pDest, long pIndex, long count);
+
     public static native void indexReshuffle16Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle256Bit(long pSrc, long pDest, long pIndex, long count);
@@ -123,6 +125,8 @@ public final class Vect {
 
         mergeLongIndexesAscInner(pIndexStructArray, count, mergedIndexAddr);
     }
+
+    public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 

@@ -28,13 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
-    public static final int CMD_SLAVE_SYNC = 1;
+    public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
 
     public static final int TSK_BEGIN = 64;
@@ -47,7 +46,6 @@ public class TableWriterTask implements Closeable {
     private AsyncWriterCommand cmd;
     private long instance;
     private long ip;
-    private long sequence;
     private long tableId;
     private String tableName;
     private int type;
@@ -62,29 +60,6 @@ public class TableWriterTask implements Closeable {
     public void close() {
         appendPtr = 0;
         appendLim = 0;
-    }
-
-    public void fromSlaveSyncRequest(
-            long tableId,
-            String tableName,
-            long txMem,
-            long txMemSize,
-            long metaMem,
-            long metaMemSize,
-            long slaveIP,
-            long sequence
-    ) {
-        reset();
-        checkCapacity(txMemSize + metaMemSize + 2 * Long.BYTES);
-        Unsafe.getUnsafe().putLong(data, txMemSize);
-        Vect.memcpy(data + Long.BYTES, txMem, txMemSize);
-        Unsafe.getUnsafe().putLong(data + txMemSize + Long.BYTES, metaMemSize);
-        Vect.memcpy(data + txMemSize + 2 * Long.BYTES, metaMem, metaMemSize);
-        this.type = CMD_SLAVE_SYNC;
-        this.tableId = tableId;
-        this.tableName = tableName;
-        this.ip = slaveIP;
-        this.sequence = sequence;
     }
 
     public AsyncWriterCommand getAsyncWriterCommand() {
@@ -105,10 +80,6 @@ public class TableWriterTask implements Closeable {
 
     public long getIp() {
         return ip;
-    }
-
-    public long getSequence() {
-        return sequence;
     }
 
     public long getTableId() {
