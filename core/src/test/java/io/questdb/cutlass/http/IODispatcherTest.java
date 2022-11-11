@@ -668,7 +668,7 @@ public class IODispatcherTest {
     public void testExpRecordTypeSelect() throws Exception {
         testJsonQuery(
                 1,
-                "GET /exp?limit=0%2C1000&delimiter=%09&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0Aselect%20pg_catalog.pg_class()%20x%2C%20(pg_catalog.pg_class()).relnamespace%20from%20long_sequence(2) HTTP/1.1\r\n" +
+                "GET /exp?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0Aselect%20pg_catalog.pg_class()%20x%2C%20(pg_catalog.pg_class()).relnamespace%20from%20long_sequence(2) HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -690,11 +690,11 @@ public class IODispatcherTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "27\r\n" +
-                        "\"x1\"\t\"column\"\r\n" +
-                        "\t11\r\n" +
-                        "\t2200\r\n" +
-                        "\t11\r\n" +
-                        "\t2200\r\n" +
+                        "\"x1\",\"column\"\r\n" +
+                        ",11\r\n" +
+                        ",2200\r\n" +
+                        ",11\r\n" +
+                        ",2200\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
