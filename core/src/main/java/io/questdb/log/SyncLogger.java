@@ -238,11 +238,6 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public Sequence getCriticalSequence() {
-        return criticalSeq;
-    }
-
-    @Override
     public LogRecord info() {
         return addTimestamp(xinfo(), LogLevel.INFO_HEADER);
     }
