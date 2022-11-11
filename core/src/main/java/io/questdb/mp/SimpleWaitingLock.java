@@ -82,7 +82,6 @@ public class SimpleWaitingLock {
         if (lock.compareAndSet(true, false)) {
             Thread waiter = this.waiter;
             this.waiter = null;
-            lock.set(false);
             if (waiter != null) {
                 LockSupport.unpark(waiter);
             }
