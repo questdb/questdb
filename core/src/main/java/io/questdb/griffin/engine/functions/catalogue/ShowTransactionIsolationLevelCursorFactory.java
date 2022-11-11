@@ -53,6 +53,6 @@ public class ShowTransactionIsolationLevelCursorFactory extends AbstractRecordCu
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("transaction_isolation", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("transaction_isolation", ColumnType.STRING));
     }
 }

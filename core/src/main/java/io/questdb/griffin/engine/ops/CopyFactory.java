@@ -161,6 +161,6 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("id", ColumnType.STRING));
     }
 }

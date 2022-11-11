@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -311,7 +312,7 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws Exception {
-        LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
+        Log ignore = LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
@@ -580,6 +581,66 @@ public class FilesTest {
     }
 
     @Test
+    public void testSendFileOver2GBWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+
+            try (
+                    Path path1 = new Path().of(temp.getAbsolutePath());
+                    Path path2 = new Path().of(temp.getAbsolutePath())
+            ) {
+                long fd1 = Files.openRW(path1.$());
+                path2.put(".2").$();
+                long fd2 = Files.openRW(path2);
+
+                long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+
+                long testValue = 0x1234567890ABCDEFL;
+                Unsafe.getUnsafe().putLong(mem, testValue);
+                long fileSize = (2L << 30) + 2 * 4096;
+
+                try {
+                    Files.truncate(fd1, fileSize);
+
+                    Files.write(fd1, mem, 8, 0);
+                    Files.write(fd1, mem, 8, fileSize - 8);
+
+                    // Check copy call works
+                    int offset = 2058;
+                    long copiedLen = Files.copyData(fd1, fd2, offset, -1);
+
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long long1 = Files.readULong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+
+                    // Copy with set length
+                    Files.close(fd2);
+                    Files.remove(path2);
+                    fd2 = Files.openRW(path2.$());
+
+                    // Check copy call works
+                    offset = 3051;
+                    copiedLen = Files.copyData(fd1, fd2, offset, fileSize - offset);
+                    MatcherAssert.assertThat("errno: " + Os.errno(), copiedLen, is(fileSize - offset));
+
+                    long1 = Files.readULong(fd2, fileSize - offset - 8);
+                    Assert.assertEquals(testValue, long1);
+                } finally {
+                    // Release mem, fd
+                    Files.close(fd1);
+                    Files.close(fd2);
+                    Unsafe.free(mem, 8, MemoryTag.NATIVE_DEFAULT);
+
+                    // Delete files
+                    Files.remove(path1);
+                    Files.remove(path2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSoftLinkAsciiName() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertSoftLinkDoesNotPreserveFileContent("some_column.d");
@@ -588,6 +649,7 @@ public class FilesTest {
     @Test
     public void testSoftLinkDoesNotFailWhenSrcDoesNotExist() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
+
         assertMemoryLeak(() -> {
             File tmpFolder = temporaryFolder.newFolder("soft");
             String fileName = "いくつかの列.d";

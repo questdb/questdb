@@ -73,6 +73,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BiFunction;
+import java.util.function.Function;
 
 /**
  * A hash table supporting full concurrency of retrievals and
@@ -649,11 +651,13 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private transient volatile int transferIndex;
     private transient ValuesView<V> values;
+
     /**
      * Creates a new, empty map with the default initial table size (16).
      */
     public ConcurrentHashMap() {
     }
+
     /**
      * Creates a new, empty map with an initial table size
      * accommodating the specified number of elements without the need
@@ -768,6 +772,319 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         if (delta != 0L)
             addCount(delta, -1);
+    }
+
+    /**
+     * Attempts to compute a mapping for the specified key and its
+     * current mapped value (or {@code null} if there is no current
+     * mapping). The entire method invocation is performed atomically.
+     * Some attempted update operations on this map by other threads
+     * may be blocked while computation is in progress, so the
+     * computation should be short and simple, and must not attempt to
+     * update any other mappings of this Map.
+     *
+     * @param key               key with which the specified value is to be associated
+     * @param remappingFunction the function to compute a value
+     * @return the new value associated with the specified key, or null if none
+     * @throws NullPointerException  if the specified key or remappingFunction
+     *                               is null
+     * @throws IllegalStateException if the computation detectably
+     *                               attempts a recursive update to this map that would
+     *                               otherwise never complete
+     * @throws RuntimeException      or Error if the remappingFunction does so,
+     *                               in which case the mapping is unchanged
+     */
+    public V compute(CharSequence key, BiFunction<CharSequence, ? super V, ? extends V> remappingFunction) {
+        if (key == null || remappingFunction == null)
+            throw new NullPointerException();
+        int h = spread(key.hashCode());
+        V val = null;
+        int delta = 0;
+        int binCount = 0;
+        for (Node<V>[] tab = table; ; ) {
+            Node<V> f;
+            int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                tab = initTable();
+            else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
+                Node<V> r = new ReservationNode<V>();
+                synchronized (r) {
+                    if (casTabAt(tab, i, r)) {
+                        binCount = 1;
+                        Node<V> node = null;
+                        try {
+                            if ((val = remappingFunction.apply(key, null)) != null) {
+                                delta = 1;
+                                node = new Node<V>(h, key, val, null);
+                            }
+                        } finally {
+                            setTabAt(tab, i, node);
+                        }
+                    }
+                }
+                if (binCount != 0)
+                    break;
+            } else if ((fh = f.hash) == MOVED)
+                tab = helpTransfer(tab, f);
+            else {
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<V> e = f, pred = null; ; ++binCount) {
+                                CharSequence ek;
+                                if (e.hash == h &&
+                                        ((ek = e.key) == key || (key.equals(ek)))) {
+                                    val = remappingFunction.apply(key, e.val);
+                                    if (val != null)
+                                        e.val = val;
+                                    else {
+                                        delta = -1;
+                                        Node<V> en = e.next;
+                                        if (pred != null)
+                                            pred.next = en;
+                                        else
+                                            setTabAt(tab, i, en);
+                                    }
+                                    break;
+                                }
+                                pred = e;
+                                if ((e = e.next) == null) {
+                                    val = remappingFunction.apply(key, null);
+                                    if (val != null) {
+                                        delta = 1;
+                                        pred.next =
+                                                new Node<V>(h, key, val, null);
+                                    }
+                                    break;
+                                }
+                            }
+                        } else if (f instanceof TreeBin) {
+                            binCount = 1;
+                            TreeBin<V> t = (TreeBin<V>) f;
+                            TreeNode<V> r, p;
+                            if ((r = t.root) != null)
+                                p = r.findTreeNode(h, key, null);
+                            else
+                                p = null;
+                            V pv = (p == null) ? null : p.val;
+                            val = remappingFunction.apply(key, pv);
+                            if (val != null) {
+                                if (p != null)
+                                    p.val = val;
+                                else {
+                                    delta = 1;
+                                    t.putTreeVal(h, key, val);
+                                }
+                            } else if (p != null) {
+                                delta = -1;
+                                if (t.removeTreeNode(p))
+                                    setTabAt(tab, i, untreeify(t.first));
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0) {
+                    if (binCount >= TREEIFY_THRESHOLD)
+                        treeifyBin(tab, i);
+                    break;
+                }
+            }
+        }
+        if (delta != 0)
+            addCount(delta, binCount);
+        return val;
+    }
+
+    /**
+     * If the specified key is not already associated with a value,
+     * attempts to compute its value using the given mapping function
+     * and enters it into this map unless {@code null}.  The entire
+     * method invocation is performed atomically, so the function is
+     * applied at most once per key.  Some attempted update operations
+     * on this map by other threads may be blocked while computation
+     * is in progress, so the computation should be short and simple,
+     * and must not attempt to update any other mappings of this map.
+     *
+     * @param key             key with which the specified value is to be associated
+     * @param mappingFunction the function to compute a value
+     * @return the current (existing or computed) value associated with
+     * the specified key, or null if the computed value is null
+     * @throws NullPointerException  if the specified key or mappingFunction
+     *                               is null
+     * @throws IllegalStateException if the computation detectably
+     *                               attempts a recursive update to this map that would
+     *                               otherwise never complete
+     * @throws RuntimeException      or Error if the mappingFunction does so,
+     *                               in which case the mapping is left unestablished
+     */
+    public V computeIfAbsent(CharSequence key, Function<CharSequence, ? extends V> mappingFunction) {
+        if (key == null || mappingFunction == null)
+            throw new NullPointerException();
+        int h = spread(key.hashCode());
+        V val = null;
+        int binCount = 0;
+        for (Node<V>[] tab = table; ; ) {
+            Node<V> f;
+            int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                tab = initTable();
+            else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
+                Node<V> r = new ReservationNode<V>();
+                synchronized (r) {
+                    if (casTabAt(tab, i, r)) {
+                        binCount = 1;
+                        Node<V> node = null;
+                        try {
+                            if ((val = mappingFunction.apply(key)) != null)
+                                node = new Node<V>(h, key, val, null);
+                        } finally {
+                            setTabAt(tab, i, node);
+                        }
+                    }
+                }
+                if (binCount != 0)
+                    break;
+            } else if ((fh = f.hash) == MOVED)
+                tab = helpTransfer(tab, f);
+            else {
+                boolean added = false;
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<V> e = f; ; ++binCount) {
+                                CharSequence ek;
+                                V ev;
+                                if (e.hash == h &&
+                                        ((ek = e.key) == key || (key.equals(ek)))) {
+                                    val = e.val;
+                                    break;
+                                }
+                                Node<V> pred = e;
+                                if ((e = e.next) == null) {
+                                    if ((val = mappingFunction.apply(key)) != null) {
+                                        added = true;
+                                        pred.next = new Node<V>(h, key, val, null);
+                                    }
+                                    break;
+                                }
+                            }
+                        } else if (f instanceof TreeBin) {
+                            binCount = 2;
+                            TreeBin<V> t = (TreeBin<V>) f;
+                            TreeNode<V> r, p;
+                            if ((r = t.root) != null &&
+                                    (p = r.findTreeNode(h, key, null)) != null)
+                                val = p.val;
+                            else if ((val = mappingFunction.apply(key)) != null) {
+                                added = true;
+                                t.putTreeVal(h, key, val);
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0) {
+                    if (binCount >= TREEIFY_THRESHOLD)
+                        treeifyBin(tab, i);
+                    if (!added)
+                        return val;
+                    break;
+                }
+            }
+        }
+        if (val != null)
+            addCount(1L, binCount);
+        return val;
+    }
+
+    /**
+     * If the value for the specified key is present, attempts to
+     * compute a new mapping given the key and its current mapped
+     * value.  The entire method invocation is performed atomically.
+     * Some attempted update operations on this map by other threads
+     * may be blocked while computation is in progress, so the
+     * computation should be short and simple, and must not attempt to
+     * update any other mappings of this map.
+     *
+     * @param key               key with which a value may be associated
+     * @param remappingFunction the function to compute a value
+     * @return the new value associated with the specified key, or null if none
+     * @throws NullPointerException  if the specified key or remappingFunction
+     *                               is null
+     * @throws IllegalStateException if the computation detectably
+     *                               attempts a recursive update to this map that would
+     *                               otherwise never complete
+     * @throws RuntimeException      or Error if the remappingFunction does so,
+     *                               in which case the mapping is unchanged
+     */
+    public V computeIfPresent(CharSequence key, BiFunction<CharSequence, ? super V, ? extends V> remappingFunction) {
+        if (key == null || remappingFunction == null)
+            throw new NullPointerException();
+        int h = spread(key.hashCode());
+        V val = null;
+        int delta = 0;
+        int binCount = 0;
+        for (Node<V>[] tab = table; ; ) {
+            Node<V> f;
+            int n, i, fh;
+            if (tab == null || (n = tab.length) == 0)
+                tab = initTable();
+            else if ((f = tabAt(tab, i = (n - 1) & h)) == null)
+                break;
+            else if ((fh = f.hash) == MOVED)
+                tab = helpTransfer(tab, f);
+            else {
+                synchronized (f) {
+                    if (tabAt(tab, i) == f) {
+                        if (fh >= 0) {
+                            binCount = 1;
+                            for (Node<V> e = f, pred = null; ; ++binCount) {
+                                CharSequence ek;
+                                if (e.hash == h &&
+                                        ((ek = e.key) == key || (key.equals(ek)))) {
+                                    val = remappingFunction.apply(key, e.val);
+                                    if (val != null)
+                                        e.val = val;
+                                    else {
+                                        delta = -1;
+                                        Node<V> en = e.next;
+                                        if (pred != null)
+                                            pred.next = en;
+                                        else
+                                            setTabAt(tab, i, en);
+                                    }
+                                    break;
+                                }
+                                pred = e;
+                                if ((e = e.next) == null)
+                                    break;
+                            }
+                        } else if (f instanceof TreeBin) {
+                            binCount = 2;
+                            TreeBin<V> t = (TreeBin<V>) f;
+                            TreeNode<V> r, p;
+                            if ((r = t.root) != null &&
+                                    (p = r.findTreeNode(h, key, null)) != null) {
+                                val = remappingFunction.apply(key, p.val);
+                                if (val != null)
+                                    p.val = val;
+                                else {
+                                    delta = -1;
+                                    if (t.removeTreeNode(p))
+                                        setTabAt(tab, i, untreeify(t.first));
+                                }
+                            }
+                        }
+                    }
+                }
+                if (binCount != 0)
+                    break;
+            }
+        }
+        if (delta != 0)
+            addCount(delta, binCount);
+        return val;
     }
 
     /**
@@ -930,6 +1247,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return (v = get(key)) == null ? defaultValue : v;
     }
 
+    // ConcurrentMap methods
+
     /**
      * Returns the hash code value for this {@link Map}, i.e.,
      * the sum of, for each key-value pair in the map,
@@ -972,8 +1291,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return new KeySetView<>(this, mappedValue);
     }
 
-    // ConcurrentMap methods
-
     /**
      * Returns a {@link Set} view of the keys contained in this map.
      * The set is backed by the map, so changes to the map are
@@ -994,6 +1311,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         KeySetView<V> ks;
         return (ks = keySet) != null ? ks : (keySet = new KeySetView<>(this, null));
     }
+
+    // Overrides of JDK8+ Map extension method defaults
 
     /**
      * Returns the number of mappings. This method should be used
@@ -1038,8 +1357,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             putVal(e.getKey(), e.getValue(), false);
     }
 
-    // Overrides of JDK8+ Map extension method defaults
-
     /**
      * {@inheritDoc}
      *
@@ -1051,9 +1368,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return putVal(key, value, true);
     }
 
-
-    // Hashtable legacy methods
-
     /**
      * {@inheritDoc}
      *
@@ -1063,8 +1377,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public boolean remove(@NotNull Object key, Object value) {
         return value != null && replaceNode((CharSequence) key, null, (V) value) != null;
     }
-
-    // ConcurrentHashMap-only methods
+    // Hashtable legacy methods
 
     /**
      * Removes the key (and its corresponding value) from this map.
@@ -1078,6 +1391,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     public V remove(CharSequence key) {
         return replaceNode(key, null, null);
     }
+
+    // ConcurrentHashMap-only methods
 
     /**
      * {@inheritDoc}
@@ -1108,8 +1423,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                 (n > (long) Integer.MAX_VALUE) ? Integer.MAX_VALUE :
                         (int) n);
     }
-
-    /* ---------------- Special Nodes -------------- */
 
     /**
      * Returns a string representation of this map.  The string
@@ -1142,7 +1455,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return sb.append('}').toString();
     }
 
-    /* ---------------- Table Initialization and Resizing -------------- */
+    /* ---------------- Special Nodes -------------- */
 
     /**
      * Returns a {@link Collection} view of the values contained in this map.
@@ -1163,6 +1476,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         ValuesView<V> vs;
         return (vs = values) != null ? vs : (values = new ValuesView<>(this));
     }
+
+    /* ---------------- Table Initialization and Resizing -------------- */
 
     private static long initialSeed() {
         String pp = System.getProperty("java.util.secureRandomSeed");
@@ -1334,8 +1649,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return traverser;
     }
 
-    /* ---------------- Counter support -------------- */
-
     /**
      * Initializes table, using the size recorded in sizeCtl.
      */
@@ -1362,6 +1675,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         return tab;
     }
+
+    /* ---------------- Counter support -------------- */
 
     /**
      * Moves and/or copies the nodes in each bin to new table. See
@@ -1529,8 +1844,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
-    /* ---------------- Conversion from/to TreeBins -------------- */
-
     /**
      * Tries to presize table to accommodate the given number of elements.
      *
@@ -1576,6 +1889,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
     }
 
+    /* ---------------- Conversion from/to TreeBins -------------- */
+
     static int advanceProbe(int probe) {
         probe ^= probe << 13;   // xorshift
         probe ^= probe >>> 17;
@@ -1584,14 +1899,12 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return probe;
     }
 
-    /* ---------------- TreeNodes -------------- */
-
     static <V> boolean casTabAt(Node<V>[] tab, int i,
                                 Node<V> v) {
         return Unsafe.getUnsafe().compareAndSwapObject(tab, ((long) i << ASHIFT) + ABASE, null, v);
     }
 
-    /* ---------------- TreeBins -------------- */
+    /* ---------------- TreeNodes -------------- */
 
     /**
      * Returns x's Class if it is of the form "class C implements
@@ -1619,7 +1932,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return null;
     }
 
-    /* ----------------Table Traversal -------------- */
+    /* ---------------- TreeBins -------------- */
 
     /**
      * Returns k.compareTo(x) if x matches kc (k's screened comparable
@@ -1630,6 +1943,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return (x == null || x.getClass() != kc ? 0 :
                 ((Comparable) k).compareTo(x));
     }
+
+    /* ----------------Table Traversal -------------- */
 
     static int getProbe() {
         return Unsafe.getUnsafe().getInt(Thread.currentThread(), PROBE);
@@ -1688,8 +2003,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return (Node<V>) Unsafe.getUnsafe().getObjectVolatile(tab, ((long) i << ASHIFT) + ABASE);
     }
 
-    /* ----------------Views -------------- */
-
     /**
      * Returns a list on non-TreeNodes replacing those in given list.
      */
@@ -1705,6 +2018,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         }
         return hd;
     }
+
+    /* ----------------Views -------------- */
 
     /**
      * Helps transfer if a resize is in progress.
@@ -2106,7 +2421,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class EntryIterator<V> extends BaseIterator<V>
             implements Iterator<Map.Entry<CharSequence, V>> {
 
-        public final Map.Entry<CharSequence, V> next() {
+        public Map.Entry<CharSequence, V> next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -2156,14 +2471,14 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
                     (v == r || v.equals(r)));
         }
 
-        public final boolean equals(Object o) {
+        public boolean equals(Object o) {
             Set<?> c;
             return ((o instanceof Set) &&
                     ((c = (Set<?>) o) == this ||
                             (containsAll(c) && c.containsAll(this))));
         }
 
-        public final int hashCode() {
+        public int hashCode() {
             int h = 0;
             Node<V>[] t = map.table;
             if (t != null) {
@@ -2238,7 +2553,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     static final class KeyIterator<V> extends BaseIterator<V>
             implements Iterator<CharSequence> {
 
-        public final CharSequence next() {
+        public CharSequence next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -2495,6 +2810,19 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
     }
 
     /**
+     * A place-holder node used in computeIfAbsent and compute
+     */
+    static final class ReservationNode<V> extends Node<V> {
+        ReservationNode() {
+            super(RESERVED, null, null, null);
+        }
+
+        Node<V> find(int h, Object k) {
+            return null;
+        }
+    }
+
+    /**
      * Stripped-down version of helper class used in previous version,
      * declared for the sake of serialization compatibility
      */
@@ -2647,6 +2975,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         volatile int lockState;
         TreeNode<V> root;
         volatile Thread waiter;
+
         /**
          * Creates bin with initial set of nodes headed by b.
          */
@@ -2946,7 +3275,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * using tree comparisons from root, but continues linear
          * search when lock not available.
          */
-        final Node<V> find(int h, CharSequence k) {
+        Node<V> find(int h, CharSequence k) {
             if (k != null) {
                 for (Node<V> e = first; e != null; ) {
                     int s;
@@ -2980,7 +3309,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return null if added
          */
-        final TreeNode<V> putTreeVal(int h, CharSequence k, V v) {
+        TreeNode<V> putTreeVal(int h, CharSequence k, V v) {
             Class<?> kc = null;
             boolean searched = false;
             for (TreeNode<V> p = root; ; ) {
@@ -3047,7 +3376,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          *
          * @return true if now too small, so should be untreeified
          */
-        final boolean removeTreeNode(TreeNode<V> p) {
+        boolean removeTreeNode(TreeNode<V> p) {
             TreeNode<V> next = (TreeNode<V>) p.next;
             TreeNode<V> pred = p.prev;  // unlink traversal pointers
             TreeNode<V> r, rl;
@@ -3196,7 +3525,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
          * Returns the TreeNode (or null if not found) for the given key
          * starting at given root.
          */
-        final TreeNode<V> findTreeNode(int h, CharSequence k, Class<?> kc) {
+        TreeNode<V> findTreeNode(int h, CharSequence k, Class<?> kc) {
             if (k != null) {
                 TreeNode<V> p = this;
                 do {
@@ -3232,7 +3561,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
 
     static final class ValueIterator<V> extends BaseIterator<V>
             implements Iterator<V> {
-        public final V next() {
+        public V next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
@@ -3257,26 +3586,26 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             super(map);
         }
 
-        public final boolean add(V e) {
+        public boolean add(V e) {
             throw new UnsupportedOperationException();
         }
 
-        public final boolean addAll(@NotNull Collection<? extends V> c) {
+        public boolean addAll(@NotNull Collection<? extends V> c) {
             throw new UnsupportedOperationException();
         }
 
-        public final boolean contains(Object o) {
+        public boolean contains(Object o) {
             return map.containsValue(o);
         }
 
         @NotNull
-        public final Iterator<V> iterator() {
+        public Iterator<V> iterator() {
             ValueIterator<V> it = tlValueIterator.get();
             it.of(map);
             return it;
         }
 
-        public final boolean remove(Object o) {
+        public boolean remove(Object o) {
             if (o != null) {
                 for (Iterator<V> it = iterator(); it.hasNext(); ) {
                     if (o.equals(it.next())) {

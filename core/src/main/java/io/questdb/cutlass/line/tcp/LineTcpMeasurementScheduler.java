@@ -91,6 +91,7 @@ class LineTcpMeasurementScheduler implements Closeable {
             NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
             netIoJobs[i] = netIoJob;
             ioWorkerPool.assign(i, netIoJob);
+            ioWorkerPool.freeOnExit(netIoJob);
         }
 
         // Worker count is set to 1 because we do not use this execution context
@@ -121,7 +122,9 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.isStringToCharCastAllowed(),
                             lineConfiguration.isSymbolAsFieldSupported(),
                             lineConfiguration.getMaxFileNameLength(),
-                            lineConfiguration.getAutoCreateNewColumns()
+                            lineConfiguration.getAutoCreateNewColumns(),
+                            engine.getConfiguration().getDefaultSymbolCapacity(),
+                            engine.getConfiguration().getDefaultSymbolCacheFlag()
                     ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
@@ -335,7 +338,7 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // get writer here to avoid constructing
                 // object instance and potentially leaking memory if
                 // writer allocation fails
-                engine.getWriter(securityContext, tableNameUtf16, "tcpIlp"),
+                engine.getTableWriterAPI(securityContext, tableNameUtf16, "tcpIlp"),
                 threadId,
                 netIoJobs,
                 defaultColumnTypes

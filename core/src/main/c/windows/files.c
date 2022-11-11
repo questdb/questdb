@@ -55,16 +55,76 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return -1;
 }
 
-int set_file_pos(HANDLE fd, jlong offset) {
+
+jboolean set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;
     }
-    long highPos = (long) (offset >> 32);
-    int r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    LONG highPos = (LONG) (offset >> 32);
+    DWORD r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
     if (r == INVALID_SET_FILE_POINTER) {
         SaveLastError();
+        return FALSE;
     }
-    return r;
+    return TRUE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong fdFrom, jlong fdTo, jlong fromOffset, jlong length) {
+
+    char buf[16*4096];
+    DWORD read_sz;
+    LONG64 rd_off = fromOffset;
+    LONG64 wrt_off = 0;
+    LONG64 hi;
+
+    if ( length < 0 ){
+        hi = _I64_MAX;
+    } else {
+        hi = fromOffset + length;
+    }
+
+    if (!set_file_pos((HANDLE) fdFrom, fromOffset)){
+        return -1;
+    }
+
+    while (ReadFile((HANDLE) fdFrom, &buf, sizeof buf, &read_sz, NULL) &&
+           read_sz > 0) {
+        char *out_ptr = buf;
+        if (rd_off + read_sz > hi) {
+            read_sz = hi - rd_off;
+        }
+
+        DWORD write_sz;
+        do {
+            if (!WriteFile((HANDLE) fdTo, &buf, read_sz, &write_sz, NULL)){
+                SaveLastError();
+                return rd_off - fromOffset;
+            }
+            if (write_sz >= 0) {
+                read_sz -= write_sz;
+                out_ptr += write_sz;
+                wrt_off += write_sz;
+            } else if (errno != EINTR) {
+                break;
+            }
+        } while (read_sz > 0);
+
+        if (read_sz > 0) {
+            // error
+            SaveLastError();
+            return -1;
+        }
+
+        rd_off += write_sz;
+        if (rd_off >= hi) {
+            /* Success! */
+            break;
+        }
+    }
+
+    SaveLastError();
+    return rd_off - fromOffset;
 }
 
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {

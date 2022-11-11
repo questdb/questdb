@@ -31,6 +31,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,7 +49,7 @@ public class WorkerPool implements Closeable {
     };
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
-    private final ObjList<Closeable> freeOnExist = new ObjList<>();
+    private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     private final HealthMetrics metrics;
@@ -128,7 +129,7 @@ public class WorkerPool implements Closeable {
     public void freeOnExit(Closeable closeable) {
         assert !running.get() && !closed.get();
 
-        freeOnExist.add(closeable);
+        freeOnExit.add(closeable);
     }
 
     public String getPoolName() {
@@ -149,8 +150,20 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            Misc.freeObjListAndClear(freeOnExist);
+            Misc.freeObjListAndClear(freeOnExit);
         }
+    }
+
+    @TestOnly
+    public void pause() {
+        if (running.compareAndSet(true, false)) {
+            started.await();
+            for (int i = 0; i < workerCount; i++) {
+                workers.getQuick(i).halt();
+            }
+            halted.await();
+        }
+        workers.clear();
     }
 
     public void start() {

@@ -103,7 +103,6 @@ public class EngineMigration {
                             ff,
                             LOG,
                             upgradeFd,
-                            true,
                             Integer.BYTES
                     );
                 }

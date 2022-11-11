@@ -741,7 +741,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                         "  from long_sequence(10);");
     }
 
-    private RecordCursorFactory prepareFactory(TableReader reader) {
+    private RecordCursorFactory prepareFactory(TableReader reader) throws SqlException {
         TableReaderMetadata metadata = reader.getMetadata();
         IntList columnIndexes = new IntList();
         columnIndexes.add(0);
@@ -752,7 +752,7 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
         columnSizes.add(3);
 
         return new DataFrameRecordCursorFactory(engine.getConfiguration(), metadata,
-                new FullBwdDataFrameCursorFactory("trips", metadata.getId(), reader.getVersion()),
+                new FullBwdDataFrameCursorFactory("trips", metadata.getTableId(), reader.getVersion()),
                 new BwdDataFrameRowCursorFactory(),
                 false,
                 null,

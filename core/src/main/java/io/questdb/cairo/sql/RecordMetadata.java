@@ -45,15 +45,6 @@ public interface RecordMetadata extends ColumnTypes {
     int getColumnCount();
 
     /**
-     * Retrieves column hash. Hash augments the name to ensure when column is removed and
-     * then added with the same name the clients do not perceive this event as no-change.
-     *
-     * @param columnIndex numeric index of the column
-     * @return hash value
-     */
-    long getColumnHash(int columnIndex);
-
-    /**
      * Gets the numeric index of a column by name
      *
      * @param columnName name of the column
@@ -117,8 +108,8 @@ public interface RecordMetadata extends ColumnTypes {
     }
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnIndex numeric index of the column
      * @return number of row IDs per block
@@ -126,8 +117,8 @@ public interface RecordMetadata extends ColumnTypes {
     int getIndexValueBlockCapacity(int columnIndex);
 
     /**
-     * How many row IDs to store in a single storage block on disk for an indexed column.
-     * Fewer blocks used to store row IDs achieves better performance.
+     * The returned value defines how many row IDs to store in a single storage block on disk
+     * for an indexed column. Fewer blocks used to store row IDs achieves better performance.
      *
      * @param columnName name of the column
      * @return number of row IDs per block
@@ -160,6 +151,12 @@ public interface RecordMetadata extends ColumnTypes {
     int getWriterIndex(int columnIndex);
 
     /**
+     * @param columnIndex column index
+     * @return true if the column with the given column index is present, otherwise false.
+     */
+    boolean hasColumn(int columnIndex);
+
+    /**
      * @param columnIndex numeric index of the column
      * @return true if column is indexed, otherwise false.
      */
@@ -178,6 +175,13 @@ public interface RecordMetadata extends ColumnTypes {
      * @return true if symbol table is static, otherwise false.
      */
     boolean isSymbolTableStatic(int columnIndex);
+
+    /**
+     * @return true if the record is from WAL enabled table, otherwise false.
+     */
+    default boolean isWalEnabled() {
+        return false;
+    }
 
     /**
      * Create a JSON object with record metadata

@@ -76,7 +76,9 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCopy() throws Exception {
-        assertMemoryLeak(() -> assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true"));
+        assertMemoryLeak(() -> {
+            assertQueryDisallowed("copy testDisallowCopySerial from '/test-alltypes.csv' with header true");
+        });
     }
 
     @Test
@@ -262,7 +264,7 @@ public class PGSecurityTest extends BasePGTest {
                         // Postgres JDBC clients ignores unknown properties and does not send them to a server
                         // so have to use a property which actually exists
                         final Connection connection = getConnectionWithCustomProperty(
-                                server.getPort(), PGProperty.OPTIONS.getName(), "user")
+                                server.getPort(), PGProperty.OPTIONS.getName(), "user");
                 ) {
                     // no need to assert anything, if we manage to create a connection then it's already a success!
                 }

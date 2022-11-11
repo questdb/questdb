@@ -34,7 +34,6 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -124,7 +123,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final NetworkFacade nf;
     private final Path path = new Path();
-    private final CharSequenceObjHashMap<TableWriter> pendingWriters;
+    private final CharSequenceObjHashMap<TableWriterAPI> pendingWriters;
     private final int recvBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final IntList selectColumnTypes = new IntList();
@@ -164,7 +163,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -173,6 +171,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -334,12 +333,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason) {
+    public TableWriterAPI getTableWriterAPI(CairoSecurityContext context, CharSequence name, String lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);
         }
-        return engine.getWriter(context, name, lockReason);
+        return engine.getTableWriterAPI(context, name, lockReason);
     }
 
     public void handleClientOperation(
@@ -1236,7 +1235,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void executeInsert() throws SqlException {
-        final TableWriter writer;
+        final TableWriterAPI writer;
         try {
             switch (transactionState) {
                 case IN_TRANSACTION:
@@ -1282,7 +1281,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case COMMIT_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
+                        final TableWriterAPI m = pendingWriters.valueQuick(i);
                         m.commit();
                         Misc.free(m);
                     }
@@ -1294,7 +1293,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case ROLLING_BACK_TRANSACTION:
                 try {
                     for (int i = 0, n = pendingWriters.size(); i < n; i++) {
-                        final TableWriter m = pendingWriters.valueQuick(i);
+                        final TableWriterAPI m = pendingWriters.valueQuick(i);
                         m.rollback();
                         Misc.free(m);
                     }
@@ -1348,14 +1347,14 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             op.withContext(sqlExecutionContext);
-            pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
+            pendingWriters.valueAt(index).apply(op);
         } else {
             if (statementTimeout > 0) {
                 circuitBreaker.setTimeout(statementTimeout);
             }
 
             // execute against writer from the engine, or async
-            try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
+            try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, false)) {
                 if (statementTimeout > 0) {
                     if (fut.await(statementTimeout) != QUERY_COMPLETE) {
                         // Timeout
@@ -1615,7 +1614,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void prepareError(CairoException ex) {
         int errno = ex.getErrno();
         CharSequence message = ex.getFlyweightMessage();
-        prepareErrorResponse(-1, ex.getFlyweightMessage());
+        prepareErrorResponse(ex.getPosition(), ex.getFlyweightMessage());
         if (errno == CairoException.NON_CRITICAL) {
             LOG.error()
                     .$("error [msg=`").$(message).$('`')
@@ -1941,7 +1940,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq.getUpdateOperation(), bindVariableService);
+                typesAndUpdate.of(cq.getUpdateOperation(), queryText, bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
@@ -1982,10 +1981,8 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
-                try (AbstractOperation op = cq.getOperation()) {
-                    try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
-                        fut.await();
-                    }
+                try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
+                    fut.await();
                 }
                 // fall thru
             default:

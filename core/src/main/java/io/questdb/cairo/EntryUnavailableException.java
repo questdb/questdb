@@ -28,12 +28,18 @@ import io.questdb.std.ThreadLocal;
 
 public class EntryUnavailableException extends CairoException {
     private static final ThreadLocal<EntryUnavailableException> tlException = new ThreadLocal<>(EntryUnavailableException::new);
+    private String reason;
 
-    public static EntryUnavailableException instance(CharSequence reason) {
+    public static EntryUnavailableException instance(String reason) {
         EntryUnavailableException ex = tlException.get();
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.put("table busy [reason=").put(reason).put("]");
+        ex.reason = reason;
         return ex;
+    }
+
+    public String getReason() {
+        return reason;
     }
 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.Nullable;
 
 public class TableColumnMetadata {
-    private final long hash;
     @Nullable
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
@@ -38,12 +37,12 @@ public class TableColumnMetadata {
     private String name;
     private int type;
 
-    public TableColumnMetadata(String name, long hash, int type) {
-        this(name, hash, type, null);
+    public TableColumnMetadata(String name, int type) {
+        this(name, type, null);
     }
 
-    public TableColumnMetadata(String name, long hash, int type, @Nullable RecordMetadata metadata) {
-        this(name, hash, type, false, 0, false, metadata, -1);
+    public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
+        this(name, type, false, 0, false, metadata, -1);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -51,19 +50,17 @@ public class TableColumnMetadata {
 
     public TableColumnMetadata(
             String name,
-            long hash,
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, hash, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1);
     }
 
     public TableColumnMetadata(
             String name,
-            long hash,
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
@@ -72,17 +69,12 @@ public class TableColumnMetadata {
             int writerIndex
     ) {
         this.name = name;
-        this.hash = hash;
         this.type = type;
         this.indexed = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
-    }
-
-    public long getHash() {
-        return hash;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -104,6 +96,10 @@ public class TableColumnMetadata {
 
     public int getWriterIndex() {
         return writerIndex;
+    }
+
+    public boolean isDeleted() {
+        return type < 0;
     }
 
     public boolean isIndexed() {

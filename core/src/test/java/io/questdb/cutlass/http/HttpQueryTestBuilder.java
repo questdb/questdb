@@ -60,11 +60,16 @@ public class HttpQueryTestBuilder {
     private MicrosecondClock microsecondClock;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private HttpServerConfigurationBuilder serverConfigBuilder;
+    private SqlExecutionContextImpl sqlExecutionContext;
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private TemporaryFolder temp;
     private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
+
+    public SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -120,7 +125,7 @@ public class HttpQueryTestBuilder {
                 };
             }
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 TelemetryJob telemetryJob = null;
@@ -155,7 +160,7 @@ public class HttpQueryTestBuilder {
                     }
                 });
 
-                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
+                this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount) {
                     @Override
                     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
                         return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;

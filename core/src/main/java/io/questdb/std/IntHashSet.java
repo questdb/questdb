@@ -25,12 +25,16 @@
 package io.questdb.std;
 
 import java.util.Arrays;
+import java.util.NoSuchElementException;
+import java.util.PrimitiveIterator;
 
 
 public class IntHashSet extends AbstractIntHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final IntList list;
+
+    private IntIteratorImpl it;
 
     public IntHashSet() {
         this(MIN_INITIAL_CAPACITY);
@@ -132,6 +136,18 @@ public class IntHashSet extends AbstractIntHashSet {
         return hashCode;
     }
 
+    /**
+     * Returns a reset borrowed iterator. It can't be used to iterate the collection in parallel.
+     */
+    public PrimitiveIterator.OfInt iterator() {
+        if (it == null) {
+            it = new IntIteratorImpl();
+        } else {
+            it.reset();
+        }
+        return it;
+    }
+
     public int remove(int key) {
         int keyIndex = keyIndex(key);
         if (keyIndex < 0) {
@@ -179,5 +195,33 @@ public class IntHashSet extends AbstractIntHashSet {
     protected void move(int from, int to) {
         keys[to] = keys[from];
         erase(from);
+    }
+
+    private class IntIteratorImpl implements PrimitiveIterator.OfInt {
+        private int keysIndex;
+        private int yieldedCount;
+
+        @Override
+        public boolean hasNext() {
+            return yieldedCount < size();
+        }
+
+        @Override
+        public int nextInt() {
+            while (keysIndex < keys.length) {
+                final int entry = keys[keysIndex];
+                ++keysIndex;
+                if (entry != noEntryKeyValue) {
+                    ++yieldedCount;
+                    return entry;
+                }
+            }
+            throw new NoSuchElementException();
+        }
+
+        public void reset() {
+            keysIndex = 0;
+            yieldedCount = 0;
+        }
     }
 }

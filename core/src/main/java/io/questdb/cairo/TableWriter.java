@@ -30,15 +30,17 @@ import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.MemoryFMCRImpl;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.UpdateOperator;
+import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -51,7 +53,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -63,9 +64,11 @@ import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements Closeable {
+public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
@@ -82,11 +85,10 @@ public class TableWriter implements Closeable {
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     final ObjList<MemoryMA> columns;
-    private final AlterOperation alterTableStatement = new AlterOperation();
-    private final LongConsumer appendTimestampSetter;
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
-    private final LongLongHashMap cmdSequences = new LongLongHashMap();
+    private final AlterOperation alterTableStatement = new AlterOperation();
+    private final LongConsumer appendTimestampSetter;
     private final LongList columnTops;
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
@@ -134,14 +136,11 @@ public class TableWriter implements Closeable {
     private final DateFormat partitionDirFmt;
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private final Path path;
-    private final Row regularRow = new RowImpl();
-    private final LongIntHashMap replPartitionHash = new LongIntHashMap();
     private final int rootLen;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
+    private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
-    private final MemoryFR slaveMetaMem = new MemoryFCRImpl();
-    private final MemoryFMCRImpl slaveTxMemory = new MemoryFMCRImpl();
     private final TxReader slaveTxReader;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
@@ -199,7 +198,6 @@ public class TableWriter implements Closeable {
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean removeDirOnCancelRow = true;
-    private Row row = regularRow;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
@@ -207,7 +205,7 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
-    private UpdateOperator updateOperator;
+    private UpdateOperatorImpl updateOperatorImpl;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -262,7 +260,7 @@ public class TableWriter implements Closeable {
             this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
 
             openMetaFile(ff, path, rootLen, metaMem);
-            this.metadata = new TableWriterMetadata(metaMem);
+            this.metadata = new TableWriterMetadata(this.tableName, metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -301,10 +299,10 @@ public class TableWriter implements Closeable {
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
             this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
-                partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-                partitionTimestampHi = txWriter.getLastPartitionTimestamp();
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                this.partitionTimestampHi = txWriter.getLastPartitionTimestamp();
             } else {
-                partitionDirFmt = null;
+                this.partitionDirFmt = null;
             }
             this.commitInterval = calculateCommitInterval();
 
@@ -400,6 +398,7 @@ public class TableWriter implements Closeable {
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      */
+    @Override
     public void addColumn(
             CharSequence name,
             int type,
@@ -493,11 +492,12 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity, columnIndex);
+        metadata.addColumn(name, type, isIndexed, indexValueBlockCapacity, columnIndex);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
+    @Override
     public void addIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
@@ -567,7 +567,7 @@ public class TableWriter implements Closeable {
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
-        TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
@@ -578,6 +578,49 @@ public class TableWriter implements Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
+    public long apply(AbstractOperation operation, long seqTxn) {
+        try {
+            setSeqTxn(seqTxn);
+            long txnBefore = getTxn();
+            operation.apply(this, true);
+            if (txnBefore == getTxn()) {
+                // Commit to update seqTxn
+                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            }
+            return 0;
+        } catch (CairoException ex) {
+            // This is non-critical error, we can mark seqTxn as processed
+            if (ex.isWALTolerable()) {
+                try {
+                    rollback(); // rollback in case on any dirty state
+                    setSeqTxn(seqTxn);
+                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                } catch (Throwable th2) {
+                    LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+                }
+            }
+            throw ex;
+        } catch (Throwable th) {
+            try {
+                rollback(); // rollback seqTxn
+            } catch (Throwable th2) {
+                LOG.critical().$("could not rollback, table is distressed [table=").$(tableName).$(", error=").$(th2).I$();
+            }
+            throw th;
+        }
+    }
+
+    @Override
+    public long apply(AlterOperation operation, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        return operation.apply(this, contextAllowsAnyStructureChanges);
+    }
+
+    @Override
+    public long apply(UpdateOperation operation) {
+        return operation.apply(this, true);
+    }
+
+    @Override
     public AttachDetachStatus attachPartition(long timestamp) {
         // -1 means unknown size
         return attachPartition(timestamp, -1L);
@@ -633,7 +676,7 @@ public class TableWriter implements Closeable {
         try {
             if (ff.exists(detachedPath)) {
                 // detached metadata files validation
-                CharSequence timestampColName = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
+                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
                     readPartitionMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
@@ -718,6 +761,7 @@ public class TableWriter implements Closeable {
         }
     }
 
+    @Override
     public void changeCacheFlag(int columnIndex, boolean cache) {
         checkDistressed();
 
@@ -758,26 +802,30 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void commit() {
-        commit(defaultCommitMode);
+    @Override
+    public long commit() {
+        return commit(defaultCommitMode);
     }
 
-    public void commit(int commitMode) {
-        commit(commitMode, 0);
+    public long commit(int commitMode) {
+        return commit(commitMode, 0);
     }
 
-    public void commitWithLag() {
-        commit(defaultCommitMode, metadata.getCommitLag());
+    @Override
+    public long commitWithLag() {
+        return commit(defaultCommitMode, metadata.getCommitLag());
     }
 
-    public void commitWithLag(long lagMicros) {
-        commit(defaultCommitMode, lagMicros);
+    @Override
+    public long commitWithLag(long lagMicros) {
+        return commit(defaultCommitMode, lagMicros);
     }
 
-    public void commitWithLag(int commitMode) {
-        commit(commitMode, metadata.getCommitLag());
+    public long commitWithLag(int commitMode) {
+        return commit(commitMode, metadata.getCommitLag());
     }
 
+    @Override
     public AttachDetachStatus detachPartition(long timestamp) {
         // Should be checked by SQL compiler
         assert metadata.getTimestampIndex() > -1;
@@ -938,6 +986,7 @@ public class TableWriter implements Closeable {
         return AttachDetachStatus.OK;
     }
 
+    @Override
     public void dropIndex(CharSequence columnName) {
 
         checkDistressed();
@@ -975,7 +1024,7 @@ public class TableWriter implements Closeable {
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName); // bumps structure version, this is in effect a commit
             // refresh metadata
-            TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+            TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
             columnMetadata.setIndexed(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             // remove indexer
@@ -1017,6 +1066,7 @@ public class TableWriter implements Closeable {
         return colTop > -1L ? colTop : defaultValue;
     }
 
+    @Override
     public long getCommitInterval() {
         return commitInterval;
     }
@@ -1033,7 +1083,13 @@ public class TableWriter implements Closeable {
         return txWriter.getMaxTimestamp();
     }
 
-    public TableWriterMetadata getMetadata() {
+    @Override
+    public long getMetaMaxUncommittedRows() {
+        return metadata.getMaxUncommittedRows();
+    }
+
+    @Override
+    public TableRecordMetadata getMetadata() {
         return metadata;
     }
 
@@ -1041,6 +1097,7 @@ public class TableWriter implements Closeable {
         return hasO3() ? getO3RowCount0() : 0;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -1064,31 +1121,23 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionTimestamp(partitionIndex);
     }
 
-    public long getRawMetaMemory() {
-        return metaMem.getPageAddress(0);
-    }
-
-    // todo: this method is not tested in cases when metadata size changes due to column add/remove operations
-    public long getRawMetaMemorySize() {
-        return metadata.getFileDataSize();
-    }
-
-    // todo: hide raw memory access from public interface when slave is able to send data over the network
-    public long getRawTxnMemory() {
-        return txWriter.unsafeGetRawMemory();
-    }
-
-    // todo: hide raw memory access from public interface when slave is able to send data over the network
-    public long getRawTxnMemorySize() {
-        return txWriter.unsafeGetRawMemorySize();
-    }
-
     public long getRowCount() {
         return txWriter.getRowCount();
     }
 
+    public long getSeqTxn() {
+        return txWriter.getSeqTxn();
+    }
+
+    @Override
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
+    }
+
+    @Override
+    public int getSymbolCountWatermark(int columnIndex) {
+        // We don't need the watermark for non-WAL tables.
+        return -1;
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
@@ -1099,6 +1148,7 @@ public class TableWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    @Override
     public String getTableName() {
         return tableName;
     }
@@ -1119,15 +1169,17 @@ public class TableWriter implements Closeable {
         return txnScoreboard;
     }
 
+    @Override
     public long getUncommittedRowCount() {
         return (masterRef - committedMasterRef) >> 1;
     }
 
+    @Override
     public UpdateOperator getUpdateOperator() {
-        if (updateOperator == null) {
-            updateOperator = new UpdateOperator(configuration, messageBus, this, path, rootLen);
+        if (updateOperatorImpl == null) {
+            updateOperatorImpl = new UpdateOperatorImpl(configuration, messageBus, this, path, rootLen);
         }
-        return updateOperator;
+        return updateOperatorImpl;
     }
 
     public boolean inTransaction() {
@@ -1138,6 +1190,12 @@ public class TableWriter implements Closeable {
         return tempMem16b != 0;
     }
 
+    @Override
+    public Row newRow() {
+        return newRow(0L);
+    }
+
+    @Override
     public Row newRow(long timestamp) {
 
         switch (rowAction) {
@@ -1193,10 +1251,6 @@ public class TableWriter implements Closeable {
         return row;
     }
 
-    public Row newRow() {
-        return newRow(0L);
-    }
-
     public void o3BumpErrorCount() {
         o3ErrorCount.incrementAndGet();
     }
@@ -1212,11 +1266,8 @@ public class TableWriter implements Closeable {
     }
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
-        if (cmd.getTableId() == getMetadata().getId()) {
+        if (cmd.getTableId() == getMetadata().getTableId()) {
             switch (cmd.getType()) {
-                case CMD_SLAVE_SYNC:
-                    processReplSyncCommand(cmd, cursor, commandSubSeq);
-                    break;
                 case CMD_ALTER_TABLE:
                     processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                     break;
@@ -1233,16 +1284,15 @@ public class TableWriter implements Closeable {
             LOG.info()
                     .$("not my command [cmdTableId=").$(cmd.getTableId())
                     .$(", cmdTableName=").$(cmd.getTableName())
-                    .$(", myTableId=").$(getMetadata().getId())
+                    .$(", myTableId=").$(getMetadata().getTableId())
                     .$(", myTableName=").utf8(tableName)
                     .I$();
             commandSubSeq.done(cursor);
         }
     }
 
-    public boolean processO3Block(
-            Path walPath,
-            long segmentId,
+    public void processWalBlock(
+            @Transient Path walPath,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1256,10 +1306,7 @@ public class TableWriter implements Closeable {
         int walRootPathLen = walPath.length();
 
         try {
-            if (segmentId > -1L) {
-                walPath.slash().put(segmentId);
-            }
-            mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
+            mmapWalColumns(walPath, timestampIndex, rowLo, rowHi);
 
             try {
                 o3Columns = walMappedColumns;
@@ -1296,55 +1343,47 @@ public class TableWriter implements Closeable {
             } finally {
                 finishO3Append(0L);
                 o3Columns = o3MemColumns;
-                for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                    MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                    if (mappedColumnMem != null) {
-                        Misc.free(mappedColumnMem);
-                        walColumnMemoryPool.push(mappedColumnMem);
-                    }
-                }
+                closeWalColumns();
             }
 
-            return finishO3Commit(partitionTimestampHiLimit);
+            finishO3Commit(partitionTimestampHiLimit);
         } finally {
             walPath.trimTo(walRootPathLen);
         }
     }
 
-    public void processWalCommit(
-            Path walPath,
-            long segmentId,
+    public void processWalData(
+            @Transient Path walPath,
             boolean inOrder,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
             long o3TimestampMax,
-            SymbolMapDiffCursor mapDiffCursor
+            SymbolMapDiffCursor mapDiffCursor,
+            long seqTxn
     ) {
         if (inTransaction()) {
+            // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
+            // Set the writer to distressed state and throw exception so that writer is re-created.
+            distressed = true;
             throw CairoException.critical(0).put("cannot process WAL while in transaction");
         }
 
         txWriter.beginPartitionSizeUpdate();
-        if (processO3Block(
-                walPath,
-                segmentId,
-                metadata.getTimestampIndex(),
-                inOrder,
-                rowLo,
-                rowHi,
-                o3TimestampMin,
-                o3TimestampMax,
-                mapDiffCursor
-        )) {
-            return;
+        LOG.debug().$("processing WAL [path=").$(walPath).$(", rowLo=").$(rowLo).$(", roHi=").$(rowHi)
+                .$(", tsMin=").$ts(o3TimestampMin).$(" , txMax=").$ts(o3TimestampMax)
+                .I$();
+        if (rowAction == ROW_ACTION_OPEN_PARTITION && txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
+            // table truncated, open partition file.
+            openFirstPartition(o3TimestampMin);
         }
-
+        processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor);
         final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
         updateIndexes();
         columnVersionWriter.commit();
+        txWriter.setSeqTxn(seqTxn);
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(defaultCommitMode, this.denseSymbolMapWriters);
 
@@ -1371,6 +1410,7 @@ public class TableWriter implements Closeable {
         }
     }
 
+    @Override
     public void removeColumn(CharSequence name) {
         checkDistressed();
         checkColumnName(name);
@@ -1435,12 +1475,13 @@ public class TableWriter implements Closeable {
 
         metadata.removeColumn(index);
         if (timestamp) {
-            metadata.setTimestampIndex(-1);
+            metadata.clearTimestampIndex();
         }
 
-        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+        LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$(path).$();
     }
 
+    @Override
     public boolean removePartition(long timestamp) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
@@ -1507,7 +1548,6 @@ public class TableWriter implements Closeable {
             if (index != 0) {
                 openPartition(prevTimestamp);
                 setAppendPosition(newTransientRowCount, false);
-                row = regularRow;
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
             }
@@ -1544,6 +1584,7 @@ public class TableWriter implements Closeable {
         return true;
     }
 
+    @Override
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -1552,7 +1593,7 @@ public class TableWriter implements Closeable {
         final int index = getColumnIndex(currentName);
         final int type = metadata.getColumnType(index);
 
-        LOG.info().$("renaming column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
+        LOG.info().$("renaming column '").utf8(currentName).$('[').$(ColumnType.nameOf(type)).$("]' to '").utf8(newName).$("' in ").$(path).$();
 
         commit();
 
@@ -1595,143 +1636,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
-    public TableSyncModel replCreateTableSyncModel(long slaveTxAddress, long slaveTxDataSize, long slaveMetaData, long slaveMetaDataSize) {
-        replPartitionHash.clear();
-
-        final TableSyncModel model = new TableSyncModel();
-
-        model.setMaxTimestamp(getMaxTimestamp());
-
-        slaveTxMemory.of(slaveTxAddress, slaveTxDataSize);
-        slaveTxReader.initRO(slaveTxMemory, partitionBy);
-        slaveTxReader.unsafeLoadAll();
-
-        final int theirLast;
-        if (slaveTxReader.getDataVersion() != txWriter.getDataVersion()) {
-            // truncate
-            model.setTableAction(TableSyncModel.TABLE_ACTION_TRUNCATE);
-            theirLast = -1;
-        } else {
-            // hash partitions on slave side
-            int partitionCount = slaveTxReader.getPartitionCount();
-            theirLast = partitionCount - 1;
-            for (int i = 0; i < partitionCount; i++) {
-                replPartitionHash.put(slaveTxReader.getPartitionTimestamp(i), i);
-            }
-        }
-        model.setDataVersion(txWriter.getDataVersion());
-
-        // collate local partitions that need to be propagated to this slave
-        final int ourPartitionCount = txWriter.getPartitionCount();
-        final int ourLast = ourPartitionCount - 1;
-
-        for (int i = 0; i < ourPartitionCount; i++) {
-            try {
-                final long ts = txWriter.getPartitionTimestamp(i);
-                final long ourSize = i < ourLast ? txWriter.getPartitionSize(i) : txWriter.transientRowCount;
-                final long ourColumnVersion = i < ourLast ? txWriter.getPartitionColumnVersion(i) : txWriter.columnVersion;
-                final int keyIndex = replPartitionHash.keyIndex(ts);
-                final long theirSize;
-                if (keyIndex < 0) {
-                    int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
-                    // check if partition name ourDataTxn is the same
-                    if (slaveTxReader.getPartitionNameTxn(slavePartitionIndex) == txWriter.getPartitionNameTxn(i)) {
-                        // this is the same partition roughly
-                        theirSize = slavePartitionIndex < theirLast ?
-                                slaveTxReader.getPartitionSize(slavePartitionIndex) :
-                                slaveTxReader.getTransientRowCount();
-
-                        if (theirSize > ourSize) {
-                            LOG.error()
-                                    .$("slave partition is larger than that on master [table=").utf8(tableName)
-                                    .$(", ts=").$ts(ts)
-                                    .I$();
-                        }
-                    } else {
-                        // partition name ourDataTxn is different, partition mutated
-                        theirSize = 0;
-                    }
-                } else {
-                    theirSize = 0;
-                }
-
-                if (theirSize < ourSize) {
-                    final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    model.addPartitionAction(
-                            theirSize == 0 ?
-                                    TableSyncModel.PARTITION_ACTION_WHOLE :
-                                    TableSyncModel.PARTITION_ACTION_APPEND,
-                            ts,
-                            theirSize,
-                            ourSize - theirSize,
-                            partitionNameTxn,
-                            ourColumnVersion
-                    );
-
-                    setPathForPartition(path, partitionBy, ts, false);
-
-                    if (partitionNameTxn > -1) {
-                        path.put('.').put(partitionNameTxn);
-                    }
-
-                    int plen = path.length();
-
-                    for (int j = 0; j < columnCount; j++) {
-                        final CharSequence columnName = metadata.getColumnName(j);
-                        long top = columnVersionWriter.getColumnTopQuick(ts, j);
-                        if (top > 0) {
-                            model.addColumnTop(ts, j, top);
-                        }
-
-                        if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
-                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-                            iFile(path.trimTo(plen), columnName, columnNameTxn);
-                            long sz = TableUtils.readLongAtOffset(
-                                    ff,
-                                    path,
-                                    tempMem16b,
-                                    ourSize * 8L
-                            );
-                            model.addVarColumnSize(ts, j, sz);
-                        }
-                    }
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
-
-        slaveMetaMem.of(slaveMetaData, slaveMetaDataSize);
-        int slaveColumnCount = slaveMetaMem.getInt(META_OFFSET_COUNT);
-        long offset = getColumnNameOffset(slaveColumnCount);
-
-        int newIndex = 0;
-        for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
-            if (masterIndex < slaveColumnCount) {
-                CharSequence slaveName = slaveMetaMem.getStr(offset);
-                offset += Vm.getStorageLength(slaveName);
-                int slaveColumnType = getColumnType(slaveMetaMem, masterIndex);
-                boolean isSlaveIndexed = isColumnIndexed(slaveMetaMem, masterIndex);
-                boolean isRename = !Chars.equalsIgnoreCase(slaveName, metadata.getColumnName(masterIndex));
-
-                if (slaveColumnType != metadata.getColumnType(masterIndex)
-                        || isRename
-                        || isSlaveIndexed != metadata.isColumnIndexed(masterIndex)) {
-                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, masterIndex, masterIndex);
-                    if (metadata.getColumnType(masterIndex) > 0) {
-                        model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
-                        model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
-                    }
-                }
-            } else {
-                model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
-                model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
-            }
-        }
-
-        return model;
-    }
-
+    @Override
     public void rollback() {
         checkDistressed();
         if (o3InError || inTransaction()) {
@@ -1773,6 +1678,7 @@ public class TableWriter implements Closeable {
         this.lifecycleManager = lifecycleManager;
     }
 
+    @Override
     public void setMetaCommitLag(long commitLag) {
         try {
             commit();
@@ -1795,6 +1701,7 @@ public class TableWriter implements Closeable {
         }
     }
 
+    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         try {
             commit();
@@ -1816,25 +1723,31 @@ public class TableWriter implements Closeable {
         }
     }
 
+    public void setSeqTxn(long seqTxn) {
+        txWriter.setSeqTxn(seqTxn);
+    }
+
     public long size() {
         // This is uncommitted row count
         return txWriter.getRowCount() + getO3RowCount();
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Does not accept structure changes, e.g. equivalent to tick(false)
      * Some tick calls can result into transaction commit.
      */
+    @Override
     public void tick() {
         tick(false);
     }
 
-    /***
+    /**
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Some tick calls can result into transaction commit.
+     *
      * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
-     *                             structure changes like column drop, rename
+     *                                         structure changes like column drop, rename
      */
     public void tick(boolean contextAllowsAnyStructureChanges) {
         // Some alter table trigger commit() which trigger tick()
@@ -1859,6 +1772,7 @@ public class TableWriter implements Closeable {
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
      * and likely to cause segmentation fault. When table re-opens any partial truncate will be retried.
      */
+    @Override
     public final void truncate() {
         rollback();
 
@@ -1907,7 +1821,6 @@ public class TableWriter implements Closeable {
         txWriter.resetTimestamp();
         columnVersionWriter.truncate(PartitionBy.isPartitioned(partitionBy));
         txWriter.truncate(columnVersionWriter.getVersion());
-        row = regularRow;
         try {
             clearTodoLog();
         } catch (CairoException err) {
@@ -1917,6 +1830,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("truncated [name=").utf8(tableName).I$();
     }
 
+    @Override
     public void updateCommitInterval(double commitIntervalFraction, long commitIntervalDefault) {
         this.commitIntervalFraction = commitIntervalFraction;
         this.commitIntervalDefault = commitIntervalDefault;
@@ -2318,13 +2232,13 @@ public class TableWriter implements Closeable {
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
-                attachMetadata = new TableWriterMetadata(attachMetaMem);
+                attachMetadata = new TableWriterMetadata(tableName, attachMetaMem);
             } else {
                 attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
                 attachMetadata.reload(attachMetaMem);
             }
 
-            if (metadata.getId() != attachMetadata.getId()) {
+            if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
@@ -2532,6 +2446,16 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void closeWalColumns() {
+        for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+            MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+            if (mappedColumnMem != null) {
+                Misc.free(mappedColumnMem);
+                walColumnMemoryPool.push(mappedColumnMem);
+            }
+        }
+    }
+
     /**
      * Commits newly added rows of data. This method updates transaction file with pointers to end of appended data.
      * <p>
@@ -2541,12 +2465,12 @@ public class TableWriter implements Closeable {
      * @param commitMode commit durability mode.
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
-    private void commit(int commitMode, long commitLag) {
+    private long commit(int commitMode, long commitLag) {
         checkDistressed();
 
         if (o3InError) {
             rollback();
-            return;
+            return TableSequencer.NO_TXN;
         }
 
         if ((masterRef & 1) != 0) {
@@ -2558,7 +2482,7 @@ public class TableWriter implements Closeable {
             if (o3 && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
-                return;
+                return getTxn();
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -2583,7 +2507,10 @@ public class TableWriter implements Closeable {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
                 addPhysicallyWrittenRows(rowsAdded);
             }
+
+            return getTxn();
         }
+        return TableSequencer.NO_TXN;
     }
 
     private void configureAppendPosition() {
@@ -2591,6 +2518,7 @@ public class TableWriter implements Closeable {
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             openFirstPartition(this.txWriter.getMaxTimestamp());
             if (partitioned) {
+                partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
                 rowAction = ROW_ACTION_OPEN_PARTITION;
                 timestampSetter = appendTimestampSetter;
             } else {
@@ -2720,8 +2648,7 @@ public class TableWriter implements Closeable {
                     }
                     ddlMem.putLong(flags);
                     ddlMem.putInt(indexValueBlockSize);
-                    ddlMem.putLong(getColumnHash(metaMem, i));
-                    ddlMem.skip(8);
+                    ddlMem.skip(16);
                 }
             }
 
@@ -2783,7 +2710,7 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
         ddlMem.putLong(txWriter.getStructureVersion() + 1);
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_WAL_ENABLED));
+        ddlMem.putBool(metaMem.getBool(META_OFFSET_WAL_ENABLED));
         metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
     }
 
@@ -2850,13 +2777,13 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
-    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
         symbolMap.setPos(symbolMapDiff.getSize());
 
-        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        // This is defensive. It validates that all the symbols used in WAL are set in SymbolMapDiff
         symbolMap.setAll(symbolMapDiff.getSize(), -1);
-        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
+        final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
         SymbolMapDiffEntry entry;
@@ -2887,7 +2814,7 @@ public class TableWriter implements Closeable {
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
-        updateOperator = Misc.free(updateOperator);
+        updateOperatorImpl = Misc.free(updateOperatorImpl);
         dropIndexOperator = null;
         freeColumns(truncate & !distressed);
         try {
@@ -2956,7 +2883,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private boolean finishO3Commit(long partitionTimestampHiLimit) {
+    private void finishO3Commit(long partitionTimestampHiLimit) {
         if (!o3InError) {
             updateO3ColumnTops();
         }
@@ -2977,8 +2904,6 @@ public class TableWriter implements Closeable {
         }
 
         metrics.tableWriter().incrementO3Commits();
-
-        return false;
     }
 
     private void freeAndRemoveColumnPair(ObjList<MemoryMA> columns, int pi, int si) {
@@ -3130,71 +3055,77 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+    private void mmapWalColumns(@Transient Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
         int walPathLen = walPath.length();
         final int columnCount = metadata.getColumnCount();
 
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int type = metadata.getColumnType(columnIndex);
-            o3RowCount = rowHi - rowLo;
-            if (type > 0) {
-                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
-                if (columnIndex == timestampIndex) {
-                    sizeBitsPow2 += 1;
-                }
+        try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int type = metadata.getColumnType(columnIndex);
+                o3RowCount = rowHi - rowLo;
+                if (type > 0) {
+                    int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                    if (columnIndex == timestampIndex) {
+                        sizeBitsPow2 += 1;
+                    }
 
-                if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMOR primary = walColumnMemoryPool.pop();
+                    if (!ColumnType.isVariableLength(type)) {
+                        MemoryCMOR primary = walColumnMemoryPool.pop();
 
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            rowHi << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        primary.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                rowHi << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
 
-                    walMappedColumns.add(primary);
-                    walMappedColumns.add(null);
+                        walMappedColumns.add(primary);
+                        walMappedColumns.add(null);
+                    } else {
+                        sizeBitsPow2 = 3;
+                        MemoryCMOR fixed = walColumnMemoryPool.pop();
+                        MemoryCMOR var = walColumnMemoryPool.pop();
+
+                        iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        fixed.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                rowLo << sizeBitsPow2,
+                                (rowHi + 1) << sizeBitsPow2,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                        long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        var.ofOffset(
+                                configuration.getFilesFacade(),
+                                walPath,
+                                varOffset,
+                                varOffset + varLen,
+                                MemoryTag.MMAP_TABLE_WRITER,
+                                CairoConfiguration.O_NONE
+                        );
+                        walPath.trimTo(walPathLen);
+
+                        walMappedColumns.add(var);
+                        walMappedColumns.add(fixed);
+                    }
                 } else {
-                    sizeBitsPow2 = 3;
-                    MemoryCMOR fixed = walColumnMemoryPool.pop();
-                    MemoryCMOR var = walColumnMemoryPool.pop();
-
-                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            (rowHi + 1) << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            varOffset,
-                            varOffset + varLen,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(var);
-                    walMappedColumns.add(fixed);
+                    walMappedColumns.add(null);
+                    walMappedColumns.add(null);
                 }
-            } else {
-                walMappedColumns.add(null);
             }
+        } catch (Throwable th) {
+            closeWalColumns();
+            throw th;
         }
     }
 
@@ -3339,7 +3270,8 @@ public class TableWriter implements Closeable {
             finishO3Append(o3LagRowCount);
         }
 
-        return finishO3Commit(partitionTimestampHiLimit);
+        finishO3Commit(partitionTimestampHiLimit);
+        return false;
     }
 
     private void o3CommitPartitionAsync(
@@ -3969,11 +3901,10 @@ public class TableWriter implements Closeable {
                 // Var size column
                 if (o3RowCount > 0) {
                     size = o3IndexMem.getLong(o3RowCount * 8);
-                    o3IndexMem.jumpTo((o3RowCount + 1) * 8);
                 } else {
                     size = 0;
-                    o3IndexMem.jumpTo(0);
                 }
+                o3IndexMem.jumpTo((o3RowCount + 1) * 8);
             }
 
             o3DataMem.jumpTo(size);
@@ -4115,6 +4046,9 @@ public class TableWriter implements Closeable {
                 break;
             case 3:
                 Vect.indexReshuffle64Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
+                break;
+            case 4:
+                Vect.indexReshuffle128Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
                 break;
             case 5:
                 Vect.indexReshuffle256Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
@@ -4384,8 +4318,8 @@ public class TableWriter implements Closeable {
                     .I$();
             errorCode = STRUCTURE_CHANGE_NOT_ALLOWED;
             errorMsg = "async cmd cannot change table structure while writer is busy";
-        } catch (SqlException | CairoException ex) {
-            errorCode = SQL_OR_CAIRO_ERROR;
+        } catch (CairoException ex) {
+            errorCode = CAIRO_ERROR;
             errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
@@ -4561,7 +4495,7 @@ public class TableWriter implements Closeable {
                             throw e;
                         }
 
-                        columnCounter.set(metadata.getDenseColumnCount());
+                        columnCounter.set(TableUtils.compressColumnCount(metadata));
                         Path pathToPartition = Path.getThreadLocal(this.path);
                         TableUtils.setPathForPartition(pathToPartition, partitionBy, o3TimestampMin, false);
                         TableUtils.txnPartitionConditionally(pathToPartition, srcNameTxn);
@@ -4698,29 +4632,6 @@ public class TableWriter implements Closeable {
 
         if (o3LagRowCount > 0) {
             o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax);
-        }
-    }
-
-    private void processReplSyncCommand(TableWriterTask cmd, long cursor, Sequence sequence) {
-        long dst = cmd.getInstance();
-        long dstIP = cmd.getIp();
-        long tableId = cmd.getTableId();
-        TableSyncModel syncModel;
-
-        try {
-            LOG.info()
-                    .$("received replication SYNC cmd [tableName=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(dst)
-                    .$(", srcIP=").$ip(dstIP)
-                    .I$();
-            syncModel = replHandleSyncCmd(cmd);
-        } finally {
-            // release command queue slot not to hold queues
-            sequence.done(cursor);
-        }
-        if (syncModel != null) {
-            publishTableWriterEvent(syncModel, tableId, dst, dstIP);
         }
     }
 
@@ -4962,21 +4873,26 @@ public class TableWriter implements Closeable {
     }
 
     private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi, Path walPath) {
-        int sym = 0;
-
         ObjList<MemoryCR> o3ColumnOverrides = null;
 
         if (symbolMapDiffCursor != null) {
             SymbolMapDiff symbolMapDiff;
             while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
                 int columnIndex = symbolMapDiff.getColumnIndex();
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType == -ColumnType.SYMBOL) {
+                    // Scroll the cursor, don't apply, symbol is deleted
+                    while (symbolMapDiff.nextEntry() != null) ;
+                    continue;
+                }
+
+                if (!ColumnType.isSymbol(columnType)) {
                     // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
                     throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
                             .put(", walPath=").put(walPath)
                             .put(']');
                 }
-                boolean identical = createWalSymbolMapping(symbolMapDiff, sym++, symbolRewriteMap);
+                boolean identical = createWalSymbolMapping(symbolMapDiff, columnIndex, symbolRewriteMap);
 
                 if (!identical) {
                     MemoryCR o3SymbolColumn = o3Columns.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -5006,6 +4922,7 @@ public class TableWriter implements Closeable {
                         long offset = rowId << 2;
 
                         int symKey = o3SymbolColumn.getInt(offset);
+                        assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
                             int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
                             if (newKey < 0) {
@@ -5176,7 +5093,8 @@ public class TableWriter implements Closeable {
         if (Files.isDir(pUtf8NameZ, type)) {
             path.trimTo(rootLen);
             path.concat(pUtf8NameZ).$();
-            if (!Chars.endsWith(path, DETACHED_DIR_MARKER)) {
+            if (!Chars.endsWith(path, DETACHED_DIR_MARKER) &&
+                    !Chars.endsWith(path, SEQ_DIR) && !Chars.equals(path, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
                 if (ff.rmdir(path) != 0) {
                     LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
                 }
@@ -5190,10 +5108,10 @@ public class TableWriter implements Closeable {
             if (
                     Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
                             || Chars.endsWith(fileNameSink, configuration.getAttachPartitionSuffix())
-                            || Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)
-                            || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
+                            || Chars.startsWith(fileNameSink, WAL_NAME_BASE)
+                            || Chars.startsWith(fileNameSink, SEQ_DIR)
             ) {
-                // Do not remove detached partitions, wals and sequencer directories
+                // Do not remove detached partitions, wal and sequencer directories
                 // They are probably about to be attached.
                 return;
             }
@@ -5270,13 +5188,13 @@ public class TableWriter implements Closeable {
                 }
 
                 if (ff.exists(other) && !ff.remove(other)) {
-                    LOG.info().$("cannot remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
 
                 if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
-                    LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
+                    LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
@@ -5285,7 +5203,7 @@ public class TableWriter implements Closeable {
 
             } while (index < retries);
 
-            throw CairoException.critical(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
+            throw CairoException.critical(0).put("could not rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
@@ -5938,8 +5856,7 @@ public class TableWriter implements Closeable {
         }
         ddlMem.putLong(flags);
         ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.putLong(getColumnHash(metaMem, i));
-        ddlMem.skip(8);
+        ddlMem.skip(16);
     }
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
@@ -6078,59 +5995,10 @@ public class TableWriter implements Closeable {
         return directIOFlag;
     }
 
-    void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
-        long pubCursor;
-        do {
-            pubCursor = messageBus.getTableWriterEventPubSeq().next();
-            if (pubCursor == -2) {
-                Os.pause();
-            }
-        } while (pubCursor < -1);
-
-        if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            model.toBinary(event);
-            event.setInstance(dst);
-            event.setIp(dstIP);
-            event.setTableId(tableId);
-            messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            LOG.info()
-                    .$("published replication SYNC event [table=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
-                    .I$();
-        } else {
-            LOG.error()
-                    .$("could not publish slave sync event [table=").utf8(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
-                    .I$();
-        }
-    }
-
     void purgeUnusedPartitions() {
         if (PartitionBy.isPartitioned(partitionBy)) {
             removeNonAttachedPartitions();
         }
-    }
-
-    @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
-        final long instance = cmd.getInstance();
-        final long sequence = cmd.getSequence();
-        final int index = cmdSequences.keyIndex(instance);
-        if (index < 0 && sequence <= cmdSequences.valueAt(index)) {
-            return null;
-        }
-        cmdSequences.putAt(index, instance, sequence);
-        final long txMemSize = Unsafe.getUnsafe().getLong(cmd.getData());
-        return replCreateTableSyncModel(
-                cmd.getData() + 8,
-                txMemSize,
-                cmd.getData() + txMemSize + 16,
-                Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
-        );
     }
 
     void rowCancel() {

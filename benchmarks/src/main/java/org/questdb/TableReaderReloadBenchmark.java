@@ -51,9 +51,9 @@ public class TableReaderReloadBenchmark {
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
     private static final long ts;
-    private static TableWriter writer;
     private static TableReader reader;
     private static long sum = 0;
+    private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {

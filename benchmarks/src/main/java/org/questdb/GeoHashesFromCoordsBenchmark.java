@@ -25,7 +25,6 @@
 package org.questdb;
 
 import io.questdb.cairo.GeoHashes;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -38,6 +37,8 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class GeoHashesFromCoordsBenchmark {
 
+    static Rnd rnd = new Rnd();
+
     public static void main(String[] args) throws Exception {
         new Runner(new OptionsBuilder()
                 .include(GeoHashesFromCoordsBenchmark.class.getSimpleName())
@@ -46,7 +47,6 @@ public class GeoHashesFromCoordsBenchmark {
                 .forks(1)
                 .build()).run();
     }
-    static Rnd rnd = new Rnd();
 
     @Benchmark
     public long fromLatLon() {
