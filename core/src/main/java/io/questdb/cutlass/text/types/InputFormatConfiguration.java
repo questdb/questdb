@@ -138,15 +138,14 @@ public class InputFormatConfiguration {
     }
 
     public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
-
-        this.clear();
+        clear();
         jsonLexer.clear();
 
         final JsonParser parser = this::onJsonEvent;
 
         try (InputStream stream = openStream(confRoot, configFileName)) {
             // here is where using direct memory is very disadvantageous
-            // we will copy buffer twice to parse json, but luckily contents should be small
+            // we will copy buffer twice to parse json, but luckily contents should be small,
             // and we should be parsing this only once on startup
             byte[] heapBuffer = new byte[4096];
             long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
@@ -316,17 +315,19 @@ public class InputFormatConfiguration {
     }
 
     private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
-        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
-        if (stream != null) {
-            LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
-            return stream;
-        }
+        // First, check the user-provided file.
         if (confRoot != null) {
             final File configFile = new File(confRoot, configFileName);
             if (configFile.exists()) {
                 LOG.info().$("loading input format config [file=").$(configFile.getAbsolutePath()).$(']').$();
                 return new FileInputStream(configFile);
             }
+        }
+        // Second, fall back to the default config.
+        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
+        if (stream != null) {
+            LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
+            return stream;
         }
         throw JsonException.$(0, "could not find input format config [confRoot=").put(confRoot)
                 .put(", configFileName=").put(configFileName)
