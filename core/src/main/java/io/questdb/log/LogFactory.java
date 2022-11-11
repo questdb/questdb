@@ -64,7 +64,7 @@ public class LogFactory implements Closeable {
     private static String rootDir;
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final ObjList<DeferredLog> deferredLogs = new ObjList<>();
+    private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
@@ -221,8 +221,8 @@ public class LogFactory implements Closeable {
 
     public synchronized Log create(String key) {
         if (!configured) {
-            DeferredLog log = new DeferredLog(key);
-            deferredLogs.add(log);
+            DeferredLogger log = new DeferredLogger(key);
+            deferredLoggers.add(log);
             return log;
         }
 
@@ -310,9 +310,9 @@ public class LogFactory implements Closeable {
     }
 
     public synchronized void init(@Nullable String rootDir) {
-        assert !configured;
-        assert !closed.get();
-        assert !running.get();
+        if (configured) {
+            return;
+        }
 
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
@@ -376,11 +376,10 @@ public class LogFactory implements Closeable {
         }
 
         // swap no-op loggers created by the configured log writers with the real ones
-        assert configured;
-        for (int i = 0, n = deferredLogs.size(); i < n; i++) {
-            deferredLogs.get(i).init(this);
+        for (int i = 0, n = deferredLoggers.size(); i < n; i++) {
+            deferredLoggers.get(i).init(this);
         }
-        deferredLogs.clear();
+        deferredLoggers.clear();
 
         startThread();
     }
@@ -556,9 +555,7 @@ public class LogFactory implements Closeable {
             return;
         }
 
-        String s;
-
-        s = getProperty(properties, "queueDepth");
+        String s = getProperty(properties, "queueDepth");
         if (s != null && s.length() > 0) {
             try {
                 setQueueDepth(Numbers.parseInt(s));
@@ -631,14 +628,14 @@ public class LogFactory implements Closeable {
         return jobs;
     }
 
-    private static class DeferredLog implements Log {
+    private static class DeferredLogger implements Log {
 
         private static final NoOpLogRecord noOpRecord = new NoOpLogRecord();
 
         private final String key;
         private Log delegate;
 
-        public DeferredLog(String key) {
+        public DeferredLogger(String key) {
             this.key = key;
         }
 
