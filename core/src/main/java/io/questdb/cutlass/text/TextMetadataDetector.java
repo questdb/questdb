@@ -152,7 +152,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
 
     @Override
     public void onFields(long line, ObjList<DirectByteCharSequence> values, int fieldCount) {
-        // keep first line in case its a header
+        // keep first line in case it's a header
         if (line == 0) {
             seedFields(fieldCount);
             stashPossibleHeader(values, fieldCount);
