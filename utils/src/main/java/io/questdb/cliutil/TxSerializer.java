@@ -27,7 +27,6 @@ package io.questdb.cliutil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -47,18 +46,8 @@ import java.util.ArrayList;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxSerializer {
-    private static long TX_OFFSET_DATA_VERSION = TX_OFFSET_DATA_VERSION_64;
-    private static long TX_OFFSET_FIXED_ROW_COUNT = TX_OFFSET_FIXED_ROW_COUNT_64;
-    private static long TX_OFFSET_MAP_WRITER_COUNT = TX_OFFSET_MAP_WRITER_COUNT_32;
-    private static long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MAX_TIMESTAMP_64;
-    private static long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP_64;
-    private static long TX_OFFSET_PARTITION_TABLE_VERSION = TX_OFFSET_PARTITION_TABLE_VERSION_64;
-    private static long TX_OFFSET_SEQ_TXN = TX_OFFSET_SEQ_TXN_64;
-    private static long TX_OFFSET_STRUCT_VERSION = TX_OFFSET_STRUCT_VERSION_64;
-    private static long TX_OFFSET_TRANSIENT_ROW_COUNT = TX_OFFSET_TRANSIENT_ROW_COUNT_64;
-    private static long TX_OFFSET_TRUNCATE_VERSION = TX_OFFSET_TRUNCATE_VERSION_64;
-    private static long TX_OFFSET_TXN = TX_OFFSET_TXN_64;
-    private static FilesFacade ff = new FilesFacadeImpl();
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final FilesFacade ff = new FilesFacadeImpl();
 
     /*
      * Read _txn file and prints to std output JSON translation.
@@ -91,179 +80,173 @@ public class TxSerializer {
         }
     }
 
-    public void serializeJson(String json, String target) {
-        Gson des = new Gson();
-        TxFileStruct tx = des.fromJson(json, TxFileStruct.class);
+    public void serializeJson(String json, String targetPath) {
+        final TxFileStruct tx = GSON.fromJson(json, TxFileStruct.class);
 
-        long version = tx.TX_OFFSET_TXN;
-        boolean isA = (version & 1L) == 0L;
-        long baseOffset = TX_BASE_HEADER_SIZE;
-        long offsetOffset = isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32;
-        long symbolSizeOffset = isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32;
-        long partitionSizeOffset = isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32;
-
-        if (tx.ATTACHED_PARTITION_SIZE != 0 && (tx.ATTACHED_PARTITIONS == null || tx.ATTACHED_PARTITION_SIZE != tx.ATTACHED_PARTITIONS.size())) {
-            String arraySize = tx.ATTACHED_PARTITIONS == null ? "null" : Integer.toString(tx.ATTACHED_PARTITIONS.size());
-            throw new IllegalArgumentException("ATTACHED_PARTITIONS array size of " + arraySize + " is different from ATTACHED_PARTITION_SIZE of " + tx.ATTACHED_PARTITION_SIZE);
+        if (tx.ATTACHED_PARTITIONS_COUNT != 0 && (tx.ATTACHED_PARTITIONS == null || tx.ATTACHED_PARTITIONS_COUNT != tx.ATTACHED_PARTITIONS.size())) {
+            throw new IllegalArgumentException(String.format(
+                    "ATTACHED_PARTITIONS array size of [%s] is different from ATTACHED_PARTITION_SIZE of [%d]",
+                    tx.ATTACHED_PARTITIONS == null ? "null" : Integer.toString(tx.ATTACHED_PARTITIONS.size()),
+                    tx.ATTACHED_PARTITIONS_COUNT
+            ));
         }
 
         if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0 && (tx.SYMBOLS == null || tx.TX_OFFSET_MAP_WRITER_COUNT != tx.SYMBOLS.size())) {
-            String arraySize = tx.SYMBOLS == null ? "null" : Integer.toString(tx.SYMBOLS.size());
-            throw new IllegalArgumentException("SYMBOLS array size if " + arraySize + "is different from MAP_WRITER_COUNT of " + tx.TX_OFFSET_MAP_WRITER_COUNT);
+            throw new IllegalArgumentException(String.format(
+                    "SYMBOLS array size if [%s] is different from MAP_WRITER_COUNT of [%d]",
+                    tx.SYMBOLS == null ? "null" : Integer.toString(tx.SYMBOLS.size()),
+                    tx.TX_OFFSET_MAP_WRITER_COUNT
+            ));
         }
 
-        long fileSize = tx.calculateFileSize();
-        try (Path path = new Path()) {
-            path.put(target).$();
-            try (MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)) {
-                Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
-                rwTxMem.putLong(TX_BASE_OFFSET_VERSION_64, version);
-                rwTxMem.putLong(offsetOffset, baseOffset);
-                rwTxMem.putLong(symbolSizeOffset, tx.TX_OFFSET_MAP_WRITER_COUNT * Long.BYTES);
-                rwTxMem.putLong(partitionSizeOffset, tx.ATTACHED_PARTITION_SIZE * Long.BYTES * LONGS_PER_TX_ATTACHED_PARTITION);
+        try (
+                Path path = new Path().of(targetPath).$();
+                MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
+        ) {
+            final int symbolsSize = tx.TX_OFFSET_MAP_WRITER_COUNT * Long.BYTES;
+            final int partitionSegmentSize = tx.ATTACHED_PARTITIONS_COUNT * LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
+            final long fileSize = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+            Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
+            rwTxMem.setTruncateSize(fileSize);
 
-                rwTxMem.setTruncateSize(fileSize);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_TXN, tx.TX_OFFSET_TXN);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT, tx.TX_OFFSET_FIXED_ROW_COUNT);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP, tx.TX_OFFSET_MIN_TIMESTAMP);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP, tx.TX_OFFSET_MAX_TIMESTAMP);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION, tx.TX_OFFSET_DATA_VERSION);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION, tx.TX_OFFSET_STRUCT_VERSION);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION, tx.TX_OFFSET_PARTITION_TABLE_VERSION);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, tx.TX_OFFSET_COLUMN_VERSION);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION, tx.TX_OFFSET_TRUNCATE_VERSION);
-                rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN, tx.TX_OFFSET_SEQ_TXN);
-                rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, tx.TX_OFFSET_MAP_WRITER_COUNT);
+            final long version = tx.TX_OFFSET_TXN;
+            final boolean isA = (version & 1L) == 0L;
+            final int baseOffset = TX_BASE_HEADER_SIZE;
+            rwTxMem.putLong(TX_BASE_OFFSET_VERSION_64, version);
+            rwTxMem.putInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32, baseOffset);
+            rwTxMem.putInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32, symbolsSize);
+            rwTxMem.putLong(isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32, partitionSegmentSize);
 
-                if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
-                    int isym = 0;
-                    for (TxFileStruct.SymbolInfo si : tx.SYMBOLS) {
-                        long offset = baseOffset + getSymbolWriterIndexOffset(isym++);
-                        rwTxMem.putInt(offset, si.COUNT);
-                        offset += 4;
-                        rwTxMem.putInt(offset, si.UNCOMMITTED_COUNT);
-                    }
+            rwTxMem.putLong(baseOffset + TX_OFFSET_TXN_64, tx.TX_OFFSET_TXN);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64, tx.TX_OFFSET_TRANSIENT_ROW_COUNT);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64, tx.TX_OFFSET_FIXED_ROW_COUNT);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64, tx.TX_OFFSET_MIN_TIMESTAMP);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64, tx.TX_OFFSET_MAX_TIMESTAMP);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_DATA_VERSION_64, tx.TX_OFFSET_DATA_VERSION);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, tx.TX_OFFSET_STRUCT_VERSION);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, tx.TX_OFFSET_PARTITION_TABLE_VERSION);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, tx.TX_OFFSET_COLUMN_VERSION);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, tx.TX_OFFSET_TRUNCATE_VERSION);
+            rwTxMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, tx.TX_OFFSET_SEQ_TXN);
+            rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, tx.TX_OFFSET_MAP_WRITER_COUNT);
+
+            if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
+                int isym = 0;
+                for (TxFileStruct.SymbolInfo si : tx.SYMBOLS) {
+                    long offset = baseOffset + getSymbolWriterIndexOffset(isym++);
+                    rwTxMem.putInt(offset, si.COUNT);
+                    offset += 4;
+                    rwTxMem.putInt(offset, si.UNCOMMITTED_COUNT);
                 }
+            }
 
-                rwTxMem.putInt(baseOffset + getPartitionTableSizeOffset(tx.TX_OFFSET_MAP_WRITER_COUNT), tx.ATTACHED_PARTITION_SIZE * Long.BYTES * LONGS_PER_TX_ATTACHED_PARTITION);
-                if (tx.ATTACHED_PARTITION_SIZE != 0) {
-                    int ipart = 0;
-                    for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
-                        long offset = baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, LONGS_PER_TX_ATTACHED_PARTITION * ipart++);
-                        rwTxMem.putLong(offset, part.TS);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.SIZE);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.NAME_TX);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.DATA_TX);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.MASK);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.AVAILABLE0);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.AVAILABLE1);
-                        offset += Long.BYTES;
-                        rwTxMem.putLong(offset, part.AVAILABLE2);
-                    }
+            rwTxMem.jumpTo(baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, 0) - Integer.BYTES);
+            rwTxMem.putInt(partitionSegmentSize);
+            if (tx.ATTACHED_PARTITIONS_COUNT != 0) {
+                for (TxFileStruct.AttachedPartition part : tx.ATTACHED_PARTITIONS) {
+                    rwTxMem.putLong(part.TS);
+                    rwTxMem.putLong(part.SIZE);
+                    rwTxMem.putLong(part.NAME_TX);
+                    rwTxMem.putLong(part.DATA_TX);
+                    rwTxMem.putLong(part.MASK);
+                    rwTxMem.putLong(part.AVAILABLE0);
+                    rwTxMem.putLong(part.AVAILABLE1);
+                    rwTxMem.putLong(part.AVAILABLE2);
                 }
             }
         }
     }
 
-    public String toJson(String txPath) {
+    public String toJson(String srcTxFilePath) {
         TxFileStruct tx = new TxFileStruct();
 
-        try (Path path = new Path()) {
-            path.put(txPath).$();
+        try (Path path = new Path().put(srcTxFilePath).$()) {
             if (!ff.exists(path)) {
-                System.out.println("error: " + txPath + " does not exist");
+                System.err.printf("file does not exist: %s%n", srcTxFilePath);
+                return null;
             }
-            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, 2 * ff.length(path), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
                 final boolean isA = (version & 1L) == 0L;
                 final long baseOffset = isA ? roTxMem.getInt(TX_BASE_OFFSET_A_32) : roTxMem.getInt(TX_BASE_OFFSET_B_32);
-                tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN);
-                tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT);
-                tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT);
-                tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP);
-                tx.TX_OFFSET_MAX_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP);
-                tx.TX_OFFSET_DATA_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_DATA_VERSION);
-                tx.TX_OFFSET_STRUCT_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_STRUCT_VERSION);
-                tx.TX_OFFSET_MAP_WRITER_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT);
-                tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION);
-                tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
-                tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION);
-                tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN);
+                final int symbolsSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+                final int partitionSegmentSize = isA ? roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMem.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
 
-                final int symbolsCount = tx.TX_OFFSET_MAP_WRITER_COUNT;
-                tx.SYMBOLS = new ArrayList<>();
-                long offset = baseOffset + getSymbolWriterIndexOffset(0);
-                while (offset + 3 < Math.min(roTxMem.size(), baseOffset + getSymbolWriterIndexOffset(symbolsCount))) {
+                tx.TX_OFFSET_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_TXN_64);
+                tx.TX_OFFSET_TRANSIENT_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+                tx.TX_OFFSET_FIXED_ROW_COUNT = roTxMem.getLong(baseOffset + TX_OFFSET_FIXED_ROW_COUNT_64);
+                tx.TX_OFFSET_MIN_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MIN_TIMESTAMP_64);
+                tx.TX_OFFSET_MAX_TIMESTAMP = roTxMem.getLong(baseOffset + TX_OFFSET_MAX_TIMESTAMP_64);
+                tx.TX_OFFSET_DATA_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_DATA_VERSION_64);
+                tx.TX_OFFSET_STRUCT_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64);
+                tx.TX_OFFSET_MAP_WRITER_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32); // symbolColumnCount
+                tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64);
+                tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
+                tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64);
+                tx.TX_OFFSET_SEQ_TXN = roTxMem.getLong(baseOffset + TX_OFFSET_SEQ_TXN_64);
+
+                final int symbolColumnCount = symbolsSize / Long.BYTES;
+                tx.SYMBOLS = new ArrayList<>(symbolColumnCount);
+                long offset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+                final long maxOffsetSymbols = offset + symbolsSize;
+                while (offset + 3 < Math.min(roTxMem.size(), maxOffsetSymbols)) {
                     TxFileStruct.SymbolInfo symbol = new TxFileStruct.SymbolInfo();
                     tx.SYMBOLS.add(symbol);
                     symbol.COUNT = roTxMem.getInt(offset);
-                    offset += 4;
+                    offset += Integer.BYTES;
                     if (offset + 3 < roTxMem.size()) {
                         symbol.UNCOMMITTED_COUNT = roTxMem.getInt(offset);
-                        offset += 4;
+                        offset += Integer.BYTES;
                     }
                 }
 
-                final long partitionTableSizeOffset = baseOffset + getPartitionTableSizeOffset(symbolsCount);
-                assert partitionTableSizeOffset == offset;
-                final int txAttachedPartitionsSizeInBytes = roTxMem.getInt(partitionTableSizeOffset);
-                final int txAttachedPartitionsSize = txAttachedPartitionsSizeInBytes / (Long.BYTES * LONGS_PER_TX_ATTACHED_PARTITION);
-                tx.ATTACHED_PARTITION_SIZE = txAttachedPartitionsSize;
-                tx.ATTACHED_PARTITIONS = new ArrayList<>(txAttachedPartitionsSize);
-                offset += 4;
-
-                final long maxOffset = partitionTableSizeOffset + 4 + txAttachedPartitionsSizeInBytes;
-                while (offset + 7 < Math.min(roTxMem.size(), maxOffset)) {
+                final int txAttachedPartitionsCount = partitionSegmentSize / LONGS_PER_TX_ATTACHED_PARTITION / Long.BYTES;
+                tx.ATTACHED_PARTITIONS_COUNT = txAttachedPartitionsCount;
+                tx.ATTACHED_PARTITIONS = new ArrayList<>(txAttachedPartitionsCount);
+                offset = baseOffset + getPartitionTableIndexOffset(tx.TX_OFFSET_MAP_WRITER_COUNT, 0);
+                final long maxOffsetPartitions = offset + partitionSegmentSize;
+                while (offset + 7 < Math.min(roTxMem.size(), maxOffsetPartitions)) {
                     TxFileStruct.AttachedPartition partition = new TxFileStruct.AttachedPartition();
                     tx.ATTACHED_PARTITIONS.add(partition);
                     partition.TS = roTxMem.getLong(offset);
-                    offset += 8;
+                    offset += Long.BYTES;
                     if (offset + 7 < roTxMem.size()) {
                         partition.SIZE = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.NAME_TX = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.DATA_TX = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.MASK = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE0 = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE1 = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                     if (offset + 7 < roTxMem.size()) {
                         partition.AVAILABLE2 = roTxMem.getLong(offset);
-                        offset += 8;
+                        offset += Long.BYTES;
                     }
                 }
             }
         }
-
-        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-        return gson.toJson(tx);
+        return GSON.toJson(tx);
     }
 
     private static void printUsage() {
-        System.out.println("usage: " + TxSerializer.class.getName() + " -s <json_path> <txn_path> | -d <json_path>");
+        System.out.printf("usage: %s -s <json_path> <txn_path> | -d <json_path>", TxSerializer.class.getName());
     }
 
     private void serializeFile(String jsonFile, String target) throws IOException {
