@@ -51,9 +51,13 @@ public class SimpleLockTest {
         Assert.assertFalse(lock.tryLock(10, TimeUnit.MILLISECONDS));
         Assert.assertTrue(lock.isLocked());
 
-        Assert.assertTrue(lock.unlock());
-        Assert.assertFalse(lock.unlock());
-        Assert.assertFalse(lock.isLocked());
+        try {
+            lock.unlock();
+            lock.unlock();
+            Assert.fail();
+        } catch (IllegalStateException ex) {
+            Assert.assertFalse(lock.isLocked());
+        }
     }
 
     @Test

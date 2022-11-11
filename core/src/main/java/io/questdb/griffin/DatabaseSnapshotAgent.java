@@ -218,7 +218,6 @@ public class DatabaseSnapshotAgent implements Closeable {
         try {
             if (snapshotReaders.size() == 0) {
                 LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
-                return;
             }
 
             // Delete snapshot/db directory.
@@ -227,11 +226,11 @@ public class DatabaseSnapshotAgent implements Closeable {
 
             // Release locked readers if any.
             unsafeReleaseReaders();
-        } finally {
             // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
+            if (walPurgeJobRunLock != null && walPurgeJobRunLock.isLocked()) {
                 walPurgeJobRunLock.unlock();
             }
+        } finally {
             lock.unlock();
         }
     }

@@ -78,8 +78,7 @@ public class SimpleWaitingLock {
         return lock.compareAndSet(false, true);
     }
 
-    // returns false if lock is not locked
-    public boolean unlock() {
+    public void unlock() {
         if (lock.compareAndSet(true, false)) {
             Thread waiter = this.waiter;
             this.waiter = null;
@@ -87,8 +86,8 @@ public class SimpleWaitingLock {
             if (waiter != null) {
                 LockSupport.unpark(waiter);
             }
-            return true;
+        } else {
+            throw new IllegalStateException();
         }
-        return false;
     }
 }
