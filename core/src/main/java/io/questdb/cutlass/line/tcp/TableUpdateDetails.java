@@ -40,6 +40,7 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.ANY_TABLE_VERSION;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8BytesToString;
 import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
@@ -369,19 +370,18 @@ public class TableUpdateDetails implements Closeable {
             latestKnownMetadata = Misc.free(latestKnownMetadata);
         }
 
-        private SymbolCache addSymbolCache(int colWriterIndex) {
+        private SymbolLookup addSymbolCache(int colWriterIndex) {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableNameUtf16)) {
-                int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
+                final int symIndex = resolveSymbolIndexAndName(reader.getMetadata(), colWriterIndex);
                 if (symbolNameTemp == null || symIndex < 0) {
-                    if (writerSPI == null) {
-                        // In case of a WAL table, the change may be not yet applied to the end table - it's fine.
-                        return null;
-                    } else {
-                        throw CairoException.critical(0).put(reader.getMetadata().getColumnName(colWriterIndex)).put(" cannot find symbol column name by writer index ").put(colWriterIndex);
-                    }
+                    // looks like the column has just been added to the table, and
+                    // the reader is a bit behind and cannot see the column yet
+                    // we will pass the symbol as string
+                    return NOT_FOUND_LOOKUP;
                 }
-                path.of(engine.getConfiguration().getRoot()).concat(tableNameUtf16);
-                SymbolCache symCache;
+                final CairoConfiguration cairoConfiguration = engine.getConfiguration();
+                path.of(cairoConfiguration.getRoot()).concat(tableNameUtf16);
+                final SymbolCache symCache;
                 final int lastUnusedSymbolCacheIndex = unusedSymbolCaches.size() - 1;
                 if (lastUnusedSymbolCacheIndex > -1) {
                     symCache = unusedSymbolCaches.get(lastUnusedSymbolCacheIndex);
@@ -389,11 +389,10 @@ public class TableUpdateDetails implements Closeable {
                 } else {
                     symCache = new SymbolCache(configuration);
                 }
-                FilesFacade filesFacade = engine.getConfiguration().getFilesFacade();
 
                 if (this.clean) {
                     if (this.txReader == null) {
-                        this.txReader = new TxReader(filesFacade);
+                        this.txReader = new TxReader(cairoConfiguration.getFilesFacade());
                     }
                     int pathLen = path.length();
                     this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getPartitionedBy());
@@ -404,7 +403,7 @@ public class TableUpdateDetails implements Closeable {
                 long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
                 assert symIndex <= colWriterIndex;
                 symCache.of(
-                        engine.getConfiguration(),
+                        cairoConfiguration,
                         writerAPI,
                         colWriterIndex,
                         path,
@@ -429,7 +428,7 @@ public class TableUpdateDetails implements Closeable {
             return writerColIndex;
         }
 
-        private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {
+        private int resolveSymbolIndexAndName(TableRecordMetadata metadata, int colWriterIndex) {
             symbolNameTemp = null;
             int symIndex = -1;
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -544,7 +543,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata != null) {
                 return latestKnownMetadata.getStructureVersion();
             }
-            return -1;
+            return ANY_TABLE_VERSION;
         }
 
         SymbolLookup getSymbolLookup(int columnIndex) {
@@ -553,10 +552,7 @@ public class TableUpdateDetails implements Closeable {
                 if (symCache != null) {
                     return symCache;
                 }
-                SymbolLookup lookup = addSymbolCache(columnIndex);
-                if (lookup != null) {
-                    return lookup;
-                }
+                return addSymbolCache(columnIndex);
             }
             return NOT_FOUND_LOOKUP;
         }

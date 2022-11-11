@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+@FunctionalInterface
 public interface SymbolLookup {
     int keyOf(CharSequence value);
 }
