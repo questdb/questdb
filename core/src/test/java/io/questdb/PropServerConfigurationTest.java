@@ -191,6 +191,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlJoinMetadataMaxResizes());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+        Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyPageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyMaxPages());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlAnalyticStorePageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticStoreMaxPages());
+        Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticRowIdPageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticRowIdMaxPages());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertPoolCapacity());
@@ -877,6 +883,12 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(16, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+            Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyPageSize());
+            Assert.assertEquals(1031, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyMaxPages());
+            Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlAnalyticStorePageSize());
+            Assert.assertEquals(1029, configuration.getCairoConfiguration().getSqlAnalyticStoreMaxPages());
+            Assert.assertEquals(524288, configuration.getCairoConfiguration().getSqlAnalyticRowIdPageSize());
+            Assert.assertEquals(1030, configuration.getCairoConfiguration().getSqlAnalyticRowIdMaxPages());
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getInsertPoolCapacity());
