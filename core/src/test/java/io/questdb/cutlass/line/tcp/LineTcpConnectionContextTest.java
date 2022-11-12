@@ -30,10 +30,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2148,7 +2145,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 }
                 recvBuffer = sink.toString();
                 do {
-                    handleContextIO();
+                    if (handleContextIO()) {
+                        Os.pause();
+                    }
                 } while (recvBuffer.length() > 0);
             }
             waitForIOCompletion();
