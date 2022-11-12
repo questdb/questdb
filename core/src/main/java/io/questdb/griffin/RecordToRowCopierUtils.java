@@ -80,6 +80,7 @@ public class RecordToRowCopierUtils {
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
         int wPutUuid = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(IJJ)V");
+        int wPutUuidStr = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuidStr", "(ILjava/lang/CharSequence;)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -625,6 +626,9 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.STRING:
                             asm.invokeInterface(wPutStr, 2);
+                            break;
+                        case ColumnType.UUID:
+                            asm.invokeInterface(wPutUuidStr, 2);
                             break;
                         default:
                             assert false;

@@ -348,7 +348,8 @@ public final class ColumnType {
         return (fromType == STRING && toType == SYMBOL)
                 || (fromType == SYMBOL && toType == STRING)
                 || (fromType == CHAR && toType == SYMBOL)
-                || (fromType == CHAR && toType == STRING);
+                || (fromType == CHAR && toType == STRING)
+                || (fromType == STRING && toType == UUID);
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

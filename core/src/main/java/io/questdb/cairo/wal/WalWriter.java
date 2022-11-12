@@ -77,6 +77,7 @@ public class WalWriter implements TableWriterAPI {
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
     private final TableSequencerAPI tableSequencerAPI;
+    private final MutableUuid uuid = new MutableUuid();
     private final int walId;
     private final SequencerMetadataChangeSPI walMetadataUpdater = new WalMetadataUpdaterBackend();
     private final String walName;
@@ -1479,6 +1480,12 @@ public class WalWriter implements TableWriterAPI {
         public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
             getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putUuidStr(int columnIndex, CharSequence uuidStr) {
+            uuid.of(uuidStr);
+            putUuid(columnIndex, uuid.getMostSigBits(), uuid.getLeastSigBits());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

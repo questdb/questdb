@@ -149,6 +149,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final TxWriter txWriter;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
+    private final MutableUuid uuid = new MutableUuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
@@ -6182,6 +6183,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         void putUuid(int columnIndex, long mostSigBits, long leastSigBits);
+
+        void putUuidStr(int columnIndex, CharSequence uuid);
     }
 
     private class RowImpl implements Row {
@@ -6339,6 +6342,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
             getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putUuidStr(int columnIndex, CharSequence uuidStr) {
+            uuid.of(uuidStr);
+            putUuid(columnIndex, uuid.getMostSigBits(), uuid.getLeastSigBits());
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

@@ -475,6 +475,13 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
                 "select * from x", null, null, true, true, true);
+
+        assertCompile("insert into x values ('a0eebc11-110b-11f8-116d-11b9bd380a11')");
+
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                        "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
+                "select * from x", null, null, true, true, true);
     }
 
     private void assertColumnTypes(String tableName, String[][] columnTypes) throws Exception {
