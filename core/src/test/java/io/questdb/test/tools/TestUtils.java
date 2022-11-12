@@ -1034,8 +1034,8 @@ public final class TestUtils {
                 long mostSig = r.getUuidMostSig(i);
                 long leastSig = r.getUuidLeastSig(i);
                 if (!UuidUtil.isNull(mostSig, leastSig)) {
-                    UUID guid = new UUID(mostSig, leastSig);
-                    sink.put(guid.toString());
+                    MutableUuid uuid = new MutableUuid(mostSig, leastSig);
+                    uuid.toSink(sink);
                 }
                 break;
             default:

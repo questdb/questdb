@@ -34,9 +34,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.MutableUuid;
 import io.questdb.std.ObjList;
-
-import java.util.UUID;
 
 public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     @Override
@@ -51,6 +50,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
     private static class Func extends UuidFunction implements UnaryFunction {
         private final Function arg;
+        private final MutableUuid uuid = new MutableUuid();
 
         public Func(Function arg) {
             this.arg = arg;
@@ -69,8 +69,8 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec
-            UUID uuid = UUID.fromString(value.toString());
-            return uuid.getLeastSignificantBits();
+            uuid.of(value.toString());
+            return uuid.getLeastSigBits();
         }
 
         @Override
@@ -81,8 +81,8 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec.
-            UUID uuid = UUID.fromString(value.toString());
-            return uuid.getMostSignificantBits();
+            uuid.of(value.toString());
+            return uuid.getMostSigBits();
         }
     }
 }

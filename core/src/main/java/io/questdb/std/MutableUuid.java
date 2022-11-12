@@ -24,13 +24,35 @@
 
 package io.questdb.std;
 
-public final class MutableUuid {
+import io.questdb.std.str.CharSink;
+
+public final class MutableUuid implements Sinkable {
     private long leastSigBits;
     private long mostSigBits;
+
+    public MutableUuid(long mostSig, long leastSig) {
+        of(mostSig, leastSig);
+    }
+
+    public MutableUuid() {
+
+    }
 
     public void copyFrom(MutableUuid uuid) {
         this.mostSigBits = uuid.mostSigBits;
         this.leastSigBits = uuid.leastSigBits;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || o.getClass() != MutableUuid.class) {
+            return false;
+        }
+        MutableUuid that = (MutableUuid) o;
+        return leastSigBits == that.leastSigBits && mostSigBits == that.mostSigBits;
     }
 
     public long getLeastSigBits() {
@@ -41,8 +63,63 @@ public final class MutableUuid {
         return mostSigBits;
     }
 
+    @Override
+    public int hashCode() {
+        long hilo = mostSigBits ^ leastSigBits;
+        return ((int) (hilo >> 32)) ^ (int) hilo;
+    }
+
     public void of(long mostSigBits, long leastSigBits) {
         this.mostSigBits = mostSigBits;
         this.leastSigBits = leastSigBits;
+    }
+
+    public void of(CharSequence uuid) {
+        if (uuid == null) {
+            throw new NullPointerException();
+        }
+
+        int len = uuid.length();
+        int dash1 = Chars.indexOf(uuid, '-');
+        int dash2 = Chars.indexOf(uuid, dash1 + 1, len, '-');
+        int dash3 = Chars.indexOf(uuid, dash2 + 1, len, '-');
+        int dash4 = Chars.indexOf(uuid, dash3 + 1, len, '-');
+
+        // valid UUIDs have exactly 4 dashes
+        if (dash4 < 0 || dash4 == len - 1 || Chars.indexOf(uuid, dash4 + 1, len, '-') > 0) {
+            // todo: is allocating a new exception here a good idea?
+            throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
+        }
+
+        long msb1;
+        long msb2;
+        long msb3;
+        long lsb1;
+        long lsb2;
+        try {
+            msb1 = Numbers.parseHexLong(uuid, 0, dash1);
+            msb2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
+            msb3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
+            lsb1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
+            lsb2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
+        }
+        this.mostSigBits = (msb1 << 32) | (msb2 << 16) | msb3;
+        this.leastSigBits = (lsb1 << 48) | lsb2;
+    }
+
+
+    @Override
+    public void toSink(CharSink sink) {
+        Numbers.appendHex(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, false);
+        sink.put('-');
+        Numbers.appendHex(sink, (mostSigBits >> 16) & 0xFFFF, false);
+        sink.put('-');
+        Numbers.appendHex(sink, mostSigBits & 0xFFFF, false);
+        sink.put('-');
+        Numbers.appendHex(sink, leastSigBits >> 48 & 0xFFFF, false);
+        sink.put('-');
+        Numbers.appendHex(sink, leastSigBits & 0xFFFFFFFFFFFFL, false);
     }
 }
