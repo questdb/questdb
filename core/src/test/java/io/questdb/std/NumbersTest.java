@@ -37,6 +37,25 @@ public class NumbersTest {
     private final StringSink sink = new StringSink();
     private Rnd rnd;
 
+    @Test
+    public void appendHexPadded() {
+        sink.clear();
+        Numbers.appendHexPadded(sink, 0xff - 1, 16);
+        TestUtils.assertEquals("00fe", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 0xff - 1, 1);
+        TestUtils.assertEquals("fe", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 0xff0, 32);
+        TestUtils.assertEquals("00000ff0", sink);
+
+        sink.clear();
+        Numbers.appendHexPadded(sink, 1, 32);
+        TestUtils.assertEquals("00000001", sink);
+    }
+
     @Test(expected = NumericException.class)
     public void parseExplicitDouble2() throws Exception {
         Numbers.parseDouble("1234dx");

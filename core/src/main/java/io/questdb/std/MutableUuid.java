@@ -75,10 +75,6 @@ public final class MutableUuid implements Sinkable {
     }
 
     public void of(CharSequence uuid) {
-        if (uuid == null) {
-            throw new NullPointerException();
-        }
-
         int len = uuid.length();
         int dash1 = Chars.indexOf(uuid, '-');
         int dash2 = Chars.indexOf(uuid, dash1 + 1, len, '-');
@@ -112,14 +108,14 @@ public final class MutableUuid implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        Numbers.appendHex(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, false);
+        Numbers.appendHexPadded(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, 32);
         sink.put('-');
-        Numbers.appendHex(sink, (mostSigBits >> 16) & 0xFFFF, false);
+        Numbers.appendHexPadded(sink, (mostSigBits >> 16) & 0xFFFF, 16);
         sink.put('-');
-        Numbers.appendHex(sink, mostSigBits & 0xFFFF, false);
+        Numbers.appendHexPadded(sink, mostSigBits & 0xFFFF, 16);
         sink.put('-');
-        Numbers.appendHex(sink, leastSigBits >> 48 & 0xFFFF, false);
+        Numbers.appendHexPadded(sink, leastSigBits >> 48 & 0xFFFF, 16);
         sink.put('-');
-        Numbers.appendHex(sink, leastSigBits & 0xFFFFFFFFFFFFL, false);
+        Numbers.appendHexPadded(sink, leastSigBits & 0xFFFFFFFFFFFFL, 48);
     }
 }

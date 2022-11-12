@@ -27,11 +27,7 @@ package io.questdb.std;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -320,6 +316,29 @@ public final class Numbers {
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
+    }
+
+    public static void appendHexPadded(CharSink sink, final long value, int paddedBits) {
+        if (paddedBits < 0 || paddedBits > 64) {
+            throw new IllegalArgumentException("paddedBits must be between 0 and 64");
+        }
+        if (value == Integer.MIN_VALUE) {
+            sink.put("NaN");
+            return;
+        }
+
+        int leadingZeroBits = Long.numberOfLeadingZeros(value);
+        int bitsToPad = paddedBits - (Long.SIZE - leadingZeroBits);
+        bitsToPad = Math.max(bitsToPad, 0);
+        int zerosToAppend = (bitsToPad >> 2) & (0xFFFFFFFE);
+        for (int i = 0; i < zerosToAppend; i++) {
+            sink.put('0');
+        }
+        if (value == 0) {
+            return;
+        }
+        int bit = 64 - leadingZeroBits;
+        longHexAppender[bit].append(sink, value);
     }
 
     public static void appendHexPadded(CharSink sink, final int value) {
