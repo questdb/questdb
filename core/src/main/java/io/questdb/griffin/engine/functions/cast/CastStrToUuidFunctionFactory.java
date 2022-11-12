@@ -45,6 +45,19 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.getQuick(0).isConstant()) {
+            final CharSequence value = args.getQuick(0).getStr(null);
+            if (value == null || value.length() == 0) {
+                return UuidConstant.NULL;
+            }
+            final MutableUuid uuid = new MutableUuid();
+            try {
+                uuid.of(value);
+            } catch (IllegalArgumentException e) {
+                throw SqlException.$(argPositions.getQuick(0), "invalid UUID constant");
+            }
+            return new UuidConstant(uuid);
+        }
         return new Func(args.getQuick(0));
     }
 
@@ -69,7 +82,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec
-            uuid.of(value.toString());
+            uuid.of(value);
             return uuid.getLeastSigBits();
         }
 
@@ -81,7 +94,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec.
-            uuid.of(value.toString());
+            uuid.of(value);
             return uuid.getMostSigBits();
         }
     }

@@ -1484,8 +1484,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void putUuidStr(int columnIndex, CharSequence uuidStr) {
-            uuid.of(uuidStr);
-            putUuid(columnIndex, uuid.getMostSigBits(), uuid.getLeastSigBits());
+            WriterRowUtils.putUuidStr(columnIndex, uuidStr, uuid, this);
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {
