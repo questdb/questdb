@@ -167,4 +167,14 @@ public abstract class DateFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.DATE;
     }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

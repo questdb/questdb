@@ -26,7 +26,6 @@ package io.questdb.test.tools;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
@@ -1028,6 +1027,14 @@ public final class TestUtils {
                 long long128Lo = r.getLong128Lo(i);
                 if (!Long128Util.isNull(long128Hi, long128Lo)) {
                     UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
+                break;
+            case ColumnType.UUID:
+                long mostSig = r.getUuidMostSig(i);
+                long leastSig = r.getUuidLeastSig(i);
+                if (!UuidUtil.isNull(mostSig, leastSig)) {
+                    UUID guid = new UUID(mostSig, leastSig);
                     sink.put(guid.toString());
                 }
                 break;

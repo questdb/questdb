@@ -482,6 +482,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.REGCLASS
                         || columnType == ColumnType.REGPROCEDURE
                         || columnType == ColumnType.ARRAY_STRING
+                        || columnType == ColumnType.UUID
         ) {
             return Constants.getTypeConstant(columnType);
         }

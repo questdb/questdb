@@ -164,6 +164,16 @@ public abstract class BooleanFunction implements ScalarFunction {
         return ColumnType.BOOLEAN;
     }
 
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
     protected String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
     }

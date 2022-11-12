@@ -162,4 +162,14 @@ public abstract class UntypedFunction implements ScalarFunction {
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

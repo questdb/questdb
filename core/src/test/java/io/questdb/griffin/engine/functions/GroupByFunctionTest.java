@@ -216,6 +216,16 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public long getUuidLeastSig(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getUuidMostSig(Record rec) {
+            return 0;
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return false;
         }

@@ -163,4 +163,14 @@ public abstract class DoubleFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.DOUBLE;
     }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

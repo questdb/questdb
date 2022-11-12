@@ -220,6 +220,16 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public long getUuidLeastSig(Record rec) {
+        return UuidConstant.NULL_LEAST_SIG;
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        return UuidConstant.NULL_MOST_SIG;
+    }
+
+    @Override
     public boolean isNullConstant() {
         return true;
     }

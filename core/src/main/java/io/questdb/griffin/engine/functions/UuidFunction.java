@@ -25,22 +25,16 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.Nullable;
 
-/**
- * Symbol API allows record cursor consumers to store "int" value of symbol function
- * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
- * populated by function dynamically, in that values that have not yet been returned via
- * getInt() are not cached.*
- */
-public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
-
+public abstract class UuidFunction implements ScalarFunction {
     @Override
-    public final BinarySequence getBin(Record rec) {
+    public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -50,12 +44,12 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public final boolean getBool(Record rec) {
+    public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final byte getByte(Record rec) {
+    public byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -65,17 +59,17 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final double getDouble(Record rec) {
+    public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final float getFloat(Record rec) {
+    public float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -100,7 +94,12 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -125,71 +124,50 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public final short getShort(Record rec) {
+    public short getShort(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Nullable
-    public StaticSymbolTable getStaticSymbolTable() {
-        return null;
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        return getSymbol(rec);
+        // todo: we could return String representation of UUID here ?
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
+        // todo: we could return String representation of UUID here ?
         throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getSymbolB(rec);
-    }
-
-    @Override
-    public final int getStrLen(Record rec) {
+        // todo: we could return String representation of UUID here ?
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getTimestamp(Record rec) {
+    public int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getType() {
-        return ColumnType.SYMBOL;
-    }
-
-    @Override
-    public long getUuidLeastSig(Record rec) {
+    public CharSequence getSymbol(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getUuidMostSig(Record rec) {
+    public CharSequence getSymbolB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
-    public abstract boolean isSymbolTableStatic();
-
-    /**
-     * A clone of function's symbol table to enable concurrent SQL execution.
-     * During such execution symbol table clones will be assigned to individual executing
-     * thread.
-     *
-     * @return clone of symbol table
-     */
-    @Nullable
-    public SymbolTable newSymbolTable() {
-        return null;
+    @Override
+    public int getType() {
+        return ColumnType.UUID;
     }
 }

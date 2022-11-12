@@ -163,6 +163,16 @@ public abstract class StrFunction implements ScalarFunction {
     }
 
     @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public boolean isReadThreadSafe() {
         return false;
     }

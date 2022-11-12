@@ -208,6 +208,16 @@ public class VirtualRecord implements ColumnTypes, Record {
         return base.getUpdateRowId();
     }
 
+    @Override
+    public long getUuidLeastSig(int col) {
+        return getFunction(col).getUuidLeastSig(base);
+    }
+
+    @Override
+    public long getUuidMostSig(int col) {
+        return getFunction(col).getUuidMostSig(base);
+    }
+
     public void of(Record record) {
         this.base = record;
     }

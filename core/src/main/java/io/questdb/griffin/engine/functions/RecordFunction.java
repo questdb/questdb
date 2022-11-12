@@ -192,4 +192,14 @@ public abstract class RecordFunction implements ScalarFunction {
     public int getType() {
         return ColumnType.RECORD;
     }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

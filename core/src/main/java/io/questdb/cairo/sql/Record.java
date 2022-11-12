@@ -343,6 +343,14 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
+    default long getUuidLeastSig(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getUuidMostSig(int col) {
+        throw new UnsupportedOperationException();
+    }
+
     @FunctionalInterface
     interface CharSequenceFunction {
         /**

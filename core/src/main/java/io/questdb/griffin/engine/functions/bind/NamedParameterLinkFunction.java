@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -182,6 +181,16 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getType() {
         return type;
+    }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        return getBase().getUuidLeastSig(rec);
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        return getBase().getUuidMostSig(rec);
     }
 
     public String getVariableName() {

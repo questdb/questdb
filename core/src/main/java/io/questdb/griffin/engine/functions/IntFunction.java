@@ -164,4 +164,14 @@ public abstract class IntFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.INT;
     }
+
+    @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 }

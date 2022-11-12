@@ -73,7 +73,7 @@ public final class ColumnType {
     public static final short LONG128 = 24; // Limited support, few tests only
     public static final short LONG256 = 13;
     public static final int NO_OVERLOAD = 10000;
-    public static final short NULL = 28;
+    public static final short NULL = 29;
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
     public static final short TYPES_SIZE = MAX + 1;
@@ -89,6 +89,7 @@ public final class ColumnType {
     public static final short SYMBOL = 12;
     public static final short TIMESTAMP = 8;
     public static final short UNDEFINED = 0;
+    public static final short UUID = 28;
     public static final short VAR_ARG = 21;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -120,6 +121,7 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
+            /* 19 UUID      */, {UUID}
     };
     private static final int[] overloadPriorityMatrix;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -388,6 +390,7 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(UUID, "UUID");
         typeNameMap.put(LONG128, "LONG128");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
@@ -413,6 +416,7 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
+        nameTypeMap.put("uuid", UUID);
         nameTypeMap.put("long128", LONG128);
         nameTypeMap.put("geohash", GEOHASH);
         nameTypeMap.put("text", STRING);
@@ -464,6 +468,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
+        TYPE_SIZE_POW2[UUID] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -488,6 +493,7 @@ public final class ColumnType {
         TYPE_SIZE[CURSOR] = -1;
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
+        TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
     }

@@ -1475,6 +1475,12 @@ public class WalWriter implements TableWriterAPI {
             putSym(columnIndex, str);
         }
 
+        @Override
+        public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
+            getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
+            setRowValueNotNull(columnIndex);
+        }
+
         private MemoryA getPrimaryColumn(int columnIndex) {
             return columns.getQuick(getPrimaryColumnIndex(columnIndex));
         }

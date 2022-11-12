@@ -57,6 +57,9 @@ public class RecordToRowCopierUtils {
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
+        int rGetUuidMostSig = asm.poolInterfaceMethod(Record.class, "getUuidMostSig", "(I)J");
+        int rGetUuidLeastSig = asm.poolInterfaceMethod(Record.class, "getUuidLeastSig", "(I)J");
+
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
         //
@@ -76,6 +79,7 @@ public class RecordToRowCopierUtils {
         int wPutLong = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong", "(IJ)V");
         int wPutLong256 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong256", "(ILio/questdb/std/Long256;)V");
         int wPutLong128 = asm.poolInterfaceMethod(TableWriter.Row.class, "putLong128LittleEndian", "(IJJ)V");
+        int wPutUuid = asm.poolInterfaceMethod(TableWriter.Row.class, "putUuid", "(IJJ)V");
         int wPutDate = asm.poolInterfaceMethod(TableWriter.Row.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
         //
@@ -756,7 +760,17 @@ public class RecordToRowCopierUtils {
                             break;
                     }
                     break;
+                case ColumnType.UUID:
+                    assert toColumnTypeTag == ColumnType.UUID;
+                    asm.invokeInterface(rGetUuidMostSig);
+                    asm.aload(1);
+                    asm.iconst(i);
+                    asm.invokeInterface(rGetUuidLeastSig);
+                    asm.invokeInterface(wPutUuid, 5);
+//                    assert false;
+                    break;
                 default:
+                    // todo: shouldn't we also assert false here?
                     break;
             }
         }

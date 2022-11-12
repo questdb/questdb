@@ -295,6 +295,26 @@ public class TableReaderSelectedColumnRecord implements Record {
         return getRowId();
     }
 
+    @Override
+    public long getUuidLeastSig(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * 16;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        return column.getLong(offset + Long.BYTES);
+    }
+
+    @Override
+    public long getUuidMostSig(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * 16;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        return column.getLong(offset);
+    }
+
     public void incrementRecordIndex() {
         recordIndex++;
     }

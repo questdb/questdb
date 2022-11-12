@@ -313,6 +313,7 @@ public class CreateTableTest extends AbstractGriffinTest {
                 {"z", "STRING"},
                 {"y", "BOOLEAN"},
                 {"l", "LONG256"},
+                {"u", "UUID"},
                 {"gh1", "GEOHASH(7c)"},
                 {"gh2", "GEOHASH(4b)"}
         };
@@ -320,8 +321,10 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertCompile("create table x (" +
                 getColumnDefinitions(columnTypes) + ")"
         );
-        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
+        assertQuery("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "select * from tab", "create table tab (like x)", null);
         assertColumnTypes("tab", columnTypes);
+
+
     }
 
     @Test
@@ -450,6 +453,28 @@ public class CreateTableTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableWithNoIndex() throws Exception {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
+    }
+
+    @Test
+    public void testUUIDColumn() throws Exception {
+        // todo: this is a super basic test to drive development
+        // it must be refactored into smaller tests and moved elsewhere
+        String[][] columnTypes = new String[][]{
+                {"u", "UUID"},
+        };
+
+        assertCompile("create table x (" +
+                getColumnDefinitions(columnTypes) + ")"
+        );
+        assertQuery("u\n", "select * from tab", "create table tab (like x)", null);
+        assertColumnTypes("tab", columnTypes);
+
+
+        assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x", null, null, true, true, true);
     }
 
     private void assertColumnTypes(String tableName, String[][] columnTypes) throws Exception {

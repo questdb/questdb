@@ -265,6 +265,16 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public long getUuidLeastSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getUuidMostSig(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         wrappedFunction.pushValueTypes(columnTypes);
     }

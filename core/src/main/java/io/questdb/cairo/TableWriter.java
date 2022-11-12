@@ -6180,6 +6180,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         default void putTimestamp(int columnIndex, long value) {
             putLong(columnIndex, value);
         }
+
+        void putUuid(int columnIndex, long mostSigBits, long leastSigBits);
     }
 
     private class RowImpl implements Row {
@@ -6330,6 +6332,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         @Override
         public void putSym(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
+            getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
             setRowValueNotNull(columnIndex);
         }
 
