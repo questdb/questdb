@@ -318,9 +318,9 @@ public final class Numbers {
         array[bit].append(sink, value);
     }
 
-    public static void appendHexPadded(CharSink sink, final long value, int paddedBits) {
-        if (paddedBits < 0 || paddedBits > 64) {
-            throw new IllegalArgumentException("paddedBits must be between 0 and 64");
+    public static void appendHexPadded(CharSink sink, final long value, int padToBits) {
+        if (padToBits < 0 || padToBits > 64) {
+            throw new IllegalArgumentException("padToBits must be between 0 and 64");
         }
         if (value == Integer.MIN_VALUE) {
             sink.put("NaN");
@@ -328,7 +328,7 @@ public final class Numbers {
         }
 
         int leadingZeroBits = Long.numberOfLeadingZeros(value);
-        int bitsToPad = paddedBits - (Long.SIZE - leadingZeroBits);
+        int bitsToPad = padToBits - (Long.SIZE - leadingZeroBits);
         bitsToPad = Math.max(bitsToPad, 0);
         int zerosToAppend = (bitsToPad >> 2) & (0xFFFFFFFE);
         for (int i = 0; i < zerosToAppend; i++) {
