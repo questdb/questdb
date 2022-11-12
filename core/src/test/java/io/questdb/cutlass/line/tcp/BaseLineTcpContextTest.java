@@ -119,6 +119,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
             @Override
+            public long getSleepTimeoutMs() {
+                return 1;
+            }
+
+            @Override
             public int getWorkerCount() {
                 return workerCount;
             }
