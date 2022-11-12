@@ -118,14 +118,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Before
-    public void setUpLineTcpReceiverTest() {
+    @Override
+    public void setUp() {
+        super.setUp();
         defaultTableWriteMode = walEnabled ? 1 : 0;
         path = new Path();
     }
 
     @After
-    public void tearDownLineTcpReceiverTest() {
+    @Override
+    public void tearDown() {
         path.close();
+        super.tearDown();
     }
 
     @Test

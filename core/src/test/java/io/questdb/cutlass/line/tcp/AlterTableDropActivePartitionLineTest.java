@@ -109,8 +109,8 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                         Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         PreparedStatement stmt = connection.prepareStatement(
                                 "CREATE TABLE " + tableName + "( " +
-                                        "favourite_colour SYMBOL INDEX CAPACITY 16, " +
-                                        "country SYMBOL INDEX CAPACITY 16, " +
+                                        "favourite_colour SYMBOL INDEX CAPACITY 256, " +
+                                        "country SYMBOL INDEX CAPACITY 256, " +
                                         "uniqueId LONG, " +
                                         "quantity INT, " +
                                         "ppu DOUBLE, " +
