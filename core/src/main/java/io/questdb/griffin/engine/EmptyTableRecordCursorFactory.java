@@ -46,6 +46,11 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean supportsUpdateRowId(CharSequence tableName) {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
     }
