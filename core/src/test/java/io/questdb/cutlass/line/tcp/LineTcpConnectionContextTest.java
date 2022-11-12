@@ -1610,6 +1610,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithMultipleWriterThreads() throws Exception {
+        netMsgBufferSize.set(4096);
         nWriterThreads = 3;
         int nTables = 5;
         int nIterations = 10_000;
@@ -1618,6 +1619,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
 
     @Test
     public void testMultipleTablesWithSingleWriterThread() throws Exception {
+        netMsgBufferSize.set(4096);
         nWriterThreads = 1;
         int nTables = 3;
         int nIterations = 10_000;

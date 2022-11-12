@@ -96,7 +96,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getSleepTimeoutMs());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
@@ -115,6 +115,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
+        Assert.assertEquals(10, configuration.getHttpServerConfiguration().getSleepTimeoutMs());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
         Assert.assertEquals(16384, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
@@ -364,7 +365,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
         Assert.assertEquals(0, configuration.getWalApplyPoolConfiguration().getWorkerCount());
-        Assert.assertEquals(100, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeoutMs());
         Assert.assertEquals(10000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
     }
@@ -792,7 +793,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeoutMs());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -1033,7 +1034,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
             Assert.assertEquals(3, configuration.getWalApplyPoolConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getWalApplyPoolConfiguration().getWorkerAffinity());
-            Assert.assertEquals(55, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(55, configuration.getWalApplyPoolConfiguration().getSleepTimeoutMs());
             Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         }

@@ -83,7 +83,7 @@ public class WorkerPool implements Closeable {
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
-        this.sleepMs = configuration.getSleepTimeout();
+        this.sleepMs = configuration.getSleepTimeoutMs();
         this.metrics = metrics;
 
         assert this.workerAffinity.length == workerCount;

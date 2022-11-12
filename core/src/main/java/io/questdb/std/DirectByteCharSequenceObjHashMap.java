@@ -94,7 +94,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(CharSequence key) {
+    public int keyIndex(DirectByteCharSequence key) {
         int index = Hash.spread(Chars.hashCode(key)) & mask;
 
         if (keys[index] == null) {
@@ -150,7 +150,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
 
     public void removeAt(int index) {
         if (index < 0) {
-            CharSequence key = keys[-index - 1];
+            String key = keys[-index - 1];
             removeAt0(index);
             list.remove(key);
         }
@@ -171,7 +171,7 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    CharSequence key = keys[from];
+                    String key = keys[from];
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
@@ -208,7 +208,19 @@ public class DirectByteCharSequenceObjHashMap<V> implements Mutable {
         return get(list.getQuick(index));
     }
 
-    private int probe(CharSequence key, int index) {
+    private int probe(DirectByteCharSequence key, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (keys[index] == null) {
+                return index;
+            }
+            if (Chars.equals(key, keys[index])) {
+                return -index - 1;
+            }
+        } while (true);
+    }
+
+    private int probe(String key, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {

@@ -1470,7 +1470,7 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
                     @Override
-                    public long getSleepTimeout() {
+                    public long getSleepTimeoutMs() {
                         return 1;
                     }
 

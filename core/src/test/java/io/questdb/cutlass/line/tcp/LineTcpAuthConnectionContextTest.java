@@ -50,7 +50,8 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
 
     @Before
     @Override
-    public void before() {
+    public void setUp() {
+        super.setUp();
         nWriterThreads = 2;
         microSecondTicks = -1;
         recvBuffer = null;

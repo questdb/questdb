@@ -100,7 +100,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected WorkerPool workerPool;
 
     @Before
-    public void before() {
+    @Override
+    public void setUp() {
+        super.setUp();
         nWriterThreads = 2;
         microSecondTicks = -1;
         recvBuffer = null;
@@ -293,7 +295,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 engine,
                 createWorkerPool(1, true),
                 null,
-                workerPool = createWorkerPool(nWriterThreads, false)) {
+                workerPool = createWorkerPool(nWriterThreads, false)
+        ) {
 
             @Override
             protected NetworkIOJob createNetworkIOJob(IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
