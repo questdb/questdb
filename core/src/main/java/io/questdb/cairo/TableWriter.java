@@ -38,6 +38,7 @@ import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.UpdateOperatorImpl;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -1911,6 +1912,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             case ColumnType.GEOLONG:
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
+            case ColumnType.UUID:
+                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_MOST_SIG, UuidConstant.NULL_LEAST_SIG));
             default:
                 nullers.add(NOOP);
         }

@@ -78,6 +78,24 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertExplicitNull() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (null)");
+        assertQuery("u\n" +
+                        "\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testInsertNullByOmitting() throws Exception {
+        assertCompile("create table x (i INT, u UUID, i2 INT)");
+        assertCompile("insert into x (i, i2) values (42, 0)");
+        assertQuery("i\tu\ti2\n" +
+                        "42\t\t0\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
     public void testInsertWithExplicitCast() throws Exception {
         assertCompile("create table x (u UUID)");
 
