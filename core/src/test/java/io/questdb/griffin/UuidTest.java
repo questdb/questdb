@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -52,6 +53,17 @@ public class UuidTest extends AbstractGriffinTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertContains(e.getMessage(), "inconvertible value");
         }
+    }
+
+    @Test
+    public void testEqualityComparison() throws Exception {
+        MutableUuid uuid = new MutableUuid();
+        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)", null, null, true, true, false);
     }
 
     @Test

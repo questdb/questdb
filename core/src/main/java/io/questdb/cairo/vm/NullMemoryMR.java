@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
@@ -149,6 +150,14 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
+    }
+
+    public long getUuidLeastSig(long offset) {
+        return UuidConstant.NULL_LEAST_SIG;
+    }
+
+    public long getUuidMostSig(long offset) {
+        return UuidConstant.NULL_MOST_SIG;
     }
 
     @Override

@@ -296,6 +296,24 @@ public class PageAddressCacheRecord implements Record, Closeable {
         return pageAddressCache.toTableRowID(frameIndex, rowIndex);
     }
 
+    @Override
+    public long getUuidLeastSig(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return NullMemoryMR.INSTANCE.getUuidLeastSig(0);
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2 + 8);
+    }
+
+    @Override
+    public long getUuidMostSig(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return NullMemoryMR.INSTANCE.getUuidMostSig(0);
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2);
+    }
+
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
         this.symbolTableSource = symbolTableSource;
         this.pageAddressCache = pageAddressCache;
