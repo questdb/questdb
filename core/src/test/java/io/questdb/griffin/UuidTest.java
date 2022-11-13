@@ -78,6 +78,20 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByUuid() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values (1, '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values (2, '22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into x values (3, '22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\tsum\n" +
+                        "11111111-1111-1111-1111-111111111111\t1\n" +
+                        "22222222-2222-2222-2222-222222222222\t5\n",
+                "select u, sum(i) from x group by u", null, null, true, true, true);
+    }
+
+    @Test
     public void testInsertExplicitNull() throws Exception {
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (null)");

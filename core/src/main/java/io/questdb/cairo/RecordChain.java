@@ -258,6 +258,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putUuid(long msb, long lsb) {
+        mem.putLong(msb);
+        mem.putLong(lsb);
+    }
+
+    @Override
     public void recordAt(Record record, long row) {
         ((RecordChainRecord) record).of(rowToDataOffset(row));
     }

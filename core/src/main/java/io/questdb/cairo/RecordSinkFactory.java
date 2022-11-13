@@ -69,6 +69,9 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+        final int rGetUuidMostSig = asm.poolInterfaceMethod(Record.class, "getUuidMostSig", "(I)J");
+        final int rGetUuidLeastSig = asm.poolInterfaceMethod(Record.class, "getUuidLeastSig", "(I)J");
+
         //
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
@@ -86,6 +89,7 @@ public class RecordSinkFactory {
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
         final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
+        final int wPutUuid = asm.poolInterfaceMethod(RecordSinkSPI.class, "putUuid", "(JJ)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
@@ -266,6 +270,18 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetGeoLong, 1);
                     asm.invokeInterface(wPutLong, 2);
+                    break;
+                case ColumnType.UUID:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetUuidMostSig, 1);
+
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetUuidLeastSig, 1);
+
+                    asm.invokeInterface(wPutUuid, 4);
                     break;
                 default:
                     break;
