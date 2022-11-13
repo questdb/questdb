@@ -27,11 +27,11 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.MutableUuid;
+import io.questdb.std.Numbers;
 
 public class UuidConstant extends UuidFunction implements ConstantFunction {
-    public static final long NULL_LEAST_SIG = Long.MIN_VALUE;
-    public static final long NULL_MOST_SIG = Long.MIN_VALUE;
-    public final static UuidConstant NULL = new UuidConstant(NULL_MOST_SIG, NULL_LEAST_SIG);
+    public static final long NULL_MSB_AND_LSB = Numbers.LONG_NaN;
+    public final static UuidConstant NULL = new UuidConstant(NULL_MSB_AND_LSB, NULL_MSB_AND_LSB);
     private final long leastSigBits;
     private final long mostSigBits;
 

@@ -116,6 +116,30 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testO3_differentPartition() throws Exception {
+        assertCompile("create table x (ts timestamp, u UUID) timestamp(ts) partition by DAY");
+        assertCompile("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+        assertCompile("insert into x values (to_timestamp('2010-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
+
+        assertQuery("ts\tu\n" +
+                        "2010-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
+                        "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
+                "select * from x", null, "ts", true, true, true);
+    }
+
+    @Test
+    public void testO3_samePartition() throws Exception {
+        assertCompile("create table x (ts timestamp, u UUID) timestamp(ts) partition by YEAR");
+        assertCompile("insert into x values (to_timestamp('2018-06', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+        assertCompile("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
+
+        assertQuery("ts\tu\n" +
+                        "2018-01-01T00:00:00.000000Z\ta0eebc11-110b-4242-116d-11b9bd380a11\n" +
+                        "2018-06-01T00:00:00.000000Z\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
+                "select * from x", null, "ts", true, true, true);
+    }
+
+    @Test
     public void testUpdateByUuid() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");

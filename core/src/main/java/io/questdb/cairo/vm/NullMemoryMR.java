@@ -153,11 +153,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     public long getUuidLeastSig(long offset) {
-        return UuidConstant.NULL_LEAST_SIG;
+        return UuidConstant.NULL_MSB_AND_LSB;
     }
 
     public long getUuidMostSig(long offset) {
-        return UuidConstant.NULL_MOST_SIG;
+        return UuidConstant.NULL_MSB_AND_LSB;
     }
 
     @Override

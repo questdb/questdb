@@ -1913,7 +1913,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_MOST_SIG, UuidConstant.NULL_LEAST_SIG));
+                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB));
             default:
                 nullers.add(NOOP);
         }

@@ -78,7 +78,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getUuidLeastSig(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return UuidConstant.NULL_LEAST_SIG;
+                return UuidConstant.NULL_MSB_AND_LSB;
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec
@@ -90,7 +90,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getUuidMostSig(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return UuidConstant.NULL_MOST_SIG;
+                return UuidConstant.NULL_MSB_AND_LSB;
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec.

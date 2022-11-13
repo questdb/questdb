@@ -33,11 +33,11 @@ public class UuidTypeConstant extends UuidFunction implements TypeConstant {
 
     @Override
     public long getUuidLeastSig(Record rec) {
-        return UuidConstant.NULL_LEAST_SIG;
+        return UuidConstant.NULL_MSB_AND_LSB;
     }
 
     @Override
     public long getUuidMostSig(Record rec) {
-        return UuidConstant.NULL_MOST_SIG;
+        return UuidConstant.NULL_MSB_AND_LSB;
     }
 }

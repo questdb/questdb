@@ -31,6 +31,6 @@ public final class UuidUtil {
     }
 
     public static boolean isNull(long mostSig, long leastSig) {
-        return mostSig == UuidConstant.NULL_MOST_SIG && leastSig == UuidConstant.NULL_LEAST_SIG;
+        return mostSig == UuidConstant.NULL_MSB_AND_LSB && leastSig == UuidConstant.NULL_MSB_AND_LSB;
     }
 }
