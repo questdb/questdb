@@ -450,6 +450,18 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
+    public static void appendUuid(long mostSigBits, long leastSigBits, CharSink sink) {
+        appendHexPadded(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, 32);
+        sink.put('-');
+        appendHexPadded(sink, (mostSigBits >> 16) & 0xFFFF, 16);
+        sink.put('-');
+        appendHexPadded(sink, mostSigBits & 0xFFFF, 16);
+        sink.put('-');
+        appendHexPadded(sink, leastSigBits >> 48 & 0xFFFF, 16);
+        sink.put('-');
+        appendHexPadded(sink, leastSigBits & 0xFFFFFFFFFFFFL, 48);
+    }
+
     public static int bswap(int value) {
         return ((value >> 24) & 0xff) | ((value << 8) & 0xff0000) | ((value >> 8) & 0xff00) | ((value << 24) & 0xff000000);
     }

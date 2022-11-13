@@ -6861,10 +6861,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertMemoryLeak(() -> {
@@ -6897,6 +6893,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
@@ -7132,6 +7132,25 @@ create table tab as (
                 "rnd_double(4) расход, ",
                 "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n"
         );
+    }
+
+    @Test
+    public void testUuidType() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("create table x (u uuid)")) {
+                statement.execute();
+                try (PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                    insert.setObject(1, UUID.fromString("11111111-1111-1111-1111-111111111111"));
+                    insert.executeUpdate();
+                }
+                try (ResultSet resultSet = connection.prepareStatement("select *  from x").executeQuery()) {
+                    sink.clear();
+                    String expected = "u[OTHER]\n" +
+                            "11111111-1111-1111-1111-111111111111\n";
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
     }
 
     private void assertHexScript(String script) throws Exception {

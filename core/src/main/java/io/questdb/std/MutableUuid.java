@@ -108,14 +108,6 @@ public final class MutableUuid implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        Numbers.appendHexPadded(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, 32);
-        sink.put('-');
-        Numbers.appendHexPadded(sink, (mostSigBits >> 16) & 0xFFFF, 16);
-        sink.put('-');
-        Numbers.appendHexPadded(sink, mostSigBits & 0xFFFF, 16);
-        sink.put('-');
-        Numbers.appendHexPadded(sink, leastSigBits >> 48 & 0xFFFF, 16);
-        sink.put('-');
-        Numbers.appendHexPadded(sink, leastSigBits & 0xFFFFFFFFFFFFL, 48);
+        Numbers.appendUuid(mostSigBits, leastSigBits, sink);
     }
 }

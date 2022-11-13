@@ -28,12 +28,12 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -163,6 +163,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -171,7 +172,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -799,6 +799,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                 case BINARY_TYPE_BYTE:
                     appendByteColumnBin(record, i);
                     break;
+                case BINARY_TYPE_UUID:
+                    appendUuidColumnBin(record, i);
+                    break;
                 case ColumnType.FLOAT:
                     appendFloatColumn(record, i);
                     break;
@@ -843,6 +846,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     break;
                 case ColumnType.NULL:
                     responseAsciiSink.setNullValue();
+                    break;
+                case ColumnType.UUID:
+                    appendUuidColumn(record, i);
                     break;
                 default:
                     assert false;
@@ -918,6 +924,30 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             responseAsciiSink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
             responseAsciiSink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        }
+    }
+
+    private void appendUuidColumn(Record record, int columnIndex) {
+        final long mostSigBits = record.getUuidMostSig(columnIndex);
+        final long leastSigBits = record.getUuidLeastSig(columnIndex);
+        if (mostSigBits == UuidConstant.NULL_MSB_AND_LSB && leastSigBits == UuidConstant.NULL_MSB_AND_LSB) {
+            responseAsciiSink.setNullValue();
+        } else {
+            final long a = responseAsciiSink.skip();
+            Numbers.appendUuid(mostSigBits, leastSigBits, responseAsciiSink);
+            responseAsciiSink.putLenEx(a);
+        }
+    }
+
+    private void appendUuidColumnBin(Record record, int columnIndex) {
+        final long mostSigBits = record.getUuidMostSig(columnIndex);
+        final long leastSigBits = record.getUuidLeastSig(columnIndex);
+        if (mostSigBits != UuidConstant.NULL_MSB_AND_LSB || leastSigBits != UuidConstant.NULL_MSB_AND_LSB) {
+            responseAsciiSink.putNetworkInt(Long.BYTES * 2);
+            responseAsciiSink.putNetworkLong(mostSigBits);
+            responseAsciiSink.putNetworkLong(leastSigBits);
+        } else {
+            responseAsciiSink.setNullValue();
         }
     }
 
@@ -1003,6 +1033,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                         break;
                     case X_B_PG_BYTEA:
                         setBinBindVariable(j, lo, valueLen);
+                        break;
+                    case X_B_PG_UUID:
+                        setUuidBindVariable(j, lo, valueLen);
                         break;
                     default:
                         setStrBindVariable(j, lo, valueLen);
@@ -2470,6 +2503,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void sendReadyForNewQuery() throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareReadyForQuery();
         sendAndReset();
+    }
+
+    private void setUuidBindVariable(int j, long lo, int valueLen) throws BadProtocolException, SqlException {
+        ensureValueLength(j, 2 * Long.BYTES, valueLen);
+        long msb = getLongUnsafe(lo);
+        long lsb = getLongUnsafe(lo + Long.BYTES);
+        bindVariableService.setUuid(j, msb, lsb);
     }
 
     private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {

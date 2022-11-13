@@ -488,4 +488,8 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Timestamp
      */
     void setTimestamp(CharSequence name, long value) throws SqlException;
+
+    void setUuid(int index, long mostSigBits, long leastSigBits) throws SqlException;
+
+    void setUuid(CharSequence name, long mostSigBits, long leastSigBits) throws SqlException;
 }

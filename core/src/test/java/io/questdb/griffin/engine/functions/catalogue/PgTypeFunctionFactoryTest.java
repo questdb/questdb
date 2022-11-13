@@ -43,7 +43,8 @@ public class PgTypeFunctionFactoryTest extends AbstractGriffinTest {
                         "20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
                         "16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
                         "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
-                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
+                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -67,7 +68,8 @@ public class PgTypeFunctionFactoryTest extends AbstractGriffinTest {
                         "20\tint8\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
                         "16\tbool\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
                         "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
-                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
+                        "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n" +
+                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tNaN\t0\t0\t0\t0\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,
