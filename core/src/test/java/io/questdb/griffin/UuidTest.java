@@ -97,4 +97,24 @@ public class UuidTest extends AbstractGriffinTest {
                 "select * from x", null, null, true, true, true);
     }
 
+    @Test
+    public void testUpdateByUuid() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+        assertCompile("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
+        assertQuery("i\tu\n" +
+                        "42\ta0eebc11-110b-11f8-116d-11b9bd380a11\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testUpdateUuid() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+        assertCompile("update x set u = 'a0eebc11-4242-11f8-116d-11b9bd380a11' where i = 0");
+        assertQuery("i\tu\n" +
+                        "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
+                "select * from x", null, null, true, true, true);
+    }
+
 }

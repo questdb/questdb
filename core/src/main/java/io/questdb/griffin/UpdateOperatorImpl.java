@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCM;
@@ -407,6 +406,10 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                 case ColumnType.LONG128:
                     dstFixMem.putLong(masterRecord.getLong128Lo(i));
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
+                    break;
+                case ColumnType.UUID:
+                    dstFixMem.putLong(masterRecord.getUuidMostSig(i));
+                    dstFixMem.putLong(masterRecord.getUuidLeastSig(i));
                     break;
                 default:
                     throw CairoException.nonCritical()
