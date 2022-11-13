@@ -38,6 +38,7 @@ public final class IntervalUtils {
     public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
+    public static Boolean negativeRangeFlag=false;
 
     public static void addHiLoInterval(
             long lo,
@@ -525,6 +526,7 @@ public final class IntervalUtils {
         int writeIndex = out.size();
         int[] pos = new int[3];
         int p = -1;
+
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {
                 if (p > 1) {
@@ -532,6 +534,22 @@ public final class IntervalUtils {
                 }
                 pos[++p] = i;
             }
+        }
+
+        if(seq.charAt(pos[1]+1)=='-')       //'-' sign in timestamp
+        {
+            negativeRangeFlag=true;
+        }
+        else
+            negativeRangeFlag=false;
+        /* parse timestamp as without - sign */
+        if(negativeRangeFlag)
+        {    
+            String tmpSeq=seq.toString();
+            tmpSeq=tmpSeq.substring(0,pos[1]+1)+tmpSeq.substring(pos[1]+2, seq.length());
+            seq=tmpSeq;  
+            pos[2]--;  
+            lim--; 
         }
 
         switch (p) {
@@ -575,6 +593,7 @@ public final class IntervalUtils {
                 char type = seq.charAt(pos[2] - 1);
                 long low = getEncodedPeriodLo(out, writeIndex);
                 long hi = getEncodedPeriodHi(out, writeIndex);
+
 
                 replaceHiLoInterval(low, hi, period, type, count, operation, out);
                 switch (type) {
@@ -626,12 +645,19 @@ public final class IntervalUtils {
         long lo = out.getQuick(k - 2);
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
+        int sign=1;
+
+        if(negativeRangeFlag)
+            sign=-1;
 
         for (int i = 0, n = count - 1; i < n; i++) {
-            lo += period;
-            hi += period;
+            lo = lo + sign * period;
+            hi = hi+ sign * period;
             writePoint = append(out, writePoint, lo, hi);
         }
+
+        if(negativeRangeFlag)
+            out.sort();
     }
 
     private static void addMonthInterval(int period, int count, LongList out) {
@@ -640,11 +666,26 @@ public final class IntervalUtils {
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
 
+        long firstlo=lo;
+        long firsthi=hi;
+
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Timestamps.addMonths(lo, period);
             hi = Timestamps.addMonths(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+            if(!negativeRangeFlag)
+            {
+                firsthi=hi;
+                firstlo=lo;
+            }
+
+            //if(negativeRangeFlag)           //negative range
+            writePoint=append(out, writePoint, firstlo-(lo-firstlo), firsthi-(hi-firsthi));
+            
+            //else
+            //    writePoint = append(out, writePoint, lo, hi);
         }
+        if(negativeRangeFlag)
+            out.sort();
     }
 
     private static void addYearIntervals(int period, int count, LongList out) {
@@ -653,11 +694,20 @@ public final class IntervalUtils {
         long hi = out.getQuick(k - 1);
         int writePoint = k / 2;
 
+        long firstlo=lo;
+        long firsthi=hi;
+
         for (int i = 0, n = count - 1; i < n; i++) {
             lo = Timestamps.addYear(lo, period);
             hi = Timestamps.addYear(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+
+            if(negativeRangeFlag)           //negative range
+                writePoint=append(out, writePoint, firstlo-(lo-firstlo), firsthi-(hi-firsthi));
+            else
+                writePoint = append(out, writePoint, lo, hi);
         }
+        if(negativeRangeFlag)
+            out.sort();
     }
 
     private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
@@ -816,7 +866,7 @@ public final class IntervalUtils {
     static int append(LongList list, int writePoint, long lo, long hi) {
         if (writePoint > 0) {
             long prevHi = list.getQuick(2 * writePoint - 1) + 1;
-            if (prevHi >= lo) {
+            if (prevHi >= lo && negativeRangeFlag==false) {
                 list.setQuick(2 * writePoint - 1, hi);
                 return writePoint;
             }
