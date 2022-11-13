@@ -402,6 +402,31 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebuildTableWithNoIndex() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "rnd_symbol(4,4,4,2) as sym3," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                ")";
+
+        try {
+            checkRebuildIndexes(
+                    createTableSql,
+                    (tablePath) -> {
+                    },
+                    IndexBuilder::rebuildAll
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "Table does not have any indexes");
+        }
+    }
+
+    @Test
     public void testRebuildFailsWriteKFile() throws Exception {
         assertMemoryLeak(() -> {
             String createTableSql = "create table xxx as (" +
