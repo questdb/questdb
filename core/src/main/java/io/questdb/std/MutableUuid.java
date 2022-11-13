@@ -24,11 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.str.CharSink;
 
 public final class MutableUuid implements Sinkable {
-    private long leastSigBits;
-    private long mostSigBits;
+    private long leastSigBits = UuidConstant.NULL_MSB_AND_LSB;
+    private long mostSigBits = UuidConstant.NULL_MSB_AND_LSB;
 
     public MutableUuid(long mostSig, long leastSig) {
         of(mostSig, leastSig);

@@ -481,6 +481,14 @@ public class SqlUtil {
         return Numbers.LONG_NaN;
     }
 
+    public static void implicitCastStrAsUuid(CharSequence str, MutableUuid uuid) {
+        try {
+            uuid.of(str);
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
+        }
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *

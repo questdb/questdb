@@ -29,28 +29,27 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.Mutable;
+import io.questdb.std.MutableUuid;
 
 public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mutable {
-    long leastSigBits = UuidConstant.NULL_MSB_AND_LSB;
-    long mostSigBits = UuidConstant.NULL_MSB_AND_LSB;
+    final MutableUuid value = new MutableUuid();
 
     @Override
     public void clear() {
-
+        value.of(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
     }
 
     @Override
     public long getUuidLeastSig(Record rec) {
-        return leastSigBits;
+        return value.getLeastSigBits();
     }
 
     @Override
     public long getUuidMostSig(Record rec) {
-        return mostSigBits;
+        return value.getMostSigBits();
     }
 
     void set(long mostSigBits, long leastSigBits) {
-        this.mostSigBits = mostSigBits;
-        this.leastSigBits = leastSigBits;
+        value.of(mostSigBits, leastSigBits);
     }
 }

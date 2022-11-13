@@ -1021,9 +1021,10 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.LONG256:
                 SqlUtil.implicitCastStrAsLong256(value, ((Long256BindVariable) function).value);
                 break;
+            case ColumnType.UUID:
+                SqlUtil.implicitCastStrAsUuid(value, ((UuidBindVariable) function).value);
+                break;
             default:
-                String todo = value.toString();
-                System.out.println(todo);
                 reportError(function, ColumnType.STRING, index, name);
                 break;
         }
@@ -1069,8 +1070,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.UUID:
-                ((UuidBindVariable) function).mostSigBits = mostSigBits;
-                ((UuidBindVariable) function).leastSigBits = leastSigBits;
+                ((UuidBindVariable) function).set(mostSigBits, leastSigBits);
                 break;
             case ColumnType.STRING:
                 ((StrBindVariable) function).setValue(mostSigBits, leastSigBits);

@@ -7136,7 +7136,7 @@ create table tab as (
 
     @Test
     public void testUuidType() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (u uuid)")) {
                 statement.execute();
                 try (PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
