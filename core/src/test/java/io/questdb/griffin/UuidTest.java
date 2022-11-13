@@ -56,14 +56,25 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testEqualityComparison() throws Exception {
+    public void testEqualityComparisonExplicitCast() throws Exception {
+        MutableUuid uuid = new MutableUuid();
+        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)", null, null, true, true, false);
+    }
+
+    @Test
+    public void testEqualityComparisonImplicitCast() throws Exception {
         MutableUuid uuid = new MutableUuid();
         uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                "select * from x where u = cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid)", null, null, true, true, false);
+                "select * from x where u = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", null, null, true, true, false);
     }
 
     @Test

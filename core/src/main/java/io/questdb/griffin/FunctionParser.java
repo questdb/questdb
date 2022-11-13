@@ -33,10 +33,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastSymbolToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.model.ExpressionNode;
@@ -641,6 +638,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
+                    // Implicit cast from STRING to UUID
+                    overloadPossible |= argTypeTag == ColumnType.STRING &&
+                            sigArgTypeTag == ColumnType.UUID && !factory.isGroupBy();
+
                     // Implicit cast from SYMBOL to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
@@ -752,8 +753,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     } else {
                         castFn = new CastSymbolToTimestampFunctionFactory.Func(arg);
                     }
-                    args.set(k, castFn);
+                    args.setQuick(k, castFn);
                 }
+            } else if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.UUID) {
+                // todo: optimize for constants
+                args.setQuick(k, new CastStrToUuidFunctionFactory.Func(arg));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
@@ -765,6 +769,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         switch (fromType) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+                if (toType == ColumnType.UUID) {
+                    return new CastStrToUuidFunctionFactory.Func(function);
+                }
                 if (toType == ColumnType.TIMESTAMP) {
                     return new CastStrToTimestampFunctionFactory.Func(function);
                 }

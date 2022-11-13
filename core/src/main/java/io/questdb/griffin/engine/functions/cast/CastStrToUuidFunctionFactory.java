@@ -61,7 +61,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends UuidFunction implements UnaryFunction {
+    public static class Func extends UuidFunction implements UnaryFunction {
         private final Function arg;
         private final MutableUuid uuid = new MutableUuid();
 
