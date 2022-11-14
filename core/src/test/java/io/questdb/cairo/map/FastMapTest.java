@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,6 +53,7 @@ public class FastMapTest extends AbstractCairoTest {
         keyTypes.add(ColumnType.BOOLEAN);
         keyTypes.add(ColumnType.DATE);
         keyTypes.add(ColumnType.getGeoHashTypeWithBits(3));
+        keyTypes.add(ColumnType.UUID);
 
         valueTypes.add(ColumnType.BYTE);
         valueTypes.add(ColumnType.SHORT);
@@ -62,6 +64,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
         valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
+        valueTypes.add(ColumnType.UUID);
 
         try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
             final int N = 100000;
@@ -81,6 +84,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
+                key.putUuid(rnd.nextLong(), rnd.nextLong());
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -94,6 +98,7 @@ public class FastMapTest extends AbstractCairoTest {
                 value.putBool(6, rnd.nextBoolean());
                 value.putDate(7, rnd.nextLong());
                 value.putInt(8, rnd.nextInt());
+                value.putUuid(9, rnd.nextLong(), rnd.nextLong());
             }
 
             rnd.reset();
@@ -115,6 +120,7 @@ public class FastMapTest extends AbstractCairoTest {
                 key.putBool(rnd.nextBoolean());
                 key.putDate(rnd.nextLong());
                 key.putShort(rnd.nextShort());
+                key.putUuid(rnd.nextLong(), rnd.nextLong());
 
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
@@ -128,6 +134,8 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(8));
+                Assert.assertEquals(rnd.nextLong(), value.getUuidMostSig(9));
+                Assert.assertEquals(rnd.nextLong(), value.getUuidLeastSig(9));
             }
 
             try (RecordCursor cursor = map.getCursor()) {
@@ -321,6 +329,7 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                         ,
                         N,
                         0.9f, 1)) {
@@ -348,6 +357,8 @@ public class FastMapTest extends AbstractCairoTest {
                             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
                             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
                             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+                            Assert.assertEquals(rnd2.nextLong(), record.getUuidMostSig(9));
+                            Assert.assertEquals(rnd2.nextLong(), record.getUuidLeastSig(9));
                         }
                     }
                 }
@@ -550,6 +561,7 @@ public class FastMapTest extends AbstractCairoTest {
                                 .add(ColumnType.DATE)
                                 .add(ColumnType.TIMESTAMP)
                                 .add(ColumnType.BOOLEAN)
+                                .add(ColumnType.UUID)
                         ,
                         N,
                         0.9f, 1)) {
@@ -784,7 +796,7 @@ public class FastMapTest extends AbstractCairoTest {
     private void assertCursor1(Rnd rnd, RecordCursor cursor) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            int col = 9;
+            int col = 10;
             Assert.assertEquals(rnd.nextByte(), record.getByte(col++));
             Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
             Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
@@ -803,7 +815,9 @@ public class FastMapTest extends AbstractCairoTest {
 
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
-            Assert.assertEquals(rnd.nextShort(), record.getShort(col));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidMostSig(col));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidLeastSig(col));
 
             // value part, it comes first in record
             col = 0;
@@ -815,7 +829,9 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd.nextDouble(), record.getDouble(col++), 0.000000001d);
             Assert.assertEquals(rnd.nextBoolean(), record.getBool(col++));
             Assert.assertEquals(rnd.nextLong(), record.getDate(col++));
-            Assert.assertEquals(rnd.nextInt(), record.getInt(col));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(col++));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidMostSig(col));
+            Assert.assertEquals(rnd.nextLong(), record.getUuidLeastSig(col));
         }
     }
 
@@ -835,6 +851,8 @@ public class FastMapTest extends AbstractCairoTest {
             Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
             Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
             Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidMostSig(9));
+            Assert.assertEquals(rnd2.nextLong(), record.getUuidLeastSig(9));
             // key fields
             Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
             Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
@@ -907,6 +925,14 @@ public class FastMapTest extends AbstractCairoTest {
                 binarySequence.of(rnd.nextBytes(25));
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidMostSig(keyColumnOffset + 12));
+                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidLeastSig(keyColumnOffset + 12));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getUuidMostSig(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidLeastSig(keyColumnOffset + 12));
+            }
         }
         Assert.assertEquals(5000, c);
     }
@@ -976,7 +1002,8 @@ public class FastMapTest extends AbstractCairoTest {
                     .col("i", ColumnType.STRING)
                     .col("j", ColumnType.SYMBOL)
                     .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY);
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID);
             CairoTestUtils.create(model);
         }
 
@@ -1042,6 +1069,11 @@ public class FastMapTest extends AbstractCairoTest {
                     binarySequence.of(rnd.nextBytes(25));
                     row.putBin(11, binarySequence);
                 }
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putUuid(12, UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+                } else {
+                    row.putUuid(12, rnd.nextLong(), rnd.nextLong());
+                }
                 row.append();
             }
             writer.commit();
@@ -1065,6 +1097,7 @@ public class FastMapTest extends AbstractCairoTest {
             value.putDate(6, rnd2.nextLong());
             value.putTimestamp(7, rnd2.nextLong());
             value.putBool(8, rnd2.nextBoolean());
+            value.putUuid(9, rnd2.nextLong(), rnd2.nextLong());
         }
     }
 

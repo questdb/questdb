@@ -232,6 +232,13 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public void putUuid(int index, long msb, long lsb) {
+        final int idx = 4 * index;
+        values[idx] = msb;
+        values[idx + 1] = lsb;
+    }
+
+    @Override
     public void setMapRecordHere() {
         throw new UnsupportedOperationException();
     }

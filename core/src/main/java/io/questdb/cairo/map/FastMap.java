@@ -179,6 +179,7 @@ public class FastMap implements Map, Reopenable {
                         offset += Long256.BYTES;
                         break;
                     case ColumnType.LONG128:
+                    case ColumnType.UUID:
                         offset += 16;
                         break;
                     default:

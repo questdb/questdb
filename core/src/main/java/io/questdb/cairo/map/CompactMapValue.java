@@ -217,6 +217,13 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public void putUuid(int columnIndex, long msb, long lsb) {
+        long valueColumnOffset = getValueColumnOffset(columnIndex);
+        entries.putLong(valueColumnOffset, msb);
+        entries.putLong(valueColumnOffset + Long.BYTES, lsb);
+    }
+
+    @Override
     public void setMapRecordHere() {
         record.of(currentValueOffset);
     }
