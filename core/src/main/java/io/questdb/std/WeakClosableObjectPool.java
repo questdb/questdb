@@ -32,9 +32,15 @@ public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolB
     private final ObjectFactory<T> factory;
 
     public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
+        this(factory, initSize, false);
+    }
+
+    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize, boolean lazy) {
         super(initSize);
         this.factory = factory;
-        fill();
+        if (!lazy) {
+            fill();
+        }
     }
 
     @Override

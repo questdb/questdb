@@ -47,6 +47,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected Path path = new Path();
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
+    protected String unsupportedTableMessage = "Table does not have any indexes";
     private MillisecondClock clock;
     private long lockFd;
 
@@ -117,7 +118,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 tableWriter.getColumnVersionReader(),
                 // this may not be needed, because table writer's column index is the same
                 // as metadata writers' index.
-                metadata.getWriterIndex(columnIndex),
+                columnIndex,
                 columnName,
                 tempStringSink, // partition name
                 partitionNameTxn,
@@ -177,8 +178,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             @Nullable CharSequence columnName // will reindex all columns if name is not provided
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
-            metadata.deferredInit(path.$(), ColumnType.VERSION);
+        try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+            metadata.load(path.$());
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {
@@ -251,12 +252,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             long partitionTimestamp,
             long partitionSize
     ) {
+        boolean isIndexed = false;
         tempStringSink.clear();
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
 
         if (columnIndex == REBUILD_ALL_COLUMNS) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 if (isSupportedColumn(metadata, i)) {
+                    isIndexed = true;
                     reindexColumn(
                             columnVersionReader,
                             metadata,
@@ -267,6 +270,9 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             partitionSize
                     );
                 }
+            }
+            if (!isIndexed) {
+                throw CairoException.nonCritical().put(unsupportedTableMessage);
             }
         } else {
             if (isSupportedColumn(metadata, columnIndex)) {

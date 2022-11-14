@@ -56,7 +56,7 @@ public class HttpMinTestBuilder {
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled(), 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {

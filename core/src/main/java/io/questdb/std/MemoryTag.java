@@ -33,11 +33,13 @@ public final class MemoryTag {
     public static final int MMAP_INDEX_WRITER = 14;
     public static final int MMAP_O3 = 2;
     public static final int MMAP_PARALLEL_IMPORT = 39;
-    public static final int MMAP_SEQUENCER = 38;
+    public static final int MMAP_SEQUENCER_METADATA = 38;
     public static final int MMAP_TABLE_READER = 7;
     public static final int MMAP_TABLE_WAL_READER = 36;
     public static final int MMAP_TABLE_WAL_WRITER = 37;
     public static final int MMAP_TABLE_WRITER = 5;
+    public static final int MMAP_TX_LOG = 53;
+    public static final int MMAP_TX_LOG_CURSOR = 52;
     public static final int MMAP_UPDATE = 27;
     public static final int NATIVE_CB1 = 28;
     public static final int NATIVE_CB2 = 29;
@@ -77,7 +79,7 @@ public final class MemoryTag {
     public static final int NATIVE_TEXT_PARSER_RSS = 48;
     public static final int NATIVE_TLS_RSS = 47;
     public static final int NATIVE_TREE_CHAIN = 6;
-    public static final int SIZE = NATIVE_DIRECT_CHAR_SINK + 1;
+    public static final int SIZE = MMAP_TX_LOG + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -123,7 +125,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_ROSTI, "NATIVE_ROSTI");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_READER, "MMAP_TABLE_WAL_READER");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WAL_WRITER");
-        tagNameMap.extendAndSet(MMAP_SEQUENCER, "MMAP_SEQUENCER");
+        tagNameMap.extendAndSet(MMAP_SEQUENCER_METADATA, "MMAP_SEQUENCER_METADATA");
         tagNameMap.extendAndSet(MMAP_PARALLEL_IMPORT, "MMAP_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_PARALLEL_IMPORT, "NATIVE_PARALLEL_IMPORT");
         tagNameMap.extendAndSet(NATIVE_JOIN_MAP, "NATIVE_JOIN_MAP");
@@ -137,5 +139,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_IO_DISPATCHER_RSS, "NATIVE_IO_DISPATCHER_RSS");
         tagNameMap.extendAndSet(NATIVE_FUNC_RSS, "NATIVE_FUNC_RSS");
         tagNameMap.extendAndSet(NATIVE_DIRECT_CHAR_SINK, "NATIVE_DIRECT_CHAR_SINK");
+        tagNameMap.extendAndSet(MMAP_TX_LOG_CURSOR, "MMAP_TX_LOG_CURSOR");
+        tagNameMap.extendAndSet(MMAP_TX_LOG, "MMAP_TX_LOG");
     }
 }

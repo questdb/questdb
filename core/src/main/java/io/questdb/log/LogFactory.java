@@ -29,8 +29,8 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -48,22 +48,24 @@ public class LogFactory implements Closeable {
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
-    //placeholder that can be used in log.conf to point to $root/log/ dir
+    // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-    //name of default logging configuration file (in jar and in $root/conf/ dir )
+    // name of default logging configuration file (in jar and in $root/conf/ dir )
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
-    private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     public static String LOG_DIR = ".";
-    private static final int DEFAULT_QUEUE_DEPTH = 1024;
+    private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     static boolean envEnabled = true;
     private static LogFactory INSTANCE;
     private static boolean overwriteWithSyncLogging = false;
+    private static String rootDir;
     private final MicrosecondClock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final AtomicBoolean running = new AtomicBoolean();
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
@@ -110,8 +112,8 @@ public class LogFactory implements Closeable {
         overwriteWithSyncLogging = false;
     }
 
-    public static synchronized void configureFromSystemProperties(@NotNull LogFactory logFactory, @Nullable String rootDir) {
-        configureFromSystemProperties(logFactory, rootDir, true);
+    public static void configureRootDir(String rootDir) {
+        LogFactory.rootDir = rootDir;
     }
 
     public static void configureSync() {
@@ -122,8 +124,13 @@ public class LogFactory implements Closeable {
         LogFactory logFactory = INSTANCE;
         if (logFactory == null) {
             logFactory = new LogFactory();
-            configureFromSystemProperties(logFactory, null);
+            // Some log writers created in the later init() call may do some logging,
+            // so we store the instance before the factory was fully initialized.
+            // Any logging calls done on a non-initialized log factory and its loggers
+            // are no-op. Once the factory is fully configured, it replaces no-op
+            // loggers with the end ones.
             INSTANCE = logFactory;
+            logFactory.init(rootDir);
         }
         return logFactory;
     }
@@ -132,7 +139,7 @@ public class LogFactory implements Closeable {
         return getLog(clazz.getName());
     }
 
-    public static Log getLog(CharSequence key) {
+    public static Log getLog(String key) {
         return getInstance().create(key);
     }
 
@@ -143,7 +150,8 @@ public class LogFactory implements Closeable {
         }
     }
 
-    public void add(final LogWriterConfig config) {
+    public synchronized void add(final LogWriterConfig config) {
+        assert !configured;
         final int index = scopeConfigMap.keyIndex(config.getScope());
         ScopeConfiguration scopeConf;
         if (index > -1) {
@@ -155,7 +163,7 @@ public class LogFactory implements Closeable {
         scopeConf.add(config);
     }
 
-    public void bind() {
+    public synchronized void bind() {
         if (configured) {
             return;
         }
@@ -212,9 +220,11 @@ public class LogFactory implements Closeable {
         return create(clazz.getName());
     }
 
-    public Log create(CharSequence key) {
+    public synchronized Log create(String key) {
         if (!configured) {
-            throw new LogError("Not configured");
+            DeferredLogger log = new DeferredLogger(key);
+            deferredLoggers.add(log);
+            return log;
         }
 
         ScopeConfiguration scopeConfiguration = find(key);
@@ -272,12 +282,106 @@ public class LogFactory implements Closeable {
         );
     }
 
+    @TestOnly
+    public void flushJobs() {
+        pauseThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+            }
+        }
+        startThread();
+    }
+
     public int getQueueDepth() {
         return queueDepth;
     }
 
     public int getRecordLength() {
         return recordLength;
+    }
+
+    public synchronized void init(@Nullable String rootDir) {
+        if (configured) {
+            return;
+        }
+
+        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
+        if (conf == null) {
+            conf = DEFAULT_CONFIG;
+        }
+
+        boolean initialized = false;
+        // prevent creating blank log dir from unit tests
+        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            LOG_DIR = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(LOG_DIR);
+            if (!logDirFile.exists() && logDirFile.mkdir()) {
+                System.err.printf("Created log directory: %s%n", LOG_DIR);
+            }
+
+            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
+            File f = new File(logPath);
+            if (f.isFile() && f.canRead()) {
+                System.err.printf("Reading log configuration from %s%n", logPath);
+                try (FileInputStream fis = new FileInputStream(logPath)) {
+                    Properties properties = new Properties();
+                    properties.load(fis);
+                    configureFromProperties(properties, LOG_DIR);
+                    initialized = true;
+                } catch (IOException e) {
+                    throw new LogError("Cannot read " + logPath, e);
+                }
+            }
+        }
+
+        if (!initialized) {
+            // in this order of initialization specifying -Dout might end up using internal jar resources ...
+            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
+                if (is != null) {
+                    Properties properties = new Properties();
+                    properties.load(is);
+                    configureFromProperties(properties, LOG_DIR);
+                    System.err.println("Log configuration loaded from default internal file.");
+                } else {
+                    File f = new File(conf);
+                    if (f.canRead()) {
+                        try (FileInputStream fis = new FileInputStream(f)) {
+                            Properties properties = new Properties();
+                            properties.load(fis);
+                            configureFromProperties(properties, LOG_DIR);
+                            System.err.printf("Log configuration loaded from: %s%n", conf);
+                        }
+                    } else {
+                        configureDefaultWriter();
+                        System.err.println("Log configuration loaded using factory defaults.");
+                    }
+                }
+            } catch (IOException e) {
+                if (!DEFAULT_CONFIG.equals(conf)) {
+                    throw new LogError("Cannot read " + conf, e);
+                } else {
+                    configureDefaultWriter();
+                }
+            }
+        }
+
+        // swap no-op loggers created by the configured log writers with the real ones
+        for (int i = 0, n = deferredLoggers.size(); i < n; i++) {
+            deferredLoggers.get(i).init(this);
+        }
+        deferredLoggers.clear();
+
+        startThread();
     }
 
     public void startThread() {
@@ -451,9 +555,7 @@ public class LogFactory implements Closeable {
             return;
         }
 
-        String s;
-
-        s = getProperty(properties, "queueDepth");
+        String s = getProperty(properties, "queueDepth");
         if (s != null && s.length() > 0) {
             try {
                 setQueueDepth(Numbers.parseInt(s));
@@ -506,6 +608,13 @@ public class LogFactory implements Closeable {
         }
     }
 
+    @TestOnly
+    private void pauseThread() {
+        if (running.compareAndSet(true, false)) {
+            workerPool.pause();
+        }
+    }
+
     private void setQueueDepth(int queueDepth) {
         this.queueDepth = queueDepth;
     }
@@ -515,88 +624,160 @@ public class LogFactory implements Closeable {
     }
 
     @TestOnly
-    static void configureFromSystemProperties(LogFactory logFactory) {
-        configureFromSystemProperties(logFactory, null, false);
-    }
-
-    static synchronized void configureFromSystemProperties(
-            @NotNull LogFactory logFactory,
-            @Nullable String rootDir,
-            boolean replacePrevInstance
-    ) {
-        String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
-        if (conf == null) {
-            conf = DEFAULT_CONFIG;
-        }
-
-        boolean initialized = false;
-        // prevent creating blank log dir from unit tests
-        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            LOG_DIR = Paths.get(rootDir, "log").toString();
-            File logDirFile = new File(LOG_DIR);
-            if (!logDirFile.exists() && logDirFile.mkdir()) {
-                System.err.printf("Created log directory: %s%n", LOG_DIR);
-            }
-
-            String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
-            File f = new File(logPath);
-            if (f.isFile() && f.canRead()) {
-                System.err.printf("Reading log configuration from %s%n", logPath);
-                try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
-                    properties.load(fis);
-                    logFactory.configureFromProperties(properties, LOG_DIR);
-                    initialized = true;
-                } catch (IOException e) {
-                    throw new LogError("Cannot read " + logPath, e);
-                }
-            }
-        }
-
-        if (!initialized) {
-            //in this order of initialization specifying -Dout might end up using internal jar resources ...
-            try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
-                if (is != null) {
-                    Properties properties = new Properties();
-                    properties.load(is);
-                    logFactory.configureFromProperties(properties, LOG_DIR);
-                    System.err.println("Log configuration loaded from default internal file.");
-                } else {
-                    File f = new File(conf);
-                    if (f.canRead()) {
-                        try (FileInputStream fis = new FileInputStream(f)) {
-                            Properties properties = new Properties();
-                            properties.load(fis);
-                            logFactory.configureFromProperties(properties, LOG_DIR);
-                            System.err.printf("Log configuration loaded from: %s%n", conf);
-                        }
-                    } else {
-                        logFactory.configureDefaultWriter();
-                        System.err.println("Log configuration loaded using factory defaults.");
-                    }
-                }
-            } catch (IOException e) {
-                if (!DEFAULT_CONFIG.equals(conf)) {
-                    throw new LogError("Cannot read " + conf, e);
-                } else {
-                    logFactory.configureDefaultWriter();
-                }
-            }
-        }
-
-        if (replacePrevInstance) {
-            LogFactory oldLogFactory = INSTANCE;
-            if (oldLogFactory != null) {
-                oldLogFactory.close();
-            }
-            INSTANCE = logFactory;
-        }
-        logFactory.startThread();
-    }
-
-    @TestOnly
     ObjHashSet<LogWriter> getJobs() {
         return jobs;
+    }
+
+    private static class DeferredLogger implements Log {
+
+        private static final NoOpLogRecord noOpRecord = new NoOpLogRecord();
+
+        private final String key;
+        private Log delegate;
+
+        public DeferredLogger(String key) {
+            this.key = key;
+        }
+
+        @Override
+        public LogRecord advisory() {
+            if (delegate != null) {
+                return delegate.advisory();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord advisoryW() {
+            if (delegate != null) {
+                return delegate.advisoryW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord critical() {
+            if (delegate != null) {
+                return delegate.critical();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord criticalW() {
+            if (delegate != null) {
+                return delegate.criticalW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord debug() {
+            if (delegate != null) {
+                return delegate.debug();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord debugW() {
+            if (delegate != null) {
+                return delegate.debugW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord error() {
+            if (delegate != null) {
+                return delegate.error();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord errorW() {
+            if (delegate != null) {
+                return delegate.errorW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord info() {
+            if (delegate != null) {
+                return delegate.info();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord infoW() {
+            if (delegate != null) {
+                return delegate.infoW();
+            }
+            return noOpRecord;
+        }
+
+        public void init(LogFactory logFactory) {
+            this.delegate = logFactory.create(key);
+        }
+
+        @Override
+        public LogRecord xDebugW() {
+            if (delegate != null) {
+                return delegate.xDebugW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xInfoW() {
+            if (delegate != null) {
+                return delegate.xInfoW();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xadvisory() {
+            if (delegate != null) {
+                return delegate.xadvisory();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xcritical() {
+            if (delegate != null) {
+                return delegate.xcritical();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xdebug() {
+            if (delegate != null) {
+                return delegate.xdebug();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xerror() {
+            if (delegate != null) {
+                return delegate.xerror();
+            }
+            return noOpRecord;
+        }
+
+        @Override
+        public LogRecord xinfo() {
+            if (delegate != null) {
+                return delegate.xinfo();
+            }
+            return noOpRecord;
+        }
     }
 
     private static class Holder implements Closeable {
@@ -637,6 +818,123 @@ public class LogFactory implements Closeable {
         }
     }
 
+    private static class NoOpLogRecord implements LogRecord {
+
+        @Override
+        public void $() {
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(CharSequence sequence, int lo, int hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(int x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(double x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(long x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(boolean x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(char c) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Throwable e) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(File x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Object x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $(Sinkable x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $256(long a, long b, long c, long d) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $hex(long value) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $hexPadded(long value) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $ip(long ip) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $ts(long x) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $utf8(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return false;
+        }
+
+        @Override
+        public LogRecord microTime(long x) {
+            return this;
+        }
+
+        @Override
+        public CharSinkBase put(char c) {
+            return this;
+        }
+
+        @Override
+        public LogRecord ts() {
+            return this;
+        }
+
+        @Override
+        public LogRecord utf8(CharSequence sequence) {
+            return this;
+        }
+    }
+
     private static class ScopeConfiguration implements Closeable {
         private final int[] channels;
         private final ObjList<Holder> holderList = new ObjList<>();
@@ -650,8 +948,7 @@ public class LogFactory implements Closeable {
 
         public void bind(ObjHashSet<LogWriter> jobs, int queueDepth, int recordLength) {
             // create queues for processed channels
-            for (int i = 0, n = channels.length; i < n; i++) {
-                int index = channels[i];
+            for (int index : channels) {
                 if (index > 0) {
                     int keyIndex = holderMap.keyIndex(index);
                     if (keyIndex > -1) {
@@ -665,7 +962,7 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = writerConfigs.size(); i < n; i++) {
                 LogWriterConfig c = writerConfigs.getQuick(i);
                 // the channels array has a guarantee that
-                // all bits in level mask will point to the same queue
+                // all bits in level mask will point to the same queue,
                 // so we just get most significant bit number
                 // and dereference queue on its index
                 Holder h = holderMap.get(channels[Numbers.msb(c.getLevel())]);

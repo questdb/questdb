@@ -30,7 +30,6 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.griffin.SqlException;
 import io.questdb.metrics.HealthMetrics;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPool;
@@ -47,7 +46,7 @@ public class WorkerPoolManagerTest {
     private static final HealthMetrics METRICS = Metrics.disabled().health();
 
     @Test
-    public void testConstructor() throws SqlException {
+    public void testConstructor() {
         final int workerCount = 2;
         final AtomicInteger counter = new AtomicInteger(0);
         final WorkerPoolManager workerPoolManager = createWorkerPoolManager(workerCount, sharedPool -> counter.incrementAndGet());
@@ -190,6 +189,11 @@ public class WorkerPoolManagerTest {
 
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
+                return null;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
                 return null;
             }
 

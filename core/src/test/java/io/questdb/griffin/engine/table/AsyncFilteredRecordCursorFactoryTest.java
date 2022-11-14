@@ -872,13 +872,28 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public int getWorkerCount() {
+            return sqlExecutionContext.getWorkerCount();
+        }
+
+        @Override
         public void initNow() {
             sqlExecutionContext.initNow();
         }
 
         @Override
+        public boolean isColumnPreTouchEnabled() {
+            return sqlExecutionContext.isColumnPreTouchEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
+        }
+
+        @Override
+        public boolean isWalApplication() {
+            return sqlExecutionContext.isWalApplication();
         }
 
         @Override
@@ -894,6 +909,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         @Override
         public void setCloneSymbolTables(boolean cloneSymbolTables) {
             sqlExecutionContext.setCloneSymbolTables(cloneSymbolTables);
+        }
+
+        @Override
+        public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+            sqlExecutionContext.setColumnPreTouchEnabled(columnPreTouchEnabled);
         }
 
         @Override

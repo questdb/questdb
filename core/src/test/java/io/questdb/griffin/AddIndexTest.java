@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -101,7 +102,7 @@ public class AddIndexTest extends AbstractGriffinTest {
             try {
                 compile("alter table trades alter column sym add index", sqlExecutionContext);
                 Assert.fail();
-            } catch (SqlException e) {
+            } catch (SqlException | CairoException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "already indexed");
             }

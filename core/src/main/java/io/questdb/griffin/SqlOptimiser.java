@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
@@ -728,7 +729,7 @@ class SqlOptimiser {
         }
     }
 
-    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m) {
+    private void copyColumnTypesFromMetadata(QueryModel model, TableRecordMetadata m) {
         // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
@@ -1441,6 +1442,15 @@ class SqlOptimiser {
         return qc;
     }
 
+    private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
+        model.setTableVersion(metadata.getStructureVersion());
+        model.setTableId(metadata.getTableId());
+        copyColumnsFromMetadata(model, metadata, false);
+        if (model.isUpdate()) {
+            copyColumnTypesFromMetadata(model, metadata);
+        }
+    }
+
     private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> jm = model.getJoinModels();
 
@@ -1501,59 +1511,6 @@ class SqlOptimiser {
             if (nested != null) {
                 eraseColumnPrefixInWhereClauses(nested);
             }
-        }
-    }
-
-    private void extractCorrelatedQueriesAsJoins(QueryModel model) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            traversalAlgo.traverse(qc.getAst(), new PostOrderTreeTraversalAlgo.Visitor() {
-                @Override
-                public boolean descend(ExpressionNode node) {
-                    // do not descend functions, such as `touch(select ...)`
-                    // what is allowed for correlated sub-queries - arithmetic
-                    // (select a from tab) + 1 alias
-                    // is a valid syntax
-                    return node.type != FUNCTION;
-                }
-
-                @Override
-                public void visit(ExpressionNode node) throws SqlException {
-                    QueryModel qm = node.queryModel;
-                    if (qm != null) {
-                        // validate correlated sub-query, we expect single column
-
-                        ObjList<QueryColumn> correlatedColumns = qm.getColumns();
-                        if (correlatedColumns.size() != 1) {
-                            throw SqlException.$(node.position, "only one column expected in correlated sub-query");
-                        }
-
-                        final QueryColumn refCol = correlatedColumns.getQuick(0);
-
-                        // The correlated sub-query is not initially aliased
-                        // as the sub-query. Single selected column is probably aliased.
-                        // The latter alias we can use when constructing new column reference
-                        final ExpressionNode qmAlias = makeJoinAlias();
-
-                        // rewrite column to alias the joined column
-                        // todo: this has to be GC-free
-                        node.token = qmAlias.token + "." + refCol.getName();
-                        // clear query model from the column
-                        node.queryModel = null;
-                        node.type = LITERAL;
-
-                        qm.setJoinType(QueryModel.JOIN_ONE);
-                        qm.setAlias(qmAlias);
-                        model.getNestedModel().addJoinModel(qm);
-                        ExpressionNode where = qm.getWhereClause();
-                        if (where != null) {
-                            model.setWhereClause(concatFilters(model.getWhereClause(), where));
-                            qm.setWhereClause(null);
-                        }
-                    }
-                }
-            });
         }
     }
 
@@ -2082,24 +2039,20 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (
-                TableReader r = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
-                        tableLookupSequence.of(tableName, lo, hi - lo),
-                        TableUtils.ANY_TABLE_ID,
-                        TableUtils.ANY_TABLE_VERSION
-                )
-        ) {
-            model.setTableVersion(r.getVersion());
-            model.setTableId(r.getMetadata().getId());
-            copyColumnsFromMetadata(model, r.getMetadata(), false);
-            if (model.isUpdate()) {
-                copyColumnTypesFromMetadata(model, r.getMetadata());
+        if (model.isUpdate()) {
+            try (TableRecordMetadata metadata = engine.getMetadata(executionContext.getCairoSecurityContext(), tableName)) {
+                enumerateColumns(model, metadata);
+            } catch (CairoException e) {
+                throw SqlException.position(tableNamePosition).put(e);
             }
-        } catch (EntryLockedException e) {
-            throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e);
+        } else {
+            try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableLookupSequence.of(tableName, lo, hi - lo))) {
+                enumerateColumns(model, reader.getMetadata());
+            } catch (EntryLockedException e) {
+                throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
+            } catch (CairoException e) {
+                throw SqlException.position(tableNamePosition).put(e);
+            }
         }
     }
 
@@ -3554,64 +3507,6 @@ class SqlOptimiser {
         return index;
     }
 
-    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
-        try (
-                TableReader r = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
-                        updateQueryModel.getTableName().token,
-                        tableId,
-                        tableVersion
-                )
-        ) {
-            TableReaderMetadata metadata = r.getMetadata();
-            int timestampIndex = metadata.getTimestampIndex();
-
-            tempList.clear(metadata.getColumnCount());
-            tempList.setPos(metadata.getColumnCount());
-            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
-            for (int i = 0; i < updateSetColumnCount; i++) {
-
-                // SET left hand side expressions are stored in top level UPDATE QueryModel
-                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
-                int position = columnExpression.position;
-                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
-
-                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
-                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
-                if (columnIndex < 0) {
-                    throw SqlException.invalidColumn(position, queryColumn.getName());
-                }
-                if (columnIndex == timestampIndex) {
-                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
-                }
-                if (tempList.getQuick(columnIndex) == 1) {
-                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
-                }
-
-                // When column name case does not match table column name in left side of SET
-                // for example if table "tbl" column name is "Col" but update uses
-                // UPDATE tbl SET coL = 1
-                // we need to replace to match metadata name exactly
-                CharSequence exactColName = metadata.getColumnName(columnIndex);
-                queryColumn.of(exactColName, queryColumn.getAst());
-                tempList.set(columnIndex, 1);
-
-                ExpressionNode rhs = queryColumn.getAst();
-                if (rhs.type == FUNCTION) {
-                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
-                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
-                    }
-                }
-            }
-            // Save update table name as a String to not re-create string later on from CharSequence
-            updateQueryModel.setUpdateTableName(r.getTableName());
-        } catch (EntryLockedException e) {
-            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
-        }
-    }
-
     void clear() {
         contextPool.clear();
         intHashSetPool.clear();
@@ -3671,7 +3566,7 @@ class SqlOptimiser {
         }
     }
 
-    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext, TableRecordMetadata metadata) throws SqlException {
         final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
         selectQueryModel.setIsUpdate(true);
         QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
@@ -3679,7 +3574,57 @@ class SqlOptimiser {
         updateQueryModel.setNestedModel(optimisedNested);
 
         // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
+        validateUpdateColumns(updateQueryModel, metadata);
+    }
+
+    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata) throws SqlException {
+        try {
+            tempList.clear(metadata.getColumnCount());
+            tempList.setPos(metadata.getColumnCount());
+            int timestampIndex = metadata.getTimestampIndex();
+            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
+            for (int i = 0; i < updateSetColumnCount; i++) {
+
+                // SET left hand side expressions are stored in top level UPDATE QueryModel
+                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
+                int position = columnExpression.position;
+                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
+
+                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
+                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
+                if (columnIndex < 0) {
+                    throw SqlException.invalidColumn(position, queryColumn.getName());
+                }
+                if (columnIndex == timestampIndex) {
+                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
+                }
+                if (tempList.getQuick(columnIndex) == 1) {
+                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
+                }
+
+                // When column name case does not match table column name in left side of SET
+                // for example if table "tbl" column name is "Col" but update uses
+                // UPDATE tbl SET coL = 1
+                // we need to replace to match metadata name exactly
+                CharSequence exactColName = metadata.getColumnName(columnIndex);
+                queryColumn.of(exactColName, queryColumn.getAst());
+                tempList.set(columnIndex, 1);
+
+                ExpressionNode rhs = queryColumn.getAst();
+                if (rhs.type == FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
+                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
+                    }
+                }
+            }
+
+            // Save update table name as a String to not re-create string later on from CharSequence
+            updateQueryModel.setUpdateTableName(metadata.getTableName());
+        } catch (EntryLockedException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
+        }
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {

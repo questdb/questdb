@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 
 /**
  * Allows for setting the values of bind variables passed
@@ -49,6 +50,11 @@ public interface BindVariableService extends Mutable {
      * @return number of bind variables in a query
      */
     int getIndexedVariableCount();
+
+    /**
+     * @return list of named variables in a query
+     */
+    ObjList<CharSequence> getNamedVariables();
 
     /**
      * Set the type of bind variable by name as binary and provide a value

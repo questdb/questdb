@@ -312,13 +312,13 @@ typedef struct {
 
 void k_way_merge_long_index(
         index_entry_t *indexes,
-        uint32_t entries_count,
+        const uint32_t entries_count,
         uint32_t sentinels_at_start,
         index_t *dest
 ) {
 
     // calculate size of the tree
-    uint32_t tree_size = entries_count * 2;
+    const uint32_t tree_size = entries_count * 2;
     uint64_t merged_index_pos = 0;
     uint32_t sentinels_left = entries_count - sentinels_at_start;
 
@@ -546,12 +546,10 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
 
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
-    uint64_t merged_index_size = 0;
     for (uint32_t i = 0; i < count; i++) {
         entries[i].index = java_entries[i].index;
         entries[i].pos = 0;
         entries[i].size = java_entries[i].size;
-        merged_index_size += java_entries[i].size;
     }
 
     if (count < size) {
@@ -614,6 +612,19 @@ Java_io_questdb_std_Vect_indexReshuffle64Bit(JNIEnv *env, jclass cl, jlong pSrc,
     });
 }
 
+DECLARE_DISPATCHER(re_shuffle_128bit);
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_indexReshuffle128Bit(JNIEnv *env, jclass cl, jlong pSrc, jlong pDest, jlong pIndex,
+                                              jlong count) {
+    measure_time(32, [=]() {
+        re_shuffle_128bit(
+                reinterpret_cast<__int128 *>(pSrc),
+                reinterpret_cast<__int128 *>(pDest),
+                reinterpret_cast<index_t *>(pIndex),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
 
 DECLARE_DISPATCHER(re_shuffle_256bit);
 JNIEXPORT void JNICALL
@@ -707,6 +718,21 @@ Java_io_questdb_std_Vect_mergeShuffle64Bit(JNIEnv *env, jclass cl, jlong src1, j
                 reinterpret_cast<int64_t *>(src1),
                 reinterpret_cast<int64_t *>(src2),
                 reinterpret_cast<int64_t *>(dest),
+                reinterpret_cast<index_t *>(index),
+                __JLONG_REINTERPRET_CAST__(int64_t, count)
+        );
+    });
+}
+
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeShuffle128Bit(JNIEnv *env, jclass cl, jlong src1, jlong src2, jlong dest, jlong index,
+                                            jlong count) {
+    measure_time(29, [=]() {
+        merge_shuffle_vanilla<__int128>(
+                reinterpret_cast<__int128 *>(src1),
+                reinterpret_cast<__int128 *>(src2),
+                reinterpret_cast<__int128 *>(dest),
                 reinterpret_cast<index_t *>(index),
                 __JLONG_REINTERPRET_CAST__(int64_t, count)
         );

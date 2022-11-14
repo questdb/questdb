@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -72,6 +73,11 @@ public abstract class AbstractPool implements Closeable {
 
     public boolean releaseInactive() {
         return releaseAll(clock.getTicks() - inactiveTtlUs);
+    }
+
+    @TestOnly
+    public boolean reopen() {
+        return Unsafe.getUnsafe().compareAndSwapInt(this, CLOSED, TRUE, FALSE);
     }
 
     public void setPoolListener(PoolListener eventListener) {

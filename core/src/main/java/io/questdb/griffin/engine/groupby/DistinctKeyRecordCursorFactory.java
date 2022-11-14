@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final TableColumnMetadata COUNT_COLUMN_META = new TableColumnMetadata("count", 1, ColumnType.LONG);
+    private static final TableColumnMetadata COUNT_COLUMN_META = new TableColumnMetadata("count", ColumnType.LONG);
 
     private final GroupByRecordCursorFactory baseAggregatorFactory;
 

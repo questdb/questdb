@@ -221,7 +221,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testTransitionIndexWhenColumnCountIsBeyondFileSize() throws Exception {
         // this test asserts that validator compares column count to file size, where
-        // file is prepared to be smaller than count. On windows this setup does not work
+        // file is prepared to be smaller than count. On Windows this setup does not work
         // because appender cannot truncate file to size smaller than default page size
         // when reader is open.
         if (Os.type != Os.WINDOWS) {
@@ -242,7 +242,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains, long pageSize, long trimSize) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
-                path.of(root).concat("x");
+                String tableName = "x";
+                path.of(root).concat(tableName);
                 final int rootLen = path.length();
                 if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.critical(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
@@ -283,8 +284,8 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     ff.close(fd);
                 }
 
-                try {
-                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
+                    metadata.load(path);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -299,11 +300,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
-                path.of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
+                String tableName = "all";
+                path.of(root).concat(tableName).concat(TableUtils.META_FILE_NAME).$();
 
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableName)) {
+                    metadata.load();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                         mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);

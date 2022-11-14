@@ -203,9 +203,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return hashCode;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int indexOf(Object o) {
         if (o == null) {

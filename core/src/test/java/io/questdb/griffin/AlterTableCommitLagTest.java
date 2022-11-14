@@ -166,7 +166,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 @Override
                 public long openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 2) {
+                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
                     return super.openRO(path);
@@ -217,14 +217,14 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         }
                         return super.rename(from, to);
                     }
-
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
+                } catch (CairoException e) {
+                    Assert.assertEquals(12, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
@@ -273,7 +273,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 }
 
                 // Now try with success.
-                engine.releaseAllWriters();
+                engine.clear();
                 ff = new FilesFacadeImpl();
                 compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");

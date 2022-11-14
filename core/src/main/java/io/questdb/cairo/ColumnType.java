@@ -283,6 +283,14 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
+    public static int variableColumnLengthBytes(int columnType) {
+        if (columnType == ColumnType.STRING) {
+            return Integer.BYTES;
+        }
+        assert columnType == ColumnType.BINARY;
+        return Long.BYTES;
+    }
+
     private static short indexOf(short[] list, short value) {
         for (short i = 0; i < list.length; i++) {
             if (list[i] == value) {

@@ -128,8 +128,9 @@ public final class TestUtils {
             rowIndex++;
             for (int i = 0; i < metadataExpected.getColumnCount(); i++) {
                 String columnName = metadataExpected.getColumnName(i);
+                int columnType = 0;
                 try {
-                    int columnType = metadataExpected.getColumnType(i);
+                    columnType = metadataExpected.getColumnType(i);
                     int tagType = ColumnType.tagOf(columnType);
                     switch (tagType) {
                         case ColumnType.DATE:
@@ -188,13 +189,17 @@ public final class TestUtils {
                         case ColumnType.LONG256:
                             assertEquals(r.getLong256A(i), l.getLong256A(i));
                             break;
+                        case ColumnType.LONG128:
+                            Assert.assertEquals(r.getLong128Hi(i), l.getLong128Hi(i));
+                            Assert.assertEquals(r.getLong128Lo(i), l.getLong128Lo(i));
+                            break;
                         default:
                             // Unknown record type.
                             assert false;
                             break;
                     }
                 } catch (AssertionError e) {
-                    throw new AssertionError(String.format("Row %d column %s %s", rowIndex, columnName, e.getMessage()));
+                    throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
                 }
             }
         }
@@ -456,6 +461,7 @@ public final class TestUtils {
 
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
+        String fileDebugInfo = Files.getOpenFdDebugInfo();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
 
         int addrInfoCount = Net.getAllocatedAddrInfoCount();
@@ -467,7 +473,7 @@ public final class TestUtils {
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
-            Assert.assertEquals("file descriptors " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+            Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
         }
 
         // Checks that the same tag used for allocation and freeing native memory
@@ -775,7 +781,7 @@ public final class TestUtils {
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics);
+                final CairoEngine engine = new CairoEngine(configuration, metrics, 2);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
@@ -817,6 +823,7 @@ public final class TestUtils {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
         log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);
     }
 
@@ -868,6 +875,10 @@ public final class TestUtils {
                 return 0;
             }
         };
+    }
+
+    public static double getZeroToOneDouble(Rnd rnd) {
+        return rnd.nextPositiveLong() / (double) Long.MAX_VALUE;
     }
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {

@@ -32,11 +32,11 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -186,9 +186,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             CompiledQuery cc = updateCompiler.compile("UPDATE up SET x = " + i, sqlExecutionContext);
                             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
-                            try (
-                                    AbstractOperation op = cc.getOperation();
-                                    OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence.get())) {
+                            try (OperationFuture fut = cc.execute(eventSubSequence.get())) {
                                 fut.await(10 * Timestamps.SECOND_MILLIS);
                             }
                             current.incrementAndGet();
@@ -198,6 +196,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
                     }
+                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();
@@ -242,6 +241,8 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);
                     }
+
+                    Path.clearThreadLocals();
                 });
                 threads.add(reader);
                 reader.start();

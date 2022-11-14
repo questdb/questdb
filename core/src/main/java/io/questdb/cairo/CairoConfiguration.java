@@ -146,6 +146,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -163,6 +165,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -371,7 +375,15 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    boolean getWalEnabledDefault();
+
+    long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
+
+    int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();
 
@@ -407,4 +419,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
 }
