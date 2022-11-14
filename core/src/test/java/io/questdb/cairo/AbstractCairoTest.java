@@ -488,7 +488,7 @@ public abstract class AbstractCairoTest {
             }
         };
         metrics = Metrics.enabled();
-        engine = new CairoEngine(configuration, metrics, 2);
+        engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }
@@ -601,7 +601,6 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                engine.releaseInactiveCompilers();
                 engine.releaseInactiveTableSequencers();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
@@ -618,7 +617,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected static ApplyWal2TableJob createWalApplyJob() {
-        return new ApplyWal2TableJob(engine, 1, 1);
+        return new ApplyWal2TableJob(engine, 1, 1, null);
     }
 
     protected static void drainWalQueue() {
@@ -628,19 +627,10 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
-        while (walApplyJob.run(0)) {
-            // run until empty
-        }
-
-        final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-        while (checkWalTransactionsJob.run(0)) {
-            // run until empty
-        }
-
+        walApplyJob.drain(0);
+        new CheckWalTransactionsJob(engine).drain(0);
         // run once again as there might be notifications to handle now
-        while (walApplyJob.run(0)) {
-            // run until empty
-        }
+        walApplyJob.drain(0);
     }
 
     protected static void dumpMemoryUsage() {
@@ -650,11 +640,9 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
-        while (job.run(0)) {
-            // run until empty
+        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
+            job.drain(0);
         }
-        job.close();
     }
 
     protected static void runWalPurgeJob() {

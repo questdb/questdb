@@ -29,4 +29,12 @@ public interface Job {
      * Runs and returns true if it should be rescheduled ASAP.
      */
     boolean run(int workerId);
+
+    default void drain(int workerId) {
+        while (true) {
+            if (!run(workerId)) {
+                return;
+            }
+        }
+    }
 }

@@ -365,7 +365,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery compile = compiler.compile("alter table x add column meh symbol cache", sqlExecutionContext);
                             Assert.assertEquals(ALTER, compile.getType());
@@ -517,7 +517,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     createX();
                     engine.clear();
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         Assert.assertEquals(ALTER, compile("alter table x add column meh symbol;", sqlExecutionContext).getType());
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
@@ -547,7 +547,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());
@@ -587,7 +587,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration)) {
+                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                         try (SqlCompiler compiler = new SqlCompiler(engine)) {
                             CompiledQuery cc = compiler.compile("alter table x add column meh symbol", sqlExecutionContext);
                             Assert.assertEquals(ALTER, cc.getType());

@@ -84,7 +84,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -225,7 +225,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 RecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -336,7 +336,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 RecordMetadata metadata;
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());

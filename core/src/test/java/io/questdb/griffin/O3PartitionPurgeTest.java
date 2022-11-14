@@ -569,10 +569,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         if (Os.type == Os.WINDOWS) {
             engine.releaseInactive();
         }
-        //noinspection StatementWithEmptyBody
-        while (purgeJob.run(0)) {
-            // drain the purge job queue fully
-        }
+        purgeJob.drain(0);
     }
 
     private void testManyReadersOpenClosedDense(int start, int increment, int iterations) throws Exception {
