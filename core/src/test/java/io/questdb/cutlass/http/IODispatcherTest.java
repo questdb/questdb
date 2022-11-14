@@ -6792,7 +6792,7 @@ public class IODispatcherTest {
                                 Assert.fail("Not all requests successful, test failed, see previous failures");
                                 break;
                             }
-                            Thread.yield();
+                            Os.pause();
                             continue;
                         }
                         boolean valid = queue.get(cursor).valid;
@@ -7431,7 +7431,8 @@ public class IODispatcherTest {
                             do {
                                 dispatcher.run(0);
                                 dispatcher.processIOQueue(requestProcessor);
-                                Thread.yield();
+                                // We can't use Os.pause() here since we rely on thread interrupts.
+                                LockSupport.parkNanos(1);
                             } while (!isInterrupted());
                         } finally {
                             Unsafe.free(smem, 1, MemoryTag.NATIVE_DEFAULT);

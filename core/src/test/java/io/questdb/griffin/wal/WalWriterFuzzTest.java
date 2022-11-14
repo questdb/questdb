@@ -111,7 +111,7 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0);
-        setFuzzCounts(false, 100_000, 300, 20, 1000, 1000, 100, 5);
+        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         runFuzz(TestUtils.generateRandom(LOG));
     }
 

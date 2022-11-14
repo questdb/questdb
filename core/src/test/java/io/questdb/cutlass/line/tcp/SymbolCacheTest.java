@@ -237,9 +237,9 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     public void testConcurrency() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rndCache = new Rnd();
-            final int N = 1_000_000;
+            final int N = 500_000;
             long ts = TimestampFormatUtils.parseTimestamp("2020-09-10T20:00:00.000000Z");
-            final long incrementUs = 10000;
+            final long incrementUs = 10_000;
             final String constValue = "hello";
             FilesFacade ff = new FilesFacadeImpl();
 
@@ -289,7 +289,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                         haltLatch.countDown();
                     }
                 }).start();
-
 
                 try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
                     barrier.await();

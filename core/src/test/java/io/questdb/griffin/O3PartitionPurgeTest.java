@@ -121,8 +121,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                                     , sqlExecutionContext);
                         }
                     }
-                    done.incrementAndGet();
                     Path.clearThreadLocals();
+                    done.incrementAndGet();
                 } catch (Throwable ex) {
                     LOG.error().$(ex).$();
                     done.decrementAndGet();

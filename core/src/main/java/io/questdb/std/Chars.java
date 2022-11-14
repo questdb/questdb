@@ -176,6 +176,19 @@ public final class Chars {
         return equalsChars(l, r, ll);
     }
 
+    public static boolean equals(String l, String r) {
+        return l.equals(r);
+    }
+
+    public static boolean equals(DirectByteCharSequence l, String r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
     public static boolean equals(CharSequence l, CharSequence r, int rLo, int rHi) {
         if (l == r) {
             return true;
@@ -218,7 +231,7 @@ public final class Chars {
 
     /**
      * Compares two char sequences on assumption and right value is always lower case.
-     * Methods converts every char of right sequence before comparing to left sequence.
+     * Method converts every char of right sequence before comparing to left sequence.
      *
      * @param l left sequence
      * @param r right sequence
@@ -868,6 +881,15 @@ public final class Chars {
     }
 
     private static boolean equalsChars(CharSequence l, CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (l.charAt(i) != r.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean equalsChars(DirectByteCharSequence l, String r, int len) {
         for (int i = 0; i < len; i++) {
             if (l.charAt(i) != r.charAt(i)) {
                 return false;
