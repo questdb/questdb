@@ -236,9 +236,9 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAlterCommandDropsColumn() throws Exception {
         runInContext((server) -> {
-            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819999000\n" +
-                    "plug,label=Power,room=6B watts=\"22\" 1631817902842\n" +
-                    "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
+            String lineData = "plug,label=Power,room=6A watts=\"1\" 2631819994000\n" +
+                    "plug,label=Power,room=6B watts=\"22\" 1631817905842\n" +
+                    "plug,label=Line,room=6C watts=\"333\" 1531817906844\n";
 
             SqlException exception = sendWithAlterStatement(server, lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
@@ -255,23 +255,23 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             Assert.assertNotNull(exception);
             TestUtils.assertEquals("async cmd cannot change table structure while writer is busy", exception.getFlyweightMessage());
-            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819999001\n" +
-                    "plug,label=Power,room=6B watts=\"55\" 1631817902843\n" +
-                    "plug,label=Line,room=6C watts=\"666\" 1531817902843\n";
+            lineData = "plug,label=Power,room=6A watts=\"4\" 2631819995001\n" +
+                    "plug,label=Power,room=6B watts=\"55\" 1631817902845\n" +
+                    "plug,label=Line,room=6C watts=\"666\" 1531817903846\n";
 
             // re-send, this should re-add column label
             send(server, lineData);
 
             String expected = "label\troom\twatts\ttimestamp\n" +
-                    "Line\t6C\t666\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
-                    "Line\t6C\t333\t1970-01-01T00:25:31.817902Z\n" +
+                    "Line\t6C\t666\t1970-01-01T00:25:31.817903Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
+                    "Line\t6C\t333\t1970-01-01T00:25:31.817906Z\n" +
                     "Power\t6B\t55\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6B\t22\t1970-01-01T00:27:11.817902Z\n" +
-                    "Power\t6A\t4\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n" +
-                    "Power\t6A\t1\t1970-01-01T00:43:51.819999Z\n";
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6B\t22\t1970-01-01T00:27:11.817905Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t1\t1970-01-01T00:43:51.819994Z\n" +
+                    "Power\t6A\t4\t1970-01-01T00:43:51.819995Z\n";
             assertTable(expected);
         }, false, 1000);
     }
