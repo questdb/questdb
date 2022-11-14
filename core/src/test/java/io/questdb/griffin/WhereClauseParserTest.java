@@ -637,6 +637,18 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesTimestampGreaterAndLess() throws Exception {
+        runWhereTest("timestamp > '2015-02-23' and timestamp < '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testDesTimestampWithEpochGreaterAndLess() throws Exception {
+        runWhereTest("timestamp > 1424649600000000 and timestamp < 1424736000000000",
+                "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
     public void testDubiousGreater() throws Exception {
         IntrinsicModel m = modelOf("ts > ts");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);

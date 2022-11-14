@@ -1262,17 +1262,20 @@ final class WhereClauseParser implements Mutable {
         try {
             // Timestamp string
             ts = IntervalUtils.parseFloorPartialTimestamp(node.token, 1, len - 1);
-            if (!equalsTo) {
-                ts += isLo ? 1 : -1;
-            }
+
         } catch (NumericException e) {
             try {
-                return Numbers.parseLong(node.token);
+                // Timestamp epoch (long)
+                ts = Numbers.parseLong(node.token);
             } catch (NumericException e2) {
-                long inc = equalsTo ? 0 : isLo ? 1 : -1;
-                ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+                // Timestamp format
+                ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1);
             }
         }
+        if (!equalsTo) {
+            ts += isLo ? 1 : -1;
+        }
+
         return ts;
     }
 
