@@ -1909,6 +1909,28 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testSymbolFileMapping() throws Exception {
+        String table = "symbolMapping";
+        runInContext(() -> {
+            final StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 2039; i++) {
+                sb.append(table).append(",location=").append(i).append(" raining=\"true\" 1465839830100400200\n");
+            }
+            recvBuffer = sb.toString();
+
+            // ingesting 2038 rows -> size of location.o file will be 16384 bytes (pageSize)
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+
+            // with this line we are testing that mmap size is calculated correctly even in case of fileSize=pageSize
+            (new TableReader(configuration, table)).close();
+        });
+    }
+
+    @Test
     public void testSymbolOrder1() throws Exception {
         String table = "symbolOrder";
         addTable(table);
