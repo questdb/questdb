@@ -40,6 +40,7 @@ import java.io.Closeable;
 
 
 public class LineTcpReceiver implements Closeable {
+    private static final SchedulerInitalizer DEFAULT_INITIALIZER = LineTcpMeasurementScheduler::new;
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
     private final MutableIOContextFactory<LineTcpConnectionContext> contextFactory;
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
@@ -51,6 +52,16 @@ public class LineTcpReceiver implements Closeable {
             CairoEngine engine,
             WorkerPool ioWorkerPool,
             WorkerPool writerWorkerPool
+    ) {
+        this(configuration, engine, ioWorkerPool, writerWorkerPool, DEFAULT_INITIALIZER);
+    }
+
+    public LineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool ioWorkerPool,
+            WorkerPool writerWorkerPool,
+            SchedulerInitalizer schedulerInitializer
     ) {
         this.scheduler = null;
         this.metrics = engine.getMetrics();
@@ -73,7 +84,7 @@ public class LineTcpReceiver implements Closeable {
                 contextFactory
         );
         ioWorkerPool.assign(dispatcher);
-        this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
+        this.scheduler = schedulerInitializer.init(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
         for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
             // http context factory has thread local pools
@@ -91,6 +102,16 @@ public class LineTcpReceiver implements Closeable {
     @TestOnly
     void setSchedulerListener(SchedulerListener listener) {
         scheduler.setListener(listener);
+    }
+
+    @FunctionalInterface
+    protected interface SchedulerInitalizer {
+        LineTcpMeasurementScheduler init(LineTcpReceiverConfiguration lineConfiguration,
+                                         CairoEngine engine,
+                                         WorkerPool ioWorkerPool,
+                                         IODispatcher<LineTcpConnectionContext> dispatcher,
+                                         WorkerPool writerWorkerPool
+        );
     }
 
     @FunctionalInterface

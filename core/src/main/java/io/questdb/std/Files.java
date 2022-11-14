@@ -31,7 +31,6 @@ import io.questdb.std.str.StringSink;
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Files {
@@ -54,9 +53,6 @@ public final class Files {
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
 
-    private static final AtomicBoolean fdTracingEnabled = new AtomicBoolean(false);
-    private static final LongObjHashMap<Exception> openFdTraces = new LongObjHashMap();
-
     private Files() {
         // Prevent construction.
     }
@@ -72,13 +68,10 @@ public final class Files {
         if (openFds.remove(fd) == -1) {
             throw new IllegalStateException("fd " + fd + " is already closed!");
         }
-        if (fdTracingEnabled.get()) {
-            openFdTraces.remove(fd);
-        }
         return true;
     }
 
-    public static synchronized boolean auditOpen(long fd, LPSZ path) {
+    public static synchronized boolean auditOpen(long fd) {
         if (null == openFds) {
             openFds = new LongHashSet();
         }
@@ -88,50 +81,17 @@ public final class Files {
         if (openFds.contains(fd)) {
             throw new IllegalStateException("fd " + fd + " is already open");
         }
-
-        if (fdTracingEnabled.get()) {
-            if (openFdTraces.keyIndex(fd) < 0) {
-                throw new RuntimeException("FD " + fd + " is already open!");
-            }
-
-            String filePath = path != null ? path.toString() : "";
-            openFdTraces.put(fd, new Exception(filePath));
-        }
-
         openFds.add(fd);
         return true;
     }
 
     public static long bumpFileCount(long fd) {
-        return bumpFileCount(fd, null);
-    }
-
-    public static long bumpFileCount(long fd, LPSZ path) {
         if (fd != -1) {
             //noinspection AssertWithSideEffects
-            assert auditOpen(fd, path);
+            assert auditOpen(fd);
             OPEN_FILE_COUNT.incrementAndGet();
         }
         return fd;
-    }
-
-    public static void disableFdTracing() {
-        fdTracingEnabled.set(false);
-        openFdTraces.clear();
-    }
-
-    public static void enableFdTracing() {
-        fdTracingEnabled.set(true);
-    }
-
-    public static String getOpenFdDebugInfo() {
-        if (isFdTracingEnabled()) {
-            return openFdTraces.deepToString();
-        }
-        if (openFds != null) {
-            return openFds.toString();
-        }
-        return null;
     }
 
     public static long ceilPageSize(long size) {
@@ -216,8 +176,11 @@ public final class Files {
         return getLastModified(lpsz.address());
     }
 
-    public static boolean isFdTracingEnabled() {
-        return fdTracingEnabled.get();
+    public static String getOpenFdDebugInfo() {
+        if (openFds != null) {
+            return openFds.toString();
+        }
+        return null;
     }
 
     public static long getOpenFileCount() {
@@ -351,25 +314,25 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return bumpFileCount(openAppend(lpsz.address()), lpsz);
+        return bumpFileCount(openAppend(lpsz.address()));
     }
 
     public static long openCleanRW(LPSZ lpsz, long size) {
-        return bumpFileCount(openCleanRW(lpsz.address(), size), lpsz);
+        return bumpFileCount(openCleanRW(lpsz.address(), size));
     }
 
     public native static long openCleanRW(long lpszName, long size);
 
     public static long openRO(LPSZ lpsz) {
-        return bumpFileCount(openRO(lpsz.address()), lpsz);
+        return bumpFileCount(openRO(lpsz.address()));
     }
 
     public static long openRW(LPSZ lpsz) {
-        return bumpFileCount(openRW(lpsz.address()), lpsz);
+        return bumpFileCount(openRW(lpsz.address()));
     }
 
     public static long openRW(LPSZ lpsz, long opts) {
-        return bumpFileCount(openRWOpts(lpsz.address(), opts), lpsz);
+        return bumpFileCount(openRWOpts(lpsz.address(), opts));
     }
 
     public native static long read(long fd, long address, long len, long offset);

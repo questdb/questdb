@@ -306,6 +306,9 @@ class LineTcpMeasurementEvent implements Closeable {
     ) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
         final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        if (localDetails == null || tableUpdateDetails.isClosed()) {
+            throw CairoException.nonCritical().put("ILP listener is closing!");
+        }
         localDetails.resetStateIfNecessary();
         this.tableUpdateDetails = tableUpdateDetails;
         long timestamp = parser.getTimestamp();

@@ -155,10 +155,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void close() {
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            closeLocals(
-                    tableUpdateDetailsUtf16);
-            closeLocals(
-                    idleTableUpdateDetailsUtf16);
+            closeLocals(tableUpdateDetailsUtf16);
+            closeLocals(idleTableUpdateDetailsUtf16);
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
@@ -396,6 +394,9 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         final int writerThreadId = tab.getWriterThreadId();
+        if (tab.isClosed()) {
+            throw CairoException.nonCritical().put("ILP listener is closing!");
+        }
         long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
             try {

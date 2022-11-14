@@ -128,40 +128,4 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
     public interface LongObjConsumer<V> {
         void accept(long key, V value);
     }
-
-    public String deepToString() {
-        StringBuilder result = new StringBuilder();
-        result.append("LongObjHashMap[");
-        for (int i = 0; i < keys.length; i++) {
-
-            long key = keys[i];
-
-            if (key != noEntryKey) {
-                Object value = get(key);
-
-                result.append(" (").append(keys[i]).append("->");
-
-                if (value instanceof Exception) {
-                    String message = ((Exception) value).getMessage();
-
-                    if (message.length() > 0) {
-                        result.append(message).append(" ; ");
-                    }
-
-                    StackTraceElement[] trace = ((Exception) value).getStackTrace();
-                    for (StackTraceElement e : trace) {
-                        result.append(e).append("\n");
-                    }
-                } else {
-                    result.append(value);
-                }
-
-                result.append("),\n");
-            }
-        }
-        result.append("]");
-        return result.toString();
-    }
-
-
 }
