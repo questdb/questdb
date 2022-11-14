@@ -95,15 +95,15 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     long getLong(Record rec);
 
+    long getLong128Hi(Record rec);
+
+    long getLong128Lo(Record rec);
+
     void getLong256(Record rec, CharSink sink);
 
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
-
-    long getLong128Hi(Record rec);
-
-    long getLong128Lo(Record rec);
 
     default RecordMetadata getMetadata() {
         return null;
@@ -174,10 +174,10 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
         return true;
     }
 
-    default void toTop() {
-    }
-
     default void toSink(CharSink sink) {
         sink.put(getClass().getName());
+    }
+
+    default void toTop() {
     }
 }

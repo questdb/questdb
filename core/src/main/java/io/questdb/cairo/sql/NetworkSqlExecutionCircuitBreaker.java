@@ -32,18 +32,18 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import java.io.Closeable;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
-    private final NetworkFacade nf;
-    private final int throttle;
     private final int bufferSize;
     private final MillisecondClock clock;
-    private final long defaultMaxTime;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
-    private long timeout;
+    private final long defaultMaxTime;
+    private final int memoryTag;
+    private final NetworkFacade nf;
+    private final int throttle;
     private long buffer;
-    private int testCount;
     private long fd = -1;
     private long powerUpTime = Long.MAX_VALUE;
-    private final int memoryTag;
+    private int testCount;
+    private long timeout;
 
     public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
         this.configuration = configuration;
@@ -65,6 +65,19 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean checkIfTripped() {
+        return checkIfTripped(powerUpTime, fd);
+    }
+
+    @Override
+    public boolean checkIfTripped(long millis, long fd) {
+        if (clock.getTicks() - timeout > millis) {
+            return true;
+        }
+        return testConnection(fd);
+    }
+
+    @Override
     public void close() {
         Unsafe.free(buffer, bufferSize, this.memoryTag);
         buffer = 0;
@@ -82,17 +95,29 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void unsetTimer() {
-        powerUpTime = Long.MAX_VALUE;
-    }
-
-    @Override
     public boolean isTimerSet() {
         return powerUpTime < Long.MAX_VALUE;
     }
 
+    public NetworkSqlExecutionCircuitBreaker of(long fd) {
+        assert buffer != 0;
+        testCount = 0;
+        this.fd = fd;
+        return this;
+    }
+
     public void resetMaxTimeToDefault() {
         this.timeout = defaultMaxTime;
+    }
+
+    @Override
+    public void resetTimer() {
+        powerUpTime = clock.getTicks();
+    }
+
+    @Override
+    public void setFd(long fd) {
+        this.fd = fd;
     }
 
     public void setTimeout(long timeout) {
@@ -118,33 +143,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped() {
-        return checkIfTripped(powerUpTime, fd);
+    public void unsetTimer() {
+        powerUpTime = Long.MAX_VALUE;
     }
 
-    @Override
-    public boolean checkIfTripped(long millis, long fd) {
-        if (clock.getTicks() - timeout > millis) {
-            return true;
+    private void testTimeout() {
+        if (clock.getTicks() - timeout > powerUpTime) {
+            throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
         }
-        return testConnection(fd);
-    }
-
-    @Override
-    public void setFd(long fd) {
-        this.fd = fd;
-    }
-
-    @Override
-    public void resetTimer() {
-        powerUpTime = clock.getTicks();
-    }
-
-    public NetworkSqlExecutionCircuitBreaker of(long fd) {
-        assert buffer != 0;
-        testCount = 0;
-        this.fd = fd;
-        return this;
     }
 
     protected boolean testConnection(long fd) {
@@ -174,11 +180,5 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
 
         return false;
-    }
-
-    private void testTimeout() {
-        if (clock.getTicks() - timeout > powerUpTime) {
-            throw CairoException.nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
-        }
     }
 }

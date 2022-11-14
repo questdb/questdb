@@ -29,17 +29,17 @@ import org.junit.Test;
 public class EscapeTest extends AbstractGriffinTest {
 
     @Test
-    public void testCreateTableAsSelectWithSingleEscapedQuote() throws Exception {
-        assertQuery("s\n1'b\n2'b\n3'b\n",
-                "select * from t",
-                "create table t as (select x || '''b' as s from long_sequence(3))", null, true, true, true);
-    }
-
-    @Test
     public void testCreateTableAsSelectWithMultipleEscapedQuote() throws Exception {
         assertQuery("s\na 'quoted' text\n",
                 "select * from t",
                 "create table t as (select 'a ''quoted'' text' as s from long_sequence(1))", null, true, true, true);
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithSingleEscapedQuote() throws Exception {
+        assertQuery("s\n1'b\n2'b\n3'b\n",
+                "select * from t",
+                "create table t as (select x || '''b' as s from long_sequence(3))", null, true, true, true);
     }
 
     @Test
@@ -49,13 +49,6 @@ public class EscapeTest extends AbstractGriffinTest {
             compile("insert into t values ( '1st ''', '2nd ''''', '3rd ''''''' );");
             assertSql("select * from t", "s1\ts2\tsym\n1st '\t2nd ''\t3rd '''\n");
         });
-    }
-
-    @Test
-    public void testSelectWithMultipleEscapedQuotes() throws Exception {
-        assertQuery("a\tb\n a 'quot\ted' text2\n",
-                "select ' a ''quot' a,  'ed'' text2' b",
-                null, null, true, true, true);
     }
 
     @Test
@@ -73,16 +66,23 @@ public class EscapeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSelectWithSingleEscapedQuotedIdentifiers() throws Exception {
-        assertQuery("quoted\"\"identifier\nsingle\n",
-                "select 'single' as \"quoted\"\"identifier\"",
+    public void testSelectWithMultipleEscapedQuotedIdentifiers() throws Exception {
+        assertQuery("a\"\"a\tb\"\"2\tc\"\"3\"\"\na\t2\t3.0\n",
+                "select 'a' \"a\"\"a\", 2 \"b\"\"2\", 3.0 \"c\"\"3\"\"\"",
                 null, null, true, true, true);
     }
 
     @Test
-    public void testSelectWithMultipleEscapedQuotedIdentifiers() throws Exception {
-        assertQuery("a\"\"a\tb\"\"2\tc\"\"3\"\"\na\t2\t3.0\n",
-                "select 'a' \"a\"\"a\", 2 \"b\"\"2\", 3.0 \"c\"\"3\"\"\"",
+    public void testSelectWithMultipleEscapedQuotes() throws Exception {
+        assertQuery("a\tb\n a 'quot\ted' text2\n",
+                "select ' a ''quot' a,  'ed'' text2' b",
+                null, null, true, true, true);
+    }
+
+    @Test
+    public void testSelectWithSingleEscapedQuotedIdentifiers() throws Exception {
+        assertQuery("quoted\"\"identifier\nsingle\n",
+                "select 'single' as \"quoted\"\"identifier\"",
                 null, null, true, true, true);
     }
 }

@@ -40,23 +40,12 @@ import java.io.Closeable;
 public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeable {
 
     private final CairoEngine cairoEngine;
-    private final Path path = new Path();
     private final String keepAliveHeader;
+    private final Path path = new Path();
 
     public TableStatusCheckProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         this.cairoEngine = cairoEngine;
         this.keepAliveHeader = Chars.toString(configuration.getKeepAliveHeader());
-    }
-
-    private static String toResponse(int existenceCheckResult) {
-        switch (existenceCheckResult) {
-            case TableUtils.TABLE_EXISTS:
-                return "Exists";
-            case TableUtils.TABLE_DOES_NOT_EXIST:
-                return "Does not exist";
-            default:
-                return "Reserved name";
-        }
     }
 
     @Override
@@ -83,6 +72,17 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor, Closeabl
             } else {
                 context.simpleResponse().sendStatus(200, toResponse(check));
             }
+        }
+    }
+
+    private static String toResponse(int existenceCheckResult) {
+        switch (existenceCheckResult) {
+            case TableUtils.TABLE_EXISTS:
+                return "Exists";
+            case TableUtils.TABLE_DOES_NOT_EXIST:
+                return "Does not exist";
+            default:
+                return "Reserved name";
         }
     }
 }

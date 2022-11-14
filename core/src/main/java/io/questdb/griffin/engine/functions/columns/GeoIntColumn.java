@@ -65,6 +65,11 @@ public class GeoIntColumn extends GeoIntFunction {
         return true;
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoIntColumn(").put(columnIndex).put(')');
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;
@@ -79,10 +84,5 @@ public class GeoIntColumn extends GeoIntFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOINT_MIN_BITS] = new GeoIntColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("GeoIntColumn(").put(columnIndex).put(')');
     }
 }

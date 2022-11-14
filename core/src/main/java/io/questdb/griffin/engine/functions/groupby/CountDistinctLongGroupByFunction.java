@@ -39,16 +39,11 @@ import io.questdb.std.ObjList;
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final ObjList<LongHashSet> sets = new ObjList<>();
-    private int valueIndex;
     private int setIndex;
+    private int valueIndex;
 
     public CountDistinctLongGroupByFunction(Function arg) {
         this.arg = arg;
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override
@@ -92,6 +87,26 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return rec.getLong(valueIndex);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
@@ -111,21 +126,6 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
     }
 
     @Override

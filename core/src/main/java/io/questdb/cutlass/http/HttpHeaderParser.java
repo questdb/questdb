@@ -32,31 +32,31 @@ import java.io.Closeable;
 public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
     private static final String CONTENT_TYPE_HEADER = "Content-Type";
-    private final ObjectPool<DirectByteCharSequence> pool;
-    private final LowerCaseAsciiCharSequenceObjHashMap<DirectByteCharSequence> headers = new LowerCaseAsciiCharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
-    private final long hi;
-    private final DirectByteCharSequence temp = new DirectByteCharSequence();
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
-    private long _wptr;
-    private long headerPtr;
-    private DirectByteCharSequence method;
-    private DirectByteCharSequence url;
-    private DirectByteCharSequence methodLine;
-    private boolean needMethod;
+    private final LowerCaseAsciiCharSequenceObjHashMap<DirectByteCharSequence> headers = new LowerCaseAsciiCharSequenceObjHashMap<>();
+    private final long hi;
+    private final ObjectPool<DirectByteCharSequence> pool;
+    private final DirectByteCharSequence temp = new DirectByteCharSequence();
+    private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
     private long _lo;
-    private DirectByteCharSequence headerName;
-    private boolean incomplete;
-    private DirectByteCharSequence contentType;
+    private long _wptr;
     private DirectByteCharSequence boundary;
-    private CharSequence contentDispositionName;
+    private DirectByteCharSequence charset;
     private CharSequence contentDisposition;
     private CharSequence contentDispositionFilename;
+    private CharSequence contentDispositionName;
+    private DirectByteCharSequence contentType;
+    private DirectByteCharSequence headerName;
+    private long headerPtr;
+    private boolean incomplete;
     private boolean m = true;
-    private boolean u = true;
+    private DirectByteCharSequence method;
+    private DirectByteCharSequence methodLine;
+    private boolean needMethod;
     private boolean q = false;
-    private DirectByteCharSequence charset;
     private long statementTimeout = -1L;
+    private boolean u = true;
+    private DirectByteCharSequence url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
@@ -65,23 +65,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.hi = this.headerPtr + sz;
         this.pool = pool;
         clear();
-    }
-
-    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
-        int len = that.length();
-        if (len == 0) {
-            throw HttpException.instance("missing value [key=").put(key).put(']');
-        }
-
-        if (that.charAt(0) == '"') {
-            if (that.charAt(len - 1) == '"') {
-                return that.of(that.getLo() + 1, that.getHi() - 1);
-            } else {
-                throw HttpException.instance("unclosed quote [key=").put(key).put(']');
-            }
-        } else {
-            return that;
-        }
     }
 
     @Override
@@ -167,6 +150,11 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     }
 
     @Override
+    public long getStatementTimeout() {
+        return statementTimeout;
+    }
+
+    @Override
     public CharSequence getUrl() {
         return url;
     }
@@ -174,11 +162,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     @Override
     public DirectByteCharSequence getUrlParam(CharSequence name) {
         return urlParams.get(name);
-    }
-
-    @Override
-    public long getStatementTimeout() {
-        return statementTimeout;
     }
 
     public boolean isIncomplete() {
@@ -237,6 +220,23 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
     public int size() {
         return headers.size();
+    }
+
+    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
+        int len = that.length();
+        if (len == 0) {
+            throw HttpException.instance("missing value [key=").put(key).put(']');
+        }
+
+        if (that.charAt(0) == '"') {
+            if (that.charAt(len - 1) == '"') {
+                return that.of(that.getLo() + 1, that.getHi() - 1);
+            } else {
+                throw HttpException.instance("unclosed quote [key=").put(key).put(']');
+            }
+        } else {
+            return that;
+        }
     }
 
     private void parseContentDisposition() {
@@ -365,20 +365,6 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         parseStatementTimeout();
     }
 
-    private void parseStatementTimeout() {
-        statementTimeout = -1L;
-        DirectByteCharSequence timeout = getHeader("Statement-Timeout");
-        if (timeout == null) {
-            return;
-        }
-
-        try {
-            statementTimeout = Numbers.parseLong(timeout);
-        } catch (NumericException ex) {
-            // keep -1L as default
-        }
-    }
-
     private int parseMethod(long lo, long hi) {
         long p = lo;
         while (p < hi) {
@@ -429,6 +415,20 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
             Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
+    }
+
+    private void parseStatementTimeout() {
+        statementTimeout = -1L;
+        DirectByteCharSequence timeout = getHeader("Statement-Timeout");
+        if (timeout == null) {
+            return;
+        }
+
+        try {
+            statementTimeout = Numbers.parseLong(timeout);
+        } catch (NumericException ex) {
+            // keep -1L as default
+        }
     }
 
     private int urlDecode(long lo, long hi, CharSequenceObjHashMap<DirectByteCharSequence> map) {
@@ -486,9 +486,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     public static class BoundaryAugmenter implements Closeable {
         private static final String BOUNDARY_PREFIX = "\r\n--";
         private final DirectByteCharSequence export = new DirectByteCharSequence();
-        private long lo;
-        private long lim;
         private long _wptr;
+        private long lim;
+        private long lo;
 
         public BoundaryAugmenter() {
             this.lim = 64;

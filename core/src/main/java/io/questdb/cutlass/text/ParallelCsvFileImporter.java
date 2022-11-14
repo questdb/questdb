@@ -29,6 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
@@ -67,82 +68,80 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * - removes temp tables and index files
  */
 public class ParallelCsvFileImporter implements Closeable, Mutable {
-    private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
-
-    private static final String LOCK_REASON = "parallel import";
-    private static final int NO_INDEX = -1;
-
     private static final int DEFAULT_MIN_CHUNK_SIZE = 300 * 1024 * 1024;
+    private static final String LOCK_REASON = "parallel import";
+    private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
+    private static final int NO_INDEX = -1;
+    private final CairoEngine cairoEngine;
     //holds result of first phase - boundary scanning
     //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats;
+    private final Sequence collectSeq;
+    private final CairoConfiguration configuration;
+    private final FilesFacade ff;
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats;
+    private final Path inputFilePath;
+    private final CharSequence inputRoot;
+    private final CharSequence inputWorkRoot;
+    private final TextImportJob localImportJob;
+    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
     private final LongList partitionKeysAndSizes;
     private final StringSink partitionNameSink;
     private final ObjList<PartitionInfo> partitions;
+    private final Sequence pubSeq;
+    private final RingQueue<TextImportTask> queue;
+    private final CairoSecurityContext securityContext;
+    private final TableStructureAdapter targetTableStructure;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
-    private final FilesFacade ff;
-    private final Path inputFilePath;
-    private final Path tmpPath;
-    private final RingQueue<TextImportTask> queue;
-    private final Sequence pubSeq;
-    private final Sequence collectSeq;
-    private final int workerCount;
-    private final CharSequence inputRoot;
-    private final CharSequence inputWorkRoot;
-    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
-    private final CairoSecurityContext securityContext;
-    private final DirectCharSink utf8Sink;
-    private final TypeManager typeManager;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
-    private final CairoEngine cairoEngine;
-    private final CairoConfiguration configuration;
-    private final TableStructureAdapter targetTableStructure;
-    private final TextImportJob localImportJob;
-    private int taskCount;
-    private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
+    private final Path tmpPath;
+    private final TypeManager typeManager;
+    private final DirectCharSink utf8Sink;
+    private final int workerCount;
+    private int atomicity;
+    private ExecutionCircuitBreaker circuitBreaker;
+    private byte columnDelimiter;
+    private boolean createdWorkDir;
+    private CharSequence errorMessage;
+    private long errors;
+    private boolean forceHeader;
+    private long importId;
     //path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
-    private long importId;
-    //input params start
-    private CharSequence tableName;
     //name of file to process in inputRoot dir
     private CharSequence inputFileName;
-    //name of timestamp column
-    private CharSequence timestampColumn;
-    private int partitionBy;
-    private byte columnDelimiter;
-    private TimestampAdapter timestampAdapter;
-    private boolean forceHeader;
-    private int atomicity;
-    //input params end
-    //index of timestamp column in input file
-    private int timestampIndex;
-    private boolean targetTableCreated;
-    private int targetTableStatus;
-    //import status variables
-    private byte status = TextImportTask.STATUS_STARTED;
-    private byte phase = TextImportTask.PHASE_SETUP;
-    private CharSequence errorMessage;
-    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
-    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
-    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     //incremented in phase 2
     private long linesIndexed;
+    private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
+    private int partitionBy;
+    private byte phase = TextImportTask.PHASE_SETUP;
+    private long phaseErrors;
     //row stats are incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
-    private long errors;
-    private long phaseErrors;
+    private long startMs;//start time of current phase (in millis)
+    //import status variables
+    private byte status = TextImportTask.STATUS_STARTED;
+    private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
+    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
+    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<TextImportTask> collectIndexStatsRef = this::collectIndexStats;
-    private long startMs;//start time of current phase (in millis)
-    private boolean createdWorkDir;
-    private ExecutionCircuitBreaker circuitBreaker;
     private PhaseStatusReporter statusReporter;
+    //input params start
+    private CharSequence tableName;
+    private boolean targetTableCreated;
+    private int targetTableStatus;
+    private int taskCount;
+    private TimestampAdapter timestampAdapter;
+    //name of timestamp column
+    private CharSequence timestampColumn;
+    //input params end
+    //index of timestamp column in input file
+    private int timestampIndex;
 
     public ParallelCsvFileImporter(CairoEngine cairoEngine, int workerCount) {
         if (workerCount < 1) {
@@ -209,8 +208,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("Table remove failed [tableName=").put(tableName).put("]");
+                        LOG.error().$("could not overwrite table [tableName='").utf8(tableName).$("',path='").utf8(path).$(", errno=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not overwrite [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -463,49 +462,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
-    }
-
-    //load balances existing partitions between given number of workers using partition sizes
-    //returns number of tasks
-    static int assignPartitions(ObjList<PartitionInfo> partitions, int workerCount) {
-        partitions.sort((p1, p2) -> Long.compare(p2.bytes, p1.bytes));
-        long[] workerSums = new long[workerCount];
-
-        for (int i = 0, n = partitions.size(); i < n; i++) {
-            int minIdx = -1;
-            long minSum = Long.MAX_VALUE;
-
-            for (int j = 0; j < workerCount; j++) {
-                if (workerSums[j] == 0) {
-                    minIdx = j;
-                    break;
-                } else if (workerSums[j] < minSum) {
-                    minSum = workerSums[j];
-                    minIdx = j;
-                }
-            }
-
-            workerSums[minIdx] += partitions.getQuick(i).bytes;
-            partitions.getQuick(i).taskId = minIdx;
-        }
-
-        partitions.sort((p1, p2) -> {
-            long workerIdDiff = p1.taskId - p2.taskId;
-            if (workerIdDiff != 0) {
-                return (int) workerIdDiff;
-            }
-
-            return Long.compare(p1.key, p2.key);
-        });
-
-        int taskIds = 0;
-        for (int i = 0, n = workerSums.length; i < n; i++) {
-            if (workerSums[i] != 0) {
-                taskIds++;
-            }
-        }
-
-        return taskIds;
     }
 
     private void attachPartitions(TableWriter writer) throws TextImportException {
@@ -813,108 +769,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return writer;
     }
 
-    TableWriter parseStructure(long fd) throws TextImportException {
-        phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
-        final CairoConfiguration configuration = cairoEngine.getConfiguration();
-
-        final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
-        int len = configuration.getSqlCopyBufferSize();
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
-
-        try (TextLexerWrapper tlw = new TextLexerWrapper(configuration.getTextConfiguration())) {
-            long n = ff.read(fd, buf, len, 0);
-            if (n > 0) {
-                if (columnDelimiter < 0) {
-                    columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
-                }
-
-                AbstractTextLexer lexer = tlw.getLexer(columnDelimiter);
-                lexer.setSkipLinesWithExtraValues(false);
-
-                final ObjList<CharSequence> names = new ObjList<>();
-                final ObjList<TypeAdapter> types = new ObjList<>();
-                if (timestampColumn != null && timestampAdapter != null) {
-                    names.add(timestampColumn);
-                    types.add(timestampAdapter);
-                }
-
-                textMetadataDetector.of(tableName, names, types, forceHeader);
-                lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
-                forceHeader = textMetadataDetector.isHeader();
-
-                TableWriter writer = prepareTable(
-                        securityContext,
-                        textMetadataDetector.getColumnNames(),
-                        textMetadataDetector.getColumnTypes(),
-                        inputFilePath,
-                        typeManager
-                );
-                phaseEpilogue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
-                return writer;
-            } else {
-                throw TextException.$("could not read from file '").put(inputFilePath).put("' to analyze structure");
-            }
-        } catch (CairoException e) {
-            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage(), e.getErrno());
-        } catch (TextException e) {
-            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage());
-        } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_IMPORT);
-        }
-    }
-
-    //returns list with N chunk boundaries
-    LongList phaseBoundaryCheck(long fileLength) throws TextImportException {
-        phasePrologue(TextImportTask.PHASE_BOUNDARY_CHECK);
-        assert (workerCount > 0 && minChunkSize > 0);
-
-        if (workerCount == 1) {
-            indexChunkStats.setPos(0);
-            indexChunkStats.add(0);
-            indexChunkStats.add(0);
-            indexChunkStats.add(fileLength);
-            indexChunkStats.add(0);
-            phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
-            return indexChunkStats;
-        }
-
-        long chunkSize = Math.max(minChunkSize, (fileLength + workerCount - 1) / workerCount);
-        final int chunks = (int) Math.max((fileLength + chunkSize - 1) / chunkSize, 1);
-
-        int queuedCount = 0;
-        int collectedCount = 0;
-
-        chunkStats.setPos(chunks * 5);
-        chunkStats.zero(0);
-
-        for (int i = 0; i < chunks; i++) {
-            final long chunkLo = i * chunkSize;
-            final long chunkHi = Long.min(chunkLo + chunkSize, fileLength);
-            while (true) {
-                final long seq = pubSeq.next();
-                if (seq > -1) {
-                    final TextImportTask task = queue.get(seq);
-                    task.setChunkIndex(i);
-                    task.setCircuitBreaker(circuitBreaker);
-                    task.ofPhaseBoundaryCheck(ff, inputFilePath, chunkLo, chunkHi);
-                    pubSeq.done(seq);
-                    queuedCount++;
-                    break;
-                } else {
-                    collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
-                }
-            }
-        }
-
-        collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
-        assert collectedCount == queuedCount;
-
-        processChunkStats(fileLength, chunks);
-        phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
-        return indexChunkStats;
-    }
-
     private void phaseBuildSymbolIndex(TableWriter writer) throws TextImportException {
         phasePrologue(TextImportTask.PHASE_BUILD_SYMBOL_INDEX);
 
@@ -966,61 +820,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 .$(", errors=").$(phaseErrors)
                 .I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_FINISHED, null);
-    }
-
-    void phaseIndexing() throws TextException {
-        phasePrologue(TextImportTask.PHASE_INDEXING);
-
-        int queuedCount = 0;
-        int collectedCount = 0;
-
-        createWorkDir();
-
-        boolean forceHeader = this.forceHeader;
-        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
-            int colIdx = i / 2;
-
-            final long chunkLo = indexChunkStats.get(i);
-            final long lineNumber = indexChunkStats.get(i + 1);
-            final long chunkHi = indexChunkStats.get(i + 2);
-
-            while (true) {
-                final long seq = pubSeq.next();
-                if (seq > -1) {
-                    final TextImportTask task = queue.get(seq);
-                    task.setChunkIndex(colIdx);
-                    task.setCircuitBreaker(circuitBreaker);
-                    task.ofPhaseIndexing(
-                            chunkLo,
-                            chunkHi,
-                            lineNumber,
-                            colIdx,
-                            inputFileName,
-                            importRoot,
-                            partitionBy,
-                            columnDelimiter,
-                            timestampIndex,
-                            timestampAdapter,
-                            forceHeader,
-                            atomicity
-                    );
-                    if (forceHeader) {
-                        forceHeader = false;
-                    }
-                    pubSeq.done(seq);
-                    queuedCount++;
-                    break;
-                } else {
-                    collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
-                }
-            }
-        }
-
-        collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
-        assert collectedCount == queuedCount;
-        processIndexStats();
-
-        phaseEpilogue(TextImportTask.PHASE_INDEXING);
     }
 
     private void phasePartitionImport() throws TextImportException {
@@ -1106,11 +905,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         int queuedCount = 0;
         int collectedCount = 0;
-        TableWriterMetadata metadata = writer.getMetadata();
+        TableRecordMetadata tableMetadata = writer.getMetadata();
 
-        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
+        for (int columnIndex = 0, size = tableMetadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            if (ColumnType.isSymbol(tableMetadata.getColumnType(columnIndex))) {
+                final CharSequence symbolColumnName = tableMetadata.getColumnName(columnIndex);
                 int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
 
                 while (true) {
@@ -1161,16 +960,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
-                    TableWriterMetadata metadata = writer.getMetadata();
+                    TableRecordMetadata tableMetadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
 
                     if (partitionSize == 0) {
                         continue;
                     }
 
-                    for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
-                        if (ColumnType.isSymbol(metadata.getColumnType(c))) {
-                            final CharSequence symbolColumnName = metadata.getColumnName(c);
+                    for (int c = 0, size = tableMetadata.getColumnCount(); c < size; c++) {
+                        if (ColumnType.isSymbol(tableMetadata.getColumnType(c))) {
+                            final CharSequence symbolColumnName = tableMetadata.getColumnName(c);
                             final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
 
                             while (true) {
@@ -1206,104 +1005,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         assert collectedCount == queuedCount;
 
         phaseEpilogue(TextImportTask.PHASE_UPDATE_SYMBOL_KEYS);
-    }
-
-    TableWriter prepareTable(
-            CairoSecurityContext cairoSecurityContext,
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types,
-            Path path,
-            TypeManager typeManager
-    ) throws TextException {
-        if (types.size() == 0) {
-            throw CairoException.nonCritical().put("cannot determine text structure");
-        }
-        if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
-        }
-
-        if (partitionBy < 0) {
-            partitionBy = PartitionBy.NONE;
-        }
-
-        if (timestampIndex == -1 && timestampColumn != null) {
-            for (int i = 0, n = names.size(); i < n; i++) {
-                if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
-                    timestampIndex = i;
-                    break;
-                }
-            }
-        }
-
-        TableWriter writer = null;
-
-        try {
-            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableName);
-            switch (targetTableStatus) {
-                case TableUtils.TABLE_DOES_NOT_EXIST:
-                    if (partitionBy == PartitionBy.NONE) {
-                        throw TextException.$("partition by unit must be set when importing to new table");
-                    }
-                    if (timestampColumn == null) {
-                        throw TextException.$("timestamp column must be set when importing to new table");
-                    }
-                    if (timestampIndex == -1) {
-                        throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
-                    }
-
-                    validate(names, types, null, NO_INDEX);
-                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
-                    createTable(
-                            ff,
-                            configuration.getMkDirMode(),
-                            configuration.getRoot(),
-                            tableName,
-                            targetTableStructure,
-                            (int) cairoEngine.getTableIdGenerator().getNextId(),
-                            configuration
-                    );
-                    targetTableCreated = true;
-                    writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
-                    partitionBy = writer.getPartitionBy();
-                    break;
-                case TableUtils.TABLE_EXISTS:
-                    writer = openWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
-
-                    if (writer.getRowCount() > 0) {
-                        throw TextException.$("target table must be empty [table=").put(tableName).put(']');
-                    }
-
-                    CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
-                    int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
-                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
-                        throw TextException.$("declared partition by unit doesn't match table's");
-                    }
-                    partitionBy = writer.getPartitionBy();
-                    if (!PartitionBy.isPartitioned(partitionBy)) {
-                        throw TextException.$("target table is not partitioned");
-                    }
-                    validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
-                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
-                    break;
-                default:
-                    throw TextException.$("name is reserved [table=").put(tableName).put(']');
-            }
-
-            inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it
-            targetTableStructure.setIgnoreColumnIndexedFlag(true);
-
-            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
-        } catch (Throwable t) {
-            if (writer != null) {
-                writer.close();
-            }
-
-            throw t;
-        }
-
-        return writer;
     }
 
     private void processChunkStats(long fileLength, int chunks) {
@@ -1430,6 +1131,308 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
+    //load balances existing partitions between given number of workers using partition sizes
+    //returns number of tasks
+    static int assignPartitions(ObjList<PartitionInfo> partitions, int workerCount) {
+        partitions.sort((p1, p2) -> Long.compare(p2.bytes, p1.bytes));
+        long[] workerSums = new long[workerCount];
+
+        for (int i = 0, n = partitions.size(); i < n; i++) {
+            int minIdx = -1;
+            long minSum = Long.MAX_VALUE;
+
+            for (int j = 0; j < workerCount; j++) {
+                if (workerSums[j] == 0) {
+                    minIdx = j;
+                    break;
+                } else if (workerSums[j] < minSum) {
+                    minSum = workerSums[j];
+                    minIdx = j;
+                }
+            }
+
+            workerSums[minIdx] += partitions.getQuick(i).bytes;
+            partitions.getQuick(i).taskId = minIdx;
+        }
+
+        partitions.sort((p1, p2) -> {
+            long workerIdDiff = p1.taskId - p2.taskId;
+            if (workerIdDiff != 0) {
+                return (int) workerIdDiff;
+            }
+
+            return Long.compare(p1.key, p2.key);
+        });
+
+        int taskIds = 0;
+        for (int i = 0, n = workerSums.length; i < n; i++) {
+            if (workerSums[i] != 0) {
+                taskIds++;
+            }
+        }
+
+        return taskIds;
+    }
+
+    TableWriter parseStructure(long fd) throws TextImportException {
+        phasePrologue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
+        final CairoConfiguration configuration = cairoEngine.getConfiguration();
+
+        final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
+        int len = configuration.getSqlCopyBufferSize();
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
+
+        try (TextLexerWrapper tlw = new TextLexerWrapper(configuration.getTextConfiguration())) {
+            long n = ff.read(fd, buf, len, 0);
+            if (n > 0) {
+                if (columnDelimiter < 0) {
+                    columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
+                }
+
+                AbstractTextLexer lexer = tlw.getLexer(columnDelimiter);
+                lexer.setSkipLinesWithExtraValues(false);
+
+                final ObjList<CharSequence> names = new ObjList<>();
+                final ObjList<TypeAdapter> types = new ObjList<>();
+                if (timestampColumn != null && timestampAdapter != null) {
+                    names.add(timestampColumn);
+                    types.add(timestampAdapter);
+                }
+
+                textMetadataDetector.of(tableName, names, types, forceHeader);
+                lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
+                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                forceHeader = textMetadataDetector.isHeader();
+
+                TableWriter writer = prepareTable(
+                        securityContext,
+                        textMetadataDetector.getColumnNames(),
+                        textMetadataDetector.getColumnTypes(),
+                        inputFilePath,
+                        typeManager
+                );
+                phaseEpilogue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
+                return writer;
+            } else {
+                throw TextException.$("could not read from file '").put(inputFilePath).put("' to analyze structure");
+            }
+        } catch (CairoException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage(), e.getErrno());
+        } catch (TextException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage());
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_IMPORT);
+        }
+    }
+
+    //returns list with N chunk boundaries
+    LongList phaseBoundaryCheck(long fileLength) throws TextImportException {
+        phasePrologue(TextImportTask.PHASE_BOUNDARY_CHECK);
+        assert (workerCount > 0 && minChunkSize > 0);
+
+        if (workerCount == 1) {
+            indexChunkStats.setPos(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(fileLength);
+            indexChunkStats.add(0);
+            phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
+            return indexChunkStats;
+        }
+
+        long chunkSize = Math.max(minChunkSize, (fileLength + workerCount - 1) / workerCount);
+        final int chunks = (int) Math.max((fileLength + chunkSize - 1) / chunkSize, 1);
+
+        int queuedCount = 0;
+        int collectedCount = 0;
+
+        chunkStats.setPos(chunks * 5);
+        chunkStats.zero(0);
+
+        for (int i = 0; i < chunks; i++) {
+            final long chunkLo = i * chunkSize;
+            final long chunkHi = Long.min(chunkLo + chunkSize, fileLength);
+            while (true) {
+                final long seq = pubSeq.next();
+                if (seq > -1) {
+                    final TextImportTask task = queue.get(seq);
+                    task.setChunkIndex(i);
+                    task.setCircuitBreaker(circuitBreaker);
+                    task.ofPhaseBoundaryCheck(ff, inputFilePath, chunkLo, chunkHi);
+                    pubSeq.done(seq);
+                    queuedCount++;
+                    break;
+                } else {
+                    collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
+                }
+            }
+        }
+
+        collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
+        assert collectedCount == queuedCount;
+
+        processChunkStats(fileLength, chunks);
+        phaseEpilogue(TextImportTask.PHASE_BOUNDARY_CHECK);
+        return indexChunkStats;
+    }
+
+    void phaseIndexing() throws TextException {
+        phasePrologue(TextImportTask.PHASE_INDEXING);
+
+        int queuedCount = 0;
+        int collectedCount = 0;
+
+        createWorkDir();
+
+        boolean forceHeader = this.forceHeader;
+        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
+            int colIdx = i / 2;
+
+            final long chunkLo = indexChunkStats.get(i);
+            final long lineNumber = indexChunkStats.get(i + 1);
+            final long chunkHi = indexChunkStats.get(i + 2);
+
+            while (true) {
+                final long seq = pubSeq.next();
+                if (seq > -1) {
+                    final TextImportTask task = queue.get(seq);
+                    task.setChunkIndex(colIdx);
+                    task.setCircuitBreaker(circuitBreaker);
+                    task.ofPhaseIndexing(
+                            chunkLo,
+                            chunkHi,
+                            lineNumber,
+                            colIdx,
+                            inputFileName,
+                            importRoot,
+                            partitionBy,
+                            columnDelimiter,
+                            timestampIndex,
+                            timestampAdapter,
+                            forceHeader,
+                            atomicity
+                    );
+                    if (forceHeader) {
+                        forceHeader = false;
+                    }
+                    pubSeq.done(seq);
+                    queuedCount++;
+                    break;
+                } else {
+                    collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
+                }
+            }
+        }
+
+        collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
+        assert collectedCount == queuedCount;
+        processIndexStats();
+
+        phaseEpilogue(TextImportTask.PHASE_INDEXING);
+    }
+
+    TableWriter prepareTable(
+            CairoSecurityContext cairoSecurityContext,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager
+    ) throws TextException {
+        if (types.size() == 0) {
+            throw CairoException.nonCritical().put("cannot determine text structure");
+        }
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.nonCritical().put("partition strategy for parallel import cannot be NONE");
+        }
+
+        if (partitionBy < 0) {
+            partitionBy = PartitionBy.NONE;
+        }
+
+        if (timestampIndex == -1 && timestampColumn != null) {
+            for (int i = 0, n = names.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
+                    timestampIndex = i;
+                    break;
+                }
+            }
+        }
+
+        TableWriter writer = null;
+
+        try {
+            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableName);
+            switch (targetTableStatus) {
+                case TableUtils.TABLE_DOES_NOT_EXIST:
+                    if (partitionBy == PartitionBy.NONE) {
+                        throw TextException.$("partition by unit must be set when importing to new table");
+                    }
+                    if (timestampColumn == null) {
+                        throw TextException.$("timestamp column must be set when importing to new table");
+                    }
+                    if (timestampIndex == -1) {
+                        throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
+                    }
+
+                    validate(names, types, null, NO_INDEX);
+                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    int tableId = (int) cairoEngine.getTableIdGenerator().getNextId();
+                    createTable(
+                            ff,
+                            configuration.getMkDirMode(),
+                            configuration.getRoot(),
+                            tableName,
+                            targetTableStructure,
+                            tableId,
+                            configuration
+                    );
+                    if (targetTableStructure.isWalEnabled()) {
+                        cairoEngine.getTableSequencerAPI().registerTable(tableId, targetTableStructure);
+                    }
+                    targetTableCreated = true;
+                    writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
+                    partitionBy = writer.getPartitionBy();
+                    break;
+                case TableUtils.TABLE_EXISTS:
+                    writer = openWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
+
+                    if (writer.getRowCount() > 0) {
+                        throw TextException.$("target table must be empty [table=").put(tableName).put(']');
+                    }
+
+                    CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                    int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
+                        throw TextException.$("declared partition by unit doesn't match table's");
+                    }
+                    partitionBy = writer.getPartitionBy();
+                    if (!PartitionBy.isPartitioned(partitionBy)) {
+                        throw TextException.$("target table is not partitioned");
+                    }
+                    validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
+                    targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
+                    break;
+                default:
+                    throw TextException.$("name is reserved [table=").put(tableName).put(']');
+            }
+
+            inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it
+            targetTableStructure.setIgnoreColumnIndexedFlag(true);
+
+            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+            }
+        } catch (Throwable t) {
+            if (writer != null) {
+                writer.close();
+            }
+
+            throw t;
+        }
+
+        return writer;
+    }
+
     void validate(ObjList<CharSequence> names,
                   ObjList<TypeAdapter> types,
                   CharSequence designatedTimestampColumnName,
@@ -1465,12 +1468,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     static class PartitionInfo {
+        long bytes;
+        long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them)
         long key;
         CharSequence name;
-        long bytes;
-
         int taskId;//assigned worker/task id
-        long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them)
 
         PartitionInfo(long key, CharSequence name, long bytes) {
             this.key = key;
@@ -1506,13 +1508,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public static class TableStructureAdapter implements TableStructure {
-        private final CairoConfiguration configuration;
         private final LongList columnBits = new LongList();
-        private CharSequence tableName;
+        private final CairoConfiguration configuration;
         private ObjList<CharSequence> columnNames;
-        private int timestampColumnIndex;
-        private int partitionBy;
         private boolean ignoreColumnIndexedFlag;
+        private int partitionBy;
+        private CharSequence tableName;
+        private int timestampColumnIndex;
 
         public TableStructureAdapter(CairoConfiguration configuration) {
             this.configuration = configuration;
@@ -1521,11 +1523,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getColumnCount() {
             return columnNames.size();
-        }
-
-        @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
         }
 
         @Override
@@ -1568,31 +1565,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             return configuration.getDefaultSymbolCapacity();
         }
 
-        @Override
-        public CharSequence getTableName() {
-            return tableName;
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampColumnIndex;
-        }
-
-        @Override
-        public boolean isWallEnabled() {
-            return false;
-        }
-
-        @Override
-        public boolean isIndexed(int columnIndex) {
-            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
-        }
-
         public int getSymbolColumnIndex(CharSequence symbolColumnName) {
             int index = -1;
             for (int i = 0, n = columnNames.size(); i < n; i++) {
@@ -1606,6 +1578,31 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
 
             return -1;
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return tableName;
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampColumnIndex;
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }
 
         public void of(final CharSequence tableName,

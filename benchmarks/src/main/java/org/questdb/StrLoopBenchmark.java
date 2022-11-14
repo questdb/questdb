@@ -38,9 +38,9 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class StrLoopBenchmark {
 
-    static Rnd rnd = new Rnd();
     static int N = 256;
     private static final String[] array = new String[N];
+    static Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

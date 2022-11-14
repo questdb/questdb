@@ -74,9 +74,9 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
     }
 
     private static class IntColumnFunction extends IntFunction implements BinaryFunction {
-        private final Function cursorFunction;
-        private final Function columnNameFunction;
         private final int columnIndex;
+        private final Function columnNameFunction;
+        private final Function cursorFunction;
 
         public IntColumnFunction(
                 Function cursorFunction,
@@ -90,6 +90,11 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            return cursorFunction.getRecord(rec).getInt(columnIndex);
+        }
+
+        @Override
         public Function getLeft() {
             return cursorFunction;
         }
@@ -97,11 +102,6 @@ public class CursorDereferenceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return columnNameFunction;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return cursorFunction.getRecord(rec).getInt(columnIndex);
         }
     }
 }

@@ -41,18 +41,8 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class HttpMinTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpMinTestBuilder.class);
-    private TemporaryFolder temp;
     private Scrapable scrapable;
-
-    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
-        this.temp = temp;
-        return this;
-    }
-
-    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
-        this.scrapable = scrapable;
-        return this;
-    }
+    private TemporaryFolder temp;
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -66,18 +56,18 @@ public class HttpMinTestBuilder {
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
+                    CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled(), 2);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), Metrics.disabled(), workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new PrometheusMetricsProcessor(scrapable);
+                    public String getUrl() {
+                        return "/metrics";
                     }
 
                     @Override
-                    public String getUrl() {
-                        return "/metrics";
+                    public HttpRequestProcessor newInstance() {
+                        return new PrometheusMetricsProcessor(scrapable);
                     }
                 });
 
@@ -92,5 +82,15 @@ public class HttpMinTestBuilder {
                 }
             }
         });
+    }
+
+    public HttpMinTestBuilder withScrapable(Scrapable scrapable) {
+        this.scrapable = scrapable;
+        return this;
+    }
+
+    public HttpMinTestBuilder withTempFolder(TemporaryFolder temp) {
+        this.temp = temp;
+        return this;
     }
 }

@@ -90,6 +90,14 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final char value = arg.getChar(rec);
+            if (value != 0) {
+                sink.put(value);
+            }
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final char value = arg.getChar(rec);
             if (value == 0) {
@@ -98,14 +106,6 @@ public class CastCharToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             sinkB.put(value);
             return sinkB;
-        }
-
-        @Override
-        public void getStr(Record rec, CharSink sink) {
-            final char value = arg.getChar(rec);
-            if (value != 0) {
-                sink.put(value);
-            }
         }
     }
 }

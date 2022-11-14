@@ -48,10 +48,10 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     protected final DirectLongList prefixes;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    protected long indexShift = 0;
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     protected long aIndex;
     protected long aLimit;
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+    protected long indexShift = 0;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,
@@ -75,13 +75,32 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
+    public long size() {
+        return aLimit - indexShift;
+    }
+
+    @Override
     public void toTop() {
         aIndex = indexShift;
     }
 
-    @Override
-    public long size() {
-        return aLimit - indexShift;
+    private static int getPow2SizeOfGeoHashType(int type) {
+        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
+    }
+
+    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                if (circuitBreaker.checkIfTripped()) {
+                    sharedCircuitBreaker.cancel();
+                }
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);
     }
 
     @Override
@@ -121,7 +140,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
-        if(this.prefixes.size() > 2) {
+        if (this.prefixes.size() > 2) {
             hashColumnIndex = (int) prefixes.get(0);
             hashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
@@ -258,25 +277,6 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         aLimit = rowCount;
         aIndex = indexShift;
         postProcessRows();
-    }
-
-    private void processTasks(SqlExecutionCircuitBreaker circuitBreaker, RingQueue<LatestByTask> queue, Sequence subSeq, int queuedCount) {
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
-                }
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);
-    }
-
-    private static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     protected void postProcessRows() {

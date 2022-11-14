@@ -60,6 +60,16 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.INT);
@@ -73,16 +83,6 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NaN);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(valueIndex);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override

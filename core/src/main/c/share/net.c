@@ -34,6 +34,7 @@
 #include <string.h>
 #include "net.h"
 #include <netdb.h>
+#include "sysutil.h"
 
 int set_int_sockopt(int fd, int level, int opt, int value) {
     return setsockopt(fd, level, opt, &value, sizeof(value));
@@ -133,7 +134,8 @@ JNIEXPORT void JNICALL Java_io_questdb_network_Net_listen
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    const ssize_t n = send((int) fd, (const void *) ptr, (size_t) len, 0);
+    ssize_t n;
+    RESTARTABLE(send((int) fd, (const void *) ptr, (size_t) len, 0), n);
     if (n > -1) {
         return n;
     }
@@ -147,7 +149,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    const ssize_t n = recv((int) fd, (void *) ptr, (size_t) len, 0);
+    ssize_t n;
+    RESTARTABLE(recv((int) fd, (void *) ptr, (size_t) len, 0), n);
     if (n > 0) {
         return n;
     }
@@ -165,7 +168,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    const ssize_t n = recv((int) fd, (void *) ptr, (size_t) len, MSG_PEEK);
+    ssize_t n;
+    RESTARTABLE(recv((int) fd, (void *) ptr, (size_t) len, MSG_PEEK), n);
     if (n > 0) {
         return n;
     }
@@ -184,7 +188,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
-    return (jboolean) (recv((int) fd, &c, 1, 0) < 1);
+    ssize_t res;
+    RESTARTABLE(recv((int) fd, &c, 1, 0), res);
+    return (jboolean) (res < 1);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking

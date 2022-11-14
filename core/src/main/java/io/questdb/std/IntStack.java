@@ -27,13 +27,13 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public class IntStack implements Mutable {
-    private static final int noEntryValue = -1;
-    private static final int MIN_INITIAL_CAPACITY = 8;
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 8;
+    private static final int noEntryValue = -1;
     private int[] elements;
     private int head;
-    private int tail;
     private int mask;
+    private int tail;
 
     public IntStack() {
         this(DEFAULT_INITIAL_CAPACITY);
@@ -50,12 +50,28 @@ public class IntStack implements Mutable {
         }
     }
 
+    public void copyTo(IntStack there, int count) {
+        int n = Math.min(count, size());
+        while (n-- > 0) {
+            there.push(pop());
+        }
+    }
+
     public boolean notEmpty() {
         return head != tail;
     }
 
     public int peek() {
         return elements[head];
+    }
+
+    public int pollLast() {
+        final int[] es = elements;
+        final int t;
+        final int e = es[t = dec(tail)];
+        tail = t;
+        es[t] = noEntryValue;
+        return e;
     }
 
     public int pop() {
@@ -69,33 +85,10 @@ public class IntStack implements Mutable {
         return result;
     }
 
-    public int pollLast() {
-        final int[] es = elements;
-        final int t;
-        final int e = es[t = dec(tail)];
-        tail = t;
-        es[t] = noEntryValue;
-        return e;
-    }
-
-    private int dec(int i) {
-        if (head != tail && --i < 0) {
-            i = mask;
-        }
-        return i;
-    }
-
     public void push(int e) {
         elements[head = (head - 1) & mask] = e;
         if (head == tail) {
             doubleCapacity();
-        }
-    }
-
-    public void copyTo(IntStack there, int count) {
-        int n = Math.min(count, size());
-        while (n-- > 0) {
-            there.push(pop());
         }
     }
 
@@ -111,6 +104,13 @@ public class IntStack implements Mutable {
         capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
         elements = new int[capacity];
         mask = capacity - 1;
+    }
+
+    private int dec(int i) {
+        if (head != tail && --i < 0) {
+            i = mask;
+        }
+        return i;
     }
 
     private void doubleCapacity() {

@@ -59,12 +59,12 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
+    public boolean fragmentedSymbolTables() {
+        return true;
     }
 
     @Override
-    public boolean fragmentedSymbolTables() {
-        return true;
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 }

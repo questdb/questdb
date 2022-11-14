@@ -43,13 +43,21 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
     }
 
     @Override
+    public boolean equals(Object obj) {
+        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
+    }
+
+    @Override
     public int hashCode() {
         return Chars.hashCode(this);
     }
 
     @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
+    public final CharSequence subSequence(int start, int end) {
+        if (start == 0 && end == length()) {
+            return this;
+        }
+        return _subSequence(start, end);
     }
 
     @NotNull
@@ -58,8 +66,7 @@ public abstract class AbstractCharSequence implements CharSequence, CloneableMut
         return getString(this);
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
+    protected CharSequence _subSequence(int start, int end) {
         throw new UnsupportedOperationException();
     }
 }

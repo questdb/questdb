@@ -29,23 +29,22 @@ import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 
 public class LatestByTask {
+    private long argsAddress;
+    private ExecutionCircuitBreaker circuitBreaker;
+    private CountDownLatchSPI doneLatch;
+    private int hashLength;
+    private long hashesAddress;
     private long keyBaseAddress;
     private long keysMemorySize;
-    private long valueBaseAddress;
-    private long valuesMemorySize;
-    private long argsAddress;
-    private long unIndexedNullCount;
-    private long rowHi;
-    private long rowLo;
     private int partitionIndex;
-    private int valueBlockCapacity;
-    private long hashesAddress;
-    private int hashLength;
     private long prefixesAddress;
     private long prefixesCount;
-
-    private CountDownLatchSPI doneLatch;
-    private ExecutionCircuitBreaker circuitBreaker;
+    private long rowHi;
+    private long rowLo;
+    private long unIndexedNullCount;
+    private long valueBaseAddress;
+    private int valueBlockCapacity;
+    private long valuesMemorySize;
 
     public void of(
             long keyBaseAddress,

@@ -46,6 +46,11 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
         return ColumnType.TIMESTAMP;
     }
 
+    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
+        this.compatibleAdapter = compatibleAdapter;
+        return this;
+    }
+
     @Override
     public boolean probe(DirectByteCharSequence text) {
         return compatibleAdapter.probe(text);
@@ -54,10 +59,5 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putTimestamp(column, getTimestamp(value));
-    }
-
-    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
-        this.compatibleAdapter = compatibleAdapter;
-        return this;
     }
 }

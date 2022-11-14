@@ -55,12 +55,6 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    protected void _close() {
-        base.close();
-        cursor.close();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor baseCursor = base.getCursor(executionContext);
         try {
@@ -81,5 +75,11 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    protected void _close() {
+        base.close();
+        cursor.close();
     }
 }

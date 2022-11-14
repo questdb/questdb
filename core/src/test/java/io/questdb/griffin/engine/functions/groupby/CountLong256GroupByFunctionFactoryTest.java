@@ -30,6 +30,42 @@ import org.junit.Test;
 public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testConstant() throws Exception {
+        assertQuery(
+                "a\tcount_distinct\n" +
+                        "a\t1\n" +
+                        "b\t1\n" +
+                        "c\t1\n",
+                "select a, count_distinct(cast('0x42' AS LONG256)) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testExpression() throws Exception {
+        final String expected = "a\tcount_distinct\n" +
+                "c\t5\n" +
+                "a\t2\n" +
+                "b\t4\n";
+        assertQuery(
+                expected,
+                "select a, count_distinct(s + s) from x",
+                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long256(8) s from long_sequence(20)))",
+                null,
+                true,
+                true,
+                true
+        );
+        // self-addition shouldn't affect the number of distinct values,
+        // so the result should stay the same
+        assertSql("select a, count_distinct(s) from x", expected);
+    }
+
+    @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
                 "a\tcount_distinct\n" +
@@ -95,42 +131,6 @@ public class CountLong256GroupByFunctionFactoryTest extends AbstractGriffinTest 
                 true,
                 true
         );
-    }
-
-    @Test
-    public void testConstant() throws Exception {
-        assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t1\n" +
-                        "b\t1\n" +
-                        "c\t1\n",
-                "select a, count_distinct(cast('0x42' AS LONG256)) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "c\t5\n" +
-                "a\t2\n" +
-                "b\t4\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(s + s) from x",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long256(8) s from long_sequence(20)))",
-                null,
-                true,
-                true,
-                true
-        );
-        // self-addition shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql("select a, count_distinct(s) from x", expected);
     }
 
     @Test

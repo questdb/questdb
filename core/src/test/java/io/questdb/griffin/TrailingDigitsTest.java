@@ -60,11 +60,12 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
 
     /**
      * Check trailing digits for the conversion of input with given digits.
-     * @param cases the number of generated cases
+     *
+     * @param cases  the number of generated cases
      * @param digits the digits count of generated input, should be greater than 5
      */
     private int passCount(int cases, int digits) throws SqlException {
-        Assert.assertTrue(digits>5);
+        Assert.assertTrue(digits > 5);
         int pass = 0;
         char[] s = new char[digits];
         Rnd rnd = new Rnd();
@@ -82,7 +83,7 @@ public class TrailingDigitsTest extends AbstractGriffinTest {
                     "select * from (select " + numStr + " as val)",
                     sink
             );
-            if (((CharSequence)sink).equals(expected)) {
+            if (((CharSequence) sink).equals(expected)) {
                 pass++;
             }
         }

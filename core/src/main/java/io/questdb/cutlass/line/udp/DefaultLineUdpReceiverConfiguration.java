@@ -38,13 +38,48 @@ import io.questdb.network.NetworkFacadeImpl;
 public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
 
     @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
+    }
+
+    @Override
     public int getBindIPv4Address() {
         return 0;
     }
 
     @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
+    }
+
+    @Override
+    public int getCommitMode() {
+        return CommitMode.NOSYNC;
+    }
+
+    @Override
     public int getCommitRate() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForFloat() {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForInteger() {
+        return ColumnType.LONG;
+    }
+
+    @Override
+    public int getDefaultPartitionBy() {
+        return PartitionBy.DAY;
     }
 
     @Override
@@ -78,23 +113,13 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
-    public LineProtoTimestampAdapter getTimestampAdapter() {
-        return LineProtoNanoTimestampAdapter.INSTANCE;
-    }
-
-    @Override
-    public int getDefaultPartitionBy() {
-        return PartitionBy.DAY;
-    }
-
-    @Override
     public int getReceiveBufferSize() {
         return -1;
     }
 
     @Override
-    public CairoSecurityContext getCairoSecurityContext() {
-        return AllowAllCairoSecurityContext.INSTANCE;
+    public LineProtoTimestampAdapter getTimestampAdapter() {
+        return LineProtoNanoTimestampAdapter.INSTANCE;
     }
 
     @Override
@@ -115,30 +140,5 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     @Override
     public int ownThreadAffinity() {
         return -1;
-    }
-
-    @Override
-    public boolean getAutoCreateNewColumns() {
-        return true;
-    }
-
-    @Override
-    public boolean getAutoCreateNewTables() {
-        return true;
-    }
-
-    @Override
-    public int getCommitMode() {
-        return CommitMode.NOSYNC;
-    }
-
-    @Override
-    public short getDefaultColumnTypeForFloat() {
-        return ColumnType.DOUBLE;
-    }
-
-    @Override
-    public short getDefaultColumnTypeForInteger() {
-        return ColumnType.LONG;
     }
 }

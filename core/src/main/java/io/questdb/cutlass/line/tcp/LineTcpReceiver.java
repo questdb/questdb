@@ -41,11 +41,10 @@ import java.io.Closeable;
 
 public class LineTcpReceiver implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
-
-    private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final MutableIOContextFactory<LineTcpConnectionContext> contextFactory;
-    private LineTcpMeasurementScheduler scheduler;
+    private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final Metrics metrics;
+    private LineTcpMeasurementScheduler scheduler;
 
     public LineTcpReceiver(
             LineTcpReceiverConfiguration configuration,

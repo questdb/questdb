@@ -35,29 +35,28 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final int COLUMN_FLAG_CACHED = 1;
     private static final int COLUMN_FLAG_INDEXED = 2;
-    private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
-    private final LongList columnHashes = new LongList();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    private ExpressionNode name;
-    private ExpressionNode likeTableName;
-    private QueryModel queryModel;
-    private ExpressionNode timestamp;
-    private ExpressionNode partitionBy;
-    private int maxUncommittedRows;
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long commitLag;
     private boolean ignoreIfExists = false;
+    private ExpressionNode likeTableName;
+    private int maxUncommittedRows;
+    private ExpressionNode name;
+    private ExpressionNode partitionBy;
+    private QueryModel queryModel;
+    private ExpressionNode timestamp;
     private boolean walEnabled;
 
     private CreateTableModel() {
     }
 
-    public void addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
-        addColumn(0, name, type, symbolCapacity, columnHash);
+    public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
+        addColumn(0, name, type, symbolCapacity);
     }
 
-    public void addColumn(int position, CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+    public void addColumn(int position, CharSequence name, int type, int symbolCapacity) throws SqlException {
         if (!columnNameIndexMap.put(name, columnNames.size())) {
             throw SqlException.duplicateColumn(position, name);
         }
@@ -66,7 +65,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
                 Numbers.encodeLowHighInts(type, symbolCapacity),
                 Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
         );
-        columnHashes.add(columnHash);
     }
 
     public boolean addColumnCastModel(ColumnCastModel model) {
@@ -95,7 +93,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         name = null;
         columnBits.clear();
         columnNames.clear();
-        columnHashes.clear();
         columnNameIndexMap.clear();
         ignoreIfExists = false;
     }
@@ -109,6 +106,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return columnNames.size();
     }
 
+    public int getColumnIndex(CharSequence columnName) {
+        return columnNameIndexMap.get(columnName);
+    }
+
     @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
@@ -120,8 +121,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return columnHashes.get(columnIndex);
+    public long getCommitLag() {
+        return commitLag;
     }
 
     @Override
@@ -129,15 +130,22 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return getHighAt(index * 2 + 1);
     }
 
-    @Override
-    public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    public ExpressionNode getLikeTableName() {
+        return likeTableName;
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        // todo: expose this flag on CREATE TABLE statement
-        return false;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    @Override
+    public int getModelType() {
+        return CREATE_TABLE;
+    }
+
+    public ExpressionNode getName() {
+        return name;
     }
 
     @Override
@@ -145,8 +153,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return partitionBy == null ? PartitionBy.NONE : PartitionBy.fromString(partitionBy.token);
     }
 
-    public void setPartitionBy(ExpressionNode partitionBy) {
-        this.partitionBy = partitionBy;
+    public QueryModel getQueryModel() {
+        return queryModel;
     }
 
     @Override
@@ -166,81 +174,37 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return name.token;
     }
 
+    public ExpressionNode getTimestamp() {
+        return timestamp;
+    }
+
     @Override
     public int getTimestampIndex() {
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
     }
 
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
+    public boolean isIgnoreIfExists() {
+        return ignoreIfExists;
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
+    public boolean isIndexed(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
     }
 
     @Override
-    public boolean isWallEnabled() {
+    public boolean isSequential(int columnIndex) {
+        // todo: expose this flag on CREATE TABLE statement
+        return false;
+    }
+
+    @Override
+    public boolean isWalEnabled() {
         return walEnabled;
-    }
-
-    public void setWalEnabled(boolean walEnabled) {
-        this.walEnabled = walEnabled;
     }
 
     public void setCommitLag(long micros) {
         this.commitLag = micros;
-    }
-
-    public int getColumnIndex(CharSequence columnName) {
-        return columnNameIndexMap.get(columnName);
-    }
-
-    @Override
-    public int getModelType() {
-        return CREATE_TABLE;
-    }
-
-    public ExpressionNode getName() {
-        return name;
-    }
-
-    public void setName(ExpressionNode name) {
-        this.name = name;
-    }
-
-    public ExpressionNode getLikeTableName() {
-        return likeTableName;
-    }
-
-    public void setLikeTableName(ExpressionNode tableName) {
-        this.likeTableName = tableName;
-    }
-
-    public QueryModel getQueryModel() {
-        return queryModel;
-    }
-
-    public void setQueryModel(QueryModel queryModel) {
-        this.queryModel = queryModel;
-    }
-
-    public ExpressionNode getTimestamp() {
-        return timestamp;
-    }
-
-    public void setTimestamp(ExpressionNode timestamp) {
-        this.timestamp = timestamp;
-    }
-
-    public boolean isIgnoreIfExists() {
-        return ignoreIfExists;
     }
 
     public void setIgnoreIfExists(boolean flag) {
@@ -253,6 +217,34 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setIndexFlags(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
         setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
+    }
+
+    public void setLikeTableName(ExpressionNode tableName) {
+        this.likeTableName = tableName;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setName(ExpressionNode name) {
+        this.name = name;
+    }
+
+    public void setPartitionBy(ExpressionNode partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
+    }
+
+    public void setTimestamp(ExpressionNode timestamp) {
+        this.timestamp = timestamp;
+    }
+
+    public void setWalEnabled(boolean walEnabled) {
+        this.walEnabled = walEnabled;
     }
 
     public void symbolCapacity(int capacity) {

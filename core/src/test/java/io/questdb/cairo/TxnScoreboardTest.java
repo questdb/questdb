@@ -399,7 +399,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             try {
                                 if (scoreboard.acquireTxn(txn + (long) s * entryCount)) {
                                     scoreboard.releaseTxn(txn + (long) s * entryCount);
-                                    Thread.yield();
+                                    Os.pause();
                                 }
                             } catch (CairoException e) {
                                 if (Chars.contains(e.getFlyweightMessage(), "max txn-inflight limit reached")) {
@@ -478,7 +478,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 // This one also fails, but those could be readers that didn't roll back yet
                                 anomaly.incrementAndGet();
                             }
-                            Thread.yield();
+                            Os.pause();
                         }
                     } catch (Throwable e) {
                         LOG.errorW().$(e).$();
@@ -617,12 +617,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Reader extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
         private final int readers;
+        private final TxnScoreboard scoreboard;
 
         private Reader(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;
@@ -677,12 +677,12 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     private static class Writer extends Thread {
 
-        private final TxnScoreboard scoreboard;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
         private final AtomicInteger anomaly;
+        private final CyclicBarrier barrier;
         private final int iterations;
+        private final CountDownLatch latch;
         private final int readers;
+        private final TxnScoreboard scoreboard;
 
         private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
             this.scoreboard = scoreboard;

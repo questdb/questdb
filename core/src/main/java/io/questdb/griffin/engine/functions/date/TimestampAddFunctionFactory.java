@@ -79,10 +79,41 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         long add(long a, int b);
     }
 
+    private static class AddLongIntVarConstFunction extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
+        private final LongAddIntFunction func;
+        private final int interval;
+
+        public AddLongIntVarConstFunction(Function left, int right, LongAddIntFunction func) {
+            this.arg = left;
+            this.interval = right;
+            this.func = func;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            final long l = arg.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return func.add(l, interval);
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("AddLongIntVarConstFunction");
+        }
+    }
+
     private static class AddLongIntVarVarFunction extends TimestampFunction implements BinaryFunction {
+        private final LongAddIntFunction func;
         private final Function left;
         private final Function right;
-        private final LongAddIntFunction func;
 
         public AddLongIntVarVarFunction(Function left, Function right, LongAddIntFunction func) {
             this.left = left;
@@ -111,40 +142,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class AddLongIntVarConstFunction extends TimestampFunction implements UnaryFunction {
-        private final Function arg;
-        private final int interval;
-        private final LongAddIntFunction func;
-
-        public AddLongIntVarConstFunction(Function left, int right, LongAddIntFunction func) {
-            this.arg = left;
-            this.interval = right;
-            this.func = func;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            final long l = arg.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return func.add(l, interval);
-        }
-
-        @Override
-        public void toSink(CharSink sink) {
-            sink.put("AddLongIntVarConstFunction");
-        }
-    }
-
     private static class DateAddFunc extends TimestampFunction implements TernaryFunction {
-        final Function left;
         final Function center;
+        final Function left;
         final Function right;
 
         public DateAddFunc(Function left, Function center, Function right) {
@@ -154,13 +154,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return left;
+        public Function getCenter() {
+            return center;
         }
 
         @Override
-        public Function getCenter() {
-            return center;
+        public Function getLeft() {
+            return left;
         }
 
         @Override

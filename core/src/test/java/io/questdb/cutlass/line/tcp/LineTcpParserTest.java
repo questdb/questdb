@@ -101,12 +101,12 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123a4i");
     }
 
-    private static void assertType(int type, String value) throws Exception {
-        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
-    }
-
     private static void assertError(int type, String value) throws Exception {
         assertType(type, value, value, LineTcpParser.ParseResult.ERROR, false, false);
+    }
+
+    private static void assertType(int type, String value) throws Exception {
+        assertType(type, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
     }
 
     private static void assertType(int type, String value, boolean stringAsTagSupported, boolean symbolAsFieldSupported) throws Exception {

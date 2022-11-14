@@ -39,14 +39,14 @@ import java.util.Arrays;
  */
 public class DirectByteCharSequenceIntHashMap implements Mutable {
     public static final int NO_ENTRY_VALUE = -1;
-    protected static final int MIN_INITIAL_CAPACITY = 16;
-    protected final double loadFactor;
-    private final int noEntryValue;
+    private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<String> list;
-    protected String[] keys;
-    protected int mask;
-    protected int free;
-    protected int capacity;
+    private final double loadFactor;
+    private final int noEntryValue;
+    private int capacity;
+    private int free;
+    private String[] keys;
+    private int mask;
     private int[] values;
 
     public DirectByteCharSequenceIntHashMap() {
@@ -89,10 +89,6 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return keyIndex(key) > -1;
     }
 
-    public boolean excludes(DirectByteCharSequence key, int lo, int hi) {
-        return keyIndex(key, lo, hi) > -1;
-    }
-
     public int get(DirectByteCharSequence key) {
         return valueAt(keyIndex(key));
     }
@@ -129,17 +125,23 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return probe(key, index);
     }
 
-    public int keyIndex(DirectByteCharSequence key, int lo, int hi) {
-        int index = Hash.spread(Chars.hashCode(key, lo, hi)) & mask;
+    public ObjList<String> keys() {
+        return list;
+    }
 
-        if (keys[index] == null) {
-            return index;
+    public boolean put(String key, int value) {
+        return putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, String key, int value) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
         }
-        CharSequence cs = keys[index];
-        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
-            return -index - 1;
-        }
-        return probe(key, lo, hi, index);
+
+        putAt0(index, key, value);
+        list.add(key);
+        return true;
     }
 
     public int remove(DirectByteCharSequence key) {
@@ -168,7 +170,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
             // After slot if freed these keys require re-hash
             from = (from + 1) & mask;
             for (
-                    CharSequence k = keys[from];
+                    String k = keys[from];
                     k != null;
                     from = (from + 1) & mask, k = keys[from]
             ) {
@@ -194,6 +196,15 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         return capacity - free;
     }
 
+    public int valueAt(int index) {
+        int index1 = -index - 1;
+        return index < 0 ? values[index1] : noEntryValue;
+    }
+
+    public int valueQuick(int index) {
+        return valueAt(keyIndex(list.getQuick(index)));
+    }
+
     private void erase(int index) {
         keys[index] = null;
         values[index] = noEntryValue;
@@ -205,35 +216,7 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         erase(from);
     }
 
-    public ObjList<String> keys() {
-        return list;
-    }
-
-    public boolean put(String key, int value) {
-        return putAt(keyIndex(key), key, value);
-    }
-
-    public boolean putAt(int index, String key, int value) {
-        if (index < 0) {
-            values[-index - 1] = value;
-            return false;
-        }
-
-        putAt0(index, key, value);
-        list.add(key);
-        return true;
-    }
-
-    public int valueAt(int index) {
-        int index1 = -index - 1;
-        return index < 0 ? values[index1] : noEntryValue;
-    }
-
-    public int valueQuick(int index) {
-        return valueAt(keyIndex(list.getQuick(index)));
-    }
-
-    private int probe(CharSequence key, int index) {
+    private int probe(DirectByteCharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
@@ -245,14 +228,13 @@ public class DirectByteCharSequenceIntHashMap implements Mutable {
         } while (true);
     }
 
-    private int probe(CharSequence key, int lo, int hi, int index) {
+    private int probe(String key, int index) {
         do {
             index = (index + 1) & mask;
             if (keys[index] == null) {
                 return index;
             }
-            CharSequence cs = keys[index];
-            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+            if (Chars.equals(key, keys[index])) {
                 return -index - 1;
             }
         } while (true);

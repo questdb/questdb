@@ -51,9 +51,29 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-        values[index] = null;
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceObjHashMap<?> that = (LowerCaseCharSequenceObjHashMap<?>) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            Object value = get(key);
+            if (value != null) {
+                Object thatValue = that.get(key);
+                if (!Objects.equals(value, thatValue)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     public T get(CharSequence key) {
@@ -61,14 +81,28 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]) ^ Objects.hashCode(values[i]);
+            }
+        }
+        return hashCode;
     }
 
     public boolean put(CharSequence key, T value) {
         return putAt(keyIndex(key), key, value);
+    }
+
+    public void putAll(LowerCaseCharSequenceObjHashMap<T> other) {
+        CharSequence[] otherKeys = other.keys;
+        T[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
     }
 
     public boolean putAt(int index, CharSequence key, T value) {
@@ -102,40 +136,16 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceObjHashMap<?> that = (LowerCaseCharSequenceObjHashMap<?>) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key == null) {
-                continue;
-            }
-            if (that.excludes(key)) {
-                return false;
-            }
-            Object value = get(key);
-            if (value != null) {
-                Object thatValue = that.get(key);
-                if (!Objects.equals(value, thatValue)) {
-                    return false;
-                }
-            }
-        }
-        return true;
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+        values[index] = null;
     }
 
     @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]) ^ Objects.hashCode(values[i]);
-            }
-        }
-        return hashCode;
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     @SuppressWarnings("unchecked")
@@ -159,16 +169,6 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
                 final int index = keyIndex(key);
                 keys[index] = key;
                 values[index] = oldValues[i];
-            }
-        }
-    }
-
-    public void putAll(LowerCaseCharSequenceObjHashMap<T> other) {
-        CharSequence[] otherKeys = other.keys;
-        T[] otherValues = other.values;
-        for (int i = 0, n = otherKeys.length; i < n; i++) {
-            if (otherKeys[i] != noEntryKey) {
-                put(otherKeys[i], otherValues[i]);
             }
         }
     }

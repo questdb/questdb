@@ -75,6 +75,25 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value == Numbers.LONG_NaN) {
+                return SymbolTable.VALUE_IS_NULL;
+            }
+
+            final int keyIndex = symbolTableShortcut.keyIndex(value);
+            if (keyIndex < 0) {
+                return symbolTableShortcut.valueAt(keyIndex) - 1;
+            }
+
+            symbolTableShortcut.putAt(keyIndex, value, next);
+            sink.clear();
+            sink.put(value);
+            symbols.add(Chars.toString(sink));
+            return next++ - 1;
+        }
+
+        @Override
         public CharSequence getSymbol(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
@@ -100,46 +119,17 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence valueOf(int symbolKey) {
-            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            return valueOf(key);
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return SymbolTable.VALUE_IS_NULL;
-            }
-
-            final int keyIndex = symbolTableShortcut.keyIndex(value);
-            if (keyIndex < 0) {
-                return symbolTableShortcut.valueAt(keyIndex) - 1;
-            }
-
-            symbolTableShortcut.putAt(keyIndex, value, next);
-            sink.clear();
-            sink.put(value);
-            symbols.add(Chars.toString(sink));
-            return next++ - 1;
-        }
-
-        @Override
-        public boolean isSymbolTableStatic() {
-            return false;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             symbolTableShortcut.clear();
             symbols.clear();
             symbols.add(null);
             next = 1;
+        }
+
+        @Override
+        public boolean isSymbolTableStatic() {
+            return false;
         }
 
         @Override
@@ -150,6 +140,16 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
             copy.symbols.addAll(this.symbols);
             copy.next = this.next;
             return copy;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int symbolKey) {
+            return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
     }
 }

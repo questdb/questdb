@@ -32,9 +32,9 @@ public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
-    private long mapPageSize = 0;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
+    private long mapPageSize = 0;
 
     @Override
     public boolean allocate(long fd, long size) {
@@ -61,6 +61,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+        return Files.copyData(srcFd, destFd, offsetSrc, length);
+    }
+
+    @Override
     public int copyRecursive(Path src, Path dst, int dirMode) {
         return runRecursive(src, dst, dirMode, copyFsOperation);
     }
@@ -84,13 +89,6 @@ public class FilesFacadeImpl implements FilesFacade {
     public void fadvise(long fd, long offset, long len, int advise) {
         if (advise > -1) {
             Files.fadvise(fd, offset, len, advise);
-        }
-    }
-
-    @Override
-    public void madvise(long address, long len, int advise) {
-        if (advise > -1) {
-            Files.madvise(address, len, advise);
         }
     }
 
@@ -217,6 +215,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void madvise(long address, long len, int advise) {
+        if (advise > -1) {
+            Files.madvise(address, len, advise);
+        }
+    }
+
+    @Override
     public int mkdir(Path path, int mode) {
         return Files.mkdir(path, mode);
     }
@@ -276,8 +281,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long readULong(long fd, long offset) {
-        return Files.readULong(fd, offset);
+    public int readNonNegativeInt(long fd, long offset) {
+        return Files.readNonNegativeInt(fd, offset);
+    }
+
+    @Override
+    public long readNonNegativeLong(long fd, long offset) {
+        return Files.readNonNegativeLong(fd, offset);
     }
 
     @Override

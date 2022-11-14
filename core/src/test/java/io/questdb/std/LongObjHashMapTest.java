@@ -34,6 +34,31 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LongObjHashMapTest {
 
     @Test
+    public void testAddAndIterate() {
+        Rnd rnd = new Rnd();
+
+        LongObjHashMap<String> map = new LongObjHashMap<>();
+        Map<Long, String> master = new HashMap<>();
+
+        final int n = 1000;
+        for (int i = 0; i < n; i++) {
+            long k = rnd.nextLong();
+            String v = rnd.nextString(rnd.nextPositiveInt() % 20);
+            map.put(k, v);
+            master.put(k, v);
+        }
+
+        AtomicInteger count = new AtomicInteger();
+        map.forEach((key, value) -> {
+            String v = master.get(key);
+            Assert.assertNotNull(v);
+            Assert.assertEquals(value, v);
+            count.incrementAndGet();
+        });
+        Assert.assertEquals(n, count.get());
+    }
+
+    @Test
     public void testAll() {
         Rnd rnd = new Rnd();
         // populate map
@@ -107,30 +132,5 @@ public class LongObjHashMapTest {
                 Assert.assertEquals(String.valueOf(rnd3.nextLong()), map.get(i));
             }
         }
-    }
-
-    @Test
-    public void testAddAndIterate() {
-        Rnd rnd = new Rnd();
-
-        LongObjHashMap<String> map = new LongObjHashMap<>();
-        Map<Long, String> master = new HashMap<>();
-
-        final int n = 1000;
-        for (int i = 0; i < n; i++) {
-            long k = rnd.nextLong();
-            String v = rnd.nextString(rnd.nextPositiveInt() % 20);
-            map.put(k, v);
-            master.put(k, v);
-        }
-
-        AtomicInteger count = new AtomicInteger();
-        map.forEach((key, value) -> {
-            String v = master.get(key);
-            Assert.assertNotNull(v);
-            Assert.assertEquals(value, v);
-            count.incrementAndGet();
-        });
-        Assert.assertEquals(n, count.get());
     }
 }

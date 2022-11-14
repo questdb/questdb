@@ -31,28 +31,25 @@ import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
 
-    private final long ringAddr;
-    private final int ringFd;
-
-    private final long sqesAddr;
-    private final long sqKheadAddr;
-    private final int sqKringMask;
-    private final int sqKringEntries;
-
-    private final long cqesAddr;
-    private final long cqKheadAddr;
-    private final long cqKtailAddr;
-    private final int cqKringMask;
-
-    private final IOURingFacade facade;
     // Holds <id, res> tuples for recently consumed cqes.
     private final long[] cachedCqes;
+    private final long cqKheadAddr;
+    private final int cqKringMask;
+    private final long cqKtailAddr;
+    private final long cqesAddr;
+    private final IOURingFacade facade;
+    private final long ringAddr;
+    private final int ringFd;
+    private final long sqKheadAddr;
+    private final int sqKringEntries;
+    private final int sqKringMask;
+    private final long sqesAddr;
     // Index of cached cqe tuple.
     private int cachedIndex;
     // Count of cached cqe tuples.
     private int cachedSize;
-    private long idSeq;
     private boolean closed = false;
+    private long idSeq;
 
     public IOURingImpl(IOURingFacade facade, int capacity) {
         assert Numbers.isPow2(capacity);
@@ -92,6 +89,12 @@ public class IOURingImpl implements IOURing {
         Files.decrementFileCount(ringFd);
         facade.close(ringAddr);
         closed = true;
+    }
+
+    @Override
+    @TestOnly
+    public long enqueueNop() {
+        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
     }
 
     @Override
@@ -147,12 +150,6 @@ public class IOURingImpl implements IOURing {
     @Override
     public int submitAndWait() {
         return facade.submitAndWait(ringAddr, 1);
-    }
-
-    @Override
-    @TestOnly
-    public long enqueueNop() {
-        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
     }
 
     private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {

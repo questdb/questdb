@@ -32,8 +32,8 @@ import org.junit.Test;
 public class FloorDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        call(13.1).andAssert(13.0, 0.0000000001);
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0);
     }
 
     @Test
@@ -42,11 +42,12 @@ public class FloorDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
-    public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0);
+    public void testPositive() throws SqlException {
+        call(13.1).andAssert(13.0, 0.0000000001);
     }
-    
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new FloorDoubleFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new FloorDoubleFunctionFactory();
     }
 }

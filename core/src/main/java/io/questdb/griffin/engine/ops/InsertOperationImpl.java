@@ -25,25 +25,25 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class InsertOperationImpl implements InsertOperation {
-    private final long structureVersion;
-    private final String tableName;
+    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
+    private final CairoEngine engine;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
-    private final CairoEngine engine;
-    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
+    private final long structureVersion;
+    private final String tableName;
 
     public InsertOperationImpl(
             CairoEngine engine,
@@ -56,15 +56,15 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
-        return createMethod(executionContext, engine);
+    public void addInsertRow(InsertRowImpl row) {
+        insertRows.add(row);
     }
 
     @Override
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName, "insert");
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
             if (writer.getStructureVersion() != structureVersion) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
@@ -75,13 +75,8 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public String getTableName() {
-        return tableName;
-    }
-
-    @Override
-    public void addInsertRow(InsertRowImpl row) {
-        insertRows.add(row);
+    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+        return createMethod(executionContext, engine);
     }
 
     @Override
@@ -93,6 +88,11 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = insertRows.size(); i < n; i++) {
             InsertRowImpl row = insertRows.get(i);
@@ -101,7 +101,17 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertMethodImpl implements InsertMethod {
-        private TableWriter writer = null;
+        private TableWriterAPI writer = null;
+
+        @Override
+        public void close() {
+            writer = Misc.free(writer);
+        }
+
+        @Override
+        public void commit() {
+            writer.commit();
+        }
 
         @Override
         public long execute() throws SqlException {
@@ -113,33 +123,23 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public void commit() {
-            writer.commit();
-        }
-
-        @Override
-        public TableWriter popWriter() {
-            TableWriter w = writer;
+        public TableWriterAPI popWriter() {
+            TableWriterAPI w = writer;
             this.writer = null;
             return w;
-        }
-
-        @Override
-        public void close() {
-            writer = Misc.free(writer);
         }
     }
 
     private class InsertOperationFuture extends DoneOperationFuture {
 
         @Override
-        public long getInstanceId() {
-            return -3L;
+        public long getAffectedRowsCount() {
+            return insertRows.size();
         }
 
         @Override
-        public long getAffectedRowsCount() {
-            return insertRows.size();
+        public long getInstanceId() {
+            return -3L;
         }
     }
 }

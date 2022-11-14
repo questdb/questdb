@@ -33,32 +33,32 @@ import io.questdb.std.str.CharSink;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatUtils {
-    public static final int HOUR_24 = 2;
-    public static final int HOUR_PM = 1;
-    public static final int HOUR_AM = 0;
-    public static final DateFormat UTC_FORMAT;
-    public static final DateFormat SEC_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS1_UTC_FORMAT;
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
-    public static final DateFormat USEC_UTC_FORMAT;
+    public static final int HOUR_24 = 2;
+    public static final int HOUR_AM = 0;
+    public static final int HOUR_PM = 1;
+    public static final DateFormat NANOS_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
-    public static final DateFormat NANOS_UTC_FORMAT;
+    public static final DateFormat SEC_UTC_FORMAT;
+    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
+    public static final DateFormat USEC_UTC_FORMAT;
+    public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
-    private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
+    private static final DateFormat[] FORMATS;
     private static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
-    private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
-    private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
     private static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
     private static final DateFormat HTTP_FORMAT;
-    private static final DateFormat[] FORMATS;
+    private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
+    private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
+    private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
+    static int prevCenturyLow;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
-    static int prevCenturyLow;
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
@@ -358,6 +358,9 @@ public class TimestampFormatUtils {
         return referenceYear;
     }
 
+    public static void init() {
+    }
+
     public static long parseDateTime(CharSequence seq) throws NumericException {
         return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
     }
@@ -448,8 +451,5 @@ public class TimestampFormatUtils {
         SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
         GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
         UTC_FORMAT = dateFormats.get(UTC_PATTERN);
-    }
-
-    public static void init() {
     }
 }

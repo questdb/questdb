@@ -33,18 +33,6 @@ import org.junit.Test;
 public class FlushQueryCacheTest extends AbstractGriffinTest {
 
     @Test
-    public void testSimple() throws Exception {
-        assertMemoryLeak(() -> TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "select flush_query_cache",
-                sink,
-                "flush_query_cache\n" +
-                        "true\n"
-        ));
-    }
-
-    @Test
     public void testFullQueue() throws Exception {
         assertMemoryLeak(() -> {
             // Subscribe to the FanOut, so that we have some consumers.
@@ -80,5 +68,17 @@ public class FlushQueryCacheTest extends AbstractGriffinTest {
                 queryCacheEventSubSeq.clear();
             }
         });
+    }
+
+    @Test
+    public void testSimple() throws Exception {
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select flush_query_cache",
+                sink,
+                "flush_query_cache\n" +
+                        "true\n"
+        ));
     }
 }

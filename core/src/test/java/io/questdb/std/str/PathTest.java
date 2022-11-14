@@ -24,14 +24,9 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -41,8 +36,18 @@ public class PathTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-    private final Path path = new Path();
     private final char separator = System.getProperty("file.separator").charAt(0);
+    private Path path;
+
+    @Before
+    public void setUp() {
+        path = new Path();
+    }
+
+    @After
+    public void tearDown() {
+        path = Misc.free(path);
+    }
 
     @Test
     public void testConcatNoSlash() {

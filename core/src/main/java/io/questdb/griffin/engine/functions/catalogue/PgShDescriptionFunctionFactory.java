@@ -43,9 +43,9 @@ public class PgShDescriptionFunctionFactory extends AbstractEmptyCatalogueFuncti
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("description", 3, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("objoid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("classoid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("description", ColumnType.STRING));
         METADATA = metadata;
     }
 }

@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -40,6 +40,33 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes valueTypes
     ) {
         return createMap(false, configuration, keyTypes, valueTypes);
+    }
+
+    public static Map createMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes) {
+        CharSequence mapType = configuration.getDefaultMapType();
+        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
+            return new FastMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes());
+        }
+
+        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
+            return new CompactMap(
+                    configuration.getSqlMapPageSize(),
+                    keyTypes,
+                    EmptyRecordMetadata.INSTANCE,
+                    configuration.getSqlMapKeyCapacity(),
+                    configuration.getSqlCompactMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getSqlMapMaxPages()
+            );
+        }
+        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
     }
 
     public static Map createSmallMap(
@@ -74,33 +101,6 @@ public class MapFactory {
                     keyTypes,
                     valueTypes,
                     keyCapacity,
-                    configuration.getSqlCompactMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getSqlMapMaxPages()
-            );
-        }
-        throw CairoException.critical(0).put("unknown map type: ").put(mapType);
-    }
-
-    public static Map createMap(
-            CairoConfiguration configuration,
-            @Transient @NotNull ColumnTypes keyTypes) {
-        CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
-            return new FastMap(
-                    configuration.getSqlMapPageSize(),
-                    keyTypes,
-                    configuration.getSqlMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes());
-        }
-
-        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
-            return new CompactMap(
-                    configuration.getSqlMapPageSize(),
-                    keyTypes,
-                    GenericRecordMetadata.EMPTY,
-                    configuration.getSqlMapKeyCapacity(),
                     configuration.getSqlCompactMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),
                     configuration.getSqlMapMaxPages()

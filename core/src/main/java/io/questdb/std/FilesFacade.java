@@ -38,6 +38,8 @@ public interface FilesFacade {
 
     int copy(LPSZ from, LPSZ to);
 
+    long copyData(long srcFd, long destFd, long offsetSrc, long length);
+
     int copyRecursive(Path src, Path dst, int dirMode);
 
     int errno();
@@ -47,8 +49,6 @@ public interface FilesFacade {
     boolean exists(long fd);
 
     void fadvise(long fd, long offset, long len, int advise);
-
-    void madvise(long address, long len, int advise);
 
     long findClose(long findPtr);
 
@@ -88,6 +88,8 @@ public interface FilesFacade {
 
     int lock(long fd);
 
+    void madvise(long address, long len, int advise);
+
     int mkdir(Path path, int mode);
 
     int mkdirs(Path path, int mode);
@@ -110,7 +112,9 @@ public interface FilesFacade {
 
     long read(long fd, long buf, long size, long offset);
 
-    long readULong(long fd, long offset);
+    int readNonNegativeInt(long fd, long offset);
+
+    long readNonNegativeLong(long fd, long offset);
 
     boolean remove(LPSZ name);
 

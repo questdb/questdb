@@ -49,11 +49,6 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public short getGeoShort(Record rec) {
-        return (short) value;
-    }
-
-    @Override
     public int getGeoInt(Record rec) {
         return (int) value;
     }
@@ -64,12 +59,17 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public short getGeoShort(Record rec) {
+        return (short) value;
     }
 
     @Override
     public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
         return true;
     }
 

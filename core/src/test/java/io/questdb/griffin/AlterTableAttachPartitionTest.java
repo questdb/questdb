@@ -41,22 +41,21 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.AttachDetachStatus.*;
+import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static StringSink partitions = new StringSink();
     @Rule
     public TestName testName = new TestName();
-    private Path other;
+    private Path otherPath;
     private Path path;
-
 
     @Override
     @Before
     public void setUp() {
         super.setUp();
-        other = new Path();
+        otherPath = new Path();
         path = new Path();
     }
 
@@ -65,11 +64,12 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void tearDown() {
         super.tearDown();
         path = Misc.free(path);
-        other = Misc.free(other);
+        otherPath = Misc.free(otherPath);
     }
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -130,7 +130,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // update a row toward the end of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             txn++;
 
@@ -140,26 +140,22 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(-1, -1, '" + partitionName + "T00:00:00.100005Z')");
             txn++;
             // verify that the link does not exist
-            if (Os.type != Os.WINDOWS) {
-                // in windows the handle is held and cannot be deleted
-                Assert.assertFalse(Files.exists(path));
-            }
+            // in windows the handle is held and cannot be deleted
+            Assert.assertFalse(Files.exists(path));
             // verify that a new partition folder has been created in the table data space (hot)
             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
             // verify cold storage folder exists
-            Assert.assertTrue(Files.exists(other));
+            Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(otherPath, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
 
             // update a row toward the beginning of the partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
 
             // verify content
@@ -219,19 +215,17 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
             // verify cold storage folder exists
-            Assert.assertTrue(Files.exists(other));
+            Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(otherPath, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
             // verify the link was removed
-            other.of(configuration.getRoot())
+            otherPath.of(configuration.getRoot())
                     .concat(tableName)
                     .concat(partitionName)
                     .put(configuration.getAttachPartitionSuffix())
                     .$();
-            Assert.assertFalse(ff.exists(other));
+            Assert.assertFalse(ff.exists(otherPath));
             // verify no copy was produced to hot space
             path.of(configuration.getRoot())
                     .concat(tableName)
@@ -288,11 +282,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     "min\tmax\tcount\n" +
                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
             // verify cold storage folder exists
-            Assert.assertTrue(Files.exists(other));
+            Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(otherPath, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
 
             path.of(configuration.getRoot())
@@ -353,17 +345,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             engine.releaseAllWriters();
             engine.releaseInactive();
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
-                for (; purgeJob.run(0); ) {
+                while (purgeJob.run(0)) {
                     Os.pause();
                 }
             }
 
             // verify cold storage folder still exists
-            Assert.assertTrue(Files.exists(other));
+            Assert.assertTrue(Files.exists(otherPath));
             AtomicInteger fileCount = new AtomicInteger();
-            ff.walk(other, (file, type) -> {
-                fileCount.incrementAndGet();
-            });
+            ff.walk(otherPath, (file, type) -> fileCount.incrementAndGet());
             Assert.assertTrue(fileCount.get() > 0);
             Assert.assertFalse(Files.exists(path));
         });
@@ -372,7 +362,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -415,9 +404,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
             // collect last modified timestamps for files in cold storage
             final Map<String, Long> lastModified = new HashMap<>();
-            path.of(other);
+            path.of(otherPath);
             final int len = path.length();
-            ff.walk(other, (file, type) -> {
+            ff.walk(otherPath, (file, type) -> {
                 path.trimTo(len).concat(file).$();
                 lastModified.put(path.toString(), ff.getLastModified(path));
             });
@@ -425,7 +414,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             // execute an update directly on the cold storage partition
             executeOperation(
                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
-                    CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation
+                    CompiledQuery.UPDATE
             );
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -446,13 +435,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     .concat(partitionName);
             TableUtils.txnPartitionConditionally(path, txn - 1);
             Assert.assertTrue(Files.exists(path.$()));
-            Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(path));
+            Assert.assertTrue(Files.isSoftLink(path));
             // in windows, detecting a soft link is tricky, and unnecessary. Removing
             // a soft link does not remove the target's content, so we do not need to
             // call unlink, thus we do not need isSoftLink. It has been implemented however
             // and it does not seem to work.
-            path.of(other);
-            ff.walk(other, (file, type) -> {
+            path.of(otherPath);
+            ff.walk(otherPath, (file, type) -> {
                 // TODO: Update does not follow the usual path, like insert. To be able to
                 //  prevent modifications on cold storage we must be able to detect whether
                 //  the column files being versioned belong in a folder that is soft linked,
@@ -462,7 +451,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 //  The later will be achieved in a later PR.
                 path.trimTo(len).concat(file).$();
                 Long lm = lastModified.get(path.toString());
-                Assert.assertTrue(lm == null || lm.longValue() == ff.getLastModified(path));
+                Assert.assertTrue(lm == null || lm == ff.getLastModified(path));
             });
         });
     }
@@ -656,8 +645,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -676,8 +665,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': " + ATTACH_ERR_MISSING_PARTITION.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -710,8 +699,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[25] failed to attach partition '2020-01-02': " + ATTACH_ERR_MISSING_PARTITION.name());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -823,7 +812,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-02");
                         Assert.fail();
-                    } catch (SqlException e) {
+                    } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column, invalid key");
                     }
                 }
@@ -881,9 +870,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[2] could not open read-only"
+                            "could not open read-only"
                     );
                     TestUtils.assertContains(e.getFlyweightMessage(),
                             "ts1.d"
@@ -1244,8 +1233,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
                             "Symbol index value file does not exist"
                     );
                 }
@@ -1290,8 +1279,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                     Assert.fail();
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "Symbol index key file does not exist");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Symbol index key file does not exist");
                 }
             }
         });
@@ -1323,8 +1312,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2022-08-09': " + ATTACH_ERR_PARTITION_EXISTS.name(), e.getMessage());
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
                 }
             }
         });
@@ -1569,7 +1558,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             try {
                 attachFromSrcIntoDst(src, dst, "2022-08-01");
                 Assert.fail("Expected exception with '" + errorMessage + "' message");
-            } catch (SqlException e) {
+            } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
             Files.rmdir(path.of(root).concat(dstTableName).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$());
@@ -1591,13 +1580,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         engine.clear();
         path.of(configuration.getRoot()).concat(src.getName());
         int pathLen = path.length();
-        other.of(configuration.getRoot()).concat(dst.getName());
-        int otherLen = other.length();
+        otherPath.of(configuration.getRoot()).concat(dst.getName());
+        int otherLen = otherPath.length();
         for (int i = 0; i < partitionList.length; i++) {
             String partition = partitionList[i];
             path.trimTo(pathLen).concat(partition).$();
-            other.trimTo(otherLen).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
-            TestUtils.copyDirectory(path, other, configuration.getMkDirMode());
+            otherPath.trimTo(otherLen).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            TestUtils.copyDirectory(path, otherPath, configuration.getMkDirMode());
         }
 
         int rowCount = readAllRows(dst.getName());
@@ -1640,31 +1629,31 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 .concat(srcTableName)
                 .concat(srcPartitionName)
                 .slash$();
-        other.of(dstRoot)
+        otherPath.of(dstRoot)
                 .concat(dstTableName)
                 .concat(dstPartitionName);
 
         if (!Chars.isBlank(dstPartitionNameSuffix)) {
-            other.put(dstPartitionNameSuffix);
+            otherPath.put(dstPartitionNameSuffix);
         }
-        other.slash$();
+        otherPath.slash$();
 
-        TestUtils.copyDirectory(path, other, configuration.getMkDirMode());
+        TestUtils.copyDirectory(path, otherPath, configuration.getMkDirMode());
 
         // copy _meta
         Files.copy(
                 path.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                other.parent().concat(TableUtils.META_FILE_NAME).$()
+                otherPath.parent().concat(TableUtils.META_FILE_NAME).$()
         );
         // copy _cv
         Files.copy(
                 path.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                other.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+                otherPath.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
         );
         // copy _txn
         Files.copy(
                 path.parent().concat(TableUtils.TXN_FILE_NAME).$(),
-                other.parent().concat(TableUtils.TXN_FILE_NAME).$()
+                otherPath.parent().concat(TableUtils.TXN_FILE_NAME).$()
         );
     }
 
@@ -1710,7 +1699,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
-        other.of(s3Buckets) // <-- the copy of the now lost .detached folder
+        otherPath.of(s3Buckets) // <-- the copy of the now lost .detached folder
                 .concat(tableName)
                 .concat(detachedPartitionName)
                 .$();
@@ -1719,8 +1708,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())
                 .$();
-        Assert.assertEquals(0, ff.softLink(other, path));
-        Assert.assertFalse(ff.isSoftLink(other));
+        Assert.assertEquals(0, ff.softLink(otherPath, path));
+        Assert.assertFalse(ff.isSoftLink(otherPath));
         Assert.assertTrue(Os.type == Os.WINDOWS || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
     }
 
@@ -1769,7 +1758,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 try {
                     attachFromSrcIntoDst(src, dst, "2020-01-01");
                     Assert.fail();
-                } catch (SqlException e) {
+                } catch (CairoException | SqlException e) {
                     for (String error : errorContains) {
                         TestUtils.assertContains(e.getFlyweightMessage(), error);
                     }

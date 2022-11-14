@@ -44,13 +44,13 @@ public class RecordColumn extends RecordFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return false;
+    public Record getRecord(Record rec) {
+        return rec.getRecord(columnIndex);
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        return rec.getRecord(columnIndex);
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override

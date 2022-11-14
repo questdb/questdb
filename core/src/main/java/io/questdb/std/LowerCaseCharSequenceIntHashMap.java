@@ -53,17 +53,44 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     }
 
     @Override
-    protected void erase(int index) {
-        keys[index] = noEntryKey;
-        values[index] = noEntryValue;
-    }
-
-    public int valueAt(int index) {
-        return index < 0 ? values[-index - 1] : noEntryValue;
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
+        if (size() != that.size()) {
+            return false;
+        }
+        for (CharSequence key : keys) {
+            if (key == null) {
+                continue;
+            }
+            if (that.excludes(key)) {
+                return false;
+            }
+            int value = get(key);
+            if (value != noEntryValue) {
+                int thatValue = that.get(key);
+                if (value != thatValue) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
+    }
+
+    @Override
+    public int hashCode() {
+        int hashCode = 0;
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                hashCode += Chars.hashCode(keys[i]) ^ values[i];
+            }
+        }
+        return hashCode;
     }
 
     public boolean put(CharSequence key, int value) {
@@ -90,11 +117,15 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         return false;
     }
 
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
+    public int removeEntry(CharSequence key) {
+        int index = keyIndex(key);
+        int value = valueAt(index);
+        removeAt(index);
+        return value;
+    }
+
+    public int valueAt(int index) {
+        return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
     private void putAt0(int index, CharSequence key, int value) {
@@ -103,40 +134,16 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        LowerCaseCharSequenceIntHashMap that = (LowerCaseCharSequenceIntHashMap) o;
-        if (size() != that.size()) {
-            return false;
-        }
-        for (CharSequence key : keys) {
-            if (key == null) {
-                continue;
-            }
-            if (that.excludes(key)) {
-                return false;
-            }
-            int value = get(key);
-            if (value != noEntryValue) {
-                int thatValue = that.get(key);
-                if (value != thatValue) {
-                    return false;
-                }
-            }
-        }
-        return true;
+    protected void erase(int index) {
+        keys[index] = noEntryKey;
+        values[index] = noEntryValue;
     }
 
     @Override
-    public int hashCode() {
-        int hashCode = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryKey) {
-                hashCode += Chars.hashCode(keys[i]) ^ values[i];
-            }
-        }
-        return hashCode;
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 
     @Override
@@ -162,12 +169,5 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
                 values[index] = oldValues[i];
             }
         }
-    }
-
-    public int removeEntry(CharSequence key) {
-        int index = keyIndex(key);
-        int value = valueAt(index);
-        removeAt(index);
-        return value;
     }
 }

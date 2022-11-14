@@ -42,13 +42,11 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Random;
-
 public class O3CommitLagTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3CommitLagTest.class);
-    private long minTimestamp;
-    private long maxTimestamp;
     private RecordToRowCopier copier;
+    private long maxTimestamp;
+    private long minTimestamp;
 
     @Before
     public void clearRecordToRowCopier() {
@@ -297,6 +295,41 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     @Test
+    public void testVarColumnPageBoundaries3() throws Exception {
+        dataAppendPageSize = (int) Files.PAGE_SIZE;
+        executeWithPool(0,
+                (CairoEngine engine,
+                 SqlCompiler compiler,
+                 SqlExecutionContext sqlExecutionContext) -> {
+                    int longsPerPage = dataAppendPageSize / 8;
+                    int hi = (longsPerPage + 8) * 2;
+                    int lo = (longsPerPage - 8) * 2;
+                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
+
+                    int initialCountLo = longsPerPage - 1;
+                    int additionalCountLo = longsPerPage - 1;
+
+                    for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
+                        for (int additionalCount = additionalCountLo; additionalCount < additionalCountLo + 3; additionalCount++) {
+                            for (int i = lo; i < hi; i++) {
+                                LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
+                                testVarColumnMergeWithColumnTops(
+                                        engine,
+                                        compiler,
+                                        sqlExecutionContext,
+                                        initialCount,
+                                        additionalCount,
+                                        i,
+                                        maxUncommitted,
+                                        new Rnd());
+                                compiler.compile("drop table x", sqlExecutionContext);
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(0,
@@ -357,41 +390,6 @@ public class O3CommitLagTest extends AbstractO3Test {
                             new Rnd()
                     );
                     compiler.compile("drop table x", sqlExecutionContext);
-                });
-    }
-
-    @Test
-    public void testVarColumnPageBoundaries3() throws Exception {
-        dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
-                    int longsPerPage = dataAppendPageSize / 8;
-                    int hi = (longsPerPage + 8) * 2;
-                    int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos()).nextInt(hi);
-
-                    int initialCountLo = longsPerPage - 1;
-                    int additionalCountLo = longsPerPage - 1;
-
-                    for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
-                        for (int additionalCount = additionalCountLo; additionalCount < additionalCountLo + 3; additionalCount++) {
-                            for (int i = lo; i < hi; i++) {
-                                LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
-                                testVarColumnMergeWithColumnTops(
-                                        engine,
-                                        compiler,
-                                        sqlExecutionContext,
-                                        initialCount,
-                                        additionalCount,
-                                        i,
-                                        maxUncommitted,
-                                        new Rnd());
-                                compiler.compile("drop table x", sqlExecutionContext);
-                            }
-                        }
-                    }
                 });
     }
 
@@ -1242,12 +1240,12 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        Random rand = new Random(0);
+        Rnd rnd = new Rnd();
         IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
         int atRow = nInitialStateRows;
         batchRowEnd.add(-atRow); // negative row means this has been committed
         while (atRow < nTotalRows) {
-            int nRows = rand.nextInt(maxBatchedRows) + 1;
+            int nRows = rnd.nextInt(maxBatchedRows) + 1;
             atRow += nRows;
             batchRowEnd.add(atRow);
         }
@@ -1257,7 +1255,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             int nHeadBatch = 1;
             int nRowsAppended = 0;
             while (nHeadBatch < batchRowEnd.size()) {
-                int nBatch = nHeadBatch + rand.nextInt(maxConcurrentBatches);
+                int nBatch = nHeadBatch + rnd.nextInt(maxConcurrentBatches);
                 while (nBatch >= batchRowEnd.size() || batchRowEnd.get(nBatch) < 0) {
                     nBatch--;
                 }
@@ -1540,77 +1538,6 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
-        // Day 1 '1970-01-01'
-        int appendCount = iteration / 2;
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " 'aa' as str," +
-                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
-                        " x " +
-                        " from long_sequence(1)" +
-                        ") timestamp (ts) partition by DAY with maxUncommittedRows = " + maxUncommittedRows,
-                sqlExecutionContext
-        );
-
-        // Day 2 '1970-01-02'
-        compiler.compile(
-                "insert into x " +
-                        "select" +
-                        " 'aa' as str," +
-                        " timestamp_sequence('1970-01-02T00:00:00',1000L) ts," +
-                        " x " +
-                        " from long_sequence(1)",
-                sqlExecutionContext
-        );
-
-        compiler.compile("alter table x add column dummy string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x drop column dummy", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
-
-        if (iteration % 2 == 0) {
-            engine.releaseAllWriters();
-        }
-
-        final String ts1 = "1970-01-01";
-        final String ts2 = "1970-01-02T10:00:01.000000Z";
-
-        Rnd rnd = new Rnd();
-        try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
-            int halfCount = appendCount / 2;
-            appendRowsWithDroppedColumn(ts1, ts2, tw, halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
-
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
-
-            appendRowsWithDroppedColumn(ts1, ts2, tw, appendCount - halfCount, rnd);
-            tw.commitWithLag(Timestamps.HOUR_MICROS);
-
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                    "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
-
-            if (iteration % 2 == 0) {
-                tw.commit();
-            }
-        }
-
-        if (iteration % 3 == 0) {
-            engine.releaseAllWriters();
-        }
-
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
-                "str\tts\tx\tstr2\ty\n" +
-                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
-    }
-
     private void testVarColumnMergeWithColumnTops(
             CairoEngine engine,
             SqlCompiler compiler,
@@ -1728,5 +1655,76 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "select * from x where str = 'aa'",
                 sink,
                 sink2);
+    }
+
+    private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
+        // Day 1 '1970-01-01'
+        int appendCount = iteration / 2;
+        compiler.compile(
+                "create table x as (" +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-01T11:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(1)" +
+                        ") timestamp (ts) partition by DAY with maxUncommittedRows = " + maxUncommittedRows,
+                sqlExecutionContext
+        );
+
+        // Day 2 '1970-01-02'
+        compiler.compile(
+                "insert into x " +
+                        "select" +
+                        " 'aa' as str," +
+                        " timestamp_sequence('1970-01-02T00:00:00',1000L) ts," +
+                        " x " +
+                        " from long_sequence(1)",
+                sqlExecutionContext
+        );
+
+        compiler.compile("alter table x add column dummy string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x drop column dummy", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
+        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
+
+        if (iteration % 2 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        final String ts1 = "1970-01-01";
+        final String ts2 = "1970-01-02T10:00:01.000000Z";
+
+        Rnd rnd = new Rnd();
+        try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
+            int halfCount = appendCount / 2;
+            appendRowsWithDroppedColumn(ts1, ts2, tw, halfCount, rnd);
+            tw.commitWithLag(Timestamps.HOUR_MICROS);
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                    "str\tts\tx\tstr2\ty\n" +
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+
+            appendRowsWithDroppedColumn(ts1, ts2, tw, appendCount - halfCount, rnd);
+            tw.commitWithLag(Timestamps.HOUR_MICROS);
+
+            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                    "str\tts\tx\tstr2\ty\n" +
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+
+            if (iteration % 2 == 0) {
+                tw.commit();
+            }
+        }
+
+        if (iteration % 3 == 0) {
+            engine.releaseAllWriters();
+        }
+
+        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+                "str\tts\tx\tstr2\ty\n" +
+                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
     }
 }

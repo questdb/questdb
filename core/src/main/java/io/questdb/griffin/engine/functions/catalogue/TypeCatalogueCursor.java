@@ -72,13 +72,13 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        row = -1;
+    public long size() {
+        return rowCount;
     }
 
     @Override
-    public long size() {
-        return rowCount;
+    public void toTop() {
+        row = -1;
     }
 
     class TypeCatalogueRecord implements Record {
@@ -116,19 +116,19 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typname", 2, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("typbasetype", 3, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typarray", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typnamespace", 5, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typnotnull", 6, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("typtypmod", 7, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typtype", 8, ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("typrelid", 9, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typelem", 10, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typreceive", 11, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typdelim", 12, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typinput", 13, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typelem", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("typinput", ColumnType.INT));
         METADATA = metadata;
     }
 }

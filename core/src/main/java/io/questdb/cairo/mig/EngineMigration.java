@@ -103,7 +103,6 @@ public class EngineMigration {
                             ff,
                             LOG,
                             upgradeFd,
-                            true,
                             Integer.BYTES
                     );
                 }
@@ -115,28 +114,6 @@ public class EngineMigration {
 
     private static @Nullable MigrationAction getMigrationToVersion(int version) {
         return MIGRATIONS.get(version);
-    }
-
-    static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
-        // make a copy
-        int copyPathLen = toTemp.length();
-        try {
-            toTemp.concat(backupName).put(".v").put(version);
-            for (int i = 1; ff.exists(toTemp.$()); i++) {
-                // if backup file already exists
-                // add .<num> at the end until file name is unique
-                LOG.info().$("backup dest exists [to=").$(toTemp).I$();
-                toTemp.trimTo(copyPathLen);
-                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
-            }
-
-            LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
-            if (ff.copy(src.$(), toTemp.$()) < 0) {
-                throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
-            }
-        } finally {
-            toTemp.trimTo(copyPathLen);
-        }
     }
 
     private static boolean upgradeTables(MigrationContext context, int latestVersion) {
@@ -213,6 +190,28 @@ public class EngineMigration {
             LOG.info().$("upgraded tables to ").$(latestVersion).$();
         }
         return updateSuccess.get();
+    }
+
+    static void backupFile(FilesFacade ff, Path src, Path toTemp, String backupName, int version) {
+        // make a copy
+        int copyPathLen = toTemp.length();
+        try {
+            toTemp.concat(backupName).put(".v").put(version);
+            for (int i = 1; ff.exists(toTemp.$()); i++) {
+                // if backup file already exists
+                // add .<num> at the end until file name is unique
+                LOG.info().$("backup dest exists [to=").$(toTemp).I$();
+                toTemp.trimTo(copyPathLen);
+                toTemp.concat(backupName).put(".v").put(version).put(".").put(i);
+            }
+
+            LOG.info().$("backing up [file=").$(src).$(",to=").$(toTemp).I$();
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
+                throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
+            }
+        } finally {
+            toTemp.trimTo(copyPathLen);
+        }
     }
 
     static {

@@ -79,7 +79,6 @@ public class DirectByteCharSequenceIntHashMapTest {
                 dbcs.of(p, p + len);
                 Assert.assertEquals(hashMap.containsKey(s), ourMap.contains(dbcs));
                 Assert.assertNotEquals(hashMap.containsKey(s), ourMap.excludes(dbcs));
-                Assert.assertNotEquals(hashMap.containsKey(s), ourMap.excludes(dbcs, 0, len));
 
                 Object v = hashMap.get(s);
                 int k = ourMap.get(dbcs);
@@ -87,10 +86,10 @@ public class DirectByteCharSequenceIntHashMapTest {
 
                 if (v == null) {
                     Assert.assertEquals(-1, k);
-                    Assert.assertTrue(ourMap.keyIndex(dbcs, 0, len) > -1);
+                    Assert.assertTrue(ourMap.keyIndex(dbcs) > -1);
                 } else {
                     Assert.assertEquals(v, k);
-                    int keyIndex = ourMap.keyIndex(dbcs, 0, len);
+                    int keyIndex = ourMap.keyIndex(dbcs);
                     Assert.assertTrue(keyIndex < 0);
                     Assert.assertEquals(k, ourMap.valueAt(keyIndex));
                 }
@@ -121,7 +120,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 } else {
                     Assert.assertEquals(-1, ourMap.remove(dbcs));
                 }
-                p+=len;
+                p += len;
             }
 
             // compare HashMap to our map after random removal
@@ -137,7 +136,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 } else {
                     Assert.assertEquals(-1, ourMap.get(dbcs));
                 }
-                p+=len;
+                p += len;
             }
 
         } finally {

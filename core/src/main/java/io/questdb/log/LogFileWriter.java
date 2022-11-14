@@ -37,20 +37,20 @@ import java.io.Closeable;
 public class LogFileWriter extends SynchronizedJob implements Closeable, LogWriter {
 
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
+    private final int level;
     private final RingQueue<LogRecordSink> ring;
     private final SCSequence subSeq;
-    private final int level;
+    private long _wptr;
+    private long buf;
+    private int bufSize;
+    private String bufferSize;
     private long fd = -1;
     private long lim;
-    private long buf;
-    private long _wptr;
-    private QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String location;
+    private QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     // can be set via reflection
     @SuppressWarnings("unused")
     private String truncate;
-    private String bufferSize;
-    private int bufSize;
 
     public LogFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this.ring = ring;

@@ -77,14 +77,17 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testKeyedMaxDateOrNullThenMaxLong() throws Exception {
         assertQuery(
-                "min\n" +
-                        "1969-12-31T23:59:59.956Z\n",
-                "select min(f) from tab",
-                "create table tab as (select cast(rnd_long(-55, 9009, 2) as date) f from long_sequence(131))",
+                "i\tmin\n" +
+                        "1\t\n",
+                "select i, min(f) from tab",
+                "create table tab as (select cast(1 as int) i, cast(null as date) f from long_sequence(33))",
                 null,
-                false,
+                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
+                "i\tmin\n" +
+                        "1\t292278994-08-17T07:12:55.807Z\n",
+                true,
                 true,
                 true
         );
@@ -108,17 +111,14 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testKeyedMaxDateOrNullThenMaxLong() throws Exception {
+    public void testSimple() throws Exception {
         assertQuery(
-                "i\tmin\n" +
-                        "1\t\n",
-                "select i, min(f) from tab",
-                "create table tab as (select cast(1 as int) i, cast(null as date) f from long_sequence(33))",
+                "min\n" +
+                        "1969-12-31T23:59:59.956Z\n",
+                "select min(f) from tab",
+                "create table tab as (select cast(rnd_long(-55, 9009, 2) as date) f from long_sequence(131))",
                 null,
-                "insert into tab select 1, 9223372036854775807L from long_sequence(1)",
-                "i\tmin\n" +
-                        "1\t292278994-08-17T07:12:55.807Z\n",
-                true,
+                false,
                 true,
                 true
         );

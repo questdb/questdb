@@ -44,10 +44,10 @@ public interface SymbolMapReader extends StaticSymbolTable {
      */
     boolean isDeleted();
 
+    StaticSymbolTable newSymbolTableView();
+
     /**
      * @param count number of symbols to update symbol table to
      */
     void updateSymbolCount(int count);
-
-    StaticSymbolTable newSymbolTableView();
 }
