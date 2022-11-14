@@ -25,10 +25,12 @@
 package io.questdb.std;
 
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -806,6 +808,28 @@ public final class Chars {
             for (int i = 0; i < len; i++) {
                 sink.put(Character.toUpperCase(str.charAt(i)));
             }
+        }
+    }
+
+    public static void trim(TrimType type, CharSequence str, StringSink sink) {
+        if (str == null) {
+            return;
+        }
+        int startIdx = 0;
+        int endIdx = str.length() - 1;
+        if (type == TrimType.LTRIM || type == TrimType.TRIM) {
+            while (startIdx < endIdx && str.charAt(startIdx) == ' ') {
+                startIdx++;
+            }
+        }
+        if (type == TrimType.RTRIM || type == TrimType.TRIM) {
+            while (startIdx < endIdx && str.charAt(endIdx) == ' ') {
+                endIdx--;
+            }
+        }
+        sink.clear();
+        if (startIdx != endIdx) {
+            sink.put(str, startIdx, endIdx+1);
         }
     }
 
