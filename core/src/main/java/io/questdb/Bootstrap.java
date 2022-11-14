@@ -319,6 +319,7 @@ public class Bootstrap {
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
         log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db");

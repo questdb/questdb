@@ -3161,7 +3161,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
         final int timestampIndex = metadata.getTimestampIndex();
-        this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
+        lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;

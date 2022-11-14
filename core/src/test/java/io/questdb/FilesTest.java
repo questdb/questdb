@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
@@ -723,7 +724,7 @@ public class FilesTest {
             try (
                     Path srcPath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcPath).concat("S3").slash$(); // does not exist yet
-                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(".attachable").$()
+                    Path linkPath = new Path().of(coldRoot).concat(fileName).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
             ) {
                 createTempFile(srcPath, fileName, fileContent); // updates srcFilePath
 
@@ -962,7 +963,7 @@ public class FilesTest {
                     Path srcFilePath = new Path().of(tmpFolder.getAbsolutePath());
                     Path coldRoot = new Path().of(srcFilePath).concat("S3").slash$();
                     Path softLinkRenamedFilePath = new Path().of(coldRoot).concat(fileName).$();
-                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(".attachable").$()
+                    Path softLinkFilePath = new Path().of(softLinkRenamedFilePath).put(TableUtils.ATTACHABLE_DIR_MARKER).$()
             ) {
                 createTempFile(srcFilePath, fileName, fileContent); // updates srcFilePath
 

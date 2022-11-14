@@ -53,6 +53,7 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 public final class TableUtils {
     public static final int ANY_TABLE_ID = -1;
     public static final int ANY_TABLE_VERSION = -1;
+    public static final String ATTACHABLE_DIR_MARKER = ".attachable";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";

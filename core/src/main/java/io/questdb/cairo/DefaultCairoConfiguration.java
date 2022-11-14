@@ -77,7 +77,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public String getAttachPartitionSuffix() {
-        return ".attachable";
+        return TableUtils.ATTACHABLE_DIR_MARKER;
     }
 
     @Override

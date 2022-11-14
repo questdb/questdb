@@ -356,7 +356,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-        Assert.assertEquals(".attachable", configuration.getCairoConfiguration().getAttachPartitionSuffix());
+        Assert.assertEquals(TableUtils.ATTACHABLE_DIR_MARKER, configuration.getCairoConfiguration().getAttachPartitionSuffix());
         Assert.assertFalse(configuration.getCairoConfiguration().attachPartitionCopy());
 
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWalPurgeInterval());
