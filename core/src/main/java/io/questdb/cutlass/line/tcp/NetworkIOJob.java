@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
@@ -34,7 +35,7 @@ interface NetworkIOJob extends Job, Closeable {
 
     void close();
 
-    TableUpdateDetails getLocalTableDetails(CharSequence tableName);
+    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName);
 
     ObjList<SymbolCache> getUnusedSymbolCaches();
 
