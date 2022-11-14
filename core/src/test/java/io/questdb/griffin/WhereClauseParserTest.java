@@ -1575,6 +1575,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleEpochInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in (1388579400000000, 1388665800000000)");
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
+        Assert.assertNull(m.filter);
+    }
+
+    @Test
     public void testThreeIntrinsics() throws Exception {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
@@ -1622,7 +1629,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampeEpochEqualsLongConst() throws Exception {
+    public void testTimestampEpochEqualsLongConst() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         try {
             runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
