@@ -22,19 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+#ifndef SYSUTIL_H
+#define SYSUTIL_H
 
-import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
+#define RESTARTABLE(_cmd, _result) do { \
+    _result = _cmd; \
+  } while(((int)_result == -1) && (errno == EINTR))
 
-public class LimitOverflowException extends CairoException {
-    private static final long serialVersionUID = 1L;
-    private static final ThreadLocal<LimitOverflowException> tlException = new ThreadLocal<>(LimitOverflowException::new);
-
-    public static LimitOverflowException instance() {
-        LimitOverflowException ex = tlException.get();
-        ex.message.clear();
-        ex.errno = NON_CRITICAL;
-        return ex;
-    }
-}
+#endif //SYSUTIL_H

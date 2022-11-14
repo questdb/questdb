@@ -208,7 +208,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readULong(long fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return 17;
             }
         };
@@ -241,7 +241,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
         FilesFacade myFf = new FilesFacadeImpl() {
             @Override
-            public long readULong(long fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return -1L;
             }
         };

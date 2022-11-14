@@ -22,19 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.std.str;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
+import org.junit.Test;
 
-public class LimitOverflowException extends CairoException {
-    private static final long serialVersionUID = 1L;
-    private static final ThreadLocal<LimitOverflowException> tlException = new ThreadLocal<>(LimitOverflowException::new);
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
-    public static LimitOverflowException instance() {
-        LimitOverflowException ex = tlException.get();
-        ex.message.clear();
-        ex.errno = NON_CRITICAL;
-        return ex;
+public class AbstractCharSequenceTest {
+
+    @Test
+    public void testSubsquenece_theWholeRangeReturnsTheSameObject() {
+        final CharSequence cs = new AbstractCharSequence() {
+            private static final String str = "abc";
+
+            @Override
+            public char charAt(int index) {
+                return str.charAt(index);
+            }
+
+            @Override
+            public int length() {
+                return str.length();
+            }
+        };
+        CharSequence sub = cs.subSequence(0, cs.length());
+        assertSame(cs, sub);
+        assertEquals("abc", sub.toString());
     }
 }
