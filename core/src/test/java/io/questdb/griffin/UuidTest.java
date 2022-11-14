@@ -154,6 +154,23 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRndUuid() throws Exception {
+        assertCompile("create table x as (select rnd_uuid() from long_sequence(10))");
+        assertQuery("rnd_uuid\n" +
+                        "0010a928-bb8b-9650-0010-cde812ce60ee\n" +
+                        "6b813981-5c50-d341-9f9b-2131d49fcd1d\n" +
+                        "72a215ba-0462-ad15-7bcd-48d8c77aa655\n" +
+                        "965d4c98-4f0f-fa8a-b5b2-159a23565217\n" +
+                        "db2d3458-6f62-75fa-e8be-ef38cd7bb3d8\n" +
+                        "797fa69e-b8fe-c6cc-322a-2198864beb14\n" +
+                        "6846d7a3-aa5a-ecce-980e-ca62a219a0f1\n" +
+                        "c72bfc52-3015-8059-c1e6-31285c1ab288\n" +
+                        "9fa2397a-5d8c-84c4-716d-e3d25dcc2d91\n" +
+                        "2f1a8266-e792-1e3b-4b0f-595f143e5d72\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
     public void testUpdateByUuid() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");

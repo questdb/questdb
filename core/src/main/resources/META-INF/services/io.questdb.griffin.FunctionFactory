@@ -167,6 +167,7 @@ io.questdb.griffin.engine.functions.rnd.RndTimestampFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
 io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
