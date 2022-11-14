@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
 import org.junit.*;
 
 import java.io.IOException;
@@ -48,7 +47,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
-        //Assume.assumeTrue(Os.type != Os.WINDOWS); // TODO: testing hypothesis
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -170,7 +169,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
-        //Assume.assumeTrue(Os.type != Os.WINDOWS); // TODO: testing hypothesis
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
@@ -226,7 +225,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
                     .concat(partitionName)
                     .put(TableUtils.DETACHED_DIR_MARKER)
                     .$();
-            //Assert.assertFalse(ff.exists(path)); // TODO: artificial condition imposed by me, windows does not like it, checking whether this is true
+            Assert.assertFalse(ff.exists(path));
 
             // insert a row at the end of the partition, the only row, which will create the partition
             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
@@ -244,7 +243,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDropIt() throws Exception {
-        //Assume.assumeTrue(Os.type != Os.WINDOWS); // TODO: ditto
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
@@ -299,7 +298,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDropItWhileThereIsAReader() throws Exception {
-        //Assume.assumeTrue(Os.type != Os.WINDOWS); // TODO: ditto
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
@@ -369,7 +368,7 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
 
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
-        //Assume.assumeTrue(Os.type != Os.WINDOWS); // TODO: ditto
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
@@ -474,13 +473,11 @@ public class AlterTableAttachPartitionViaSoftLinkTest extends AlterTableAttachPa
                 detachedPartitionName,
                 null
         );
-        // TODO: I suspect windows tests would fail because of this.
-        //  in fact deleting the original partition does not matter
-//        Files.rmdir(path.of(configuration.getRoot())
-//                .concat(tableName)
-//                .concat(detachedPartitionName)
-//                .$());
-//        Assert.assertFalse(ff.exists(path));
+        Files.rmdir(path.of(configuration.getRoot())
+                .concat(tableName)
+                .concat(detachedPartitionName)
+                .$());
+        Assert.assertFalse(ff.exists(path));
 
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
