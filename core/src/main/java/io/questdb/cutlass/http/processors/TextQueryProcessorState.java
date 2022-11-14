@@ -53,6 +53,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     private boolean queryCacheable = false;
+    char delimiter = ',';
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
