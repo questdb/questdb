@@ -448,6 +448,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
         }
 
+        @Override
+        public long getUuidLeastSig(int col) {
+            return mem.getLong(fixedWithColumnOffset(col) + Long.BYTES);
+        }
+
+        @Override
+        public long getUuidMostSig(int col) {
+            return mem.getLong(fixedWithColumnOffset(col));
+        }
+
         private long fixedWithColumnOffset(int index) {
             return fixedOffset + columnOffsets[index];
         }

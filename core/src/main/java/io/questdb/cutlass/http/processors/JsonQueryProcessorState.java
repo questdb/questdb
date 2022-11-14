@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -383,6 +382,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"').putISODate(t).put('"');
     }
 
+    private static void putUuidValue(HttpChunkedResponseSocket socket, Record rec, int col) {
+        long msb = rec.getUuidMostSig(col);
+        long lsb = rec.getUuidLeastSig(col);
+        if (UuidUtil.isNull(msb, lsb)) {
+            socket.put("null");
+            return;
+        }
+        socket.put('"');
+        Numbers.appendUuid(msb, lsb, socket);
+        socket.put('"');
+    }
+
     private boolean addColumnToOutput(RecordMetadata metadata, CharSequence columnNames, int start, int hi) throws PeerDisconnectedException, PeerIsSlowToReadException {
 
         if (start == hi) {
@@ -564,6 +575,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.LONG128:
                     throw new UnsupportedOperationException();
+                case ColumnType.UUID:
+                    putUuidValue(socket, record, columnIdx);
+                    break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid

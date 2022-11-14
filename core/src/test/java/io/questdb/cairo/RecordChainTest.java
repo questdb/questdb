@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
@@ -284,6 +283,10 @@ public class RecordChainTest extends AbstractCairoTest {
                     break;
                 case ColumnType.BINARY:
                     TestUtils.assertEquals(expected.getBin(i), actual.getBin(i), actual.getBinLen(i));
+                    break;
+                case ColumnType.UUID:
+                    Assert.assertEquals(expected.getUuidMostSig(i), actual.getUuidMostSig(i));
+                    Assert.assertEquals(expected.getUuidLeastSig(i), actual.getUuidLeastSig(i));
                     break;
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));

@@ -294,6 +294,7 @@ public class CompactMap implements Map, Reopenable {
                     sz = Long256.BYTES;
                     break;
                 case ColumnType.LONG128:
+                case ColumnType.UUID:
                     sz = 2 * Long.BYTES;
                     break;
                 default:

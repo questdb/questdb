@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.Metrics;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 
@@ -113,7 +114,8 @@ public class CairoTestUtils {
                     .col("i", ColumnType.STRING)
                     .col("j", ColumnType.SYMBOL)
                     .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY);
+                    .col("l", ColumnType.BINARY)
+                    .col("m", ColumnType.UUID);
             create(model);
         }
 
@@ -178,6 +180,12 @@ public class CairoTestUtils {
                 } else {
                     binarySequence.of(rnd.nextBytes(25));
                     row.putBin(11, binarySequence);
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putUuid(12, UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+                } else {
+                    row.putUuid(12, rnd.nextLong(), rnd.nextLong());
                 }
                 row.append();
             }

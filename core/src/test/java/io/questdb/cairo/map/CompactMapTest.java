@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -312,13 +313,13 @@ public class CompactMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
+            try (TableReader keyReader = new TableReader(configuration, "x")) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+                entityColumnFilter.of(keyReader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
-                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new SymbolAsStrTypes(keyReader.getMetadata()),
                         new ArrayColumnTypes()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)
@@ -334,14 +335,14 @@ public class CompactMapTest extends AbstractCairoTest {
                         0.9,
                         1, Integer.MAX_VALUE)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, keyReader.getMetadata(), entityColumnFilter, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
+                    RecordCursor cursor = keyReader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -770,6 +771,14 @@ public class CompactMapTest extends AbstractCairoTest {
                 TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
             }
 
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidMostSig(keyColumnOffset + 12));
+                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidLeastSig(keyColumnOffset + 12));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getUuidMostSig(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidLeastSig(keyColumnOffset + 12));
+            }
+
         }
         Assert.assertEquals(5000, c);
     }
@@ -787,10 +796,10 @@ public class CompactMapTest extends AbstractCairoTest {
         }
     }
 
-    private void populateMap(CompactMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+    private void populateMap(CompactMap map, Rnd rnd2, RecordCursor keyCursor, RecordSink sink) {
         long counter = 0;
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
+        final Record record = keyCursor.getRecord();
+        while (keyCursor.hasNext()) {
             MapKey key = map.withKey();
             key.put(record, sink);
             MapValue value = key.createValue();
