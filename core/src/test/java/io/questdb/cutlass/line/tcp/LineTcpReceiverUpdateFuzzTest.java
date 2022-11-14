@@ -197,8 +197,8 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 Assert.fail("Update failed [e=" + e + ", sql=" + sql + "]");
                 throw new RuntimeException(e);
             } finally {
-                updatesDone.countDown();
                 Path.clearThreadLocals();
+                updatesDone.countDown();
             }
         }).start();
     }

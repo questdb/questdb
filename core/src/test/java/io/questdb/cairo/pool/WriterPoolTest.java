@@ -534,7 +534,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 Os.pause();
                                 pool.unlock(tableName);
                             } else {
-                                Thread.yield();
+                                Os.pause();
                             }
                         } catch (Exception e) {
                             e.printStackTrace();
