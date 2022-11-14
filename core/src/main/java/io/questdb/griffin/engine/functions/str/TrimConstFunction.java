@@ -22,19 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.StringSink;
 
-public class LimitOverflowException extends CairoException {
-    private static final long serialVersionUID = 1L;
-    private static final ThreadLocal<LimitOverflowException> tlException = new ThreadLocal<>(LimitOverflowException::new);
+import static io.questdb.std.Chars.trim;
 
-    public static LimitOverflowException instance() {
-        LimitOverflowException ex = tlException.get();
-        ex.message.clear();
-        ex.errno = NON_CRITICAL;
-        return ex;
+public class TrimConstFunction extends StrFunction implements UnaryFunction {
+
+    private final StringSink sink1 = new StringSink();
+    private final StringSink sink2 = new StringSink();
+    private final Function arg;
+
+    public TrimConstFunction(Function arg, TrimType type) {
+        this.arg = arg;
+        trim(type, getArg().getStr(null), sink1);
+        trim(type, getArg().getStr(null), sink2);
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return sink1;
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return sink2;
     }
 }

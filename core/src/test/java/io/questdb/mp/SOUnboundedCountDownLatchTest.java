@@ -26,6 +26,7 @@ package io.questdb.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.Dates;
 import org.junit.Assert;
 import org.junit.Test;
@@ -101,7 +102,7 @@ public class SOUnboundedCountDownLatchTest {
                             Assert.assertEquals(last + 1, c);
                             last = c;
                         } else if (c == -1) {
-                            Thread.yield();
+                            Os.pause();
                         }
                         if (System.currentTimeMillis() - time > Dates.MINUTE_MILLIS) {
                             LOG.error()
@@ -131,7 +132,7 @@ public class SOUnboundedCountDownLatchTest {
                 i++;
                 pubSeq.done(c);
             } else if (c == -1) {
-                Thread.yield();
+                Os.pause();
             }
         }
         LOG.info().$("all published").$();

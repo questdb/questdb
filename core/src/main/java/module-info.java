@@ -649,6 +649,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
+
+            // trim
+            io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+
             //starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
             // split_part

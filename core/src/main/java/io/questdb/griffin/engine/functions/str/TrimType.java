@@ -22,19 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.std.ThreadLocal;
-
-public class LimitOverflowException extends CairoException {
-    private static final long serialVersionUID = 1L;
-    private static final ThreadLocal<LimitOverflowException> tlException = new ThreadLocal<>(LimitOverflowException::new);
-
-    public static LimitOverflowException instance() {
-        LimitOverflowException ex = tlException.get();
-        ex.message.clear();
-        ex.errno = NON_CRITICAL;
-        return ex;
-    }
+public enum TrimType {
+    TRIM,
+    LTRIM,
+    RTRIM
 }
