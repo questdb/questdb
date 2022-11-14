@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -881,6 +883,86 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseLongSizeOverflowNoQualifier() throws Exception {
         Numbers.parseLongSize("45035996273704960000000");
+    }
+
+    @Test
+    public void testParseLongDurationSecond() throws Exception {
+        Assert.assertEquals(20 * Timestamps.SECOND_MICROS, Numbers.parseLongDuration("20s"));
+    }
+
+    @Test
+    public void testParseLongDurationMinute() throws Exception {
+        Assert.assertEquals(20 * Timestamps.MINUTE_MICROS, Numbers.parseLongDuration("20m"));
+    }
+
+    @Test
+    public void testParseLongDurationHour() throws Exception {
+        Assert.assertEquals(20 * Timestamps.HOUR_MICROS, Numbers.parseLongDuration("20h"));
+    }
+
+    @Test
+    public void testParseLongDurationDay() throws Exception {
+        Assert.assertEquals(20 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20d"));
+    }
+
+    @Test
+    public void testParseLongDurationWeek() throws Exception {
+        Assert.assertEquals(20 * Timestamps.WEEK_MICROS, Numbers.parseLongDuration("20w"));
+    }
+
+    @Test
+    public void testParseLongDurationMonth() throws Exception {
+        Assert.assertEquals(20 * 30 * Timestamps.DAY_MICROS, Numbers.parseLongDuration("20M"));
+    }
+
+    @Test
+    public void testParseLongDurationYear() throws Exception {
+        Assert.assertEquals(20 * 365 *Timestamps.DAY_MICROS, Numbers.parseLongDuration("20y"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationFail() throws Exception {
+        Numbers.parseLongDuration("5year");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtSecond() throws Exception {
+        Numbers.parseLongDuration("9223372036855s");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtMinute() throws Exception {
+        Numbers.parseLongDuration("153722867281m");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtHour() throws Exception {
+        Numbers.parseLongDuration("2562047789h");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtDay() throws Exception {
+        Numbers.parseLongDuration("106751992d");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtWeek() throws Exception {
+        Numbers.parseLongDuration("15250285w");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtMonth() throws Exception {
+        Numbers.parseLongDuration("3558400M");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowAtYear() throws Exception {
+        Numbers.parseLongDuration("292472y");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongDurationOverflowNoQualifier() throws Exception {
+        Numbers.parseLongDuration("9223372036854775808");
     }
 
     @Test(expected = NumericException.class)
