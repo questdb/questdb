@@ -22,36 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
-        super(metadata);
+public class TrimFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "trim(S)";
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return true;
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            if (arg.getStr(null) == null) {
+                return StrConstant.NULL;
+            } else {
+                return new TrimConstFunction(args.getQuick(0), TrimType.TRIM);
+            }
+        }
+        return new TrimFunction(args.getQuick(0), TrimType.TRIM);
     }
 }

@@ -35,7 +35,6 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Random;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -49,7 +48,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
     public void testVanilla() throws IOException, BrokenBarrierException, InterruptedException {
         final long longsPerPage = Files.PAGE_SIZE / 8;
         for (int loop = 0; loop < 10; loop++) {
-            Random rnd = new Random();
+            Rnd rnd = new Rnd();
             // increments randomly by [0..512] up to three pages
             for (long longCountIncr = longsPerPage, limit = longsPerPage * 3; longCountIncr < limit; longCountIncr += rnd.nextDouble() * 512) {
                 long longCount = longCountIncr;
@@ -58,7 +57,6 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                 try (Path path = new Path()) {
                     path.of(file.getAbsolutePath()).$();
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
 
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);

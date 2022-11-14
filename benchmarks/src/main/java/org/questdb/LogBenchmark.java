@@ -33,13 +33,14 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.TimeUnit;
 
-@State(Scope.Thread)
+@State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class LogBenchmark {
 
-    private static final Log LOG;
     private long counter = 0;
+    private LogFactory factory;
+    private Log log;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -53,27 +54,9 @@ public class LogBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public void testBaseline() {
-    }
-
-    @Benchmark
-    public void testLogOneInt() {
-        LOG.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testLogOneIntBlocking() {
-        LOG.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    @Benchmark
-    public void testLogOneIntDisabled() {
-        LOG.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
-    }
-
-    static {
-        LogFactory factory = LogFactory.getInstance();
+    @Setup(Level.Iteration)
+    public void setUp() {
+        factory = new LogFactory();
         factory.add(new LogWriterConfig(LogLevel.INFO, (queue, subSeq, level) -> {
             LogRollingFileWriter w = new LogRollingFileWriter(queue, subSeq, level);
             w.setLocation("log-bench1.log");
@@ -81,6 +64,30 @@ public class LogBenchmark {
         }));
         factory.bind();
         factory.startThread();
-        LOG = factory.create(LogBenchmark.class);
+        log = factory.create(LogBenchmark.class);
+    }
+
+    @TearDown(Level.Iteration)
+    public void tearDown() {
+        factory.close();
+    }
+
+    @Benchmark
+    public void testBaseline() {
+    }
+
+    @Benchmark
+    public void testLogOneInt() {
+        log.info().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    }
+
+    @Benchmark
+    public void testLogOneIntBlocking() {
+        log.infoW().$("brown fox jumped over ").$(counter++).$(" fence").$();
+    }
+
+    @Benchmark
+    public void testLogOneIntDisabled() {
+        log.debug().$("brown fox jumped over ").$(counter++).$(" fence").$();
     }
 }
