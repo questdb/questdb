@@ -22,36 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
-        super(metadata);
+public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testLTrimSpace() throws SqlException {
+        call("    abc     ").andAssert("abc     ");
+        call("     abc").andAssert("abc");
+        call(" a b c ").andAssert("a b c ");
+    }
+
+    @Test
+    public void testNoLTrimSpace() throws SqlException {
+        call("abc     ").andAssert("abc     ");
+        call("a b c").andAssert("a b c");
+        call("kkk").andAssert("kkk");
+        call("()  /  {}").andAssert("()  /  {}");
+    }
+
+    @Test
+    public void testEmptyLTrimSpace() throws SqlException {
+        call("").andAssert("");
+        call(" ").andAssert("");
+        call("    ").andAssert("");
+        call((Object) null).andAssert(null);
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(CharSequence tableName) {
-        return true;
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
+    protected FunctionFactory getFunctionFactory() {
+        return new LTrimFunctionFactory();
     }
 }

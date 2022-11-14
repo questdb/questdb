@@ -122,9 +122,9 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         }
                     }
                 } finally {
-                    ilpProducerHalted.countDown();
-                    Path.clearThreadLocals();
                     LOG.info().$("sender finished").$();
+                    Path.clearThreadLocals();
+                    ilpProducerHalted.countDown();
                 }
             }, "ilp-producer");
             ilpProducer.start();
@@ -154,10 +154,10 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 } catch (SqlException e) {
                     partitionDropperProblem.set(e);
                 } finally {
+                    Path.clearThreadLocals();
                     // a few rows may have made it into the active partition,
                     // as dropping it is concurrent with inserting
                     keepSending.set(false);
-                    Path.clearThreadLocals();
                 }
 
             }, "partition-dropper");
@@ -702,12 +702,12 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             } catch (Throwable e) {
                 LOG.error().$(e).$();
             } finally {
-                // exit this method if alter executed
-                releaseAllLatch.countDown();
                 LOG.info().$("Stopped waiting for txn notification event").$();
                 Path.clearThreadLocals();
                 // If subscribed to global writer event queue, unsubscribe here
                 Misc.free(alterOperationFuture);
+                // exit this method if alter executed
+                releaseAllLatch.countDown();
             }
         }).start();
 

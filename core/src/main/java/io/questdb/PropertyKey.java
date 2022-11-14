@@ -173,6 +173,7 @@ public enum PropertyKey {
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_SLEEP_THRESHOLD("http.min.worker.sleep.threshold"),
+    HTTP_MIN_WORKER_SLEEP_TIMEOUT("http.min.worker.sleep.timeout"),
     HTTP_MIN_BIND_TO("http.min.bind.to"),
     HTTP_MIN_NET_BIND_TO("http.min.net.bind.to"),
     HTTP_MIN_WORKER_HALT_ON_ERROR("http.min.worker.haltOnError"),
