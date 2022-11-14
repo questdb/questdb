@@ -35,13 +35,20 @@ import org.junit.*;
 public class SnapshotTest extends AbstractGriffinTest {
 
     private static final TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
-    private final Path path = new Path();
+    private static Path path;
     private int rootLen;
 
     @BeforeClass
     public static void setUpStatic() {
+        path = new Path();
         ff = testFilesFacade;
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        path = Misc.free(path);
+        AbstractGriffinTest.tearDownStatic();
     }
 
     @Before

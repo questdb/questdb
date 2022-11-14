@@ -31,7 +31,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-public class DirectByteCharSequenceIntHashMapTest {
+public class DirectByteCharSequenceObjHashMapTest {
     @Test
     public void testHashMapCompatibility() {
         final Rnd rnd = new Rnd();
@@ -41,7 +41,7 @@ public class DirectByteCharSequenceIntHashMapTest {
         HashMap<String, Integer> hashMap = new HashMap<>();
         ArrayList<String> list = new ArrayList<>();
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-        DirectByteCharSequenceIntHashMap ourMap = new DirectByteCharSequenceIntHashMap();
+        DirectByteCharSequenceObjHashMap<Integer> ourMap = new DirectByteCharSequenceObjHashMap<>();
         try {
             // generate random strings and randomly add some of them to the HashMap
             long p = mem;
@@ -81,11 +81,11 @@ public class DirectByteCharSequenceIntHashMapTest {
                 Assert.assertNotEquals(hashMap.containsKey(s), ourMap.excludes(dbcs));
 
                 Object v = hashMap.get(s);
-                int k = ourMap.get(dbcs);
+                Integer k = ourMap.get(dbcs);
                 Assert.assertEquals(k, ourMap.get(s));
 
                 if (v == null) {
-                    Assert.assertEquals(-1, k);
+                    Assert.assertNull(k);
                     Assert.assertTrue(ourMap.keyIndex(dbcs) > -1);
                 } else {
                     Assert.assertEquals(v, k);
@@ -115,10 +115,10 @@ public class DirectByteCharSequenceIntHashMapTest {
                     if (rnd.nextBoolean()) {
                         Object v = hashMap.remove(s);
                         Assert.assertNotNull(v);
-                        ourMap.remove(dbcs);
+                        ourMap.remove(Chars.toString(dbcs));
                     }
                 } else {
-                    Assert.assertEquals(-1, ourMap.remove(dbcs));
+                    Assert.assertEquals(-1, ourMap.remove(Chars.toString(dbcs)));
                 }
                 p += len;
             }
@@ -134,7 +134,7 @@ public class DirectByteCharSequenceIntHashMapTest {
                 if (v != null) {
                     Assert.assertEquals(v, ourMap.get(dbcs));
                 } else {
-                    Assert.assertEquals(-1, ourMap.get(dbcs));
+                    Assert.assertNull(ourMap.get(dbcs));
                 }
                 p += len;
             }
