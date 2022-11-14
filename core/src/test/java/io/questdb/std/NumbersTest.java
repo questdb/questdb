@@ -111,6 +111,17 @@ public class NumbersTest {
     }
 
     @Test
+    public void testExtractLong256() {
+        String invalidInput = "0xogulcan.near";
+        String validInputZero = "0x00";
+        String validInputMax = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        Long256Impl sink = new Long256Impl();
+        Assert.assertFalse(Numbers.extractLong256(invalidInput, invalidInput.length(), sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputZero, validInputZero.length(), sink));
+        Assert.assertTrue(Numbers.extractLong256(validInputMax, validInputMax.length(), sink));
+    }
+
+    @Test
     public void testFormatByte() {
         for (int i = 0; i < 1000; i++) {
             byte n = (byte) rnd.nextInt();
