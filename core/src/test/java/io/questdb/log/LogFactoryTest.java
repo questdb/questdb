@@ -58,7 +58,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-bad-writer.conf");
         try (LogFactory factory = new LogFactory()) {
             try {
-                LogFactory.configureFromSystemProperties(factory);
+                factory.init(null);
                 Assert.fail();
             } catch (LogError e) {
                 Assert.assertEquals("Class not found com.questdb.log.StdOutWriter2", e.getMessage());
@@ -206,7 +206,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog2.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -218,11 +218,11 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testNoDefault() {
+    public void testNonDefault() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -538,7 +538,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for queueDepth", e.getMessage());
@@ -559,7 +559,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Invalid value for recordLength", e.getMessage());
@@ -585,7 +585,7 @@ public class LogFactoryTest {
             System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
 
             try (LogFactory factory = new LogFactory()) {
-                LogFactory.configureFromSystemProperties(factory);
+                factory.init(null);
 
                 Log log = factory.create("xyz");
 
@@ -621,7 +621,7 @@ public class LogFactoryTest {
         );
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, conf.getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
             Assert.fail();
         } catch (LogError e) {
             Assert.assertEquals("Unknown property: w.file.avocado", e.getMessage());
@@ -633,7 +633,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            factory.init(null);
 
             Log logger = factory.create("x");
             assertDisabled(logger.debug());
@@ -646,6 +646,50 @@ public class LogFactoryTest {
             assertDisabled(logger1.info());
             assertDisabled(logger1.error());
             assertDisabled(logger1.advisory());
+        }
+    }
+
+    @Test
+    public void testUninitializedFactory() {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
+
+        try (LogFactory factory = new LogFactory()) {
+            // First we get a no-op logger.
+            Log logger = factory.create("com.questdb.x.y");
+            assertDisabled(logger.debug());
+            assertDisabled(logger.info());
+            assertDisabled(logger.error());
+            assertDisabled(logger.critical());
+            assertDisabled(logger.advisory());
+            assertDisabled(logger.xdebug());
+            assertDisabled(logger.xinfo());
+            assertDisabled(logger.xerror());
+            assertDisabled(logger.xcritical());
+            assertDisabled(logger.xadvisory());
+            assertDisabled(logger.debugW());
+            assertDisabled(logger.infoW());
+            assertDisabled(logger.errorW());
+            assertDisabled(logger.criticalW());
+            assertDisabled(logger.advisoryW());
+
+            factory.init(null);
+
+            // Once the factory is initialized, the logger is no longer no-op.
+            assertEnabled(logger.debug());
+            assertDisabled(logger.info());
+            assertEnabled(logger.error());
+            assertEnabled(logger.critical());
+            assertEnabled(logger.advisory());
+            assertEnabled(logger.xdebug());
+            assertDisabled(logger.xinfo());
+            assertEnabled(logger.xerror());
+            assertEnabled(logger.xcritical());
+            assertEnabled(logger.xadvisory());
+            assertEnabled(logger.debugW());
+            assertDisabled(logger.infoW());
+            assertEnabled(logger.errorW());
+            assertEnabled(logger.criticalW());
+            assertEnabled(logger.advisoryW());
         }
     }
 
@@ -694,7 +738,7 @@ public class LogFactoryTest {
                 props.store(stream, "");
             }
 
-            LogFactory.configureFromSystemProperties(factory, temp.getRoot().getPath(), false);
+            factory.init(temp.getRoot().getPath());
 
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
@@ -760,7 +804,7 @@ public class LogFactoryTest {
             }
         }
 
-        // this is a very weak assertion but we have to live with it
+        // this is a very weak assertion, but we have to live with it
         // logger runs asynchronously, it doesn't offer any synchronisation
         // support right now, which leaves tests at a mercy of the hardware/OS/other things
         // consuming CPU and potentially starving logger of execution time
