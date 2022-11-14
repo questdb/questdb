@@ -101,8 +101,9 @@ public class Bootstrap {
         }
 
         // setup logger
+        // note: this call must be made before any Log init.
         if (argsMap.get(SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION) == null) {
-            LogFactory.configureFromSystemProperties(new LogFactory(), rootDirectory);
+            LogFactory.configureRootDir(rootDirectory);
         }
         log = LogFactory.getLog(LOG_NAME);
 
