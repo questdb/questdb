@@ -138,6 +138,66 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
     }
 
     @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenAddColumn() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            final String partitionName = "2022-10-17";
+            attachPartitionFromSoftLink(
+                    tableName,
+                    partitionName,
+                    2,
+                    "2022-10-17T00:00:17.279900Z",
+                    "2022-10-18T23:59:59.000000Z",
+                    "TUNGSTEN",
+                    txn -> {
+                        try {
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
+                            // add column ss of type symbol
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " ADD COLUMN ss SYMBOL",
+                                    CompiledQuery.ALTER
+                            );
+
+                            // add index on symbol column ss
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " ALTER COLUMN ss ADD INDEX CAPACITY 32",
+                                    CompiledQuery.ALTER
+                            );
+
+                            // insert a row at the end of the partition
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z', '¶')");
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\tss\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\t\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\t\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\t\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\t\n" +
+                                            "666\t666\tqueso\t2022-10-17T23:59:59.999999Z\t¶\n"
+                            );
+                        } catch (SqlException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -188,6 +248,50 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n");
+                        } catch (SqlException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenDropIndex() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            final String partitionName = "2022-10-17";
+            attachPartitionFromSoftLink(
+                    tableName,
+                    partitionName,
+                    2,
+                    "2022-10-17T00:00:17.279900Z",
+                    "2022-10-18T23:59:59.000000Z",
+                    "BILBAO",
+                    txn -> {
+                        try {
+                            // drop the index on symbol column s
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " ALTER COLUMN s DROP INDEX",
+                                    CompiledQuery.ALTER
+                            );
+                            // add index on symbol column s
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " ALTER COLUMN s ADD INDEX",
+                                    CompiledQuery.ALTER
+                            );
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
+                                    "l\ti\ts\tts\n" +
+                                            "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
+                                            "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
+                                            "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
+                                            "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
+                                            "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n"
+                            );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -285,6 +389,66 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         } catch (IOException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAttachPartitionFromSoftLinkThenRenameColumn() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            final String partitionName = "2022-10-17";
+            attachPartitionFromSoftLink(
+                    tableName,
+                    partitionName,
+                    2,
+                    "2022-10-17T00:00:17.279900Z",
+                    "2022-10-18T23:59:59.000000Z",
+                    "ESPAÑA",
+                    txn -> {
+                        try {
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
+                            // add column ss of type symbol
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " RENAME COLUMN s TO ss",
+                                    CompiledQuery.ALTER
+                            );
+
+                            // drop index on symbol column ss
+                            executeOperation(
+                                    "ALTER TABLE " + tableName + " ALTER COLUMN ss DROP INDEX",
+                                    CompiledQuery.ALTER
+                            );
+
+                            // insert a row at the end of the partition
+                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z')");
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\tss\tts\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n" +
+                                            "666\t666\tqueso\t2022-10-17T23:59:59.999999Z\n"
+                            );
+                        } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
                     }
