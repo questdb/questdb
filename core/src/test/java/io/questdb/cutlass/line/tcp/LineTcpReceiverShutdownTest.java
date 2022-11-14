@@ -33,12 +33,34 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.Net;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectByteCharSequence;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class LineTcpReceiverShutdownTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverShutdownTest.class);
     private final SOCountDownLatch finished = new SOCountDownLatch(1);
+
+    private static final DirectByteCharSequence key = new DirectByteCharSequence();
+    private static long addr;
+
+    @BeforeClass
+    public static void setUpTest() {
+        addr = Unsafe.malloc(3, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().putByte(addr, (byte) 't');
+        Unsafe.getUnsafe().putByte(addr + 1, (byte) 'a');
+        Unsafe.getUnsafe().putByte(addr + 2, (byte) 'b');
+        key.of(addr, addr + 3);
+    }
+
+    @AfterClass
+    public static void tearDownTest() {
+        addr = Unsafe.free(addr, 3, MemoryTag.NATIVE_DEFAULT);
+    }
 
     @Test
     public void testIlpExceptionInCreateMeasurementEvent() throws Exception {
@@ -128,7 +150,7 @@ public class LineTcpReceiverShutdownTest extends AbstractLineTcpReceiverTest {
 
         @Override
         boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
-            TableUpdateDetails details = netIoJob.getLocalTableDetails("tab");
+            TableUpdateDetails details = netIoJob.getLocalTableDetails(key);
             if (details != null) {
                 details.close();
                 details.setWriterThreadId(writerThreadId);
