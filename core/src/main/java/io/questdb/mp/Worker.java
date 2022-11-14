@@ -139,7 +139,7 @@ public class Worker extends Thread {
                     if (uselessCounter > sleepThreshold) {
                         Os.sleep(sleepMs);
                     } else if (uselessCounter > yieldThreshold) {
-                        Thread.yield();
+                        Os.pause();
                     }
                 }
             }

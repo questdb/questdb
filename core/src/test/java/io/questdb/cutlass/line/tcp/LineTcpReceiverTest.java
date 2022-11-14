@@ -1434,7 +1434,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
                             break;
                         }
-                        Thread.yield();
+                        Os.pause();
                         for (int n = 0; n < tables.size(); n++) {
                             CharSequence tableName = tables.get(n);
                             while (true) {
