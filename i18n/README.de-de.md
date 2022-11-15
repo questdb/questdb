@@ -105,7 +105,7 @@ vergleicht QuestDB übergreifend mit anderen Open-Source-Timeseriesdatenbanken
 Funktionalität, Reife und Leistung.
 
 Hier sind hohe Kardinalität
-[Zeitreihen-Benchmark-Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
+[Timeseries-Benchmark-Suite](https://questdb.io/blog/2021/06/16/high-cardinality-time-series-data-performance/)
 Ergebnisse unter Verwendung des Anwendungsfalls "nur CPU" mit 6 Arbeitern auf einem AMD Ryzen 3970X:
 
 <div align="center">
