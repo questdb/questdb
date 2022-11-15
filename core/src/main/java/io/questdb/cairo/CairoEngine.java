@@ -503,7 +503,7 @@ public class CairoEngine implements Closeable, WriterSource {
             String lockReason
     ) {
         securityContext.checkWritePermission();
-        checkTableName(tableName);
+        validNameOrThrow(tableName);
         String systemTableName = getSystemTableName(tableName);
         return writerPool.get(systemTableName, lockReason);
     }

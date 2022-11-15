@@ -2119,14 +2119,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
                 engine.clear();
                 CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.of(configuration.getRoot()).concat(systemTableName)
+                path.of(configuration.getRoot())
+                        .concat(systemTableName)
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
                         .$();
                 Assert.assertTrue(Files.remove(path));
                 otherPath.of(configuration.getRoot())
-                        .concat(brokenTableName)
+                        .concat(engine.getSystemTableName(brokenTableName))
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
