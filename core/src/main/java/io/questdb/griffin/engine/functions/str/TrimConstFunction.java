@@ -22,41 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.log;
+package io.questdb.griffin.engine.functions.str;
 
-public interface Log {
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.StringSink;
 
-    LogRecord advisory();
+import static io.questdb.std.Chars.trim;
 
-    LogRecord advisoryW();
+public class TrimConstFunction extends StrFunction implements UnaryFunction {
 
-    LogRecord critical();
+    private final StringSink sink1 = new StringSink();
+    private final StringSink sink2 = new StringSink();
+    private final Function arg;
 
-    LogRecord criticalW();
+    public TrimConstFunction(Function arg, TrimType type) {
+        this.arg = arg;
+        trim(type, getArg().getStr(null), sink1);
+        trim(type, getArg().getStr(null), sink2);
+    }
 
-    LogRecord debug();
+    @Override
+    public Function getArg() {
+        return arg;
+    }
 
-    LogRecord debugW();
+    @Override
+    public CharSequence getStr(Record rec) {
+        return sink1;
+    }
 
-    LogRecord error();
-
-    LogRecord errorW();
-
-    LogRecord info();
-
-    LogRecord infoW();
-
-    LogRecord xDebugW();
-
-    LogRecord xInfoW();
-
-    LogRecord xadvisory();
-
-    LogRecord xcritical();
-
-    LogRecord xdebug();
-
-    LogRecord xerror();
-
-    LogRecord xinfo();
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return sink2;
+    }
 }

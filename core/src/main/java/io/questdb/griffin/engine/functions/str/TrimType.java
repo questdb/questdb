@@ -22,41 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.log;
+package io.questdb.griffin.engine.functions.str;
 
-public interface Log {
-
-    LogRecord advisory();
-
-    LogRecord advisoryW();
-
-    LogRecord critical();
-
-    LogRecord criticalW();
-
-    LogRecord debug();
-
-    LogRecord debugW();
-
-    LogRecord error();
-
-    LogRecord errorW();
-
-    LogRecord info();
-
-    LogRecord infoW();
-
-    LogRecord xDebugW();
-
-    LogRecord xInfoW();
-
-    LogRecord xadvisory();
-
-    LogRecord xcritical();
-
-    LogRecord xdebug();
-
-    LogRecord xerror();
-
-    LogRecord xinfo();
+public enum TrimType {
+    TRIM,
+    LTRIM,
+    RTRIM
 }
