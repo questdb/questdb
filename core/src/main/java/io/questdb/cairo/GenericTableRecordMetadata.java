@@ -82,7 +82,7 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount, long lastTxn) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;

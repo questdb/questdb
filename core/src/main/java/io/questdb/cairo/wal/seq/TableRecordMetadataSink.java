@@ -44,6 +44,7 @@ public interface TableRecordMetadataSink extends Mutable {
             int compressedTimestampIndex,
             boolean suspended,
             long structureVersion,
-            int columnCount
+            int columnCount,
+            long lastTxn
     );
 }

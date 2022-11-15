@@ -156,7 +156,8 @@ public class TableSequencerImpl implements TableSequencer {
                 compressedTimestampIndex,
                 metadata.isSuspended(),
                 metadata.getStructureVersion(),
-                compressedColumnCount
+                compressedColumnCount,
+                tableTransactionLog.lastTxn()
         );
     }
 

@@ -45,6 +45,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final MemoryMR roMetaMem;
+    private long lastTxn;
     private long structureVersion = -1;
     private boolean suspended;
     private int tableId;
@@ -90,6 +91,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         clear(truncateMode);
     }
 
+    public long getLastTxn() {
+        return lastTxn;
+    }
+
     @Override
     public long getStructureVersion() {
         return structureVersion;
@@ -111,12 +116,13 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(String tableName, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount, long lastTxn) {
         this.tableName = tableName;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
         this.suspended = suspended;
         this.structureVersion = structureVersion;
+        this.lastTxn = lastTxn;
     }
 
     public void removeColumn(CharSequence columnName) {
@@ -181,6 +187,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         tableName = null;
         tableId = -1;
         suspended = false;
+        lastTxn = -1;
     }
 
     protected void clear(byte truncateMode) {
