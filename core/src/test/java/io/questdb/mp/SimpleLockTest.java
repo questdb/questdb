@@ -216,7 +216,7 @@ public class SimpleLockTest {
         Thread thread = new Thread(() -> {
             lock.lock();
             try {
-                Thread.sleep(30);
+                Thread.sleep(25);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             } finally {
@@ -227,14 +227,13 @@ public class SimpleLockTest {
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.sleep(10);
-        }
+        } // spin
 
         Assert.assertTrue(lock.isLocked());
 
         // thread can acquire lock
         try {
-            Assert.assertTrue(lock.tryLock(100, TimeUnit.MILLISECONDS));
+            Assert.assertTrue(lock.tryLock(250, TimeUnit.MILLISECONDS));
         } finally {
             lock.unlock();
             thread.join();
