@@ -137,6 +137,7 @@ class TableStructureAdapter implements TableStructure {
         this.tableName = tableName;
         entityNamesUtf16.clear();
         entities.clear();
+        timestampIndex = -1;
         final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
