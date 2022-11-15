@@ -1664,9 +1664,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        if (completed) {
-            characterStore.clear();
-        }
+        characterStore.clear();
     }
 
     private void prepareLoginOk() {
