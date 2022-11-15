@@ -123,6 +123,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                        Assert.assertFalse(ex.isCritical());
                     } finally {
                         releaseInactive(engine);
                     }
@@ -152,6 +153,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                                 ex.getFlyweightMessage(),
                                 "limit of -1 resizes exceeded in FastMap"
                         );
+                        Assert.assertFalse(ex.isCritical());
                     } finally {
                         releaseInactive(engine);
                     }

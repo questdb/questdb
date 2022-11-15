@@ -54,9 +54,10 @@ abstract class BaseLineTcpInsertGeoHashTest extends BaseLineTcpContextTest {
     }
 
     @Before
+    @Override
     public void setUp() {
-        defaultTableWriteMode = walEnabled ? 1 : 0;
         super.setUp();
+        defaultTableWriteMode = walEnabled ? 1 : 0;
     }
 
     @Test

@@ -94,9 +94,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
-        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getSleepTimeout());
+
+        Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
+        Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getSleepThreshold());
+        Assert.assertEquals(50, configuration.getHttpMinServerConfiguration().getSleepTimeout());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
@@ -115,6 +119,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getListenBacklog());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getSndBufSize());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getRcvBufSize());
+        Assert.assertEquals(10, configuration.getHttpServerConfiguration().getSleepTimeout());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getTextConfiguration().getDateAdapterPoolCapacity());
         Assert.assertEquals(16384, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheLimit());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getTextConfiguration().getJsonCacheSize());
@@ -191,6 +196,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlJoinMetadataMaxResizes());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+        Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyPageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyMaxPages());
+        Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlAnalyticStorePageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticStoreMaxPages());
+        Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticRowIdPageSize());
+        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlAnalyticRowIdMaxPages());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertPoolCapacity());
@@ -358,8 +369,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getWalApplyPoolConfiguration().haltOnError());
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
         Assert.assertEquals(0, configuration.getWalApplyPoolConfiguration().getWorkerCount());
-        Assert.assertEquals(100, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
-        Assert.assertEquals(10000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
     }
 
@@ -788,6 +799,14 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
 
+            Assert.assertEquals(101, configuration.getHttpServerConfiguration().getYieldThreshold());
+            Assert.assertEquals(100001, configuration.getHttpServerConfiguration().getSleepThreshold());
+            Assert.assertEquals(1001, configuration.getHttpServerConfiguration().getSleepTimeout());
+
+            Assert.assertEquals(102, configuration.getHttpMinServerConfiguration().getYieldThreshold());
+            Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
+            Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
+
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
 
@@ -877,6 +896,12 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(16, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getAnalyticColumnPoolCapacity());
+            Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyPageSize());
+            Assert.assertEquals(1031, configuration.getCairoConfiguration().getSqlAnalyticTreeKeyMaxPages());
+            Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlAnalyticStorePageSize());
+            Assert.assertEquals(1029, configuration.getCairoConfiguration().getSqlAnalyticStoreMaxPages());
+            Assert.assertEquals(524288, configuration.getCairoConfiguration().getSqlAnalyticRowIdPageSize());
+            Assert.assertEquals(1030, configuration.getCairoConfiguration().getSqlAnalyticRowIdMaxPages());
             Assert.assertEquals(1024, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getInsertPoolCapacity());

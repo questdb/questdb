@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include "../share/sysutil.h"
 
 #if defined(__APPLE__)
 #include <copyfile.h>
@@ -85,7 +86,11 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
     }
     off_t hi = fromOffset + len;
 
-    while ((read_sz = pread(inFd, buf, sizeof buf, rd_off)) > 0) {
+    for (;;) {
+        RESTARTABLE(pread(inFd, buf, sizeof buf, rd_off), read_sz);
+        if (read_sz <= 0) {
+            break;
+        }
         char *out_ptr = buf;
 
         if (rd_off + read_sz > hi) {
@@ -94,12 +99,12 @@ size_t copyData0(int inFd, int outFd, off_t fromOffset, jlong length) {
 
         long wrtn;
         do {
-            wrtn = pwrite(outFd, out_ptr, read_sz, wrt_off);
+            RESTARTABLE(pwrite(outFd, out_ptr, read_sz, wrt_off), wrtn);
             if (wrtn >= 0) {
                 read_sz -= wrtn;
                 out_ptr += wrtn;
                 wrt_off += wrtn;
-            } else if (errno != EINTR) {
+            } else {
                 break;
             }
         } while (read_sz > 0);
