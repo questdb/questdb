@@ -3559,6 +3559,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                                     ") timestamp(k) partition by DAY"),
                             sqlExecutionContext);
 
+                    AbstractGriffinTest.engine.getTableSequencerAPI().reopen();
                     try (final RecordCursorFactory factory = compiler.compile(
                             "select * from x where b = 'PEHN' and a < 22 latest on k partition by b",
                             sqlExecutionContext
@@ -7702,6 +7703,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 compiler.compile("create table xy as (select rnd_str() v from long_sequence(100))", sqlExecutionContext);
+                AbstractGriffinTest.engine.getTableSequencerAPI().reopen();
                 bindVariableService.clear();
                 try (RecordCursorFactory factory = compiler.compile("xy where v " + keyword + " $1", sqlExecutionContext).getRecordCursorFactory()) {
 

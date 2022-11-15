@@ -72,7 +72,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         return assertCursor(
                 expected,
                 supportsRandomAccess,
-                checkSameStr,
                 sizeExpected,
                 sizeCanBeVariable,
                 cursor,
@@ -88,7 +87,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     public static boolean assertCursor(
             CharSequence expected,
             boolean supportsRandomAccess,
-            boolean checkSameStr,
             boolean sizeExpected,
             boolean sizeCanBeVariable,
             RecordCursor cursor,
@@ -109,7 +107,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
         testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
         cursor.toTop();
-        testStringsLong256AndBinary(metadata, cursor, checkSameStr);
+        testStringsLong256AndBinary(metadata, cursor);
 
         // test API where same record is being updated by cursor
         cursor.toTop();
@@ -210,7 +208,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    public static void assertVariableColumns(RecordCursorFactory factory, boolean checkSameStr, SqlExecutionContext executionContext) {
+    public static void assertVariableColumns(RecordCursorFactory factory, SqlExecutionContext executionContext) {
         try (RecordCursor cursor = factory.getCursor(executionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
@@ -360,7 +358,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         return false;  // Could not obtain lock.
     }
 
-    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor, boolean checkSameStr) {
+    private static void testStringsLong256AndBinary(RecordMetadata metadata, RecordCursor cursor) {
         Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -611,7 +609,6 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertCursorRawRecords(
             Record[] expected,
             RecordCursorFactory factory,
-            boolean checkSameStr,
             boolean expectSize
     ) {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -629,7 +626,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
 
             testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
             cursor.toTop();
-            testStringsLong256AndBinary(metadata, cursor, checkSameStr);
+            testStringsLong256AndBinary(metadata, cursor);
 
             cursor.toTop();
             final Record record = cursor.getRecord();
@@ -729,11 +726,11 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             RecordCursorFactory factory = cc.getRecordCursorFactory();
             try {
                 assertTimestamp(expectedTimestamp, factory);
-                assertCursorRawRecords(expected, factory, checkSameStr, expectSize);
+                assertCursorRawRecords(expected, factory, expectSize);
                 // make sure we get the same outcome when we get factory to create new cursor
-                assertCursorRawRecords(expected, factory, checkSameStr, expectSize);
+                assertCursorRawRecords(expected, factory, expectSize);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, checkSameStr, sqlExecutionContext);
+                assertVariableColumns(factory, sqlExecutionContext);
 
                 if (ddl2 != null) {
                     compile(ddl2, sqlExecutionContext);
@@ -741,9 +738,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
                     int count = 3;
                     while (count > 0) {
                         try {
-                            assertCursorRawRecords(expected2, factory, checkSameStr, expectSize);
+                            assertCursorRawRecords(expected2, factory, expectSize);
                             // and again
-                            assertCursorRawRecords(expected2, factory, checkSameStr, expectSize);
+                            assertCursorRawRecords(expected2, factory, expectSize);
                             return;
                         } catch (ReaderOutOfDateException e) {
                             Misc.free(factory);
@@ -1101,7 +1098,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable);
             // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory, checkSameStr, sqlExecutionContext);
+            assertVariableColumns(factory, sqlExecutionContext);
 
             if (ddl2 != null) {
                 compile(ddl2, sqlExecutionContext);
@@ -1161,7 +1158,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         // make sure we get the same outcome when we get factory to create new cursor
         assertCursor(expected, factory, supportsRandomAccess, checkSameStr, expectSize, sizeCanBeVariable, executionContext);
         // make sure strings, binary fields and symbols are compliant with expected record behaviour
-        assertVariableColumns(factory, checkSameStr, executionContext);
+        assertVariableColumns(factory, executionContext);
     }
 
     protected void assertFailure(
@@ -1507,7 +1504,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        CharSequence systemTableName = engine.getSystemTableName(tableModel.getTableName());
+        CharSequence systemTableName = registerTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
                 Path path = new Path().of(configuration.getRoot()).concat(systemTableName)

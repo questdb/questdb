@@ -62,12 +62,10 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     protected TableReader getReader(SqlExecutionContext executionContext) throws SqlException {
-        return executionContext.getCairoEngine()
-                .getReader(
-                        executionContext.getCairoSecurityContext(),
-                        tableName,
-                        tableId,
-                        tableVersion
-                );
+        return executionContext.getReader(
+                tableName,
+                tableId,
+                tableVersion
+        );
     }
 }

@@ -116,10 +116,11 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                CharSequence telemetry = engine.getSystemTableName("telemetry");
-                CharSequence telemetry_config = engine.getSystemTableName("telemetry_config");
                 final TelemetryJob telemetryJob = new TelemetryJob(engine, null);
+
                 try (Path path = new Path()) {
+                    CharSequence telemetry = engine.getSystemTableName("telemetry");
+                    CharSequence telemetry_config = engine.getSystemTableName("telemetry_config");
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry));
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config));
                 }
@@ -145,6 +146,7 @@ public class TelemetryTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
+                refreshTablesInBaseEngine();
 
                 final String expectedEvent = "100\n" +
                         "101\n";

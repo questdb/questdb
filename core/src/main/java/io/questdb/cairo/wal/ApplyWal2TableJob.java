@@ -90,7 +90,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 if (!engine.getTableSequencerAPI().isWalSystemName(systemTableName)) {
                     LOG.info().$("table '").utf8(systemTableName).$("' does not exist, skipping WAL application").$();
-                    return Long.MAX_VALUE;
+                    return 0;
                 }
 
                 try (TableWriter writer = engine.getWriterBySystemName(AllowAllCairoSecurityContext.INSTANCE, systemTableName, WAL_2_TABLE_WRITE_REASON)) {
@@ -158,12 +158,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     } else if (type == Files.DT_FILE) {
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ).$();
+
+                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME)) {
+                            continue;
+                        }
+
                         if (!ff.remove(tempPath)) {
                             allClean = false;
                             LOG.info().$("could not remove [tempPath=").$(tempPath).$(", errno=").$(ff.errno()).I$();
                         }
                     }
                 } while (ff.findNext(p) > 0);
+
+                if (allClean) {
+                    // Remove _txn and _meta files when all other files are removed
+                    allClean = ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$());
+                    allClean &= ff.remove(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                }
             } finally {
                 ff.findClose(p);
             }

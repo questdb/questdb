@@ -295,6 +295,9 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+        // This method can be called multiple times during the test. Remove created tables.
+        tearDown();
+        setUp();
     }
 
     private void testFwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
@@ -406,5 +409,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+        tearDown();
+        setUp();
     }
 }

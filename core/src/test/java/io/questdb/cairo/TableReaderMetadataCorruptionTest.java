@@ -243,8 +243,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 String tableName = "x";
-                CharSequence systemTableName = engine.getSystemTableName(tableName);
-                path.of(root).concat(systemTableName);
+                path.of(root).concat(tableName);
                 final int rootLen = path.length();
                 if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.critical(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);

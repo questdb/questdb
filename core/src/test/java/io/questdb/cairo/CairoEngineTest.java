@@ -47,7 +47,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testAncillaries() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
 
             class MyListener implements PoolListener {
                 int count = 0;
@@ -61,6 +60,8 @@ public class CairoEngineTest extends AbstractCairoTest {
             MyListener listener = new MyListener();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
@@ -149,7 +150,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testExpiry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
 
             class MyListener implements PoolListener {
                 int count = 0;
@@ -165,6 +165,8 @@ public class CairoEngineTest extends AbstractCairoTest {
             MyListener listener = new MyListener();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+
                 engine.setPoolListener(listener);
 
                 assertWriter(engine, "x");
@@ -184,10 +186,9 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testLockBusyReader() throws Exception {
 
-        createX();
-
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     Assert.assertEquals(CairoEngine.BUSY_READER, engine.lock(AllowAllCairoSecurityContext.INSTANCE, engine.getSystemTableName("x"), "testing"));
@@ -222,10 +223,9 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testNewTableRename() throws Exception {
-        createX();
-
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
@@ -237,10 +237,9 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
-
             spinLockTimeout = 1;
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
@@ -263,10 +262,8 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveNewTable() {
-
-        createX();
-
         try (CairoEngine engine = new CairoEngine(configuration)) {
+            createX(engine);
             engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
         }
@@ -274,14 +271,14 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveNonExisting() throws Exception {
-        createY(); // this will create root dir at least
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createY(engine);
                 try {
                     engine.drop(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
                 }
             }
         });
@@ -290,9 +287,8 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveWhenReaderBusy() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
-
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
@@ -308,9 +304,8 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRemoveWhenWriterBusy() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
-
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "testing")) {
                     Assert.assertNotNull(writer);
                     try {
@@ -325,10 +320,9 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testRenameExisting() throws Exception {
-        createX();
-
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
 
@@ -345,8 +339,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRenameExternallyLockedTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
-
+            createX(engine);
             try (TableWriter ignored1 = newTableWriter(configuration, "x", metrics)) {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -370,7 +363,6 @@ public class CairoEngineTest extends AbstractCairoTest {
     @Test
     public void testRenameFail() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            createX();
 
             TestFilesFacade ff = new TestFilesFacade() {
                 int counter = 1;
@@ -390,6 +382,8 @@ public class CairoEngineTest extends AbstractCairoTest {
             AbstractCairoTest.ff = ff;
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 try {
@@ -432,10 +426,10 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRenameToExistingTarget() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
-            createX();
-            createY();
-
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+                createY(engine);
+
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
                 try {
@@ -479,10 +473,11 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testWrongReaderVersion() throws Exception {
-        createX();
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
+                createX(engine);
+
                 assertWriter(engine, "x");
                 try {
                     engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION, 2);
@@ -506,17 +501,17 @@ public class CairoEngineTest extends AbstractCairoTest {
         }
     }
 
-    private void createX() {
+    private void createX(CairoEngine engine) {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("a", ColumnType.INT)) {
-            CairoTestUtils.create(model);
+            CairoTestUtils.create(model, engine);
         }
     }
 
-    private void createY() {
+    private void createY(CairoEngine engine) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)
                 .col("b", ColumnType.INT)) {
-            CairoTestUtils.create(model);
+            CairoTestUtils.create(model, engine);
         }
     }
 }

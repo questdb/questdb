@@ -37,7 +37,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+
+import java.util.Iterator;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
@@ -81,7 +82,6 @@ public class TableListFunctionFactory implements FunctionFactory {
 
     private static class TableListCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
-        private final FilesFacade ff;
         private final boolean hideTelemetryTables;
         private final CharSequence sysTablePrefix;
         private CairoEngine engine;
@@ -90,7 +90,6 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         public TableListCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
-            this.ff = configuration.getFilesFacade();
             path = new Path().of(configuration.getRoot()).$();
             this.sysTablePrefix = configuration.getSystemTableNamePrefix();
             cursor = new TableListRecordCursor();
@@ -118,12 +117,12 @@ public class TableListFunctionFactory implements FunctionFactory {
 
         private class TableListRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final StringSink sink = new StringSink();
-            private long findPtr = 0;
+            private Iterator<CharSequence> systemNames;
+            private CharSequence systemTableName;
+            private String tableName;
 
             @Override
             public void close() {
-                findPtr = ff.findClose(findPtr);
                 tableReaderMetadata.clear();//release FD of last table on the list
             }
 
@@ -139,23 +138,21 @@ public class TableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                while (true) {
-                    if (findPtr == 0) {
-                        findPtr = ff.findFirst(path);
-                        if (findPtr <= 0) {
-                            return false;
-                        }
-                    } else {
-                        if (ff.findNext(findPtr) <= 0) {
-                            return false;
-                        }
-                    }
-                    if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                        if (record.open(sink)) {
-                            return true;
-                        }
-                    }
+                if (systemNames == null) {
+                    systemNames = engine.getTableSequencerAPI().getTableSystemNames().iterator();
                 }
+
+                do {
+                    boolean hasNext = systemNames.hasNext();
+                    if (!hasNext) {
+                        systemNames = null;
+                    } else {
+                        systemTableName = systemNames.next();
+                        tableName = record.open(systemTableName) ? engine.getTableNameBySystemName(systemTableName) : null;
+                    }
+                } while (systemNames != null && tableName == null);
+
+                return systemNames != null;
             }
 
             @Override
@@ -178,7 +175,6 @@ public class TableListFunctionFactory implements FunctionFactory {
                 private int maxUncommittedRows;
                 private int partitionBy;
                 private int tableId;
-                private String tableName;
 
                 @Override
                 public boolean getBool(int col) {
@@ -221,7 +217,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         }
                     }
                     if (col == systemNameColumn) {
-                        return engine.getSystemTableName(tableName);
+                        return systemTableName;
                     }
                     return null;
                 }
@@ -241,10 +237,6 @@ public class TableListFunctionFactory implements FunctionFactory {
                     if (hideTelemetryTables && (TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.tableName)
                             || TableUtils.isSystemNameSameAsTableName(systemTableName, TelemetryJob.configTableName)
                             || Chars.startsWith(systemTableName, sysTablePrefix))) {
-                        return false;
-                    }
-                    tableName = engine.getTableNameBySystemName(sink);
-                    if (tableName == null) {
                         return false;
                     }
 

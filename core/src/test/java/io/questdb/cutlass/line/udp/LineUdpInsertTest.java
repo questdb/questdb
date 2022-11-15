@@ -46,10 +46,12 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     protected static final int PORT = RCVR_CONF.getPort();
 
     protected static void assertReader(String tableName, String expected) {
+        refreshTablesInBaseEngine();
         assertReader(tableName, expected, (String[]) null);
     }
 
     protected static void assertReader(String tableName, String expected, String... expectedExtraStringColumns) {
+        refreshTablesInBaseEngine();
         try (TableReader reader = newTableReader(new DefaultCairoConfiguration(root), tableName)) {
             TestUtils.assertReader(expected, reader, sink);
             if (expectedExtraStringColumns != null) {
@@ -80,7 +82,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp());
+                            CairoTestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
                         }
                     }
                     receiver.start();

@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -194,6 +195,10 @@ public abstract class AbstractCairoTest {
                 System.err.println(value);
             }
         }
+    }
+
+    public static void refreshTablesInBaseEngine() {
+        AbstractGriffinTest.engine.getTableSequencerAPI().reopen();
     }
 
     @BeforeClass
@@ -710,6 +715,10 @@ public abstract class AbstractCairoTest {
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {
         return new TableWriter(configuration, tableName, engine.getSystemTableName(tableName), messageBus, metrics);
+    }
+
+    protected String registerTableName(CharSequence tableName) {
+        return engine.registerTableName(tableName, false);
     }
 
     protected enum WalMode {

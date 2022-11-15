@@ -793,7 +793,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("l", ColumnType.INT)
                                 .col("s2", ColumnType.SYMBOL),
                         1,
-                        engine.getSystemTableName(brokenMeta.getTableName())
+                        registerTableName(brokenMeta.getTableName())
                 );
                 compiler.compile(
                         "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
@@ -1186,7 +1186,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("s", ColumnType.SYMBOL)
                                 .timestamp("ts"),
                         1,
-                        engine.getSystemTableName(brokenMeta.getTableName())
+                        registerTableName(brokenMeta.getTableName())
                 );
                 compiler.compile(
                         "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
@@ -1264,7 +1264,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .timestamp("ts"),
                         1,
-                        engine.getSystemTableName(brokenMeta.getTableName())
+                        registerTableName(brokenMeta.getTableName())
                 );
                 compiler.compile(
                         "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
@@ -1343,7 +1343,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .timestamp("ts"),
                         1,
-                        engine.getSystemTableName(brokenMeta.getTableName())
+                        registerTableName(brokenMeta.getTableName())
                 );
                 compiler.compile(
                         "INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName(),
@@ -2101,7 +2101,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
                 // create populate broken metadata table
                 TableUtils.createTable(configuration, mem, path, brokenMetaTransform.apply(brokenMeta), brokenMetaId,
-                        engine.getSystemTableName(brokenMeta.getTableName()));
+                        registerTableName(brokenMeta.getTableName()));
                 if (insertStmt != null) {
                     compile(insertStmt, sqlExecutionContext);
                 }

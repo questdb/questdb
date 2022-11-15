@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -45,15 +46,9 @@ public class TableNameRegistry implements Closeable {
     private static final int OPERATION_REMOVE = -1;
     private static final String TABLE_DROPPED_MARKER = "TABLE_DROPPED_MARKER:..";
     private final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
-    private final boolean mangleDefaultTableNames;
     private final ConcurrentHashMap<String> reverseTableNameCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<TableNameRecord> systemTableNameCache = new ConcurrentHashMap<>();
     private final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
-
-    public TableNameRegistry(boolean mangleDefaultTableNames) {
-
-        this.mangleDefaultTableNames = mangleDefaultTableNames;
-    }
 
     @Override
     public void close() {
@@ -62,17 +57,14 @@ public class TableNameRegistry implements Closeable {
         Misc.free(tableNameMemory);
     }
 
+    public void deleteNonWalName(CharSequence tableName, String systemTableName) {
+        systemTableNameCache.remove(tableName);
+        reverseTableNameCache.remove(systemTableName);
+    }
+
     public String getSystemName(CharSequence tableName) {
         TableNameRecord nameRecord = systemTableNameCache.get(tableName);
-        if (nameRecord == null) {
-            String defaultSystemName = Chars.toString(tableName);
-            if (mangleDefaultTableNames) {
-                defaultSystemName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            }
-            nameRecord = new TableNameRecord(defaultSystemName, false);
-            systemTableNameCache.putIfAbsent(tableName, nameRecord);
-        }
-        return nameRecord.systemTableName;
+        return nameRecord != null ? nameRecord.systemTableName : null;
     }
 
     public String getTableNameBySystemName(CharSequence systemTableName) {
@@ -96,7 +88,7 @@ public class TableNameRegistry implements Closeable {
         return systemTableNameCache.get(tableName);
     }
 
-    public ConcurrentHashMap.KeySetView<String> getTableSystemNames() {
+    public Iterable<CharSequence> getTableSystemNames() {
         return reverseTableNameCache.keySet();
     }
 
@@ -118,22 +110,14 @@ public class TableNameRegistry implements Closeable {
         return nameRecord != null && nameRecord.isWal;
     }
 
-    public String registerName(String tableName, String systemTableName) {
-        TableNameRecord newNameRecord = new TableNameRecord(systemTableName, true);
+    public String registerName(String tableName, String systemTableName, boolean isWal) {
+        TableNameRecord newNameRecord = new TableNameRecord(systemTableName, isWal);
         TableNameRecord registeredRecord = systemTableNameCache.putIfAbsent(tableName, newNameRecord);
-        if (registeredRecord != null && !registeredRecord.isWal) {
-            // Replace non-Wal with Wal record.
-            while (!systemTableNameCache.replace(tableName, registeredRecord, newNameRecord)) {
-                registeredRecord = systemTableNameCache.get(tableName);
-                if (registeredRecord.isWal) {
-                    return null;
-                }
-            }
-            registeredRecord = null;
-        }
 
         if (registeredRecord == null) {
-            appendEntry(tableName, systemTableName);
+            if (isWal) {
+                appendEntry(tableName, systemTableName);
+            }
             reverseTableNameCache.put(systemTableName, tableName);
             return systemTableName;
         } else {
@@ -143,58 +127,11 @@ public class TableNameRegistry implements Closeable {
 
     public synchronized void reloadTableNameCache(CairoConfiguration configuration) {
         LOG.info().$("reloading table to system name mappings").$();
-        final FilesFacade ff = configuration.getFilesFacade();
         systemTableNameCache.clear();
         reverseTableNameCache.clear();
 
-        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$()) {
-            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
-
-            long entryCount = tableNameMemory.getLong(0);
-            long currentOffset = Long.BYTES;
-
-            int deletedRecordsFound = 0;
-            for (int i = 0; i < entryCount; i++) {
-                int operation = tableNameMemory.getInt(currentOffset);
-                currentOffset += Integer.BYTES;
-                CharSequence tableName = tableNameMemory.getStr(currentOffset);
-                currentOffset += Vm.getStorageLength(tableName);
-
-                String tableNameStr = Chars.toString(tableName);
-                String systemName = Chars.toString(tableNameMemory.getStr(currentOffset));
-                currentOffset += Vm.getStorageLength(systemName);
-
-                if (operation == OPERATION_REMOVE) {
-                    // remove from registry
-                    systemTableNameCache.remove(tableNameStr);
-                    reverseTableNameCache.remove(systemName);
-                    deletedRecordsFound++;
-                } else {
-                    boolean systemNameExists = reverseTableNameCache.get(systemName) != null;
-                    systemTableNameCache.put(tableNameStr, new TableNameRecord(systemName, true));
-                    if (systemNameExists) {
-                        // This table is renamed, log system to real table name mapping
-                        LOG.advisory().$("renamed WAL table system name [table=").utf8(tableNameStr).$(", systemTableName=").utf8(systemName).$();
-                    }
-                    reverseTableNameCache.put(systemName, tableNameStr);
-                    currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
-                }
-            }
-            tableNameMemory.jumpTo(currentOffset);
-
-            // compact the memory, remove deleted entries
-            // TODO: make this rewrite power cut stable
-            if (deletedRecordsFound > 0) {
-                tableNameMemory.jumpTo(Long.BYTES);
-
-                for (CharSequence tableName : systemTableNameCache.keySet()) {
-                    String systemName = systemTableNameCache.get(tableName).systemTableName;
-                    appendEntry(tableName, systemName);
-                }
-                tableNameMemory.putLong(0, systemTableNameCache.size());
-            }
-
-        }
+        reloadFromFile(configuration);
+        reloadFromRootDirectory(configuration);
     }
 
     public boolean removeName(CharSequence tableName, String systemTableName) {
@@ -237,6 +174,81 @@ public class TableNameRegistry implements Closeable {
 
     private synchronized void appendEntry(final CharSequence tableName, final CharSequence systemTableName) {
         writeEntry(tableName, systemTableName, OPERATION_ADD);
+    }
+
+    private void reloadFromFile(CairoConfiguration configuration) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$()) {
+            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
+
+            long entryCount = tableNameMemory.getLong(0);
+            long currentOffset = Long.BYTES;
+
+            int deletedRecordsFound = 0;
+            for (int i = 0; i < entryCount; i++) {
+                int operation = tableNameMemory.getInt(currentOffset);
+                currentOffset += Integer.BYTES;
+                CharSequence tableName = tableNameMemory.getStr(currentOffset);
+                currentOffset += Vm.getStorageLength(tableName);
+
+                String tableNameStr = Chars.toString(tableName);
+                String systemName = Chars.toString(tableNameMemory.getStr(currentOffset));
+                currentOffset += Vm.getStorageLength(systemName);
+
+                if (operation == OPERATION_REMOVE) {
+                    // remove from registry
+                    systemTableNameCache.remove(tableNameStr);
+                    reverseTableNameCache.put(systemName, TABLE_DROPPED_MARKER);
+                    deletedRecordsFound++;
+                } else {
+                    boolean systemNameExists = reverseTableNameCache.get(systemName) != null;
+                    systemTableNameCache.put(tableNameStr, new TableNameRecord(systemName, true));
+                    if (systemNameExists) {
+                        // This table is renamed, log system to real table name mapping
+                        LOG.advisory().$("renamed WAL table system name [table=").utf8(tableNameStr).$(", systemTableName=").utf8(systemName).$();
+                    }
+                    reverseTableNameCache.put(systemName, tableNameStr);
+                    currentOffset += TABLE_NAME_ENTRY_RESERVED_LONGS * Long.BYTES;
+                }
+            }
+            tableNameMemory.jumpTo(currentOffset);
+
+            // compact the memory, remove deleted entries
+            // TODO: make this rewrite power cut stable
+            if (deletedRecordsFound > 0) {
+                tableNameMemory.jumpTo(Long.BYTES);
+
+                for (CharSequence tableName : systemTableNameCache.keySet()) {
+                    String systemName = systemTableNameCache.get(tableName).systemTableName;
+                    appendEntry(tableName, systemName);
+                }
+                tableNameMemory.putLong(0, systemTableNameCache.size());
+            }
+
+        }
+    }
+
+    private void reloadFromRootDirectory(CairoConfiguration configuration) {
+        Path path = Path.getThreadLocal(configuration.getRoot());
+        FilesFacade ff = configuration.getFilesFacade();
+        long findPtr = ff.findFirst(path.$());
+        StringSink sink = Misc.getThreadLocalBuilder();
+
+        do {
+            long fileName = ff.findName(findPtr);
+            if (Files.isDir(fileName, ff.findType(findPtr), sink)) {
+                if (systemTableNameCache.get(sink) == null
+                        && TableUtils.exists(ff, path, configuration.getRoot(), sink) == TableUtils.TABLE_EXISTS) {
+
+                    String systemTableName = sink.toString();
+                    String tableName = TableUtils.toTableNameFromSystemName(systemTableName);
+                    if (tableName != null) {
+                        registerName(tableName, systemTableName, false);
+                    }
+                }
+            }
+        } while (ff.findNext(findPtr) > 0);
+        ff.findClose(findPtr);
     }
 
     private synchronized void removeEntry(final CharSequence tableName, final CharSequence systemTableName) {

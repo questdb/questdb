@@ -920,7 +920,8 @@ public class IODispatcherTest {
             boolean expectDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectDisconnect, requestCount);
+        testImport(response, request, nf, null, expectDisconnect, requestCount, engine -> {
+        });
     }
 
     public void testImport(
@@ -929,7 +930,8 @@ public class IODispatcherTest {
             NetworkFacade nf,
             CairoConfiguration configuration,
             boolean expectDisconnect,
-            int requestCount
+            int requestCount,
+            HttpQueryTestBuilder.HttpClientCode createTable
     ) throws Exception {
 
         new HttpQueryTestBuilder()
@@ -944,15 +946,18 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run(configuration,
-                        engine -> sendAndReceive(
-                                nf,
-                                request,
-                                response,
-                                requestCount,
-                                0,
-                                false,
-                                expectDisconnect
-                        ));
+                        engine -> {
+                            createTable.run(engine);
+                            sendAndReceive(
+                                    nf,
+                                    request,
+                                    response,
+                                    requestCount,
+                                    0,
+                                    false,
+                                    expectDisconnect
+                            );
+                        });
     }
 
     @Test
@@ -2494,7 +2499,7 @@ public class IODispatcherTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        HttpQueryTestBuilder builder = testJsonQuery(
+        testJsonQuery(
                 10,
                 "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
@@ -3721,6 +3726,9 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
+        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
+
         // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
         testJsonQuery(
                 0,
@@ -3746,6 +3754,9 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
+
+        TestUtils.removeTestPath(temp.getRoot().getAbsolutePath());
+        TestUtils.createTestPath(temp.getRoot().getAbsolutePath());
 
         // quote large numbers (LONG) for questdb web console
         testJsonQuery(
@@ -7029,12 +7040,6 @@ public class IODispatcherTest {
         };
 
         String tableName = "test_table";
-        try (TableModel model = new TableModel(configuration, tableName, partitionBy)
-                .timestamp("ts")
-                .col("int", ColumnType.INT)) {
-            CairoTestUtils.createTable(model, tableName);
-        }
-
         String command = "POST /upload?fmt=json&" +
                 String.format("overwrite=%b&", overwrite) +
                 String.format("durable=%b&", durable) +
@@ -7094,7 +7099,14 @@ public class IODispatcherTest {
                 NetworkFacadeImpl.INSTANCE,
                 configuration,
                 false,
-                1
+                1,
+                engine -> {
+                    try (TableModel model = new TableModel(configuration, tableName, partitionBy)
+                            .timestamp("ts")
+                            .col("int", ColumnType.INT)) {
+                        CairoTestUtils.create(model, engine);
+                    }
+                }
         );
 
         Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));

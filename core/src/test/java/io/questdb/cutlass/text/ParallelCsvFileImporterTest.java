@@ -178,6 +178,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
@@ -217,6 +218,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
@@ -242,6 +244,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
 
+                refreshTablesInBaseEngine();
                 assertQuery("count\n1000\n", "select count(*) from t",
                         null, false, false, true);
 
@@ -280,6 +283,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab24", "test-badheadernames.csv", 1, PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("Line\tTs\tD\tDescRipTION\n" +
                             "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
                             "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
@@ -297,6 +301,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("t", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
@@ -323,6 +328,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab1", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
@@ -351,6 +357,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
@@ -389,6 +396,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n" +
                             "1000\n",
                     "select count(*) cnt from " + tableName,
@@ -429,6 +437,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("reading", "test-quotes-rawts.csv", 1, -1, (byte) ',', null, null, true, null);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("readingTypeId\tvalue\treadingDate\n" +
                             "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000001Z\n" +
                             "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000002Z\n" +
@@ -449,6 +458,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab2", "test-quotes-small.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("other\ttxt\tline\tts\td\n" +
                             "\tsome text\r\nspanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11\n" +
                             "\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\tline2\t2022-05-11T11:52:00.000000Z\t222.22\n" +
@@ -709,10 +719,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
         String tab41 = "tab41";
+        String systemTableName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                String systemTableName = Chars.toString(engine.getSystemTableName(tab41));
                 if (Chars.contains(path, File.separator + systemTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
                     return -1;
                 }
@@ -763,9 +774,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
         String tab34 = "tab34";
-        CharSequence systemTableName = engine.getSystemTableName(tab34);
+        CharSequence systemTableName = tab34 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         String tab34_0 = Chars.toString(systemTableName) + "_0";
-        String fakeExists = tab34_0 + File.separator + "_txn";
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
@@ -800,7 +810,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
         String tab33 = "tab33";
-        CharSequence systemTableName = engine.getSystemTableName(tab33);
+        CharSequence systemTableName = tab33 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         CharSequence fakeExists = systemTableName + "_0";
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
@@ -818,11 +828,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
-        CharSequence systemTableName = engine.getSystemTableName(tabex3);
+        CharSequence systemTableName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(systemTableName).slash$()) {
             FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
+        refreshTablesInBaseEngine();
         testImportThrowsException(tabex3, "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [table=" + tabex3 + "]");
     }
 
@@ -887,7 +898,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
-        String mangledPartDir = engine.getSystemTableName("tab34") + "_0";
+        CharSequence systemTableName = "tab34" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        String mangledPartDir = systemTableName + "_0";
         FilesFacade ff = new FilesFacadeImpl() {
 
             @Override
@@ -909,6 +921,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
+        refreshTablesInBaseEngine();
         testImportThrowsException(
                 ff,
                 "tab34",
@@ -930,6 +943,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("line\tts\td\ttxt\n" +
                             "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
                             "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
@@ -948,6 +962,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab", "test-row-over-65k.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("ts\tdescription\n" +
                             "2022-05-11T11:52:00.000000Z\tb\n",
                     "select * from tab",
@@ -965,6 +980,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("count\n1000\n",
                     "select count(*) from tab51", null, false, false, true);
         });
@@ -1076,6 +1092,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("count\ticount\tlcount\n1000\t1000\t1000\n",
                     "select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58", null, false, false, true);
         });
@@ -1101,6 +1118,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab50", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process();
 
+                refreshTablesInBaseEngine();
                 assertQuery("count\n1000\n",
                         "select count(*) from tab50", null, false, false, true);
             }
@@ -1124,6 +1142,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab61", "test-header-missing.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
                 importer.process();
 
+                refreshTablesInBaseEngine();
                 assertQuery("ts\tf3\tf3_\tf3__\tf4\n" +
                         "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
                         "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
@@ -1158,6 +1177,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab57", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("count\n3\n", "select count(*) from tab57", null, false, false, true);
         });
     }
@@ -1183,6 +1203,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of("tab55", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("count\n3\n", "select count(*) from tab55", null, false, false, true);
         });
     }
@@ -1536,6 +1557,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n13\n",
                     "select count(*) cnt from alltypes", null, false, false, true);
         });
@@ -1554,6 +1576,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
         });
     }
@@ -1583,6 +1606,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.process();
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" + //boolean parses anything other than true as false
@@ -2305,6 +2329,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(e.getMessage(), containsString("could not attach [partition='1972-09'"));
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n0\n", "select count(*) cnt from tab21", null, false, false, true);
         });
     }
@@ -2338,6 +2363,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(e.getMessage(), containsString("could not copy partition file"));
             }
 
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
         });
     }
@@ -2530,6 +2556,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             importer.process();
         }
 
+        refreshTablesInBaseEngine();
         assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                         "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                         "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
@@ -2633,6 +2660,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+
+            refreshTablesInBaseEngine();
             assertQuery("cnt\n" +
                             "1000\n",
                     "select count(*) cnt from " + tableName,

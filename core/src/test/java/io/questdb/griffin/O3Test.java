@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -40,6 +39,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.hamcrest.number.OrderingComparison;
@@ -89,23 +89,26 @@ public class O3Test extends AbstractO3Test {
     @Test
     // test case is contributed by Zhongwei Yao
     public void testAddColumnO3Fuzz() throws Exception {
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-        final String tableName = "ABC";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                .col("productId", ColumnType.INT)
-                .col("productName", ColumnType.STRING)
-                .col("category", ColumnType.SYMBOL)
-                .col("price", ColumnType.DOUBLE)
-                .timestamp()
-                .col("supplier", ColumnType.SYMBOL)
-        ) {
-            CairoTestUtils.createTable(model, tableName);
+        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final String tableName = "ABC";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("productId", ColumnType.INT)
+                    .col("productName", ColumnType.STRING)
+                    .col("category", ColumnType.SYMBOL)
+                    .col("price", ColumnType.DOUBLE)
+                    .timestamp()
+                    .col("supplier", ColumnType.SYMBOL)
+            ) {
+
+                CairoTestUtils.create(model, engine);
+            }
 
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
             IntList newColTypes = new IntList();
             CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = new TableWriter(configuration, tableName, tableName, Metrics.disabled())) {
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
                 Thread writerT = new Thread(() -> {
                     try {
                         int i = 0;
@@ -136,6 +139,7 @@ public class O3Test extends AbstractO3Test {
                     } catch (Exception e) {
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         LOG.info().$("write is done").$();
                     }
                 });
@@ -143,7 +147,7 @@ public class O3Test extends AbstractO3Test {
                 writerT.start();
                 writerT.join();
             }
-        }
+        });
     }
 
     @Test

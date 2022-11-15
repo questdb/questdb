@@ -294,7 +294,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.systemTableName = cairoEngine.getSystemTableName(tableName);
+        this.systemTableName = cairoEngine.getOrCreateSystemTableName(tableName, false);
         this.importRoot = tmpPath.of(inputWorkRoot).concat(systemTableName).toString();
         this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;

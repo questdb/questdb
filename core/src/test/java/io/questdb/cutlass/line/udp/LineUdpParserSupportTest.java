@@ -287,9 +287,10 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
                         CairoTestUtils.create(model
-                                .col(targetColumnName, columnType)
-                                .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                .timestamp());
+                                        .col(targetColumnName, columnType)
+                                        .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
+                                        .timestamp(),
+                                engine);
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {

@@ -28,25 +28,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+
+import java.util.Iterator;
 
 public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
     private final TableListRecordCursor cursor;
-    private final FilesFacade ff;
-    private Path path;
 
-    public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
+    public TableListRecordCursorFactory() {
         super(METADATA);
-        this.ff = ff;
-        path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
     }
 
@@ -62,19 +55,16 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        path = Misc.free(path);
     }
 
-    private class TableListRecordCursor implements RecordCursor {
+    private static class TableListRecordCursor implements RecordCursor {
         private final TableListRecord record = new TableListRecord();
-        private final StringSink sink = new StringSink();
         private CairoEngine engine;
-        private long findPtr = 0;
+        private Iterator<CharSequence> systemNames;
         private String tableName = null;
 
         @Override
         public void close() {
-            findPtr = ff.findClose(findPtr);
         }
 
         @Override
@@ -89,24 +79,20 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (true) {
-                if (findPtr == 0) {
-                    findPtr = ff.findFirst(path);
-                    if (findPtr <= 0) {
-                        return false;
-                    }
-                } else {
-                    if (ff.findNext(findPtr) <= 0) {
-                        return false;
-                    }
-                }
-                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                    tableName = engine.getTableNameBySystemName(sink);
-                    if (tableName != null) {
-                        return true;
-                    }
-                }
+            if (systemNames == null) {
+                systemNames = engine.getTableSequencerAPI().getTableSystemNames().iterator();
             }
+
+            do {
+                boolean hasNext = systemNames.hasNext();
+                if (!hasNext) {
+                    systemNames = null;
+                } else {
+                    tableName = engine.getTableNameBySystemName(systemNames.next());
+                }
+            } while (systemNames != null && tableName == null);
+
+            return systemNames != null;
         }
 
         @Override
@@ -121,7 +107,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
-            close();
+            systemNames = null;
         }
 
         private TableListRecordCursor of(@NotNull CairoEngine cairoEngine) {

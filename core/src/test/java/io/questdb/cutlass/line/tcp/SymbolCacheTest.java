@@ -29,7 +29,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -633,21 +632,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     }
 
     private void createTable(String tableName, int partitionBy) {
-        try (Path path = new Path()) {
-            try (
-                    MemoryMARW mem = Vm.getCMARWInstance();
-                    TableModel model = new TableModel(configuration, tableName, partitionBy)
-            ) {
-                model.timestamp();
-                TableUtils.createTable(
-                        configuration,
-                        mem,
-                        path,
-                        model,
-                        1,
-                        engine.getSystemTableName(model.getTableName())
-                );
-            }
+        try (
+                TableModel model = new TableModel(configuration, tableName, partitionBy)
+        ) {
+            model.timestamp();
+            CairoTestUtils.create(model, engine);
         }
     }
 

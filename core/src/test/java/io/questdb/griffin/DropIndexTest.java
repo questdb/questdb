@@ -30,11 +30,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -89,7 +85,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
-        CharSequence systemTableName = engine.getSystemTableName(tableName);
+        CharSequence systemTableName = tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         path = new Path().put(configuration.getRoot()).concat(systemTableName);
         tablePathLen = path.length();
     }

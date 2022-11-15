@@ -50,6 +50,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -59,9 +60,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
-    public static final String PRODUCT_FS = Chars.toString(engine.getSystemTableName(PRODUCT));
+    public static String PRODUCT_FS;
     private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        PRODUCT_FS = PRODUCT;
+        if (configuration.mangleTableSystemNames()) {
+            PRODUCT_FS += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        }
+    }
 
     @Test
     public void tesFrequentCommit() throws Exception {
@@ -209,7 +219,7 @@ public class TableWriterTest extends AbstractCairoTest {
                             path,
                             model,
                             tableId,
-                            engine.getSystemTableName(model.getTableName())
+                            registerTableName(model.getTableName())
                     );
                 }
             }
@@ -2118,7 +2128,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)) {
-            CairoTestUtils.create(model);
             testRemoveColumn(model);
         }
     }
@@ -2132,7 +2141,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
-            CairoTestUtils.create(model);
             testRemoveColumn(model);
         }
     }
@@ -2146,7 +2154,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("productName", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
-            CairoTestUtils.create(model);
             testRemoveColumn(model);
         }
     }
@@ -2390,7 +2397,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)) {
-            CairoTestUtils.create(model);
             testRenameColumn(model);
         }
     }
@@ -2404,7 +2410,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 .col("category", ColumnType.SYMBOL)
                 .col("price", ColumnType.DOUBLE)
                 .timestamp()) {
-            CairoTestUtils.create(model);
             testRenameColumn(model);
         }
     }

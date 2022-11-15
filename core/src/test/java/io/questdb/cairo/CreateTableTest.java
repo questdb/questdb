@@ -7,6 +7,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -277,6 +278,77 @@ public class CreateTableTest extends AbstractGriffinTest {
             }
 
             for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateWanAndNonWalTablesParallel() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 3;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(2 * threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int)", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i).start();
+
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                try {
+                                    compiler.compile("create table tab" + j + " (x int, ts timestamp) timestamp(ts) Partition by DAY WAL ", executionContext);
+                                    compiler.compile("drop table tab" + j, executionContext);
+                                } catch (SqlException e) {
+                                    TestUtils.assertContains(e.getFlyweightMessage(), "table already exists");
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(2 * i + 1).start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
                 threads.getQuick(i).join();
             }
 

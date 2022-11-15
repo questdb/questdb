@@ -256,9 +256,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                 throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
             }
 
-            try (
-                    TableListRecordCursorFactory factory = new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot())
-            ) {
+            try (TableListRecordCursorFactory factory = new TableListRecordCursorFactory()) {
                 final int tableNameIndex = factory.getMetadata().getColumnIndex(TableListRecordCursorFactory.TABLE_NAME_COLUMN);
                 try (RecordCursor cursor = factory.getCursor(executionContext)) {
                     final Record record = cursor.getRecord();

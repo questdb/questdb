@@ -413,8 +413,7 @@ public class SqlCompiler implements Closeable {
             tok = GenericLexer.unquote(expectToken(lexer, "table name"));
             tableExistsOrFail(tableNamePosition, tok, executionContext);
 
-            String systemTableName = engine.getSystemTableName(tok);
-            String tableName = engine.getTableNameBySystemName(systemTableName);
+            String tableName = executionContext.getTableNameAsString(tok);
             try (TableRecordMetadata tableMetadata = executionContext.getMetadata(
                     tok
             )) {
@@ -2233,7 +2232,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (null != tok) {
             if (isTablesKeyword(tok)) {
-                return compiledQuery.of(new TableListRecordCursorFactory(configuration.getFilesFacade(), configuration.getRoot()));
+                return compiledQuery.of(new TableListRecordCursorFactory());
             }
             if (isColumnsKeyword(tok)) {
                 return sqlShowColumns(executionContext);

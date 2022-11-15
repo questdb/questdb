@@ -6984,7 +6984,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 try {
                     try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            CairoTestUtils.create(tableModels[i]);
+                            CairoTestUtils.create(tableModels[i], engine);
                         }
                         compiler.compile("select * from tab", ctx);
                         Assert.fail("Exception expected");
@@ -7017,7 +7017,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
-            String systemTableName = engine.getSystemTableName("tab");
+            String systemTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             CharSequence lockedReason = engine.lock(AllowAllCairoSecurityContext.INSTANCE, systemTableName, "testing");
             Assert.assertNull(lockedReason);
             try {
@@ -7038,7 +7038,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         TableModel tableModel = tableModels[i];
                         CharSequence systemTableName1 = engine.getSystemTableName(tableModel.getName());
                         Path path = tableModel.getPath().of(tableModel.getConfiguration().getRoot()).concat(systemTableName1).slash$();
-                        Assert.assertEquals(0, configuration.getFilesFacade().rmdir(path));
+                        configuration.getFilesFacade().rmdir(path);
                         tableModel.close();
                     }
                 }
@@ -7051,14 +7051,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameReserved() throws Exception {
         try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName("tab");
+            String systemTableName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             configuration.getFilesFacade().touch(path.of(root).concat(systemTableName).$());
         }
 
         assertSyntaxError(
                 "select * from tab",
                 14,
-                "table directory is of unknown format"
+                "table does not exist [table=tab]" // creating folder does not reserve table name anymore
         );
     }
 

@@ -60,7 +60,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.openSequencerInstanceLambda = this::openSequencerInstance;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
-        this.tableNameRegistry = new TableNameRegistry(configuration.mangleTableSystemNames());
+        this.tableNameRegistry = new TableNameRegistry();
         this.tableNameRegistry.reloadTableNameCache(configuration);
     }
 
@@ -69,6 +69,14 @@ public class TableSequencerAPI implements QuietCloseable {
         closed = true;
         releaseAll();
         Misc.free(tableNameRegistry);
+    }
+
+    public void deleteNonWalName(CharSequence tableName, String systemTableName) {
+        tableNameRegistry.deleteNonWalName(tableName, systemTableName);
+    }
+
+    public void deregisterTableName(CharSequence tableName, String systemTableName) {
+        tableNameRegistry.removeName(tableName, systemTableName);
     }
 
     public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
@@ -94,61 +102,57 @@ public class TableSequencerAPI implements QuietCloseable {
         final FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.PATH.get();
 
-        for (CharSequence systemTableName : tableNameRegistry.getTableSystemNames()) {
+        for (CharSequence systemTableName : getTableSystemNames()) {
             if (tableNameRegistry.isWalSystemTableName(systemTableName) || tableNameRegistry.isWalTableDropped(systemTableName)) {
                 long lastTxn;
                 int tableId;
 
                 try {
-                    try {
-                        if (!seqRegistry.containsKey(systemTableName)) {
-                            // Fast path.
-                            // The following calls are racy, i.e. there might be a sequencer modifying both
-                            // metadata and log concurrently as we read the values. It's ok since we iterate
-                            // through the WAL tables periodically, so eventually we should see the updates.
-                            path.of(root).concat(systemTableName).concat(SEQ_DIR);
-                            long fdMeta = -1;
-                            long fdTxn = -1;
-                            try {
-                                fdMeta = openFileRO(ff, path, META_FILE_NAME);
-                                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-                                tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
-                                lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
-                            } finally {
-                                if (fdMeta > -1) {
-                                    ff.close(fdMeta);
-                                }
-                                if (fdTxn > -1) {
-                                    ff.close(fdTxn);
-                                }
+                    if (!seqRegistry.containsKey(systemTableName)) {
+                        // Fast path.
+                        // The following calls are racy, i.e. there might be a sequencer modifying both
+                        // metadata and log concurrently as we read the values. It's ok since we iterate
+                        // through the WAL tables periodically, so eventually we should see the updates.
+                        path.of(root).concat(systemTableName).concat(SEQ_DIR);
+                        long fdMeta = -1;
+                        long fdTxn = -1;
+                        try {
+                            fdMeta = openFileRO(ff, path, META_FILE_NAME);
+                            fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                            tableId = ff.readNonNegativeInt(fdMeta, SEQ_META_TABLE_ID);
+                            lastTxn = ff.readNonNegativeLong(fdTxn, MAX_TXN_OFFSET);
+                        } finally {
+                            if (fdMeta > -1) {
+                                ff.close(fdMeta);
                             }
-                        } else {
-                            // Slow path.
-                            try (TableSequencer tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
-                                lastTxn = tableSequencer.lastTxn();
-                                tableId = tableSequencer.getTableId();
+                            if (fdTxn > -1) {
+                                ff.close(fdTxn);
                             }
                         }
-                    } catch (CairoException ex) {
-                        LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
-                                .$(", error=").$((Throwable) ex).I$();
-                        return;
+                    } else {
+                        // Slow path.
+                        try (TableSequencer tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.NONE)) {
+                            lastTxn = tableSequencer.lastTxn();
+                            tableId = tableSequencer.getTableId();
+                        }
                     }
-                    if (tableId < 0 || lastTxn < 0) {
-                        LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", tableId=").$(tableId)
-                                .$(", lastTxn=").$(lastTxn).I$();
-                        return;
-                    }
-                    try {
-                        callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
-                    } catch (CairoException ex) {
-                        LOG.critical().$("could not process table sequencer [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
-                                .$(", error=").$((Throwable) ex).I$();
-                    }
-                } catch (CairoException e) {
-                    LOG.error().$("failed process WAL table [name=").utf8(systemTableName)
-                            .$(", errno=").$(e.getErrno())
-                            .$(", error=").$(e.getFlyweightMessage()).I$();
+                } catch (CairoException ex) {
+                    LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
+                            .$(", error=").$((Throwable) ex).I$();
+                    continue;
+                }
+
+                if (tableId < 0 || lastTxn < 0) {
+                    LOG.critical().$("could not read WAL table metadata [table=").utf8(systemTableName).$(", tableId=").$(tableId)
+                            .$(", lastTxn=").$(lastTxn).I$();
+                    continue;
+                }
+
+                try {
+                    callback.onTable(tableId, Chars.toString(systemTableName), lastTxn);
+                } catch (CairoException ex) {
+                    LOG.critical().$("could not process table sequencer [table=").utf8(systemTableName).$(", errno=").$(ex.getErrno())
+                            .$(", error=").$((Throwable) ex).I$();
                 }
             }
         }
@@ -194,10 +198,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return tableNameRegistry.getSystemName(tableName);
     }
 
-    public TableNameRecord getTableNameRecord(final CharSequence tableName) {
-        return tableNameRegistry.getTableNameRecord(tableName);
-    }
-
     public void getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
             try {
@@ -210,6 +210,14 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public String getTableNameBySystemName(CharSequence systemTableName) {
         return tableNameRegistry.getTableNameBySystemName(systemTableName);
+    }
+
+    public TableNameRecord getTableNameRecord(final CharSequence tableName) {
+        return tableNameRegistry.getTableNameRecord(tableName);
+    }
+
+    public Iterable<CharSequence> getTableSystemNames() {
+        return tableNameRegistry.getTableSystemNames();
     }
 
     @TestOnly
@@ -288,13 +296,21 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @Nullable
-    public String registerTableName(CharSequence tableName, int tableId) {
-        if (tableNameRegistry.isWalTableName(tableName)) {
+    public String registerTableName(CharSequence tableName, int tableId, boolean isWal) {
+        TableNameRecord nameRecord = tableNameRegistry.getTableNameRecord(tableName);
+        if (nameRecord != null) {
             return null;
         }
 
-        String systemTableName = Chars.toString(tableName) + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + tableId;
-        return tableNameRegistry.registerName(Chars.toString(tableName), systemTableName);
+        String tableNameStr = Chars.toString(tableName);
+        String systemTableName = tableNameStr;
+        if (isWal) {
+            systemTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+            systemTableName += tableId;
+        } else if (configuration.mangleTableSystemNames()) {
+            systemTableName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+        }
+        return tableNameRegistry.registerName(tableNameStr, systemTableName, isWal);
     }
 
     public boolean releaseAll() {
@@ -325,7 +341,7 @@ public class TableSequencerAPI implements QuietCloseable {
         tableNameRegistry.removeTableSystemName(systemTableName);
     }
 
-    public void rename(CharSequence tableName, CharSequence newTableName, String systemTableName) {
+    public void renameWalTable(CharSequence tableName, CharSequence newTableName, String systemTableName) {
         String newTableNameStr = tableNameRegistry.rename(tableName, newTableName, systemTableName);
         try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
             try {

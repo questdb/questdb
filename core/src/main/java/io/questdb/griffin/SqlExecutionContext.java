@@ -123,6 +123,11 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getStatus(getCairoSecurityContext(), path, tableName);
     }
 
+    default String getTableNameAsString(CharSequence tableName) {
+        String tableSystemName = getCairoEngine().getSystemTableName(tableName);
+        return getCairoEngine().getTableNameBySystemName(tableSystemName);
+    }
+
     int getWorkerCount();
 
     void initNow();

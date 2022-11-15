@@ -35,8 +35,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
+
+import java.util.Iterator;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_CATALOG_OID;
 import static io.questdb.cutlass.pgwire.PGOids.PG_PUBLIC_OID;
@@ -149,12 +149,11 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
         private final Path path;
         private final int plimit;
         private final DelegatingRecord record = new DelegatingRecord();
-        private final StringSink sink = new StringSink();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
         private final long tempMem;
         private CairoEngine engine;
-        private long findFileStruct = 0;
         private int fixedRelPos = -1;
+        private Iterator<CharSequence> systemNames;
         private String tableName;
 
         public PgClassRecordCursor(CairoConfiguration configuration, Path path, long tempMem) {
@@ -190,7 +189,6 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -205,20 +203,38 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             }
 
             record.of(diskReadingRecord);
-            if (findFileStruct == 0) {
-                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
-                if (findFileStruct > 0) {
-                    return next0();
+            if (systemNames == null) {
+                systemNames = engine.getTableSequencerAPI().getTableSystemNames().iterator();
+            }
+
+            do {
+                boolean hasNext = systemNames.hasNext();
+                if (!hasNext) {
+                    systemNames = null;
+                } else {
+                    CharSequence systemTableName = systemNames.next();
+                    tableName = engine.getTableNameBySystemName(systemTableName);
+
+                    if (tableName != null
+                            && ff.exists(path.trimTo(plimit).concat(systemTableName).concat(TableUtils.META_FILE_NAME).$())) {
+
+                        // open metadata file and read id
+                        long fd = ff.openRO(path);
+                        if (fd > -1) {
+                            if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
+                                intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
+                                ff.close(fd);
+                                return true;
+                            }
+                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                            ff.close(fd);
+                        }
+                    } else {
+                        tableName = null;
+                    }
                 }
-
-                findFileStruct = 0;
-                return false;
-            }
-
-            if (ff.findNext(findFileStruct) > 0) {
-                return next0();
-            }
-            return false;
+            } while (systemNames != null && tableName == null);
+            return systemNames != null;
         }
 
         public void of(CairoEngine engine) {
@@ -232,49 +248,12 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
         @Override
         public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
             fixedRelPos = -1;
             record.of(staticReadingRecord);
-        }
-
-        private boolean next0() {
-            do {
-                final long pUtf8NameZ = ff.findName(findFileStruct);
-                final long type = ff.findType(findFileStruct);
-                if (Files.isDir(pUtf8NameZ, type, sink)) {
-                    path.trimTo(plimit);
-                    if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
-                        tableName = engine.getTableNameBySystemName(sink);
-                        if (tableName == null) {
-                            continue;
-                        }
-
-                        // open metadata file and read id
-                        long fd = ff.openRO(path);
-                        if (fd > -1) {
-                            if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                intValues[INDEX_OID] = Unsafe.getUnsafe().getInt(tempMem);
-                                ff.close(fd);
-                                return true;
-                            }
-                            LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                            ff.close(fd);
-                        } else {
-                            LOG.error().$("could not read metadata [file=").$(path).$(']').$();
-                        }
-                        intValues[INDEX_OID] = -1;
-                        return true;
-                    }
-                }
-            } while (ff.findNext(findFileStruct) > 0);
-
-            findFileStruct = ff.findClose(findFileStruct);
-            return false;
+            systemNames = null;
         }
 
         private class DiskReadingRecord implements Record {
-            private final StringSink utf8SinkB = new StringSink();
-
             @Override
             public boolean getBool(int col) {
                 // most 'bool' fields are false, except 'relispopulated'
@@ -330,7 +309,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public CharSequence getStrB(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return getName(utf8SinkB);
+                    return tableName;
                 }
                 return null;
             }
@@ -339,19 +318,9 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
             public int getStrLen(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
-                    return engine.getTableNameBySystemName(sink).length();
+                    return tableName.length();
                 }
                 return -1;
-            }
-
-            @Nullable
-            private CharSequence getName(StringSink sink) {
-                sink.clear();
-                if (Chars.utf8DecodeZ(ff.findName(findFileStruct), sink)) {
-                    return engine.getTableNameBySystemName(sink);
-                } else {
-                    return null;
-                }
             }
         }
 

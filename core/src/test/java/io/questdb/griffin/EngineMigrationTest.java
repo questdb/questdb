@@ -1272,6 +1272,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
+        engine.reloadTableNames();
         assertData(withO3, withColTops, withColTopO3);
         appendData(withColTopO3);
         assertAppendedData(withColTopO3);

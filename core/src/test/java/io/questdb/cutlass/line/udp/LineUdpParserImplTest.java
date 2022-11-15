@@ -378,12 +378,12 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
     public void testCannotCreateTable() throws Exception {
+        CharSequence systemTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         TestFilesFacade ff = new TestFilesFacade() {
             boolean called = false;
 
             @Override
             public int mkdirs(Path path, int mode) {
-                CharSequence systemTableName = engine.getSystemTableName("x");
                 if (Chars.endsWith(path, Chars.toString(systemTableName) + Files.SEPARATOR)) {
                     called = true;
                     return -1;
@@ -556,7 +556,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     @Test
     public void testColumnConversion1() throws Exception {
         try (
-                @SuppressWarnings("resource")
                 TableModel model = new TableModel(configuration, "t_ilp21",
                         PartitionBy.NONE).col("event", ColumnType.SHORT).col("id", ColumnType.LONG256).col("ts", ColumnType.TIMESTAMP).col("float1", ColumnType.FLOAT)
                         .col("int1", ColumnType.INT).col("date1", ColumnType.DATE).col("byte1", ColumnType.BYTE).timestamp()) {
@@ -829,7 +828,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         try (Path path = new Path()) {
-            CharSequence systemTableName = engine.getSystemTableName("x");
+            CharSequence systemTableName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
             Files.mkdirs(path.of(root).concat(systemTableName).slash$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, systemTableName));
@@ -972,6 +971,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
+        refreshTablesInBaseEngine();
         try (TableReader reader = newTableReader(configuration, tableName)) {
             assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
@@ -1048,6 +1048,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
         });
 
+        refreshTablesInBaseEngine();
         try (TableReader reader = newTableReader(configuration, "tab")) {
             Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
         }

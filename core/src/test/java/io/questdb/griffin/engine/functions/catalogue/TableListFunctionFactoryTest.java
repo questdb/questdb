@@ -94,6 +94,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
             path.concat(configuration.getRoot()).concat(systemTableName).concat(META_FILE_NAME).$();
             filesFacade.remove(path);
         }
+
+        refreshTablesInBaseEngine();
         assertSql(
                 "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
