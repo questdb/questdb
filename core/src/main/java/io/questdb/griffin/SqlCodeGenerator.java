@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
@@ -3582,7 +3581,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     functionParser,
                     myMeta,
                     executionContext,
-                    latestByColumnCount > 1
+                    latestByColumnCount > 1,
+                    reader
             );
 
             // intrinsic parser can collapse where clause when removing parts it can replace
