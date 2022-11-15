@@ -69,7 +69,9 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertMemoryLeak(() -> assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n"));
+        assertMemoryLeak(() -> {
+            assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n");
+        });
     }
 
     @Test
@@ -116,13 +118,15 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
             long threadId = Thread.currentThread().getId();
 
-            long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
-                assertReaderPool(readerAcquisitionCount * 2, eitherOf(
-                        recordValidator(startTime, "tab1", threadId, 1),
-                        recordValidator(startTime, "tab2", threadId, 1))
-                );
-                return MicrosecondClockImpl.INSTANCE.getTicks();
-            }));
+            long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> {
+                return acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
+                    assertReaderPool(readerAcquisitionCount * 2, eitherOf(
+                            recordValidator(startTime, "tab1", threadId, 1),
+                            recordValidator(startTime, "tab2", threadId, 1))
+                    );
+                    return MicrosecondClockImpl.INSTANCE.getTicks();
+                });
+            });
 
             // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
             assertReaderPool(readerAcquisitionCount * 2, eitherOf(
@@ -298,6 +302,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     private static void exhaustCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
         }
+        ;
     }
 
     private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {

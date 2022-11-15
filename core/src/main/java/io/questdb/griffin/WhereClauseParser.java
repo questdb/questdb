@@ -100,7 +100,8 @@ final class WhereClauseParser implements Mutable {
         return typeTag == ColumnType.TIMESTAMP
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.STRING
-                || typeTag == ColumnType.SYMBOL;
+                || typeTag == ColumnType.SYMBOL
+                || typeTag == ColumnType.LONG;
     }
 
     private static void checkNodeValid(ExpressionNode node) throws SqlException {
@@ -146,8 +147,12 @@ final class WhereClauseParser implements Mutable {
                 return IntervalUtils.parseFloorPartialTimestamp(lo.token, 1, lo.token.length() - 1);
             }
             return Numbers.LONG_NaN;
-        } catch (NumericException ignore) {
-            throw SqlException.invalidDate(lo.position);
+        } catch (NumericException e1) {
+            try {
+                return Numbers.parseLong(lo.token);
+            } catch (NumericException ignore) {
+                throw SqlException.invalidDate(lo.position);
+            }
         }
     }
 
@@ -1257,13 +1262,20 @@ final class WhereClauseParser implements Mutable {
         try {
             // Timestamp string
             ts = IntervalUtils.parseFloorPartialTimestamp(node.token, 1, len - 1);
-            if (!equalsTo) {
-                ts += isLo ? 1 : -1;
-            }
+
         } catch (NumericException e) {
-            long inc = equalsTo ? 0 : isLo ? 1 : -1;
-            ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1) + inc;
+            try {
+                // Timestamp epoch (long)
+                ts = Numbers.parseLong(node.token);
+            } catch (NumericException e2) {
+                // Timestamp format
+                ts = TimestampFormatUtils.tryParse(node.token, 1, node.token.length() - 1);
+            }
         }
+        if (!equalsTo) {
+            ts += isLo ? 1 : -1;
+        }
+
         return ts;
     }
 

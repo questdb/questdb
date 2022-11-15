@@ -36,19 +36,27 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
 public class CmdUtils {
+    static PropServerConfiguration readServerConfiguration(
+            final String rootDirectory,
+            final Properties properties,
+            Log log,
+            final BuildInformation buildInformation
+    ) throws ServerConfigurationException, JsonException {
+        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
+    }
+
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) throws IOException, ServerConfigurationException, JsonException {
         String rootDirectory = params.tablePath + Files.SEPARATOR + ".." + Files.SEPARATOR + "..";
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
         final File configurationFile = new File(new File(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY), configurationFileName);
 
-        try (InputStream is = new FileInputStream(configurationFile)) {
+        try (InputStream is = java.nio.file.Files.newInputStream(configurationFile.toPath())) {
             properties.load(is);
         }
         final Log log = LogFactory.getLog("recover-var-index");
@@ -60,14 +68,5 @@ public class CmdUtils {
         } catch (CairoException ex) {
             log.error().$(ex.getFlyweightMessage()).$();
         }
-    }
-
-    static PropServerConfiguration readServerConfiguration(
-            final String rootDirectory,
-            final Properties properties,
-            Log log,
-            final BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException {
-        return new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
     }
 }

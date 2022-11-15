@@ -34,16 +34,18 @@ import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.ColumnType.*;
 
+@RunWith(Parameterized.class)
 abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTest {
 
     static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
@@ -51,6 +53,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    protected final boolean walEnabled;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
@@ -88,12 +91,26 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private boolean sendSymbolsWithSpace = false;
     private SOCountDownLatch threadPushFinished;
 
+    public AbstractLineTcpReceiverFuzzTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
+    @Before
+    public void setUp() {
+        defaultTableWriteMode = walEnabled ? 1 : 0;
+        super.setUp();
+    }
+
     @Before
     public void setUp2() {
-        long s0 = System.currentTimeMillis();
-        long s1 = System.nanoTime();
-        random = new Rnd(s0, s1);
-        getLog().info().$("random seed : ").$(s0).$(", ").$(s1).$();
+        random = TestUtils.generateRandom(getLog());
     }
 
     private CharSequence addColumn(LineData line, int colIndex) {
@@ -250,8 +267,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (shouldFuzz(columnSkipFactor)) {
             // avoid list here and just copy slices of the original array into the new one
             final List<Integer> indexes = new ArrayList<>();
-            for (int i = 0; i < originalColumnIndexes.length; i++) {
-                indexes.add(originalColumnIndexes[i]);
+            for (int originalColumnIndex : originalColumnIndexes) {
+                indexes.add(originalColumnIndex);
             }
             final int numOfSkippedCols = random.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
             for (int i = 0; i < numOfSkippedCols; i++) {
@@ -285,16 +302,14 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final LineData line = new LineData(timestampMillis.incrementAndGet());
         if (exerciseTags) {
             final int[] tagIndexes = getTagIndexes();
-            for (int i = 0; i < tagIndexes.length; i++) {
-                final int tagIndex = tagIndexes[i];
+            for (final int tagIndex : tagIndexes) {
                 final CharSequence tagName = addTag(line, tagIndex);
                 addDuplicateTag(line, tagIndex, tagName);
                 addNewTag(line);
             }
         }
         final int[] columnIndexes = getColumnIndexes();
-        for (int i = 0; i < columnIndexes.length; i++) {
-            final int colIndex = columnIndexes[i];
+        for (final int colIndex : columnIndexes) {
             final CharSequence colName = addColumn(line, colIndex);
             addDuplicateColumn(line, colIndex, colName);
             addNewColumn(line);
@@ -368,20 +383,37 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         tableNames = new ConcurrentHashMap<>();
     }
 
+    protected void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
+
     protected CharSequence pickTableName(int threadId) {
         return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
     }
 
     void runTest() throws Exception {
         runTest((factoryType, thread, name, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_UNLOCKED) {
-                handleWriterUnlockEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
-                handleWriterGetEvent(name);
-            }
-            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
-                handleWriterReturnEvent(name);
+            if (walEnabled) {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(name);
+                }
+                // There is no locking as such in WAL, so we treat writer return as an unlock event.
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterUnlockEvent(name);
+                    handleWriterReturnEvent(name);
+                }
+            } else {
+                if (factoryType == PoolListener.SRC_METADATA && event == PoolListener.EV_UNLOCKED) {
+                    handleWriterUnlockEvent(name);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_GET) {
+                    handleWriterGetEvent(name);
+                }
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    handleWriterReturnEvent(name);
+                }
             }
         }, 250);
     }
@@ -455,26 +487,27 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }).start();
     }
 
-    void waiForTable(TableData table) {
+    protected void waitDone() {
+        for (int i = 0; i < numOfTables; i++) {
+            final CharSequence tableName = getTableName(i);
+            final TableData table = tables.get(tableName);
+            waitForTable(table);
+        }
+    }
+
+    void waitForTable(TableData table) {
         // if CI is very slow the table could be released before ingestion stops
         // then acquired again for further data ingestion
         // because of the above we will wait in a loop with a timeout for the data to appear in the table
         // in most cases we should not hit the sleep() below
         table.await();
         for (int i = 0; i < 180; i++) {
+            mayDrainWalQueue();
             if (checkTable(table)) {
                 return;
             }
             Os.sleep(1000);
         }
         throw new RuntimeException("Timed out on waiting for the data, table=" + table.getName());
-    }
-
-    protected void waitDone() {
-        for (int i = 0; i < numOfTables; i++) {
-            final CharSequence tableName = getTableName(i);
-            final TableData table = tables.get(tableName);
-            waiForTable(table);
-        }
     }
 }

@@ -80,13 +80,15 @@ public class HealthCheckTest {
                 .withTempFolder(temp)
                 .withMetrics(metrics)
                 .withInjectedUnhandledError()
-                .run(engine -> new SendAndReceiveRequestBuilder()
-                        .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
-                        .withExpectDisconnect(false)
-                        .withPrintOnly(false)
-                        .withRequestCount(1)
-                        .withPauseBetweenSendAndReceive(0)
-                        .execute(healthCheckRequest, expectedResponse));
+                .run(engine -> {
+                    new SendAndReceiveRequestBuilder()
+                            .withNetworkFacade(NetworkFacadeImpl.INSTANCE)
+                            .withExpectDisconnect(false)
+                            .withPrintOnly(false)
+                            .withRequestCount(1)
+                            .withPauseBetweenSendAndReceive(0)
+                            .execute(healthCheckRequest, expectedResponse);
+                });
     }
 
     @Test

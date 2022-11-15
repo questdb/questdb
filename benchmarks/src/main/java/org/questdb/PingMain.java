@@ -35,9 +35,9 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectByteCharSequence;
 
 public class PingMain {
-    private static final Log LOG = LogFactory.getLog(PingMain.class);
     public static final String PING = "PING";
     public static final String PONG = "PONG";
+    private static final Log LOG = LogFactory.getLog(PingMain.class);
 
     public static void main(String[] args) {
         String host = "127.0.0.1";

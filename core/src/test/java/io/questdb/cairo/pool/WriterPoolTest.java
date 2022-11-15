@@ -534,7 +534,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 Os.pause();
                                 pool.unlock(tableName);
                             } else {
-                                Thread.yield();
+                                Os.pause();
                             }
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -556,6 +556,27 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, writerCount.get());
                 Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, pool.countFreeWriters());
+            }
+        });
+    }
+
+    @Test
+    public void testNThreadsRaceToLockSameTable() throws Exception {
+        assertWithPool(pool -> {
+            int N = 8;
+            final AtomicInteger errors = new AtomicInteger();
+            Thread[] threads = new Thread[N];
+            for (int i = 0; i < N; i++) {
+                threads[i] = new Thread(() -> {
+                    try (TableWriter w = pool.get("x", "testing")) {
+                    } catch (Throwable ignored) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads[i].start();
+            }
+            for (int i = 0; i < threads.length; i++) {
+                threads[i].join();
             }
         });
     }

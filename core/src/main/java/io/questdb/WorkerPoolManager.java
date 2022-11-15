@@ -42,6 +42,7 @@ public abstract class WorkerPoolManager {
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPool sharedPool;
+
     public WorkerPoolManager(ServerConfiguration config, HealthMetrics metrics) {
         sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
@@ -133,7 +134,8 @@ public abstract class WorkerPoolManager {
         PG_WIRE_SERVER("pg-wire"),
         LINE_TCP_IO("line-tcp-io"),
         LINE_TCP_WRITER("line-tcp-writer"),
-        OTHER("other");
+        OTHER("other"),
+        WAL_APPLY("wal-apply");
 
         private final String requester;
 

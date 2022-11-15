@@ -29,21 +29,35 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.mp.Job;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
 public class CairoEngineTest extends AbstractCairoTest {
-    private final static Path otherPath = new Path();
-    private final static Path path = new Path();
+
+    private static Path otherPath = new Path();
+    private static Path path = new Path();
+
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractCairoTest.setUpStatic();
+        otherPath = new Path();
+        path = new Path();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        otherPath = Misc.free(otherPath);
+        path = Misc.free(path);
+        AbstractCairoTest.tearDownStatic();
+    }
 
     @Test
     public void testAncillaries() throws Exception {
@@ -281,7 +295,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "remove failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table");
                 }
             }
         });
@@ -402,7 +416,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Rename failed");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 assertReader(engine, "x");

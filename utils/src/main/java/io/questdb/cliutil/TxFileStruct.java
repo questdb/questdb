@@ -30,30 +30,31 @@ import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 
 class TxFileStruct {
-    public long TX_OFFSET_COLUMN_VERSION;
-    public long TX_OFFSET_TXN;
-    public long TX_OFFSET_TRANSIENT_ROW_COUNT;
-    public long TX_OFFSET_FIXED_ROW_COUNT;
-    public long TX_OFFSET_MIN_TIMESTAMP;
-    public long TX_OFFSET_MAX_TIMESTAMP;
-    public long TX_OFFSET_DATA_VERSION;
-    public long TX_OFFSET_STRUCT_VERSION;
-    public long TX_OFFSET_PARTITION_TABLE_VERSION;
-    public long TX_OFFSET_TRUNCATE_VERSION;
-    public int TX_OFFSET_MAP_WRITER_COUNT;
-    public ArrayList<SymbolInfo> SYMBOLS;
-    public int ATTACHED_PARTITION_SIZE;
     public ArrayList<AttachedPartition> ATTACHED_PARTITIONS;
+    public int ATTACHED_PARTITION_SIZE;
+    public ArrayList<SymbolInfo> SYMBOLS;
+    public long TX_OFFSET_COLUMN_VERSION;
+    public long TX_OFFSET_DATA_VERSION;
+    public long TX_OFFSET_FIXED_ROW_COUNT;
+    public int TX_OFFSET_MAP_WRITER_COUNT;
+    public long TX_OFFSET_MAX_TIMESTAMP;
+    public long TX_OFFSET_MIN_TIMESTAMP;
+    public long TX_OFFSET_PARTITION_TABLE_VERSION;
+    public long TX_OFFSET_SEQ_TXN;
+    public long TX_OFFSET_STRUCT_VERSION;
+    public long TX_OFFSET_TRANSIENT_ROW_COUNT;
+    public long TX_OFFSET_TRUNCATE_VERSION;
+    public long TX_OFFSET_TXN;
 
     public long calculateFileSize() {
         return getPartitionTableIndexOffset(TX_OFFSET_MAP_WRITER_COUNT, ATTACHED_PARTITION_SIZE * 4) + TX_BASE_HEADER_SIZE;
     }
 
     static class AttachedPartition {
-        long TS;
-        long SIZE;
-        long NAME_TX;
         long DATA_TX;
+        long NAME_TX;
+        long SIZE;
+        long TS;
     }
 
     static class SymbolInfo {

@@ -399,7 +399,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             try {
                                 if (scoreboard.acquireTxn(txn + (long) s * entryCount)) {
                                     scoreboard.releaseTxn(txn + (long) s * entryCount);
-                                    Thread.yield();
+                                    Os.pause();
                                 }
                             } catch (CairoException e) {
                                 if (Chars.contains(e.getFlyweightMessage(), "max txn-inflight limit reached")) {
@@ -478,7 +478,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                                 // This one also fails, but those could be readers that didn't roll back yet
                                 anomaly.incrementAndGet();
                             }
-                            Thread.yield();
+                            Os.pause();
                         }
                     } catch (Throwable e) {
                         LOG.errorW().$(e).$();

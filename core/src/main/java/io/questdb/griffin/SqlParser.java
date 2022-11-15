@@ -565,8 +565,8 @@ public final class SqlParser {
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setCommitLag(commitLag);
         final boolean isWalEnabled =
-                PartitionBy.isPartitioned(model.getPartitionBy()) && (
-                        (walSetting == walNotSet && configuration.getWallEnabledDefault()) || walSetting == walEnabled
+                configuration.isWalSupported() && PartitionBy.isPartitioned(model.getPartitionBy()) && (
+                        (walSetting == walNotSet && configuration.getWalEnabledDefault()) || walSetting == walEnabled
                 );
 
         model.setWalEnabled(isWalEnabled);
@@ -586,7 +586,7 @@ public final class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
         }
 
         model.setQueryModel(queryModel);
@@ -660,7 +660,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
+            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {
@@ -1260,7 +1260,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (isSelectKeyword(tok) || isWithKeyword(tok)) {
+        if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
@@ -1728,14 +1728,20 @@ public final class SqlParser {
     private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
         parseWithClauses(lexer, topLevelWithModel);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
-        if (!isUpdateKeyword(tok)) {
-            // SELECT
+        if (isSelectKeyword(tok)) {
             lexer.unparseLast();
             return parseDml(lexer, null, lexer.lastTokenPosition());
-        } else {
-            // UPDATE
+        }
+
+        if (isUpdateKeyword(tok)) {
             return parseUpdate(lexer);
         }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer);
+        }
+
+        throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
     private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {

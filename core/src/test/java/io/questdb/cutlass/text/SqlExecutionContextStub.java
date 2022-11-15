@@ -119,7 +119,17 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isColumnPreTouchEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
+        return false;
+    }
+
+    @Override
+    public boolean isWalApplication() {
         return false;
     }
 
@@ -133,6 +143,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
+    }
+
+    @Override
+    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
     }
 
     @Override

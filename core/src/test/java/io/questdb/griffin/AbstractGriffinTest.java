@@ -31,9 +31,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.ops.AbstractOperation;
-import io.questdb.griffin.engine.ops.OperationDispatcher;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
@@ -51,10 +48,9 @@ import org.junit.BeforeClass;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
-public class AbstractGriffinTest extends AbstractCairoTest {
+public abstract class AbstractGriffinTest extends AbstractCairoTest {
     private final static double EPSILON = 0.000001;
     private static final LongList rows = new LongList();
     protected static BindVariableService bindVariableService;
@@ -1021,18 +1017,19 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        if (cc.getType() == CompiledQuery.UPDATE) {
-            try (UpdateOperation op = cc.getUpdateOperation()) {
-                try (OperationFuture future = cc.getDispatcher().execute(op, sqlExecutionContext, null)) {
-                    future.await();
-                }
-            }
-        } else {
-            try (OperationFuture future = cc.execute(null)) {
-                future.await();
-            }
+        try (OperationFuture future = cc.execute(null)) {
+            future.await();
         }
         return cc;
+    }
+
+    protected static boolean couldObtainLock(Path path) {
+        final long lockFd = TableUtils.lock(FilesFacadeImpl.INSTANCE, path, false);
+        if (lockFd != -1L) {
+            FilesFacadeImpl.INSTANCE.close(lockFd);
+            return true;  // Could lock/unlock.
+        }
+        return false;  // Could not obtain lock.
     }
 
     protected static void printSqlResult(
@@ -1171,7 +1168,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 try {
                     compile(query, sqlExecutionContext);
                     Assert.fail("query '" + query + "' should have failed with '" + expectedMessage + "' message!");
-                } catch (SqlException | ImplicitCastException e) {
+                } catch (SqlException | ImplicitCastException | CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                     Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
                 }
@@ -1405,6 +1402,31 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    protected void assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).$();
+            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
+    protected void assertSegmentLockEngagement(boolean expectLocked, String tableName, int walId, int segmentId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            final boolean could = couldObtainLock(path);
+            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
+        }
+    }
+
+    protected void assertSegmentLockExistence(boolean expectExists, String tableName, int walId, int segmentId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
+            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
     protected void assertSql(CharSequence sql, CharSequence expected) throws SqlException {
         TestUtils.assertSql(
                 compiler,
@@ -1430,6 +1452,31 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 expected
         );
+    }
+
+    protected void assertWalExistence(boolean expectExists, String tableName, int walId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).$();
+            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
+    }
+
+    protected void assertWalLockEngagement(boolean expectLocked, String tableName, int walId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).put(".lock").$();
+            final boolean could = couldObtainLock(path);
+            Assert.assertEquals(Chars.toString(path), expectLocked, !could);
+        }
+    }
+
+    protected void assertWalLockExistence(boolean expectExists, String tableName, int walId) {
+        final CharSequence root = engine.getConfiguration().getRoot();
+        try (Path path = new Path()) {
+            path.of(root).concat(tableName).concat("wal").put(walId).put(".lock").$();
+            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+        }
     }
 
     protected void createPopulateTable(
@@ -1460,18 +1507,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    protected <T extends AbstractOperation> void executeOperation(
+    protected void executeOperation(
             String query,
-            short opType,
-            Function<CompiledQuery, T> op
+            int opType
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(opType, cq.getType());
-        OperationDispatcher<T> dispatcher = cq.getDispatcher();
-        try (
-                T operation = op.apply(cq);
-                OperationFuture fut = dispatcher.execute(operation, sqlExecutionContext, eventSubSequence)
-        ) {
+        try (OperationFuture fut = cq.execute(eventSubSequence)) {
             fut.await();
         }
     }

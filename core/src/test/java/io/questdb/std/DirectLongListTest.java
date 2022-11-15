@@ -59,10 +59,7 @@ public class DirectLongListTest {
 
     @Test
     public void test128BitSortFuzzTest() throws Exception {
-        long s0 = System.currentTimeMillis();
-        long s1 = System.nanoTime();
-        Rnd rnd = new Rnd(s0, s1);
-        LOG.info().$("random seed : ").$(s0).$(", ").$(s1).$();
+        Rnd rnd = TestUtils.generateRandom(LOG);
 
         int size = 1024 * 1024;
         int range = Integer.MAX_VALUE - 1;

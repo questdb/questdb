@@ -234,6 +234,36 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testExplicitTimestampColumnIndexIsCleared() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                // the poison table sets the timestamp column index explicitly
+                sender.table("poison")
+                        .stringColumn("str_col1", "str_col1")
+                        .stringColumn("str_col2", "str_col2")
+                        .stringColumn("str_col3", "str_col3")
+                        .stringColumn("str_col4", "str_col4")
+                        .timestampColumn("timestamp", ts)
+                        .at(ts * 1000);
+                sender.flush();
+                assertTableSizeEventually(engine, "poison", 1);
+
+                // the victim table does not set the timestamp column index explicitly
+                sender.table("victim")
+                        .stringColumn("str_col1", "str_col1")
+                        .at(ts * 1000);
+                sender.flush();
+                assertTableSizeEventually(engine, "victim", 1);
+            }
+        });
+    }
+
+    @Test
     public void testMinBufferSizeWhenAuth() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;

@@ -45,25 +45,13 @@ import java.util.concurrent.TimeUnit;
 public class StrPosBenchmark {
 
     private static final int N = 1_000_000;
-
-    private final Record[] records;
-    private final String[] strings;
-    private final Function strFunc;
-    private final Function strConstFunc;
-    private final Function charFunc;
     private final Function charConstFunc;
+    private final Function charFunc;
+    private final Record[] records;
     private final Rnd rnd = new Rnd();
-
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(StrPosBenchmark.class.getSimpleName())
-                .warmupIterations(2)
-                .measurementIterations(3)
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
-    }
+    private final Function strConstFunc;
+    private final Function strFunc;
+    private final String[] strings;
 
     public StrPosBenchmark() {
         StringBuilder builder = new StringBuilder();
@@ -129,21 +117,26 @@ public class StrPosBenchmark {
         charConstFunc = new StrPosCharFunctionFactory.ConstFunc(strInputFunc, ',');
     }
 
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(StrPosBenchmark.class.getSimpleName())
+                .warmupIterations(2)
+                .measurementIterations(3)
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+
     @Benchmark
     public int testBaseline() {
         return rnd.nextInt(N);
     }
 
     @Benchmark
-    public int testStrOverload() {
+    public int testCharConstOverload() {
         int i = rnd.nextInt(N);
-        return strFunc.getInt(records[i]);
-    }
-
-    @Benchmark
-    public int testStrConstOverload() {
-        int i = rnd.nextInt(N);
-        return strConstFunc.getInt(records[i]);
+        return charConstFunc.getInt(records[i]);
     }
 
     @Benchmark
@@ -153,8 +146,14 @@ public class StrPosBenchmark {
     }
 
     @Benchmark
-    public int testCharConstOverload() {
+    public int testStrConstOverload() {
         int i = rnd.nextInt(N);
-        return charConstFunc.getInt(records[i]);
+        return strConstFunc.getInt(records[i]);
+    }
+
+    @Benchmark
+    public int testStrOverload() {
+        int i = rnd.nextInt(N);
+        return strFunc.getInt(records[i]);
     }
 }

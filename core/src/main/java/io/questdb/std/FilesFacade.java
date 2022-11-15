@@ -38,6 +38,8 @@ public interface FilesFacade {
 
     int copy(LPSZ from, LPSZ to);
 
+    long copyData(long srcFd, long destFd, long offsetSrc, long length);
+
     int copyRecursive(Path src, Path dst, int dirMode);
 
     int errno();
@@ -110,7 +112,9 @@ public interface FilesFacade {
 
     long read(long fd, long buf, long size, long offset);
 
-    long readULong(long fd, long offset);
+    int readNonNegativeInt(long fd, long offset);
+
+    long readNonNegativeLong(long fd, long offset);
 
     boolean remove(LPSZ name);
 
