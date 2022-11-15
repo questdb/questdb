@@ -116,7 +116,7 @@ public class RecordComparatorCompiler {
             asm.iconst(columnIndex);
             asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
 
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
                 asm.aload(0);
                 asm.getfield(fieldIndices.getQuick(fieldIndex++));
                 asm.aload(1);
@@ -197,7 +197,7 @@ public class RecordComparatorCompiler {
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
 
-            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128 || columnTypes.getColumnType(columnIndex) == ColumnType.UUID) {
                 asm.aload(0);
                 asm.aload(1);
                 asm.iconst(columnIndex);
@@ -318,6 +318,14 @@ public class RecordComparatorCompiler {
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128Util.class;
                     break;
+                case ColumnType.UUID:
+                    getterNameA = "getUuidMostSig";
+                    getterNameB = "getUuidLeastSig";
+                    fieldType = "J";
+                    comparatorDesc = "(JJJJ)I";
+                    // todo: is this a desirable reuse?
+                    comparatorClass = Long128Util.class;
+                    break;
                 default:
                     // SYMBOL
                     getterNameA = "getSym";
@@ -345,7 +353,7 @@ public class RecordComparatorCompiler {
 
             int methodIndex;
             String getterType = fieldType;
-            if (columnType == ColumnType.LONG128) {
+            if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
                 // Special case, Long128 is 2 longs of type J on comparison
                 fieldTypeIndices.add(typeIndex);
                 int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
