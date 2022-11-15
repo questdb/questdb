@@ -66,8 +66,7 @@ public final class MutableUuid implements Sinkable {
 
     @Override
     public int hashCode() {
-        long hilo = mostSigBits ^ leastSigBits;
-        return ((int) (hilo >> 32)) ^ (int) hilo;
+        return Hash.hash(mostSigBits, leastSigBits);
     }
 
     public void of(long mostSigBits, long leastSigBits) {

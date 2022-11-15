@@ -536,6 +536,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CountLong256GroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctLongGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.CountDistinctIntGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFactory,
             //      'haversine_dist_degree' group by function
             io.questdb.griffin.engine.functions.groupby.HaversineDistDegreeGroupByFunctionFactory,
 //                  'isOrdered'

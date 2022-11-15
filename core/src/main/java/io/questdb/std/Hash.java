@@ -64,6 +64,24 @@ public final class Hash {
     }
 
     /**
+     * Hash function based on Knuth's multiplicative method.
+     *
+     * @param k the long for which the hash will be calculated
+     * @return the hash
+     */
+    public static long fastLongMix(long k) {
+        // phi = 2^64 / goldenRatio
+        final long phi = 0x9E3779B97F4A7C15L;
+        long h = k * phi;
+        h ^= h >>> 32;
+        return h ^ (h >>> 16);
+    }
+
+    public static int hash(long key1, long key2) {
+        return (int) fastLongMix(fastLongMix(key1) + key2);
+    }
+
+    /**
      * Calculates positive integer hash of memory pointer using 32-bit variant of xxHash hash algorithm.
      *
      * @param p   memory pointer

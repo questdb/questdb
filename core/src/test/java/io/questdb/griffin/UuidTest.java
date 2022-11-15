@@ -71,6 +71,35 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCountDistinctAggregation_keyed() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+
+        assertQuery("i\tcount_distinct\n" +
+                        "0\t2\n" +
+                        "1\t1\n",
+                "select i, count_distinct(u) from x group by i order by i", null, null, true, true, true);
+    }
+
+    @Test
+    public void testCountDistinctAggregation_nonkeyed() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+
+        assertQuery("count_distinct\n" +
+                        "3\n",
+                "select count_distinct(u) from x", null, null, false, true, true);
+    }
+
+    @Test
     public void testEqualityComparisonExplicitCast() throws Exception {
         MutableUuid uuid = new MutableUuid();
         uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
