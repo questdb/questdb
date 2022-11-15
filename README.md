@@ -49,6 +49,13 @@ QuestDB release and sample datasets:
 - live trading data from a cryptocurrency exchange
 - geolocations of 250k unique ships over time
 
+| Query                                                                                                       | Runtime    |
+| ----------------------------------------------------------------------------------------------------------- | ---------- |
+| `SELECT sum(fare_amount) FROM trips;`                                                                       | 0.152 secs |
+| `SELECT sum(fare_amount), avg(fare_amount) FROM trips;`                                                     | 0.523 secs |
+| `SELECT sum(fare_amount), avg(fare_amount) FROM trips WHERE pickup_datetime IN '2019';`                     | 0.018 secs |
+| `SELECT pickup_datetime, avg(trip_distance) FROM trips WHERE pickup_datetime IN '2019-01-01' SAMPLE BY 1h;` | 0.009 secs |
+
 ## Get started
 
 ### Install QuestDB
@@ -113,15 +120,6 @@ results using the `cpu-only` use case with 6 workers on an AMD Ryzen 3970X:
     <img alt="A chart comparing the maximum throughput of QuestDB, ClickHouse, TimescaleDB and InfluxDB." src=".github/tsbs-results.png"/>
   </a>
 </div>
-
-The following table shows query execution time of a billion rows run on a
-`c5.metal` instance using 16 of the 96 threads available:
-
-| Query                                                        | Runtime    |
-| ------------------------------------------------------------ | ---------- |
-| `SELECT sum(double) FROM 1bn`                                | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                           | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp in '2019'` | 0.05 secs  |
 
 ## Resources
 
