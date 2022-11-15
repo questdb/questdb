@@ -136,10 +136,17 @@ public class TableNameRegistry implements Closeable {
 
     public boolean removeName(CharSequence tableName, String systemTableName) {
         TableNameRecord nameRecord = systemTableNameCache.get(tableName);
-        if (nameRecord != null && nameRecord.systemTableName.equals(systemTableName) && systemTableNameCache.remove(tableName, nameRecord)) {
-            removeEntry(tableName, systemTableName);
-            reverseTableNameCache.put(systemTableName, TABLE_DROPPED_MARKER);
+        if (nameRecord != null
+                && nameRecord.systemTableName.equals(systemTableName)
+                && systemTableNameCache.remove(tableName, nameRecord)) {
+            if (nameRecord.isWal) {
+                removeEntry(tableName, systemTableName);
+                reverseTableNameCache.put(systemTableName, TABLE_DROPPED_MARKER);
+            } else {
+                reverseTableNameCache.remove(systemTableName);
+            }
             return true;
+
         }
         return false;
     }

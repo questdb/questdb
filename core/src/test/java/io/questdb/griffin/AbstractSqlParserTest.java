@@ -170,7 +170,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
     }
 
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
-        engine.getTableSequencerAPI().reopen();
+        refreshTablesInBaseEngine();
         AbstractSqlParserTest.assertSyntaxError(compiler, query, position, contains, tableModels);
     }
 

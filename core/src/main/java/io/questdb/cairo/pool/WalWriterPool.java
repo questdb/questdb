@@ -25,16 +25,17 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
 
-    private final TableSequencerAPI tableSequencerAPI;
+    private final CairoEngine engine;
 
-    public WalWriterPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
         super(configuration);
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.engine = engine;
     }
 
     @Override
@@ -44,7 +45,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected WalWriterTenant newTenant(String systemtableName, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(this, entry, index, systemtableName, tableSequencerAPI.getTableNameBySystemName(systemtableName), tableSequencerAPI);
+        return new WalWriterTenant(this, entry, index, systemtableName, engine.getTableNameBySystemName(systemtableName), engine.getTableSequencerAPI());
     }
 
     public static class WalWriterTenant extends WalWriter implements PoolTenant {

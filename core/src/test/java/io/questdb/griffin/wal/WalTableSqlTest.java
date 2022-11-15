@@ -401,9 +401,11 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertManyThenDrop() throws Exception {
-        assertMemoryLeak(ff, () -> {
+    public void testDropRemovesFromCatalogFunctions() throws Exception {
+        assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
+            String tableNameNonWal = testName.getMethodName() + "_non_wal";
+
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -412,17 +414,60 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-            String sysTableName = Chars.toString(engine.getSystemTableName(tableName));
+
+            compile("create table " + tableNameNonWal + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+
+            assertSql("all_tables() order by table", "table\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables() order by name", "name\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
+                    tableName + "\n" +
+                    tableNameNonWal + "\n");
+
 
             compile("drop table " + tableName);
+
+            assertSql("all_tables() order by table", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables() order by name", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
+
             drainWalQueue();
 
-            engine.getTableSequencerAPI().reopen();
-            engine.notifyWalTxnCommitted(1, sysTableName, 10);
-            drainWalQueue();
+            assertSql("all_tables() order by table", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables() order by name", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
 
-            checkTableFilesExist(sysTableName, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName);
+
+            refreshTablesInBaseEngine();
+
+            assertSql("all_tables() order by table", "table\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select name from tables() order by name", "name\n" +
+                    tableNameNonWal + "\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
+                    tableNameNonWal + "\n");
+
+            compile("drop table " + tableNameNonWal);
+
+            assertSql("all_tables() order by table", "table\n");
+            assertSql("select name from tables() order by name", "name\n");
+            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n");
         });
     }
 
@@ -694,11 +739,9 @@ public class WalTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropRemovesFromCatalogFunctions() throws Exception {
-        assertMemoryLeak(() -> {
+    public void testInsertManyThenDrop() throws Exception {
+        assertMemoryLeak(ff, () -> {
             String tableName = testName.getMethodName();
-            String tableNameNonWal = testName.getMethodName() + "_non_wal";
-
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -707,60 +750,17 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-
-            compile("create table " + tableNameNonWal + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY BYPASS WAL"
-            );
-
-            assertSql("all_tables() order by table", "table\n" +
-                    tableName + "\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select name from tables() order by name", "name\n" +
-                    tableName + "\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
-                    tableName + "\n" +
-                    tableNameNonWal + "\n");
-
+            String sysTableName = Chars.toString(engine.getSystemTableName(tableName));
 
             compile("drop table " + tableName);
-
-            assertSql("all_tables() order by table", "table\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select name from tables() order by name", "name\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
-                    tableNameNonWal + "\n");
-
             drainWalQueue();
 
-            assertSql("all_tables() order by table", "table\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select name from tables() order by name", "name\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
-                    tableNameNonWal + "\n");
+            refreshTablesInBaseEngine();
+            engine.notifyWalTxnCommitted(1, sysTableName, 10);
+            drainWalQueue();
 
-
-            engine.getTableSequencerAPI().reopen();
-
-            assertSql("all_tables() order by table", "table\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select name from tables() order by name", "name\n" +
-                    tableNameNonWal + "\n");
-            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n" +
-                    tableNameNonWal + "\n");
-
-            compile("drop table " + tableNameNonWal);
-
-            assertSql("all_tables() order by table", "table\n");
-            assertSql("select name from tables() order by name", "name\n");
-            assertSql("select relname from pg_class() order by relname", "relname\npg_class\n");
+            checkTableFilesExist(sysTableName, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName);
         });
     }
 
@@ -932,7 +932,7 @@ public class WalTableSqlTest extends AbstractGriffinTest {
 
             for (int i = 0; i < 2; i++) {
                 engine.releaseInactive();
-                engine.getTableSequencerAPI().reopen();
+                refreshTablesInBaseEngine();
 
                 String newTableSystemName2 = Chars.toString(engine.getSystemTableName(newTableName));
                 Assert.assertEquals(newTableSystemName, newTableSystemName2);

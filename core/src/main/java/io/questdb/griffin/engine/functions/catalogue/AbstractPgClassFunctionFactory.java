@@ -204,7 +204,7 @@ public abstract class AbstractPgClassFunctionFactory implements FunctionFactory 
 
             record.of(diskReadingRecord);
             if (systemNames == null) {
-                systemNames = engine.getTableSequencerAPI().getTableSystemNames().iterator();
+                systemNames = engine.getTableSystemNames().iterator();
             }
 
             do {

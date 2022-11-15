@@ -2980,7 +2980,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private static void assertTable(String expected) throws SqlException {
-        engine.getTableSequencerAPI().reopen();
+        refreshTablesInBaseEngine();
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,

@@ -198,7 +198,7 @@ public abstract class AbstractCairoTest {
     }
 
     public static void refreshTablesInBaseEngine() {
-        AbstractGriffinTest.engine.getTableSequencerAPI().reopen();
+        AbstractGriffinTest.engine.reloadTableNames();
     }
 
     @BeforeClass
@@ -530,7 +530,7 @@ public abstract class AbstractCairoTest {
         TestUtils.createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
-        engine.getTableSequencerAPI().reopen();
+        refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
     }
@@ -545,7 +545,7 @@ public abstract class AbstractCairoTest {
         snapshotAgent.clear();
         engine.getTableIdGenerator().close();
         engine.clear();
-        engine.getTableSequencerAPI().close();
+        engine.getTableSequencerAPI().releaseInactive();
         if (removeDir) {
             TestUtils.removeTestPath(root);
         }
@@ -630,7 +630,7 @@ public abstract class AbstractCairoTest {
                 engine.releaseInactive();
                 engine.releaseInactiveCompilers();
                 engine.releaseInactiveTableSequencers();
-                engine.getTableSequencerAPI().resetNameRegistryMemory();
+                engine.resetNameRegistryMemory();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
             } finally {
@@ -710,7 +710,7 @@ public abstract class AbstractCairoTest {
     }
 
     protected boolean isWalTable(CharSequence tableName) {
-        return engine.getTableSequencerAPI().isWalTableName(tableName);
+        return engine.isWalTableName(tableName);
     }
 
     protected TableWriter newTableWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus, Metrics metrics) {

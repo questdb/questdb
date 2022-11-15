@@ -24,19 +24,16 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DynamicTableReaderMetadata;
-import io.questdb.cairo.GenericTableRecordMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
 public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataTenant> {
-    private final TableSequencerAPI tableSequencerAPI;
+    private final CairoEngine engine;
 
-    public MetadataPool(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public MetadataPool(CairoConfiguration configuration, CairoEngine engine) {
         super(configuration);
-        this.tableSequencerAPI = tableSequencerAPI;
+        this.engine = engine;
     }
 
     @Override
@@ -46,10 +43,10 @@ public class MetadataPool extends AbstractMultiTenantPool<MetadataPool.MetadataT
 
     @Override
     protected MetadataTenant newTenant(String systemTableName, Entry<MetadataTenant> entry, int index) {
-        String tableName = tableSequencerAPI.getTableNameBySystemName(systemTableName);
+        String tableName = engine.getTableNameBySystemName(systemTableName);
         if (tableName != null) {
-            if (tableSequencerAPI.isWalSystemName(systemTableName)) {
-                return new SequencerMetadataTenant(this, entry, index, systemTableName, tableSequencerAPI);
+            if (engine.isWalSystemTableName(systemTableName)) {
+                return new SequencerMetadataTenant(this, entry, index, systemTableName, engine.getTableSequencerAPI());
             }
             return new TableReaderMetadataTenant(this, entry, index, tableName, systemTableName);
         }

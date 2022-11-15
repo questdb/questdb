@@ -38,7 +38,7 @@ public class CairoTestUtils {
 
     public static void create(TableModel model, CairoEngine engine) {
         int tableId = 1;
-        String systemTableName = engine.getTableSequencerAPI().registerTableName(model.getTableName(), tableId, false);
+        String systemTableName = engine.registerTableName(model.getTableName(), tableId, false);
         if (systemTableName == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }
@@ -76,7 +76,7 @@ public class CairoTestUtils {
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        String systemTableName = engine.getTableSequencerAPI().registerTableName(model.getTableName(), tableId, false);
+        String systemTableName = engine.registerTableName(model.getTableName(), tableId, false);
         TableUtils.createTable(
                 model.getConfiguration(),
                 model.getMem(),

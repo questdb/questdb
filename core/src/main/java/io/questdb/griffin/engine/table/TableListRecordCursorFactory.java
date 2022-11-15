@@ -80,7 +80,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             if (systemNames == null) {
-                systemNames = engine.getTableSequencerAPI().getTableSystemNames().iterator();
+                systemNames = engine.getTableSystemNames().iterator();
             }
 
             do {

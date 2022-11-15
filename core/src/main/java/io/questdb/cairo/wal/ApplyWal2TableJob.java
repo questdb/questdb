@@ -82,13 +82,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             do {
                 // security context is checked on writing to the WAL and can be ignored here
-                if (engine.getTableSequencerAPI().isWalTableDropped(systemTableName)) {
+                if (engine.isWalTableDropped(systemTableName)) {
                     // table was dropped, clean up the table directory.
                     tryDestroyDroppedTable(systemTableName, null, engine, tempPath);
                     return Long.MAX_VALUE;
                 }
 
-                if (!engine.getTableSequencerAPI().isWalSystemName(systemTableName)) {
+                if (!engine.isWalSystemTableName(systemTableName)) {
                     LOG.info().$("table '").utf8(systemTableName).$("' does not exist, skipping WAL application").$();
                     return 0;
                 }
