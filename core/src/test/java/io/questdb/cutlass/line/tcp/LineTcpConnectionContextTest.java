@@ -1725,9 +1725,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     TestUtils.assertSql(
                             compiler,
                             context,
-                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                             sink,
-                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n"
+                            "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n"
                     );
                     // should be able to create table after this (e.g. no debris left by ILP)
                     compiler.compile("create table vbw(a int)", context);
@@ -1974,7 +1974,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     SqlCompiler compiler = new SqlCompiler(engine);
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                 compiler.compile(
-                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, commitLag=250ms;",
+                        "create table " + table + " (location SYMBOL, temperature DOUBLE, timestamp TIMESTAMP) timestamp(timestamp) partition by DAY WITH maxUncommittedRows=3, o3MaxLag=250ms;",
                         sqlExecutionContext);
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);

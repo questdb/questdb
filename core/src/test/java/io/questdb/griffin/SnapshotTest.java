@@ -264,7 +264,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null
         );
     }

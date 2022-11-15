@@ -321,7 +321,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testWithCommitLag() throws Exception {
+    public void testWithO3MaxLag() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);

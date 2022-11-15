@@ -349,10 +349,10 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableLikeTableWithMaxUncommittedRowsAndCommitLag() throws Exception {
+    public void testCreateTableLikeTableWithMaxUncommittedRowsAndO3MaxLag() throws Exception {
         int maxUncommittedRows = 20;
         int o3MaxLag = 200;
-        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", commitLag = " + o3MaxLag + "us");
+        assertCompile("create table y (s2 symbol, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WITH maxUncommittedRows = " + maxUncommittedRows + ", o3MaxLag = " + o3MaxLag + "us");
         assertQuery("s2\tts\n", "select * from x", "create table x (like y)", "ts");
         assertWithClauseParameters(maxUncommittedRows, o3MaxLag);
     }

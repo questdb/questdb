@@ -48,8 +48,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by id desc",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc",
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
                         "1\ttable1\tts1\tDAY\t1000\t300000000\n"
         );
@@ -67,8 +67,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "1\ttable1\tts1\tDAY\t83737\t28291\n"
         );
     }
@@ -94,8 +94,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
             filesFacade.remove(path);
         }
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t300000000\n"
         );
     }
@@ -113,8 +113,8 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'table1'",
-                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where name = 'table1'",
+                "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                         "1\ttable1\tts1\tDAY\t1000\t300000000\n"
         );
     }

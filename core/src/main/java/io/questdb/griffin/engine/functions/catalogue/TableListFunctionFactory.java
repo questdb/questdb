@@ -44,7 +44,7 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 public class TableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
-    private static final int commitLagColumn;
+    private static final int o3MaxLagColumn;
     private static final int designatedTimestampColumn;
     private static final int idColumn;
     private static final int maxUncommittedRowsColumn;
@@ -171,7 +171,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
-                private long commitLag;
+                private long o3MaxLag;
                 private int maxUncommittedRows;
                 private int partitionBy;
                 private int tableId;
@@ -197,8 +197,8 @@ public class TableListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
-                    if (col == commitLagColumn) {
-                        return commitLag;
+                    if (col == o3MaxLagColumn) {
+                        return o3MaxLag;
                     }
                     return Numbers.LONG_NaN;
                 }
@@ -243,7 +243,7 @@ public class TableListFunctionFactory implements FunctionFactory {
                         // Pre-read as much as possible to skip record instead of failing on column fetch
                         tableId = tableReaderMetadata.getTableId();
                         maxUncommittedRows = tableReaderMetadata.getMaxUncommittedRows();
-                        commitLag = tableReaderMetadata.getO3MaxLag();
+                        o3MaxLag = tableReaderMetadata.getO3MaxLag();
                         partitionBy = tableReaderMetadata.getPartitionBy();
                     } catch (CairoException e) {
                         // perhaps this folder is not a table
@@ -276,8 +276,8 @@ public class TableListFunctionFactory implements FunctionFactory {
         partitionByColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("commitLag", ColumnType.LONG));
-        commitLagColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("o3MaxLag", ColumnType.LONG));
+        o3MaxLagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;

@@ -343,7 +343,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     "plug,label=Line,room=6C watts=\"333\" 1531817902842\n";
 
             SqlException exception = sendWithAlterStatement(lineData,
-                    "ALTER TABLE plug SET PARAM commitLag = 20s;",
+                    "ALTER TABLE plug SET PARAM o3MaxLag = 20s;",
                     false);
             Assert.assertNull(exception);
 

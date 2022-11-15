@@ -179,7 +179,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
             w.append();
-            checkMaxAndCommitLag();
+            checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dbcs);
         }
@@ -193,7 +193,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.o3MaxLag = o3MaxLag;
     }
 
-    private void checkMaxAndCommitLag() {
+    private void checkUncommittedRowCount() {
         if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
             writer.ic(durable ? CommitMode.SYNC : CommitMode.NOSYNC);
         }
@@ -364,7 +364,7 @@ public class CairoTextWriter implements Closeable, Mutable {
             if (PartitionBy.isPartitioned(partitionBy)) {
                 if (o3MaxLag > -1) {
                     writer.setMetaO3MaxLag(o3MaxLag);
-                    LOG.info().$("updating metadata attribute commitLag to ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+                    LOG.info().$("updating metadata attribute o3MaxLag to ").$(o3MaxLag).$(", table=").utf8(tableName).$();
                 }
                 if (maxUncommittedRows > -1) {
                     writer.setMetaMaxUncommittedRows(maxUncommittedRows);
@@ -372,7 +372,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
             }
         } else {
-            LOG.info().$("cannot update metadata attributes commitLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
+            LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
         }
         _size = writer.size();
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

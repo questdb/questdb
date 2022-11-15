@@ -1026,12 +1026,12 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableNamePosition, tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLagKeyword(paramName)) {
-            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (commitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
+        } else if (isO3MaxLagKeyword(paramName)) {
+            long o3MaxLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (o3MaxLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "o3MaxLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableNamePosition, tableName, tableId, commitLag).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableName, tableId, o3MaxLag).build());
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }

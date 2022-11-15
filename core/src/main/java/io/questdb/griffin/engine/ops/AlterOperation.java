@@ -118,7 +118,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     applyParamUncommittedRows(tableWriter);
                     break;
                 case SET_PARAM_COMMIT_LAG:
-                    applyParamCommitLag(tableWriter);
+                    applyParamO3MaxLag(tableWriter);
                     break;
                 default:
                     LOG.error()
@@ -355,10 +355,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyParamCommitLag(MetadataChangeSPI tableWriter) {
-        long commitLag = longList.get(0);
+    private void applyParamO3MaxLag(MetadataChangeSPI tableWriter) {
+        long o3MaxLag = longList.get(0);
         try {
-            tableWriter.setMetaO3MaxLag(commitLag);
+            tableWriter.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
             LOG.error().$("could not change commit lag [table=").$(tableName)
                     .$(", errno=").$(e.getErrno())

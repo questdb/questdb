@@ -322,7 +322,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     server,
                     lineData,
                     WAIT_ALTER_TABLE_RELEASE | WAIT_ENGINE_TABLE_RELEASE,
-                    "ALTER TABLE plug SET PARAM commitLag = 20s;");
+                    "ALTER TABLE plug SET PARAM o3MaxLag = 20s;");
             Assert.assertNull(exception);
 
             exception = sendWithAlterStatement(

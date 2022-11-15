@@ -481,9 +481,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
-                "partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 true,
                 PartitionBy.DAY,
                 180_000_000,
@@ -493,8 +493,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 true,
                 PartitionBy.DAY,
                 0,
@@ -548,9 +548,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
-                "partition by DAY with maxUncommittedRows = 2, commitLag = 2s",
+    public void testCannotUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 false,
                 PartitionBy.DAY,
                 180_000_000,
@@ -1304,8 +1304,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows1() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, precision is micro
                 3,
                 true,
@@ -1314,8 +1314,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows2() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 60_000_000, // 1 minute, precision is micro
                 2,
                 false,
@@ -2407,8 +2407,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 "",
                 true,
                 PartitionBy.NONE,
@@ -2419,8 +2419,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 "partition by DAY",
                 true,
                 PartitionBy.DAY,
@@ -3166,13 +3166,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
-                                                                     boolean overwrite,
-                                                                     int partitionBy,
-                                                                     long o3MaxLagUs,
-                                                                     int maxUncommittedRows,
-                                                                     long expectedO3MaxLag,
-                                                                     int expectedMaxUncommittedRows) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
+                                                                    boolean overwrite,
+                                                                    int partitionBy,
+                                                                    long o3MaxLagUs,
+                                                                    int maxUncommittedRows,
+                                                                    long expectedO3MaxLag,
+                                                                    int expectedMaxUncommittedRows) throws Exception {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
@@ -3213,7 +3213,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         }
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
             long expectedO3MaxLag,
             int maxUncommittedRows,
             boolean durable,

@@ -148,6 +148,7 @@ public enum PropertyKey {
     CAIRO_O3_COLUMN_MEMORY_SIZE("cairo.o3.column.memory.size"),
     CAIRO_MAX_UNCOMMITTED_ROWS("cairo.max.uncommitted.rows"),
     CAIRO_COMMIT_LAG("cairo.commit.lag"),
+    CAIRO_O3_MAX_LAG("cairo.o3.max.lag"),
     CAIRO_O3_QUICKSORT_ENABLED("cairo.o3.quicksort.enabled"),
     CAIRO_RND_MEMORY_PAGE_SIZE("cairo.rnd.memory.page.size"),
     CAIRO_RND_MEMORY_MAX_PAGES("cairo.rnd.memory.max.pages"),

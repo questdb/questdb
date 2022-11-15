@@ -45,9 +45,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class O3CommitLagTest extends AbstractO3Test {
-    private final static Log LOG = LogFactory.getLog(O3CommitLagTest.class);
+public class O3MaxLagTest extends AbstractO3Test {
+    private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
     private RecordToRowCopier copier;
+
     @Before
     public void clearRecordToRowCopier() {
         copier = null;
@@ -92,63 +93,63 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testCommitLagEndingAtPartitionBoundaryContended() throws Exception {
-        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundary0);
+    public void testO3MaxLagEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagEndingAtPartitionBoundary0);
     }
 
     @Test
-    public void testCommitLagEndingAtPartitionBoundaryParallel() throws Exception {
-        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundary0);
+    public void testO3MaxLagEndingAtPartitionBoundaryParallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagEndingAtPartitionBoundary0);
     }
 
     @Test
-    public void testCommitLagEndingAtPartitionBoundaryPlus1Contended() throws Exception {
-        executeWithPool(0, this::testCommitLagEndingAtPartitionBoundaryPlus10);
+    public void testO3MaxLagEndingAtPartitionBoundaryPlus1Contended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagEndingAtPartitionBoundaryPlus10);
     }
 
     @Test
-    public void testCommitLagEndingAtPartitionBoundaryPlus1Parallel() throws Exception {
-        executeWithPool(2, this::testCommitLagEndingAtPartitionBoundaryPlus10);
+    public void testO3MaxLagEndingAtPartitionBoundaryPlus1Parallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagEndingAtPartitionBoundaryPlus10);
     }
 
     @Test
-    public void testCommitLagStaggeredPartitionsContended() throws Exception {
-        executeWithPool(0, this::testCommitLagStaggeredPartitions0);
+    public void testO3MaxLagStaggeredPartitionsContended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagStaggeredPartitions0);
     }
 
     @Test
-    public void testCommitLagStaggeredPartitionsParallel() throws Exception {
-        executeWithPool(2, this::testCommitLagStaggeredPartitions0);
+    public void testO3MaxLagStaggeredPartitionsParallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagStaggeredPartitions0);
     }
 
     @Test
-    public void testCommitLagWithInOrderBatchFollowedByO3BatchContended() throws Exception {
-        executeWithPool(0, this::testCommitLagWithInOrderBatchFollowedByO3Batch0);
+    public void testO3MaxLagWithInOrderBatchFollowedByO3BatchContended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagWithInOrderBatchFollowedByO3Batch0);
     }
 
     @Test
-    public void testCommitLagWithInOrderBatchFollowedByO3BatchParallel() throws Exception {
-        executeWithPool(2, this::testCommitLagWithInOrderBatchFollowedByO3Batch0);
+    public void testO3MaxLagWithInOrderBatchFollowedByO3BatchParallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagWithInOrderBatchFollowedByO3Batch0);
     }
 
     @Test
-    public void testCommitLagWithLargeO3Contended() throws Exception {
-        executeWithPool(0, this::testCommitLagWithLargeO3);
+    public void testO3MaxLagWithLargeO3Contended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagWithLargeO3);
     }
 
     @Test
-    public void testCommitLagWithLargeO3Parallel() throws Exception {
-        executeWithPool(2, this::testCommitLagWithLargeO3);
+    public void testO3MaxLagWithLargeO3Parallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagWithLargeO3);
     }
 
     @Test
-    public void testCommitLagWithinPartitionContended() throws Exception {
-        executeWithPool(0, this::testCommitLagWithinPartition);
+    public void testO3MaxLagWithinPartitionContended() throws Exception {
+        executeWithPool(0, this::testO3MaxLagWithinPartition);
     }
 
     @Test
-    public void testCommitLagWithinPartitionParallel() throws Exception {
-        executeWithPool(2, this::testCommitLagWithinPartition);
+    public void testO3MaxLagWithinPartitionParallel() throws Exception {
+        executeWithPool(2, this::testO3MaxLagWithinPartition);
     }
 
     @Test
@@ -234,7 +235,7 @@ public class O3CommitLagTest extends AbstractO3Test {
                 compiler.compile("create table " + tableName + "( " +
                         "ts timestamp" +
                         ") timestamp(ts) partition by DAY " +
-                        " WITH maxUncommittedRows=1, commitLag=120s", sqlExecutionContext);
+                        " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
                     for (int i = 0; i < length; i++) {
@@ -584,7 +585,47 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
     }
 
-    private void testCommitLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(500)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY WITH maxUncommittedRows=100, o3MaxLag=10s";
+        compiler.compile(sql, sqlExecutionContext);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x where i>250 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.ic();
+            writer.commit();
+        }
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -632,7 +673,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagEndingAtPartitionBoundaryPlus10(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -677,7 +718,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testCommitLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagStaggeredPartitions0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -781,7 +822,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
     }
 
-    private void testCommitLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithInOrderBatchFollowedByO3Batch0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -828,7 +869,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testCommitLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithLargeO3(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -866,46 +907,6 @@ public class O3CommitLagTest extends AbstractO3Test {
             writer.commit();
         }
 
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testCommitLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>490 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.ic();
-            writer.commit();
-        }
         assertXY(compiler, sqlExecutionContext);
     }
 
@@ -1196,7 +1197,7 @@ public class O3CommitLagTest extends AbstractO3Test {
         }
     }
 
-    private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -1220,15 +1221,15 @@ public class O3CommitLagTest extends AbstractO3Test {
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY WITH maxUncommittedRows=100, commitLag=10s";
+        sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>250 order by f";
+            sql = "select * from x where i>490 order by f";
             insertUncommitted(compiler, sqlExecutionContext, sql, writer);
             writer.ic();
             writer.commit();

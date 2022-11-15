@@ -269,8 +269,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 true,
                 PartitionBy.DAY,
@@ -281,8 +281,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 false,
                 PartitionBy.DAY,
@@ -365,8 +365,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCannotUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 false,
                 true,
                 PartitionBy.DAY,
@@ -702,9 +702,9 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testFailsOnBadCommitLag() throws Exception {
+    public void testFailsOnBadO3MaxLag() throws Exception {
         String command = "POST /upload?fmt=json&" +
-                "commitLag=2seconds+please&" +
+                "o3MaxLag=2seconds+please&" +
                 "name=test HTTP/1.1\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -713,8 +713,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2e\r\n" +
-                        "{\"status\":\"invalid commitLag, must be a long\"}\r\n" +
+                        "33\r\n" +
+                        "{\"status\":\"invalid o3MaxLag value, must be a long\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 command +
@@ -2025,8 +2025,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows1() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, micro precision
                 3,
                 240_000_000, // 4 minutes, micro precision
@@ -2049,8 +2049,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows2() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 120_000_000, // 2 minutes, micro precision
                 1,
                 120_000_000,
@@ -6859,8 +6859,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 false,
                 PartitionBy.NONE,
@@ -6871,8 +6871,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 true,
                 PartitionBy.DAY,
@@ -7052,11 +7052,11 @@ public class IODispatcherTest {
         return httpConfiguration;
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableExists(
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
             boolean overwrite,
             boolean durable,
             int partitionBy,
-            long commitLag,
+            long o3MaxLag,
             int maxUncommittedRows,
             long expectedO3MaxLag,
             int expectedMaxUncommittedRows
@@ -7089,7 +7089,7 @@ public class IODispatcherTest {
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
-                "commitLag=" + commitLag + "&" +
+                "o3MaxLag=" + o3MaxLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=" + tableName + " HTTP/1.1\r\n";
 
@@ -7156,20 +7156,20 @@ public class IODispatcherTest {
         );
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
-                                                                        int maxUncommittedRows,
-                                                                        long expectedCommitLag,
-                                                                        int expectedMaxUncommittedRows,
-                                                                        int expectedImportedRows,
-                                                                        String data,
-                                                                        String expectedData) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(long o3MaxLag,
+                                                                       int maxUncommittedRows,
+                                                                       long expectedO3MaxLag,
+                                                                       int expectedMaxUncommittedRows,
+                                                                       int expectedImportedRows,
+                                                                       String data,
+                                                                       String expectedData) throws Exception {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 "overwrite=false&" +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 "partitionBy=DAY&" +
-                "commitLag=" + commitLag + "&" +
+                "o3MaxLag=" + o3MaxLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=" + tableName + " HTTP/1.1\r\n";
 
@@ -7225,7 +7225,7 @@ public class IODispatcherTest {
 
         assertMetadataAndData(
                 tableName,
-                expectedCommitLag,
+                expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
                 expectedData);

@@ -546,7 +546,7 @@ public final class SqlParser {
                             } catch (NumericException e) {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
-                        } else if (isCommitLagKeyword(expr.lhs.token)) {
+                        } else if (isO3MaxLagKeyword(expr.lhs.token)) {
                             o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
@@ -1223,8 +1223,8 @@ public final class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
 
-            tok = tok(lexer, "into or commitLag");
-            if (SqlKeywords.isCommitLagKeyword(tok)) {
+            tok = tok(lexer, "into or o3MaxLag");
+            if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
                 model.setMaxO3Lag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "into");

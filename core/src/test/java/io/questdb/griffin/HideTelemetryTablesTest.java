@@ -42,9 +42,9 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()",
                     sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "1\ttest\t\tNONE\t1000\t300000000\n"
             );
         });
@@ -60,9 +60,9 @@ public class HideTelemetryTablesTest extends AbstractGriffinTest {
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
-                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by 2",
+                    "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by 2",
                     sink,
-                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
+                    "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
                             "2\ttelemetry\t\tNONE\t1000\t300000000\n" +
                             "3\ttelemetry_config\t\tNONE\t1000\t300000000\n" +
                             "1\ttest\t\tNONE\t1000\t300000000\n"

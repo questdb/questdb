@@ -320,18 +320,17 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 's';
     }
 
-    public static boolean isCommitLagKeyword(CharSequence tok) {
-        if (tok.length() != 9) {
+    public static boolean isO3MaxLagKeyword(CharSequence tok) {
+        if (tok.length() != 8) {
             return false;
         }
 
         int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == '3'
                 && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'x'
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i) | 32) == 'g';
@@ -1628,20 +1627,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 's';
         // @formatter:off
-    }
-
-    public static boolean isTextArray(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++)) == '['
-                && (tok.charAt(i)) == ']';
     }
 
     public static boolean isTimeKeyword(CharSequence tok) {
