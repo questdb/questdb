@@ -998,12 +998,14 @@ public class O3CommitLagTest extends AbstractO3Test {
     }
 
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Rnd rnd = sqlExecutionContext.getRandom();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         for (int i = 0; i < 50; i++) {
             final int nTotalRows = rnd.nextInt(79000);
             final long microsBetweenRows = rnd.nextLong(3090985);
             final double fraction = rnd.nextDouble();
             testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
             compiler.compile("drop table x", sqlExecutionContext);
             compiler.compile("drop table y", sqlExecutionContext);
             compiler.compile("drop table z", sqlExecutionContext);

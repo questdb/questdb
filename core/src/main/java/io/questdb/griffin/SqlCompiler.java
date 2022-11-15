@@ -2612,11 +2612,6 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getO3MaxLag() {
-            return model.getO3MaxLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return model.getIndexBlockCapacity(columnIndex);
         }
@@ -2624,6 +2619,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getMaxUncommittedRows() {
             return model.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return model.getO3MaxLag();
         }
 
         @Override

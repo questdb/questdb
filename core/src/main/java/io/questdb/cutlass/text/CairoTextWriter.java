@@ -51,12 +51,12 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private long _size;
     private int atomicity;
-    private long o3MaxLag = -1;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private boolean durable;
     private CharSequence importedTimestampColumnName;
     private int maxUncommittedRows = -1;
+    private long o3MaxLag = -1;
     private boolean overwrite;
     private int partitionBy;
     private CharSequence tableName;
@@ -185,12 +185,12 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
-    public void setO3MaxLag(long o3MaxLag) {
-        this.o3MaxLag = o3MaxLag;
-    }
-
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
     private void checkMaxAndCommitLag() {
@@ -406,11 +406,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getO3MaxLag() {
-            return configuration.getO3MaxLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
@@ -418,6 +413,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override

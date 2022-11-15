@@ -93,12 +93,12 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnPositions.getQuick(columnIndex);
     }
 
-    public long getMaxO3Lag() {
-        return maxO3Lag;
-    }
-
     public int getEndOfRowTupleValuesPosition(int index) {
         return endOfRowTupleValuesPositions.get(index);
+    }
+
+    public long getMaxO3Lag() {
+        return maxO3Lag;
     }
 
     @Override

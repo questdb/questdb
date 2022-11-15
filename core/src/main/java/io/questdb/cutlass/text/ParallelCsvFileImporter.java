@@ -1536,11 +1536,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getO3MaxLag() {
-            return configuration.getO3MaxLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
@@ -1548,6 +1543,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override

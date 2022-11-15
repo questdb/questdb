@@ -576,11 +576,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public long getO3MaxLag() {
-            return configuration.getO3MaxLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return 0;
         }
@@ -588,6 +583,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override

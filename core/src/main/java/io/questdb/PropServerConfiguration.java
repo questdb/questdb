@@ -98,7 +98,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnPurgeRetryDelayLimit;
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
-    private final long o3MaxLag;
     private final int commitMode;
     private final String confRoot;
     private final int createAsSelectRetryCount;
@@ -161,12 +160,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
+    private final long o3MaxLag;
+    private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
-    private final long o3MinLagUs;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
     private final boolean pgEnabled;
@@ -859,7 +859,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
-            this.o3MinLagUs = getLong(properties, env, PropertyKey.CAIRO_O3_MIN_LAG_US, 1_000_000);
+            this.o3MinLagUs = getLong(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
@@ -1485,11 +1485,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getO3MaxLag() {
-            return o3MaxLag;
-        }
-
-        @Override
         public DateFormat getBackupDirTimestampFormat() {
             return backupDirTimestampFormat;
         }
@@ -1562,11 +1557,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getColumnPurgeTaskPoolCapacity() {
             return columnPurgeTaskPoolCapacity;
-        }
-
-        @Override
-        public long getO3MinLag() {
-            return o3MinLagUs;
         }
 
         @Override
@@ -1772,6 +1762,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3CopyQueueCapacity() {
             return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return o3MaxLag;
+        }
+
+        @Override
+        public long getO3MinLag() {
+            return o3MinLagUs;
         }
 
         @Override

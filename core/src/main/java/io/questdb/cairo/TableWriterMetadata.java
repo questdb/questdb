@@ -31,8 +31,8 @@ import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private final String tableName;
-    private long o3MaxLag;
     private int maxUncommittedRows;
+    private long o3MaxLag;
     private long structureVersion;
     private int symbolMapCount;
     private int tableId;
@@ -50,13 +50,13 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public long getO3MaxLag() {
-        return o3MaxLag;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     @Override
@@ -128,12 +128,12 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         }
     }
 
-    public void setO3MaxLag(long o3MaxLagUs) {
-        this.o3MaxLag = o3MaxLagUs;
-    }
-
     public void setMaxUncommittedRows(int rows) {
         this.maxUncommittedRows = rows;
+    }
+
+    public void setO3MaxLag(long o3MaxLagUs) {
+        this.o3MaxLag = o3MaxLagUs;
     }
 
     public void setStructureVersion(long value) {

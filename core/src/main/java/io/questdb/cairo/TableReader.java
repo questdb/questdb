@@ -231,10 +231,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public long getO3MaxLag() {
-        return metadata.getO3MaxLag();
-    }
-
     public TableReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -258,6 +254,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
+    }
+
+    public long getO3MaxLag() {
+        return metadata.getO3MaxLag();
     }
 
     public int getPartitionCount() {

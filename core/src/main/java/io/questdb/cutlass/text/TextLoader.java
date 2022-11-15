@@ -241,10 +241,6 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
-    public void setO3MaxLag(long o3MaxLagUs) {
-        textWriter.setO3MaxLag(o3MaxLagUs);
-    }
-
     public void setDelimiter(byte delimiter) {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
@@ -257,6 +253,10 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         textWriter.setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    public void setO3MaxLag(long o3MaxLagUs) {
+        textWriter.setO3MaxLag(o3MaxLagUs);
     }
 
     public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {

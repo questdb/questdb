@@ -79,11 +79,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getO3MaxLag() {
-        return cairoConfiguration.getO3MaxLag();
-    }
-
-    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }
@@ -91,6 +86,11 @@ class TableStructureAdapter implements TableStructure {
     @Override
     public int getMaxUncommittedRows() {
         return cairoConfiguration.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return cairoConfiguration.getO3MaxLag();
     }
 
     @Override

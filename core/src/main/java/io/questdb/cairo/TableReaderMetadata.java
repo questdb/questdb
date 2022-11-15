@@ -37,9 +37,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final FilesFacade ff;
     private final String tableName;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
-    private long o3MaxLag;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
+    private long o3MaxLag;
     private int partitionBy;
     private Path path;
     private int plen;
@@ -222,13 +222,13 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public long getO3MaxLag() {
-        return o3MaxLag;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public int getPartitionBy() {

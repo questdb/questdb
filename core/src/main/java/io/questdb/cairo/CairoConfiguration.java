@@ -88,14 +88,6 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
-    /**
-     * Default commit lag in microseconds for new tables. This value
-     * can be overridden with 'create table' statement.
-     *
-     * @return commit lag in microseconds
-     */
-    long getO3MaxLag();
-
     int getCommitMode();
 
     CharSequence getConfRoot(); // same as root/../conf
@@ -185,6 +177,16 @@ public interface CairoConfiguration {
     int getO3ColumnMemorySize();
 
     int getO3CopyQueueCapacity();
+
+    /**
+     * Default commit lag in microseconds for new tables. This value
+     * can be overridden with 'create table' statement.
+     *
+     * @return commit lag in microseconds
+     */
+    long getO3MaxLag();
+
+    long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
 
@@ -378,8 +380,6 @@ public interface CairoConfiguration {
     boolean getWalEnabledDefault();
 
     long getWalPurgeInterval();
-
-    long getO3MinLag();
 
     int getWalRecreateDistressedSequencerAttempts();
 
