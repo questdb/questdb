@@ -249,6 +249,22 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotDbWithWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 'a'; i < 'd'; i++) {
+                compile("create table " + Character.toString(i) + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            }
+
+            for (int i = 'd'; i < 'f'; i++) {
+                compile("create table " + Character.toString(i) + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+            }
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 'a'; i < 'f'; i++) {
@@ -601,6 +617,68 @@ public class SnapshotTest extends AbstractGriffinTest {
 
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    @Test
+    public void testWalMetadataRecovery() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+            String tableName = testName.getMethodName() + "_abc";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+
+            compile("alter table " + tableName + " add column jjj int");
+            executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 42)");
+
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // ignored updates
+            compile("alter table " + tableName + " add column kkk int");
+            executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asdf', 1, 11)");
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'asdfe', 2, 22)");
+
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseInactive();
+
+            snapshotInstanceId = restartedId;
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\tjjj\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t42\n");
         });
     }
 
