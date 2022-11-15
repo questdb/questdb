@@ -251,12 +251,12 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
-            for (int i = 'a'; i < 'd'; i++) {
-                compile("create table " + Character.toString(i) + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            for (char i = 'a'; i < 'd'; i++) {
+                compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
             }
 
-            for (int i = 'd'; i < 'f'; i++) {
-                compile("create table " + Character.toString(i) + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+            for (char i = 'd'; i < 'f'; i++) {
+                compile("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
             }
 
             compiler.compile("snapshot prepare", sqlExecutionContext);
@@ -267,7 +267,7 @@ public class SnapshotTest extends AbstractGriffinTest {
     @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
-            for (int i = 'a'; i < 'f'; i++) {
+            for (char i = 'a'; i < 'f'; i++) {
                 compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
             }
 
