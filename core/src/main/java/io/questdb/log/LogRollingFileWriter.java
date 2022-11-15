@@ -32,6 +32,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -71,6 +72,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String rollEvery;
     private String rollSize;
     private String spinBeforeFlush;
+    private String logFileTemplate;
     private final FindVisitor removeExpiredLogsVisitor = this::removeOldLogsVisitor;
     private final FindVisitor removeExcessiveLogsVisitor = this::removeExcessiveLogsVisitor;
 
@@ -95,6 +97,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     @Override
     public void bindProperties(LogFactory factory) {
         locationParser.parseEnv(location, clock.getTicks());
+        logFileTemplate = location.toString().substring(LogFactory.LOG_DIR.length()+1, location.toString().indexOf('$'));
         if (this.bufferSize != null) {
             try {
                 nBufferSize = Numbers.parseIntSize(this.bufferSize);
@@ -286,7 +289,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeOldLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        if (Files.notDots(filePointer) && type == Files.DT_FILE
+        NativeLPSZ name = new NativeLPSZ();
+        name.of(filePointer);
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && name.toString().contains(logFileTemplate)
             && clock.getTicks() - ff.getLastModified(path.$())*Timestamps.MILLI_MICROS > nLifeDuration) {
             if(!ff.remove(path)) {
                 throw new LogError("cannot remove: " + path.$());
@@ -297,7 +302,10 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private void removeExcessiveLogsVisitor(long filePointer, int type){
         path.trimTo(LogFactory.LOG_DIR.length());
         path.concat(filePointer).$();
-        if (Files.notDots(filePointer) && type == Files.DT_FILE && (currentLogSizeSum += Files.length(path)) > nSizeLimit){
+        NativeLPSZ name = new NativeLPSZ();
+        name.of(filePointer);
+        if (Files.notDots(filePointer) && type == Files.DT_FILE && name.toString().contains(logFileTemplate)
+                && (currentLogSizeSum += Files.length(path)) > nSizeLimit){
             if(!ff.remove(path)){
                 throw new LogError("cannot remove: "+ path.$());
             }
