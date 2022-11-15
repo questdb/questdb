@@ -304,7 +304,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                     }
                                 }
 
-                                Thread.yield();
+                                Os.pause();
 
                                 if (readers.size() == 0) {
                                     continue;
@@ -321,7 +321,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                         sink
                                 );
 
-                                Thread.yield();
+                                Os.pause();
 
                                 if (readers.size() > 0 && rnd.nextPositiveInt() % 4 == 0) {
                                     TableReader r2 = readers.get(rnd.nextPositiveInt() % readers.size());
@@ -330,8 +330,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                     Assert.assertTrue(readers.remove(r2));
                                 }
 
-                                Thread.yield();
-
+                                Os.pause();
                             }
                         } catch (Exception e) {
                             errors.incrementAndGet();

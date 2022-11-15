@@ -316,7 +316,7 @@ public class InsertTest extends AbstractGriffinTest {
         assertInsertTimestamp(
                 "seq\tts\n" +
                         "1\t1970-01-01T00:00:00.123456Z\n",
-                "insert into tab with x as (select 1, '123456') select * from x",
+                "with x as (select 1, '123456') insert into tab  select * from x",
                 null,
                 false
         );

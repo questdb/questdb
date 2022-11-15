@@ -109,22 +109,22 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                         Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         PreparedStatement stmt = connection.prepareStatement(
                                 "CREATE TABLE " + tableName + "( " +
-                                        "favourite_colour SYMBOL INDEX CAPACITY 16, " +
-                                        "country SYMBOL INDEX CAPACITY 16, " +
+                                        "favourite_colour SYMBOL INDEX CAPACITY 256, " +
+                                        "country SYMBOL INDEX CAPACITY 256, " +
                                         "uniqueId LONG, " +
                                         "quantity INT, " +
                                         "ppu DOUBLE, " +
                                         "addressId STRING, " +
                                         "timestamp TIMESTAMP" +
                                         ") TIMESTAMP(timestamp) PARTITION BY DAY " +
-                                        "WITH maxUncommittedRows=20, commitLag=200000us" // 200 millis
+                                        "WITH maxUncommittedRows=1000, commitLag=200000us" // 200 millis
                         )
                 ) {
                     LOG.info().$("creating table: ").utf8(tableName).$();
                     stmt.execute();
                 }
 
-                // setup a thread that will send ILP/TCP for today
+                // set up a thread that will send ILP/TCP for today
 
                 // today is deterministic
                 final String activePartitionName = "2022-10-19";
@@ -140,7 +140,10 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     final Rnd rnd = new Rnd();
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         while (ilpAgentKeepSending.get()) {
-                            addLine(sender, tableName, uniqueId, timestampNano, rnd).flush();
+                            for (int i = 0; i < 100; i++) {
+                                addLine(sender, tableName, uniqueId, timestampNano, rnd);
+                            }
+                            sender.flush();
                         }
                         // send a few more
                         for (int i = 0, n = 50 + rnd.nextInt(100); i < n; i++) {
@@ -165,7 +168,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 ilpAgent.start();
 
                 // give the ilpAgent some time
-                while (uniqueId.get() < 1_000_000L) {
+                while (uniqueId.get() < 500_000L) {
                     Os.pause();
                 }
 

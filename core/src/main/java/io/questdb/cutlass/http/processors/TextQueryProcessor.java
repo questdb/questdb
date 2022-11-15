@@ -235,7 +235,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
                         }
@@ -278,7 +278,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                         }
@@ -430,6 +430,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (fileName != null && fileName.length() > 0) {
             state.fileName = fileName.toString();
         }
+
+        DirectByteCharSequence delimiter = request.getUrlParam("delimiter");
+        state.delimiter = ',';
+
+        if (delimiter != null && delimiter.length() == 1) {
+            state.delimiter = delimiter.charAt(0);
+        }
+
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;

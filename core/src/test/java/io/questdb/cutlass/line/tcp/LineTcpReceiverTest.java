@@ -118,14 +118,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Before
-    public void setUpLineTcpReceiverTest() {
+    @Override
+    public void setUp() {
+        super.setUp();
         defaultTableWriteMode = walEnabled ? 1 : 0;
         path = new Path();
     }
 
     @After
-    public void tearDownLineTcpReceiverTest() {
+    @Override
+    public void tearDown() {
         path.close();
+        super.tearDown();
     }
 
     @Test
@@ -1433,7 +1437,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             LOG.error().$("after ").$(timeTakenMs).$("ms tables only had ").$(nRowsWritten).$(" rows out of ").$(nRows).$();
                             break;
                         }
-                        Thread.yield();
+                        Os.pause();
                         for (int n = 0; n < tables.size(); n++) {
                             CharSequence tableName = tables.get(n);
                             while (true) {

@@ -787,7 +787,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
         assertFailure(
-                "with tab as (x where b in ('BB')) tab latest by b",
+                "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
                         "select" +

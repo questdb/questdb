@@ -171,12 +171,12 @@ class LineTcpMeasurementScheduler implements Closeable {
     }
 
     public boolean doMaintenance(
-            CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final CharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();

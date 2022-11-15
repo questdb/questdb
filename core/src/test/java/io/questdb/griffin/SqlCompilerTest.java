@@ -35,7 +35,9 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -47,8 +49,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.griffin.CompiledQuery.SET;
 
 public class SqlCompilerTest extends AbstractGriffinTest {
+
     private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
-    private final static Path path = new Path();
+    private static Path path;
+
+    @BeforeClass
+    public static void setUpStatic() {
+        path = new Path();
+        AbstractGriffinTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        path = Misc.free(path);
+        AbstractGriffinTest.tearDownStatic();
+    }
 
     @Test
     public void assertCastString() throws SqlException {
