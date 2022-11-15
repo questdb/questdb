@@ -3643,7 +3643,6 @@ nodejs code:
             try (
                     final PGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
-
             ) {
                 workerPool.start(LOG);
                 try (
@@ -4996,6 +4995,91 @@ nodejs code:
     }
 
     @Test
+    public void testQueryEventuallySucceedsOnDataUnavailable() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), true, false)) {
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n";
+                    try (ResultSet resultSet = connection.prepareStatement("select * from test_data_unavailable(3, 100)").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
+        // This test doesn't use tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertMemoryLeak(() -> {
+            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
+                @Override
+                public IODispatcherConfiguration getDispatcherConfiguration() {
+                    return new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public int getBindPort() {
+                            return 0; // Bind to ANY port.
+                        }
+
+                        @Override
+                        public String getDispatcherLogName() {
+                            return "pg-server";
+                        }
+                    };
+                }
+
+                @Override
+                public int getSendBufferSize() {
+                    return 192;
+                }
+            };
+
+            try (
+                    PGWireServer server = createPGServer(configuration);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), false, true)) {
+                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                            "1,1,1\n" +
+                            "2,2,2\n" +
+                            "3,3,3\n" +
+                            "4,4,4\n" +
+                            "5,5,5\n" +
+                            "6,6,6\n" +
+                            "7,7,7\n" +
+                            "8,8,8\n" +
+                            "9,9,9\n" +
+                            "10,10,10\n" +
+                            "11,11,11\n" +
+                            "12,12,12\n" +
+                            "13,13,13\n" +
+                            "14,14,14\n" +
+                            "15,15,15\n" +
+                            "16,16,16\n";
+                    try (ResultSet resultSet = connection.prepareStatement("select * from test_data_unavailable(16, 10)").executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, resultSet);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
@@ -6258,14 +6342,13 @@ create table tab as (
     @Test
     public void testSmallSendBufferForRowData() throws Exception {
         assertMemoryLeak(() -> {
-
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
                 public IODispatcherConfiguration getDispatcherConfiguration() {
                     return new DefaultIODispatcherConfiguration() {
                         @Override
                         public int getBindPort() {
-                            return 0;  // Bind to ANY port.
+                            return 0; // Bind to ANY port.
                         }
 
                         @Override

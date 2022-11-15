@@ -82,20 +82,27 @@ public class PGWireServer implements Closeable {
                     try {
                         jobContext.handleClientOperation(context, operation);
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
+                        return true;
                     } catch (PeerIsSlowToWriteException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
-                    } catch (PeerIsSlowToReadException e) {
+                    } catch (PeerIsSlowToReadException | SuspendQueryException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
-                        context.getDispatcher().disconnect(context, operation == IOOperation.READ ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+                        context.getDispatcher().disconnect(
+                                context,
+                                operation == IOOperation.READ
+                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                        );
                     } catch (BadProtocolException e) {
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                    } catch (Throwable e) { //must remain last in catch list!
+                    } catch (Throwable e) { // must remain last in catch list!
                         LOG.critical().$("internal error [ex=").$(e).$(']').$();
                         // This is a critical error, so we treat it as an unhandled one.
                         metrics.health().incrementUnhandledErrors();
                         context.getDispatcher().disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
                     }
+                    return false;
                 };
 
                 @Override

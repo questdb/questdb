@@ -22,21 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.SuspendQueryException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.ThreadLocal;
 
 /**
- * Interface used to add steps before and/or after query compilation, e.g. cache checks and query result sending to jdbc client .
+ * Thrown when the queried data is in a cold partition and a request to download it
+ * to a local disk has been started. The querying side should switch to other tasks
+ * and retry {@link RecordCursor#hasNext()} call later when the data is moved to
+ * the local disk.
  */
-public interface BatchCallback {
-    void postCompile(
-            SqlCompiler compiler,
-            CompiledQuery cq,
-            CharSequence queryText
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException;
+public class DataUnavailableException extends CairoException {
+    private static final ThreadLocal<DataUnavailableException> tlException = new ThreadLocal<>(DataUnavailableException::new);
 
-    void preCompile(SqlCompiler compiler) throws SqlException;
+    public static DataUnavailableException instance(CharSequence table, CharSequence partition) {
+        DataUnavailableException ex = tlException.get();
+        ex.message.clear();
+        ex.errno = CairoException.NON_CRITICAL;
+        ex.put("partition is located in cold storage, retry query later [table=").put(table)
+                .put(", partition=").put(partition)
+                .put(']');
+        return ex;
+    }
 }

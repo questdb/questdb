@@ -243,6 +243,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        context.resumeResponseSend();
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
@@ -463,7 +464,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             HttpChunkedResponseSocket socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-
             if (state.errorMessage != null) {
                 resumeError(state, socket);
             } else if (state.json) {

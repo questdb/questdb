@@ -232,8 +232,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         if (z_streamp != 0) {
             Zip.deflateReset(z_streamp);
             compressOutBuffer.clear();
-            this.crc = 0;
-            this.total = 0;
+            crc = 0;
+            total = 0;
             compressedHeaderDone = false;
             compressedOutputReady = false;
             compressionComplete = false;

@@ -161,16 +161,16 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             cursor = ioEventSubSeq.next();
         }
 
+        boolean useful = false;
         if (cursor > -1) {
             IOEvent<C> event = ioEventQueue.get(cursor);
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
-            processor.onRequest(operation, connectionContext);
-            return true;
+            useful = processor.onRequest(operation, connectionContext);
         }
 
-        return false;
+        return useful;
     }
 
     @Override

@@ -198,7 +198,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //explicit transaction + rollback on two tables
+    @Test // explicit transaction + rollback on two tables
     public void testBeginCreateInsertRollbackOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -255,11 +255,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     boolean hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
                 }
-
             }
         });
-
-
     }
 
     @Test
@@ -688,7 +685,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         statement.execute("CREATE TABLE test(l long,s string); " +
                                 "INSERT INTO test VALUES (19, 'k'); " +
                                 "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO test VALUES (27, 'f');" +
+                                "INSERT INTO test VALUES (27, 'f'); " +
                                 "SELECT * from test;");
 
                 assertResults(statement, hasResult, count(0), count(1), count(0),
@@ -707,14 +704,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult =
                         statement.execute("CREATE TABLE testA(l long,s string); " +
-                                "CREATE TABLE testB(c char, d double);" +
+                                "CREATE TABLE testB(c char, d double); " +
                                 "INSERT INTO testA VALUES (198, 'cop'); " +
                                 "INSERT INTO testB VALUES ('q', 2.0); " +
                                 "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO testA VALUES (-27, 'o');" +
-                                "INSERT INTO testB VALUES ('z', 1.0);" +
-                                "SELECT * from testA;" +
-                                "SELECT * from testB;");
+                                "INSERT INTO testA VALUES (-27, 'o'); " +
+                                "INSERT INTO testB VALUES ('z', 1.0); " +
+                                "SELECT * from testA; " +
+                                "SELECT * from testB; ");
 
                 assertResults(statement, hasResult, count(0), count(0),
                         count(1), count(1), count(0),
@@ -739,7 +736,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
-    @Test //alter table isn't transactional so we commit transaction right before it
+    @Test // alter table isn't transactional, so we commit transaction right before it
     public void testCreateInsertThenAlterTableRenameThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -761,14 +758,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Ignore("Drop conflicts with earlier insert in the same transaction")
     @Test
-    public void testCreateInsertThenDropDoesntSelfLock() throws Exception {
+    public void testCreateInsertThenDropDoesNotSelfLock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
                 test.connection.setAutoCommit(false);
                 Statement statement = test.statement;
 
                 boolean hasResult =
-                        statement.execute("CREATE TABLE mytable(l long);" +
+                        statement.execute("CREATE TABLE mytable(l long); " +
                                 "INSERT INTO mytable values(1); " +
                                 "DROP TABLE mytable; ");
 
@@ -777,7 +774,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in block should create implicit transaction so first insert should be rolled back
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -800,7 +797,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test //running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in block should create implicit transaction so first insert should be rolled back
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransactionOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -840,7 +837,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("alter table throws error while trying to acquire lock taken by prior transactional insert")
-    @Test //alter table isn't transactional so we commit transaction right before it
+    @Test // alter table isn't transactional, so we commit transaction right before it
     public void testCreateNormalInsertThenAlterAddColumnTableThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -861,7 +858,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("Truncate table times out trying to acquire lock taken by earlier insert in the same transaction")
-    @Test//truncate commits existing transaction and is non-transactional
+    @Test // truncate commits existing transaction and is non-transactional
     public void testCreateNormalInsertThenTruncateThenRollbackLeavesEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -896,7 +893,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Ignore("Insert as select times out trying to acquire lock taken by earlier insert in the same transaction")
-    @Test//insert as select is not transactional. It commits existing transaction and right after inserting data.
+    @Test // Insert as select is not transactional. It commits existing transaction and right after inserting data.
     public void testCreateTableInsertThenInsertAsSelectThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -917,8 +914,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//test interleaved extended query execution they don't spill bind formats
-    public void testDifferentExtendedQueriesExecutedInExtendedModeDontSpillFormats() throws Exception {
+    @Test // test interleaved extended query execution they don't spill bind formats
+    public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(2);
@@ -974,8 +971,24 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test//edge case - run the same query with binary protocol in extended mode and then the same in query block
-    public void testQueryExecutedInBatchModeDoesntUseCachedStatementBinaryFormat() throws Exception {
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("select * from test_data_unavailable(3, 10); " +
+                        "select * from test_data_unavailable(2, 10);");
+                // TODO(puzpuzpuz): the second query get ignored here since batch statement execution doesn't
+                //  support proper suspend/resume on insufficient buffer size or data in cold storage.
+                assertResults(statement, hasResult,
+                        data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L)));
+            }
+        });
+    }
+
+    @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
+    public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server = createPGServer(2);
@@ -1544,7 +1557,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-
+    // TODOs:
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
     //test when there's error in the middle then implicit transaction is rolled back 

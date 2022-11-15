@@ -102,6 +102,7 @@ open module io.questdb {
 
     provides FunctionFactory with
             // test functions
+            io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory,

@@ -163,15 +163,16 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long statementTimeout = -1L;
+    private boolean suspended = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -309,6 +310,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
+        suspended = false;
     }
 
     public void clearWriters() {
@@ -348,7 +350,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
             @Transient WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool,
             int operation
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, SuspendQueryException, BadProtocolException {
 
         this.typesAndSelectCache = selectAndTypesCache;
         this.typesAndSelectPool = selectAndTypesPool;
@@ -356,7 +358,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         this.typesAndUpdatePool = typesAndUpdatePool;
 
         try {
-            if (bufferRemainingSize > 0) {
+            if (suspended) {
+                suspended = false;
+                if (resumeProcessor != null) {
+                    resumeProcessor.resume();
+                }
+            } else if (bufferRemainingSize > 0) {
                 doSend(bufferRemainingOffset, bufferRemainingSize);
                 if (resumeProcessor != null) {
                     resumeProcessor.resume();
@@ -1447,12 +1454,15 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     /**
-     * returns address of where parsing stopped. If there are remaining bytes left
+     * Returns address of where parsing stopped. If there are remaining bytes left
      * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
-    private void parse(long address, int len, @Transient SqlCompiler compiler)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException, AuthenticationException {
+    private void parse(
+            long address,
+            int len,
+            @Transient SqlCompiler compiler
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SuspendQueryException, AuthenticationException, SqlException {
 
         if (requireInitialMessage) {
             sendRNQ = true;
@@ -1509,7 +1519,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             return;
         }
         switch (type) {
-            case 'P': //parse
+            case 'P': // parse
                 sendRNQ = true;
                 processParse(
                         address,
@@ -2028,8 +2038,11 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void processExec(long lo, long msgLimit, SqlCompiler compiler)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException, BadProtocolException {
+    private void processExec(
+            long lo,
+            long msgLimit,
+            SqlCompiler compiler
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
 
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
@@ -2046,7 +2059,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         wrapper = null;
     }
 
-    private void processExecute(int maxRows, SqlCompiler compiler) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void processExecute(
+            int maxRows,
+            SqlCompiler compiler
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         if (typesAndSelect != null) {
             LOG.debug().$("executing query").$();
             setupFactoryAndCursor(compiler);
@@ -2057,7 +2073,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         } else if (typesAndUpdate != null) {
             LOG.debug().$("executing update").$();
             executeUpdate(compiler);
-        } else { //this must be a OK/SET/COMMIT/ROLLBACK or empty query
+        } else { // this must be an OK/SET/COMMIT/ROLLBACK or empty query
             executeTag();
             prepareCommandComplete(false);
         }
@@ -2228,9 +2244,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         syncActions.add(SYNC_PARSE);
     }
 
-    //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.
-    private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
+    private void processQuery(
+            long lo,
+            long limit,
+            @Transient SqlCompiler compiler
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, BadProtocolException {
         prepareForNewQuery();
         CharacterStoreEntry e = characterStore.newEntry();
 
@@ -2349,24 +2368,22 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         prepareCommandComplete(true);
     }
 
-    private void resumeCursorExecute() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeCursorExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         responseAsciiSink.bookmark();
-        appendSingleRecord(record, columnCount);
         sendCursor0(record, columnCount, resumeCommandCompleteRef);
     }
 
-    private void resumeCursorQuery() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeCursorQuery() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         resumeCursorQuery0();
         sendReadyForNewQuery();
     }
 
-    private void resumeCursorQuery0() throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeCursorQuery0() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
         responseAsciiSink.bookmark();
-        appendSingleRecord(record, columnCount);
         sendCursor0(record, columnCount, resumeQueryCompleteRef);
     }
 
@@ -2413,9 +2430,9 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             int maxRows,
             PGResumeProcessor cursorResumeProcessor,
             PGResumeProcessor commandCompleteResumeProcessor
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         // the assumption for now is that any record will fit into response buffer. This of course precludes us from
-        // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
+        // streaming large BLOBs, but, and it's a big one, PostgreSQL protocol for DataRow does not allow for
         // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
         // approach for general queries. For streaming protocol we will code something else. PostgreSQL Java driver is
         // slow anyway.
@@ -2427,29 +2444,38 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         final long cursorRowCount = currentCursor.size();
         this.maxRows = maxRows > 0 ? Long.min(maxRows, cursorRowCount) : Long.MAX_VALUE;
         this.resumeProcessor = cursorResumeProcessor;
+        responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, commandCompleteResumeProcessor);
     }
 
-    private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        while (currentCursor.hasNext()) {
-            // create checkpoint to which we can undo the buffer in case
-            // current DataRow will not fit fully.
-            responseAsciiSink.bookmark();
-            try {
+    private void sendCursor0(
+            Record record,
+            int columnCount,
+            PGResumeProcessor commandCompleteResumeProcessor
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+        try {
+            while (currentCursor.hasNext()) {
                 try {
-                    appendRecord(record, columnCount);
-                    if (rowCount >= maxRows) break;
-                } catch (NoSpaceLeftInResponseBufferException e) {
+                    try {
+                        appendRecord(record, columnCount);
+                        responseAsciiSink.bookmark();
+                        if (rowCount >= maxRows) break;
+                    } catch (NoSpaceLeftInResponseBufferException e) {
+                        responseAsciiSink.resetToBookmark();
+                        sendAndReset();
+                        appendSingleRecord(record, columnCount);
+                        responseAsciiSink.bookmark();
+                    }
+                } catch (SqlException e) {
+                    clearCursorAndFactory();
                     responseAsciiSink.resetToBookmark();
-                    sendAndReset();
-                    appendSingleRecord(record, columnCount);
+                    throw e;
                 }
-            } catch (SqlException e) {
-                clearCursorAndFactory();
-                responseAsciiSink.resetToBookmark();
-                throw e;
             }
+        } catch (DataUnavailableException ignore) {
+            suspended = true;
+            responseAsciiSink.resetToBookmark();
+            throw SuspendQueryException.INSTANCE;
         }
 
         completed = maxRows <= 0 || rowCount < maxRows;
@@ -2652,7 +2678,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     @FunctionalInterface
     private interface PGResumeProcessor {
-        void resume() throws PeerIsSlowToReadException, SqlException, PeerDisconnectedException;
+        void resume() throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException;
     }
 
     public static class NamedStatementWrapper implements Mutable {
@@ -2672,6 +2698,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     public static class Portal implements Mutable {
+
         public CharSequence statementName = null;
 
         @Override
@@ -2681,9 +2708,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     class PGConnectionBatchCallback implements BatchCallback {
+
         @Override
-        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text)
-                throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        public void postCompile(
+                SqlCompiler compiler,
+                CompiledQuery cq,
+                CharSequence text
+        ) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException {
             try {
                 PGConnectionContext.this.queryText = text;
                 LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();

@@ -40,6 +40,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.SuspendQueryException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
@@ -102,7 +103,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
@@ -182,7 +183,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(context));
@@ -209,7 +210,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null || state.cursor == null) {
             return;
@@ -218,6 +219,12 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         // copy random during query resume
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+
+        if (!state.suspended) {
+            context.resumeResponseSend();
+        } else {
+            state.suspended = false;
+        }
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         final int columnCount = state.metadata.getColumnCount();
@@ -231,22 +238,22 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     case JsonQueryProcessorState.QUERY_METADATA:
                         state.columnIndex = 0;
                         state.queryState = JsonQueryProcessorState.QUERY_METADATA;
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-
-                            socket.bookmark();
+                        while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
                                 socket.put(state.delimiter);
                             }
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
+                            state.columnIndex++;
+                            socket.bookmark();
                         }
                         socket.put(Misc.EOL);
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        socket.bookmark();
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD_START:
-
                         if (state.record == null) {
                             // check if cursor has any records
-                            state.record = state.cursor.getRecord();
+                            Record record = state.cursor.getRecord();
                             while (true) {
                                 if (state.cursor.hasNext()) {
                                     state.count++;
@@ -256,6 +263,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                     }
 
                                     if (state.count > state.skip) {
+                                        state.record = record;
                                         break;
                                     }
                                 } else {
@@ -274,23 +282,22 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         state.columnIndex = 0;
                         // fall through
                     case JsonQueryProcessorState.QUERY_RECORD:
-
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-                            socket.bookmark();
+                        while (state.columnIndex < columnCount) {
                             if (state.columnIndex > 0) {
                                 socket.put(state.delimiter);
                             }
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            state.columnIndex++;
+                            socket.bookmark();
                         }
 
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_SUFFIX;
                         // fall through
-
                     case JsonQueryProcessorState.QUERY_RECORD_SUFFIX:
-                        socket.bookmark();
                         socket.put(Misc.EOL);
                         state.record = null;
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
+                        socket.bookmark();
                         break;
                     case JsonQueryProcessorState.QUERY_SUFFIX:
                         sendDone(socket, state);
@@ -298,6 +305,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     default:
                         break OUT;
                 }
+            } catch (DataUnavailableException e) {
+                socket.resetToBookmark();
+                throw SuspendQueryException.INSTANCE;
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
                     socket.sendChunk(false);
@@ -313,6 +323,15 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context);
+    }
+
+    @Override
+    public void suspendRequest(HttpConnectionContext context) {
+        TextQueryProcessorState state = LV.get(context);
+        if (state != null) {
+            state.rnd = sqlExecutionContext.getRandom();
+            state.suspended = true;
+        }
     }
 
     private static boolean isExpUrl(CharSequence tok) {

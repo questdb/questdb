@@ -170,7 +170,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.isOpen();
     }
 
-    final public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
+    public final void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
@@ -248,7 +248,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
-    final public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
+    public final void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long keyAppendPageSize, long valueAppendPageSize) {
         close();
         final int plen = path.length();
         final FilesFacade ff = configuration.getFilesFacade();

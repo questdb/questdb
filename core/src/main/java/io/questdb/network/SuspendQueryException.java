@@ -22,21 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.network;
 
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.SuspendQueryException;
-
-/**
- * Interface used to add steps before and/or after query compilation, e.g. cache checks and query result sending to jdbc client .
- */
-public interface BatchCallback {
-    void postCompile(
-            SqlCompiler compiler,
-            CompiledQuery cq,
-            CharSequence queryText
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException;
-
-    void preCompile(SqlCompiler compiler) throws SqlException;
+public class SuspendQueryException extends Exception {
+    public static final SuspendQueryException INSTANCE = new SuspendQueryException();
 }

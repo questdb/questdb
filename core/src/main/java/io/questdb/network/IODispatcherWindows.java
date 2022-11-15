@@ -113,7 +113,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
 
     @Override
     protected boolean runSerially() {
-
         final long timestamp = clock.getTicks();
         processDisconnects(timestamp);
 

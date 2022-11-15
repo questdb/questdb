@@ -222,6 +222,7 @@ public class IODispatcherTest {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
                                         context.dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                     }
+                                    return true;
                                 }
                         );
                     }
@@ -626,6 +627,46 @@ public class IODispatcherTest {
                         "\r\n" +
                         "08\r\n" +
                         "Exists\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testExpCustomDelimiter() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "54\r\n" +
+                        "\"sym\"\t\"num\"\r\n" +
+                        "\"c\"\t9\r\n" +
+                        "\"b\"\t5\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t5\r\n" +
+                        "\"a\"\t7\r\n" +
+                        "\"a\"\t4\r\n" +
+                        "\"a\"\t8\r\n" +
+                        "\"a\"\t2\r\n" +
+                        "\"c\"\t10\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
@@ -5195,6 +5236,46 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testQueryEventuallySucceedsOnDataUnavailable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String select = "select * from test_data_unavailable(3, 100)";
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "c2\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(3, 100)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String select = "select * from test_data_unavailable(32, 10)";
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "0100\r\n" +
+                                    "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10],[11,11,11],[12\r\n" +
+                                    "f0\r\n" +
+                                    ",12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],\"count\":32}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                });
+    }
+
+    @Test
     public void testQueuedConnectionTimeout() throws Exception {
         testQueuedConnectionTimeoutImpl(9001);
     }
@@ -6178,6 +6259,99 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String select = "select * from test_data_unavailable(3, 100)";
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "22\r\n" +
+                                    "\"x\",\"y\",\"z\"\r\n" +
+                                    "1,1,1\r\n" +
+                                    "2,2,2\r\n" +
+                                    "3,3,3\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256))
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String select = "select * from test_data_unavailable(32, 10)";
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0100\r\n" +
+                                    "\"x\",\"y\",\"z\"\r\n" +
+                                    "1,1,1\r\n" +
+                                    "2,2,2\r\n" +
+                                    "3,3,3\r\n" +
+                                    "4,4,4\r\n" +
+                                    "5,5,5\r\n" +
+                                    "6,6,6\r\n" +
+                                    "7,7,7\r\n" +
+                                    "8,8,8\r\n" +
+                                    "9,9,9\r\n" +
+                                    "10,10,10\r\n" +
+                                    "11,11,11\r\n" +
+                                    "12,12,12\r\n" +
+                                    "13,13,13\r\n" +
+                                    "14,14,14\r\n" +
+                                    "15,15,15\r\n" +
+                                    "16,16,16\r\n" +
+                                    "17,17,17\r\n" +
+                                    "18,18,18\r\n" +
+                                    "19,19,19\r\n" +
+                                    "20,20,20\r\n" +
+                                    "21,21,21\r\n" +
+                                    "22,22,22\r\n" +
+                                    "23,23,23\r\n" +
+                                    "24,24,24\r\n" +
+                                    "25,25,25\r\n" +
+                                    "26,26,26\r\n" +
+                                    "27,27,27\r\n" +
+                                    "\r\n" +
+                                    "32\r\n" +
+                                    "28,28,28\r\n" +
+                                    "29,29,29\r\n" +
+                                    "30,30,30\r\n" +
+                                    "31,31,31\r\n" +
+                                    "32,32,32\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                });
+    }
+
+    @Test
     public void testTextQueryCopyFrom() throws Exception {
         String copyInputRoot = TestUtils.getCsvRoot();
         new HttpQueryTestBuilder()
@@ -6493,46 +6667,6 @@ public class IODispatcherTest {
                         "\r\n" +
                         "00\r\n" +
                         "\r\n");
-    }
-
-    @Test
-    public void testExpCustomDelimiter() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "54\r\n" +
-                        "\"sym\"\t\"num\"\r\n" +
-                        "\"c\"\t9\r\n" +
-                        "\"b\"\t5\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t5\r\n" +
-                        "\"a\"\t7\r\n" +
-                        "\"a\"\t4\r\n" +
-                        "\"a\"\t8\r\n" +
-                        "\"a\"\t2\r\n" +
-                        "\"c\"\t10\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
     }
 
     @Test
@@ -7467,6 +7601,7 @@ public class IODispatcherTest {
                                     default:
                                         dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_TEST);
                                 }
+                                return true;
                             };
                             do {
                                 dispatcher.run(0);

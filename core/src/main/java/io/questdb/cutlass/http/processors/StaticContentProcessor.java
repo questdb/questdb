@@ -103,6 +103,8 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
+        context.resumeResponseSend();
+
         final HttpRawSocket socket = context.getRawResponseSocket();
         long address = socket.getBufferAddress();
         int size = socket.getBufferSize();

@@ -118,7 +118,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             pending.set(r, M_ID, id);
             pending.set(r, context);
 
-
             if (count > capacity - 1) {
                 registerWithKQueue(count);
                 count = 0;

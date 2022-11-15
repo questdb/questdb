@@ -94,7 +94,7 @@ public class SendAndReceiveRequestBuilder {
 
     public void execute(
             String request,
-            CharSequence response
+            CharSequence expectedResponse
     ) throws InterruptedException {
         final long fd = nf.socketTcp(true);
         try {
@@ -107,7 +107,7 @@ public class SendAndReceiveRequestBuilder {
                     nf.configureNonBlocking(fd);
                 }
 
-                executeWithSocket(request, response, fd);
+                executeWithSocket(request, expectedResponse, fd);
             } finally {
                 nf.freeSockAddr(sockAddrInfo);
             }
@@ -364,12 +364,12 @@ public class SendAndReceiveRequestBuilder {
         return this;
     }
 
-    private void executeWithSocket(String request, CharSequence response, long fd) {
-        final int len = Math.max(response.length(), request.length()) * 2;
+    private void executeWithSocket(String request, CharSequence expectedResponse, long fd) {
+        final int len = Math.max(expectedResponse.length(), request.length()) * 2;
         long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int j = 0; j < requestCount; j++) {
-                executeExplicit(request, fd, response, len, ptr, null);
+                executeExplicit(request, fd, expectedResponse, len, ptr, null);
             }
         } finally {
             Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);

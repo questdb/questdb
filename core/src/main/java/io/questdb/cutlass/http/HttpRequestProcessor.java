@@ -27,21 +27,29 @@ package io.questdb.cutlass.http;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.SuspendQueryException;
 
 public interface HttpRequestProcessor {
     // after this callback is invoked the server will disconnect the client
     // if processor desires to write a goodbye letter to the client
     // it must also send TCP FIN by invoking socket.shutdownWrite()
-    default void failRequest(HttpConnectionContext context, HttpException exception) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void failRequest(
+            HttpConnectionContext context,
+            HttpException exception
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
     default void onHeadersReady(HttpConnectionContext context) {
     }
 
-    default void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void onRequestComplete(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
     }
 
-    default void onRequestRetry(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void onRequestRetry(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
     }
 
     default void parkRequest(HttpConnectionContext context) {
@@ -50,6 +58,11 @@ public interface HttpRequestProcessor {
     default void resumeRecv(HttpConnectionContext context) {
     }
 
-    default void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    default void resumeSend(
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    }
+
+    default void suspendRequest(HttpConnectionContext context) {
     }
 }
