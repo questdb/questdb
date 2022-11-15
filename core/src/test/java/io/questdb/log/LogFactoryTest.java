@@ -708,10 +708,14 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
-    @Ignore
     @Test
     public void testLogAutoDeleteByDirectorySize40k() throws Exception {
         testAutoDeleteByDirectorySize("40k");
+    }
+
+    @Test
+    public void testLogAutoDeleteByDirectorySize500k() throws Exception {
+        testAutoDeleteByDirectorySize("500k");
     }
 
     private static void assertDisabled(LogRecord r) {
@@ -834,7 +838,7 @@ public class LogFactoryTest {
             LogWriterConfig config = new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
-                w.setRollSize("4k");
+                w.setRollSize(sizeLimit);
                 w.setRollEvery("day");
                 w.setSizeLimit(sizeLimit);
                 return w;
@@ -845,14 +849,33 @@ public class LogFactoryTest {
             factory.startThread();
 
             Log logger = factory.create("x");
-            for (int i = 0; i < 10000; i++) {
+            for (int i = 0; i < 100000; i++) {
                 logger.xinfo().$("test ").$(' ').$(i).$();
-                //maybe need to call flush() in here at certain times?
             }
         }
-        //LogRollingFileWriter only flushes once (at this point because it's closing) so only 1 log file is made
-        //And RemoveOldLogs() never gets called. I think I need multiple log files to show that some get deleted.
-        //How can I test this properly?
+
+        int fileCount = 0;
+        try (Path path = new Path()) {
+            StringSink fileNameSink = new StringSink();
+            path.of(base).$();
+            long pFind = Files.findFirst(path);
+            try {
+                Assert.assertTrue(pFind != 0);
+                do {
+                    fileNameSink.clear();
+                    Chars.utf8DecodeZ(Files.findName(pFind), fileNameSink);
+                    if (Files.isDots(fileNameSink)) {
+                        continue;
+                    }
+                    fileCount++;
+                } while (Files.findNext(pFind) > 0);
+
+            } finally {
+                Files.findClose(pFind);
+            }
+        }
+        //It usually ends up with 4 files without auto log removal
+        Assert.assertTrue(fileCount == 1);
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {

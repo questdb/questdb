@@ -73,6 +73,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private String rollSize;
     private String spinBeforeFlush;
     private String logFileTemplate;
+    private String logDir;
     private final FindVisitor removeExpiredLogsVisitor = this::removeOldLogsVisitor;
     private final FindVisitor removeExcessiveLogsVisitor = this::removeExcessiveLogsVisitor;
 
@@ -97,7 +98,6 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     @Override
     public void bindProperties(LogFactory factory) {
         locationParser.parseEnv(location, clock.getTicks());
-        logFileTemplate = location.toString().substring(LogFactory.LOG_DIR.length()+1, location.toString().indexOf('$'));
         if (this.bufferSize != null) {
             try {
                 nBufferSize = Numbers.parseIntSize(this.bufferSize);
@@ -174,6 +174,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         this.buf = _wptr = Unsafe.malloc(nBufferSize, MemoryTag.NATIVE_LOGGER);
         this.lim = buf + nBufferSize;
         openFile();
+        logFileTemplate = location.substring(path.toString().lastIndexOf(Files.SEPARATOR)+1, location.indexOf('$'));
+        logDir = location.substring(0, location.indexOf(logFileTemplate)-1);
     }
 
     @Override
@@ -279,15 +281,15 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void removeOldLogs(){
         if(this.lifeDuration != null) {
-            ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExpiredLogsVisitor);
+            ff.iterateDir(path.of(logDir).$(), removeExpiredLogsVisitor);
         }
         if(this.sizeLimit != null) {
             currentLogSizeSum = 0;
-            ff.iterateDir(path.of(LogFactory.LOG_DIR).$(), removeExcessiveLogsVisitor);
+            ff.iterateDir(path.of(logDir).$(), removeExcessiveLogsVisitor);
         }
     }
     private void removeOldLogsVisitor(long filePointer, int type){
-        path.trimTo(LogFactory.LOG_DIR.length());
+        path.trimTo(logDir.length());
         path.concat(filePointer).$();
         NativeLPSZ name = new NativeLPSZ();
         name.of(filePointer);
@@ -300,7 +302,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private void removeExcessiveLogsVisitor(long filePointer, int type){
-        path.trimTo(LogFactory.LOG_DIR.length());
+        path.trimTo(logDir.length());
         path.concat(filePointer).$();
         NativeLPSZ name = new NativeLPSZ();
         name.of(filePointer);
