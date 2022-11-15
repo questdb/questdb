@@ -1260,7 +1260,7 @@ public final class SqlParser {
             throw SqlException.$(lexer.getPosition(), "'select' or 'values' expected");
         }
 
-        if (isSelectKeyword(tok) || isWithKeyword(tok)) {
+        if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
@@ -1728,14 +1728,20 @@ public final class SqlParser {
     private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
         parseWithClauses(lexer, topLevelWithModel);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
-        if (!isUpdateKeyword(tok)) {
-            // SELECT
+        if (isSelectKeyword(tok)) {
             lexer.unparseLast();
             return parseDml(lexer, null, lexer.lastTokenPosition());
-        } else {
-            // UPDATE
+        }
+
+        if (isUpdateKeyword(tok)) {
             return parseUpdate(lexer);
         }
+
+        if (isInsertKeyword(tok)) {
+            return parseInsert(lexer);
+        }
+
+        throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
     }
 
     private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
