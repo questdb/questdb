@@ -1148,12 +1148,12 @@ public class O3MaxLagTest extends AbstractO3Test {
             TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
 
+        Rnd rnd = TestUtils.generateRandom(LOG);
 
-        Rnd rnd = new Rnd();
         long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
         long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = 23;
-        int rowCount = txCount * 120000;
+        int txCount = rnd.nextInt(50);
+        int rowCount = txCount * rnd.nextInt(200) * 1000;
         try (
                 TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                 TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
