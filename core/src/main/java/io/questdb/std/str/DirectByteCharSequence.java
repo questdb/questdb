@@ -83,18 +83,18 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
         this.hi--;
     }
 
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        DirectByteCharSequence seq = new DirectByteCharSequence();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
-        return seq;
-    }
-
     @NotNull
     @Override
     public String toString() {
         return Chars.stringFromUtf8Bytes(lo, hi);
+    }
+
+    @Override
+    protected CharSequence _subSequence(int start, int end) {
+        DirectByteCharSequence seq = new DirectByteCharSequence();
+        seq.lo = this.lo + start;
+        seq.hi = this.lo + end;
+        return seq;
     }
 
     public static final class Factory implements ObjectFactory<DirectByteCharSequence> {

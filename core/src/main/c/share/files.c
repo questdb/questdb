@@ -123,7 +123,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return readOffset - offset;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    jint result;
+    ssize_t readLen = pread((int) fd, (void *) &result, (size_t) 4, (off_t) offset);
+    if (readLen != 4) {
+        return -1;
+    }
+    return result;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {

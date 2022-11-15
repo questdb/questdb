@@ -34,7 +34,7 @@ public interface WorkerPoolConfiguration {
     }
 
     default long getSleepTimeout() {
-        return 100;
+        return 10;
     }
 
     default int[] getWorkerAffinity() {

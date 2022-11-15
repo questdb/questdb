@@ -42,8 +42,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Random;
-
 public class O3CommitLagTest extends AbstractO3Test {
     private final static Log LOG = LogFactory.getLog(O3CommitLagTest.class);
     private RecordToRowCopier copier;
@@ -1242,12 +1240,12 @@ public class O3CommitLagTest extends AbstractO3Test {
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        Random rand = new Random(0);
+        Rnd rnd = new Rnd();
         IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
         int atRow = nInitialStateRows;
         batchRowEnd.add(-atRow); // negative row means this has been committed
         while (atRow < nTotalRows) {
-            int nRows = rand.nextInt(maxBatchedRows) + 1;
+            int nRows = rnd.nextInt(maxBatchedRows) + 1;
             atRow += nRows;
             batchRowEnd.add(atRow);
         }
@@ -1257,7 +1255,7 @@ public class O3CommitLagTest extends AbstractO3Test {
             int nHeadBatch = 1;
             int nRowsAppended = 0;
             while (nHeadBatch < batchRowEnd.size()) {
-                int nBatch = nHeadBatch + rand.nextInt(maxConcurrentBatches);
+                int nBatch = nHeadBatch + rnd.nextInt(maxConcurrentBatches);
                 while (nBatch >= batchRowEnd.size() || batchRowEnd.get(nBatch) < 0) {
                     nBatch--;
                 }

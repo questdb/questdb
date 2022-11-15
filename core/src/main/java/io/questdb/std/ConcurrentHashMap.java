@@ -1657,7 +1657,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         int sc;
         while ((tab = table) == null || tab.length == 0) {
             if ((sc = sizeCtl) < 0)
-                Thread.yield(); // lost initialization race; just spin
+                Os.pause(); // lost initialization race; just spin
             else if (Unsafe.getUnsafe().compareAndSwapInt(this, SIZECTL, sc, -1)) {
                 try {
                     if ((tab = table) == null || tab.length == 0) {

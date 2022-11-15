@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.lang.ThreadLocal;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
@@ -57,11 +58,11 @@ public class TableTransactionLog implements Closeable {
     private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
     private final FilesFacade ff;
+    private final AtomicLong maxTxn = new AtomicLong();
     private final StringSink rootPath = new StringSink();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
-    private long maxTxn;
 
     TableTransactionLog(FilesFacade ff) {
         this.ff = ff;
@@ -71,7 +72,7 @@ public class TableTransactionLog implements Closeable {
     public void close() {
         if (txnMem.isOpen()) {
             long maxTxnInFile = txnMem.getLong(MAX_TXN_OFFSET);
-            assert maxTxnInFile == maxTxn : "Max txn in the file " + maxTxnInFile + " but in memory is " + maxTxn;
+            assert maxTxnInFile == maxTxn.get() : "Max txn in the file " + maxTxnInFile + " but in memory is " + maxTxn.get();
             txnMem.close(false);
             txnMetaMem.close(false);
             txnMetaMemIndex.close(false);
@@ -104,9 +105,9 @@ public class TableTransactionLog implements Closeable {
         txnMem.jumpTo(txnMem.getAppendOffset() + RECORD_RESERVED);
 
         Unsafe.getUnsafe().storeFence();
-        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
+        txnMem.putLong(MAX_TXN_OFFSET, maxTxn.incrementAndGet());
         // Transactions are 1 based here
-        return maxTxn;
+        return maxTxn.get();
     }
 
     long beginMetadataChangeEntry(long newStructureVersion, MemorySerializer serializer, Object instance) {
@@ -114,7 +115,7 @@ public class TableTransactionLog implements Closeable {
 
         txnMem.putInt(STRUCTURAL_CHANGE_WAL_ID);
         txnMem.putLong(newStructureVersion);
-        txnMem.jumpTo((maxTxn + 1) * RECORD_SIZE + HEADER_SIZE);
+        txnMem.jumpTo((maxTxn.get() + 1) * RECORD_SIZE + HEADER_SIZE);
 
         txnMetaMem.putInt(0);
         long varMemBegin = txnMetaMem.getAppendOffset();
@@ -128,12 +129,12 @@ public class TableTransactionLog implements Closeable {
 
     long endMetadataChangeEntry(long newStructureVersion, long offset) {
         Unsafe.getUnsafe().storeFence();
-        txnMem.putLong(MAX_TXN_OFFSET, ++maxTxn);
+        txnMem.putLong(MAX_TXN_OFFSET, maxTxn.incrementAndGet());
         txnMem.putLong(MAX_STRUCTURE_VERSION_OFFSET, newStructureVersion);
         txnMem.putLong(TXN_META_SIZE_OFFSET, offset);
 
         // Transactions are 1 based here
-        return maxTxn;
+        return maxTxn.get();
     }
 
     TransactionLogCursor getCursor(long txnLo) {
@@ -155,7 +156,7 @@ public class TableTransactionLog implements Closeable {
     }
 
     long lastTxn() {
-        return maxTxn;
+        return maxTxn.get();
     }
 
     void open(Path path) {
@@ -167,11 +168,11 @@ public class TableTransactionLog implements Closeable {
         openSmallFile(ff, path, pathLength, txnMetaMem, TXNLOG_FILE_NAME_META_VAR, MemoryTag.MMAP_TX_LOG);
         openSmallFile(ff, path, pathLength, txnMetaMemIndex, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
-        maxTxn = txnMem.getLong(MAX_TXN_OFFSET);
+        maxTxn.set(txnMem.getLong(MAX_TXN_OFFSET));
         long maxStructureVersion = txnMem.getLong(MAX_STRUCTURE_VERSION_OFFSET);
         long txnMetaMemSize = txnMem.getLong(TXN_META_SIZE_OFFSET);
 
-        if (maxTxn == 0) {
+        if (maxTxn.get() == 0) {
             txnMem.jumpTo(0L);
             txnMem.putInt(WAL_FORMAT_VERSION);
             txnMem.putLong(0L);
@@ -182,7 +183,7 @@ public class TableTransactionLog implements Closeable {
             txnMetaMemIndex.putLong(0L); // N + 1, first entry is 0.
             txnMetaMem.jumpTo(0L);
         } else {
-            txnMem.jumpTo(HEADER_SIZE + maxTxn * RECORD_SIZE);
+            txnMem.jumpTo(HEADER_SIZE + maxTxn.get() * RECORD_SIZE);
             long structureAppendOffset = (maxStructureVersion + 1) * Long.BYTES;
             txnMetaMemIndex.jumpTo(structureAppendOffset);
             txnMetaMem.jumpTo(txnMetaMemSize);
@@ -235,16 +236,20 @@ public class TableTransactionLog implements Closeable {
             // deallocates current state
             close();
 
-            final long fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            final long fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
-            final long fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
-
             this.ff = ff;
             this.serializer = serializer;
+
+            long fdTxn = -1;
+            long fdTxnMeta = -1;
+            long fdTxnMetaIndex = -1;
             try {
-                txnMetaOffset = ff.readULong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
+                fdTxn = openFileRO(ff, path, TXNLOG_FILE_NAME);
+                fdTxnMeta = openFileRO(ff, path, TXNLOG_FILE_NAME_META_VAR);
+                fdTxnMetaIndex = openFileRO(ff, path, TXNLOG_FILE_NAME_META_INX);
+
+                txnMetaOffset = ff.readNonNegativeLong(fdTxnMetaIndex, structureVersionLo * Long.BYTES);
                 if (txnMetaOffset > -1L) {
-                    txnMetaOffsetHi = ff.readULong(fdTxn, TXN_META_SIZE_OFFSET);
+                    txnMetaOffsetHi = ff.readNonNegativeLong(fdTxn, TXN_META_SIZE_OFFSET);
                     if (txnMetaOffsetHi > txnMetaOffset) {
                         txnMetaAddress = ff.mmap(
                                 fdTxnMeta,
@@ -329,7 +334,7 @@ public class TableTransactionLog implements Closeable {
                 return true;
             }
 
-            final long newTxnCount = ff.readULong(fd, MAX_TXN_OFFSET);
+            final long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (newTxnCount > txnCount) {
                 final long oldSize = getMappedLen();
                 txnCount = newTxnCount;
@@ -358,7 +363,7 @@ public class TableTransactionLog implements Closeable {
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
             this.fd = openFileRO(ff, path, TXNLOG_FILE_NAME);
-            this.txnCount = ff.readULong(fd, MAX_TXN_OFFSET);
+            this.txnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET);
             if (txnCount > -1L) {
                 this.address = ff.mmap(fd, getMappedLen(), 0, Files.MAP_RO, MemoryTag.NATIVE_DEFAULT);
                 this.txnOffset = HEADER_SIZE + (txnLo - 1) * RECORD_SIZE;
