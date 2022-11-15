@@ -2887,6 +2887,32 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinOnUUID() throws Exception {
+        testFullFat(() -> assertMemoryLeak(() -> {
+            final String query = "select x.i, y.i, x.uuid " +
+                    "from x " +
+                    "join x y on y.uuid = x.uuid";
+
+            final String expected = "i\ti1\tuuid\n" +
+                    "1\t1\t0010a928-bb8b-9650-0010-cde812ce60ee\n" +
+                    "2\t2\t6b813981-5c50-d341-9f9b-2131d49fcd1d\n" +
+                    "3\t3\t72a215ba-0462-ad15-7bcd-48d8c77aa655\n";
+
+            compiler.compile(
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_uuid() uuid" +
+                            " from long_sequence(3)" +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            assertQueryAndCache(expected, query, null, false);
+        }));
+    }
+
+    @Test
     public void testJoinOuterAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +

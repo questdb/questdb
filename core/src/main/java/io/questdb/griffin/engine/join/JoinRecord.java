@@ -274,6 +274,22 @@ public class JoinRecord implements Record {
         return master.getUpdateRowId();
     }
 
+    @Override
+    public long getUuidLeastSig(int col) {
+        if (col < split) {
+            return master.getUuidLeastSig(col);
+        }
+        return slave.getUuidLeastSig(col - split);
+    }
+
+    @Override
+    public long getUuidMostSig(int col) {
+        if (col < split) {
+            return master.getUuidMostSig(col);
+        }
+        return slave.getUuidMostSig(col - split);
+    }
+
     void of(Record master, Record slave) {
         this.master = master;
         this.slave = slave;

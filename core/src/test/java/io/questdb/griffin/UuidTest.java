@@ -215,6 +215,24 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectChoose() throws Exception {
+        assertCompile("create table x (i INT, u UUID)");
+        assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n" +
+                        "33333333-3333-3333-3333-333333333333\n" +
+                        "33333333-3333-3333-3333-333333333333\n" +
+                        "33333333-3333-3333-3333-333333333333\n",
+                "select u from (select * from x)", null, null, true, true, true);
+    }
+
+    @Test
     public void testUpdateByUuid() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");

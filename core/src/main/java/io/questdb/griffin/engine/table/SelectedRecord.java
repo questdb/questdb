@@ -188,6 +188,16 @@ class SelectedRecord implements Record {
         return base.getUpdateRowId();
     }
 
+    @Override
+    public long getUuidLeastSig(int col) {
+        return base.getUuidLeastSig(getColumnIndex(col));
+    }
+
+    @Override
+    public long getUuidMostSig(int col) {
+        return base.getUuidMostSig(getColumnIndex(col));
+    }
+
     private int getColumnIndex(int columnIndex) {
         return columnCrossIndex.getQuick(columnIndex);
     }
