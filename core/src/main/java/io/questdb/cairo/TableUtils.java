@@ -267,7 +267,8 @@ public final class TableUtils {
             mem.putInt(count);
             mem.putInt(structure.getPartitionBy());
             int timestampIndex = structure.getTimestampIndex();
-            assert timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP;
+            assert timestampIndex == -1 ||
+                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
             mem.putInt(timestampIndex);
             mem.putInt(tableVersion);
             mem.putInt(tableId);
@@ -276,6 +277,8 @@ public final class TableUtils {
             mem.putLong(0); // Structure version.
             mem.putInt(structure.isWalEnabled() ? 1 : 0);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+            assert count > 0;
 
             for (int i = 0; i < count; i++) {
                 mem.putInt(structure.getColumnType(i));
