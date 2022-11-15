@@ -394,10 +394,9 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                                 if (isWalTable) {
                                     metadata.clear();
-                                    engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
+                                    long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                     metadata.switchTo(path, path.length());
-                                    long lastTxn = metadata.getLastTxn();
                                     metadata.close(Vm.TRUNCATE_TO_POINTER);
 
                                     mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
