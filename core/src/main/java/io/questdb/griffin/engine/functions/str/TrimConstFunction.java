@@ -22,40 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.functions.str;
 
-public interface WorkerPoolConfiguration {
-    default String getPoolName() {
-        return "worker";
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.StringSink;
+
+import static io.questdb.std.Chars.trim;
+
+public class TrimConstFunction extends StrFunction implements UnaryFunction {
+
+    private final StringSink sink1 = new StringSink();
+    private final StringSink sink2 = new StringSink();
+    private final Function arg;
+
+    public TrimConstFunction(Function arg, TrimType type) {
+        this.arg = arg;
+        trim(type, getArg().getStr(null), sink1);
+        trim(type, getArg().getStr(null), sink2);
     }
 
-    default long getSleepThreshold() {
-        return 10000;
+    @Override
+    public Function getArg() {
+        return arg;
     }
 
-    default long getSleepTimeout() {
-        return 10;
+    @Override
+    public CharSequence getStr(Record rec) {
+        return sink1;
     }
 
-    default int[] getWorkerAffinity() {
-        return null;
-    }
-
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return sink2;
     }
 }

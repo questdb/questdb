@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Files;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -37,19 +38,20 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.util.Base64;
-import java.util.Random;
 
 import static io.questdb.cutlass.line.tcp.AbstractLineTcpReceiverTest.*;
 import static org.junit.Assert.assertEquals;
 
 public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
-    private final Random rand = new Random(0);
+
+    private final Rnd rnd = new Rnd();
     private int maxSendBytes = 1024;
     private byte[] sentBytes;
 
     @Before
     @Override
-    public void before() {
+    public void setUp() {
+        super.setUp();
         nWriterThreads = 2;
         microSecondTicks = -1;
         recvBuffer = null;
@@ -475,7 +477,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                 return null;
             }
             if (fragment) {
-                maxSendBytes = rand.nextInt(10) + 1;
+                maxSendBytes = rnd.nextInt(10) + 1;
             }
             handleContextIO();
             if (null != sentBytes) {
@@ -505,7 +507,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         if (fragmented) {
             int nSent = 0;
             do {
-                int n = 1 + rand.nextInt(3);
+                int n = 1 + rnd.nextInt(3);
                 if (n + nSent > sendStr.length()) {
                     recvBuffer = sendStr.substring(nSent);
                 } else {

@@ -24,8 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.Sequence;
-
 public interface Log {
 
     LogRecord advisory();
@@ -43,8 +41,6 @@ public interface Log {
     LogRecord error();
 
     LogRecord errorW();
-
-    Sequence getCriticalSequence();
 
     LogRecord info();
 
