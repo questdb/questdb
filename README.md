@@ -49,12 +49,18 @@ QuestDB release and sample datasets:
 - live trading data from a cryptocurrency exchange
 - geolocations of 250k unique ships over time
 
-| Query                                                                                                                    | Runtime    |
-| ------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| <pre>SELECT sum(fare_amount) FROM trips;</pre>                                                                           | 0.152 secs |
-| <pre>SELECT sum(fare_amount), avg(fare_amount) FROM trips;</pre>                                                         | 0.523 secs |
-| <pre>SELECT sum(fare_amount), avg(fare_amount) FROM trips <br>WHERE pickup_datetime IN '2019';</pre>                     | 0.018 secs |
-| <pre>SELECT pickup_datetime, avg(trip_distance) FROM trips <br>WHERE pickup_datetime IN '2019-01-01' SAMPLE BY 1h;</pre> | 0.009 secs |
+<table>
+<tr><td> Query </td> <td> Runtime </td>
+</tr>
+<tr><td><pre>SELECT sum(fare_amount) FROM trips;</pre></td> <td>0.152 secs</td>
+</tr>
+<tr><td><pre>SELECT sum(fare_amount), avg(fare_amount) FROM trips;</pre></td> <td>0.523 secs</td>
+</tr>
+<tr><td><pre>SELECT sum(fare_amount), avg(fare_amount) FROM trips <br/>WHERE pickup_datetime IN '2019';</pre></td> <td>0.018 secs</td>
+</tr>
+<tr><td><pre>SELECT pickup_datetime, avg(trip_distance) FROM trips <br/>WHERE pickup_datetime IN '2019-01-01' SAMPLE BY 1h;</pre></td> <td>0.009 secs</td>
+</tr>
+</table>
 
 ## Get started
 
