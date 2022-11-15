@@ -108,7 +108,7 @@ public class SimpleLockTest {
         });
         thread.start();
 
-        // wat for thread to acquire lock
+        // wait for thread to acquire lock
         while (!lock.isLocked()) {
             Thread.sleep(20);
         }
@@ -142,7 +142,7 @@ public class SimpleLockTest {
         });
         thread1.start();
 
-        // wat for virtual thread to acquire lock
+        // wait for virtual thread to acquire lock
         while (!lock.isLocked()) {
             Thread.sleep(10);
         }
@@ -191,7 +191,7 @@ public class SimpleLockTest {
         });
         thread.start();
 
-        // wat for thread to acquire lock
+        // wait for thread to acquire lock
         while (!lock.isLocked()) {
             Thread.sleep(20);
         }
@@ -225,7 +225,7 @@ public class SimpleLockTest {
         });
         thread.start();
 
-        // wat for thread to acquire lock
+        // wait for thread to acquire lock
         while (!lock.isLocked()) {
             Thread.sleep(10);
         }
