@@ -1488,6 +1488,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 importer.of(tableName, "test-quotes-big-reverseorder.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 importer.process();
             }
+            refreshTablesInBaseEngine();
             assertQuery("line\tts\td\tdescription\n" +
                             "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
                             "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
