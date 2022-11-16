@@ -29,6 +29,9 @@ import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.UUID;
+
 import static org.junit.Assert.fail;
 
 public class UuidTest extends AbstractGriffinTest {
@@ -305,6 +308,34 @@ public class UuidTest extends AbstractGriffinTest {
                         "1\t00000000-0000-0000-0000-000000000001\n" +
                         "2\t00000000-0000-0000-0000-000000000000\n",
                 "select * from x order by u desc", null, null, true, true, true);
+    }
+
+    @Test
+    public void testRandomizedOrderBy() throws Exception {
+        int count = 1000;
+
+        assertCompile("create table x (u UUID)");
+        UUID[] uuids = new UUID[count];
+        for (int i = 0; i < count; i++) {
+            UUID uuid = UUID.randomUUID();
+            assertCompile("insert into x values ('" + uuid + "')");
+            uuids[i] = uuid;
+        }
+        Arrays.sort(uuids);
+
+        // test ascending
+        StringBuilder expected = new StringBuilder("u\n");
+        for (int i = 0; i < count; i++) {
+            expected.append(uuids[i]).append("\n");
+        }
+        assertQuery(expected.toString(), "select * from x order by u", null, null, true, true, true);
+
+        // test descending
+        expected = new StringBuilder("u\n");
+        for (int i = count - 1; i >= 0; i--) {
+            expected.append(uuids[i]).append("\n");
+        }
+        assertQuery(expected.toString(), "select * from x order by u desc", null, null, true, true, true);
     }
 
     @Test
