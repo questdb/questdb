@@ -3224,7 +3224,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         o3EffectiveLag = Math.min(o3EffectiveLag, o3MaxLag);
                     } else {
                         // avoid using negative effective o3MaxLag
-                        o3EffectiveLag += Math.max(0, lagError * 0.5);
+                        o3EffectiveLag += lagError * 0.5;
+                        o3EffectiveLag = Math.max(0, o3EffectiveLag);
                     }
 
                     long max = Long.MIN_VALUE;
