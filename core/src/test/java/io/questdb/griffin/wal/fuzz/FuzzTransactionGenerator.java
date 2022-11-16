@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
-
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
@@ -68,7 +66,7 @@ public class FuzzTransactionGenerator {
         transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
-            double transactionType = getZeroToOneDouble(rnd);
+            double transactionType = rnd.nextDouble();
             if (transactionType < probabilityOfRemovingColumn) {
                 // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, tableMetadata);
@@ -92,13 +90,13 @@ public class FuzzTransactionGenerator {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
                 if (i < transactionCount - 1) {
-                    blockRows = (int) ((getZeroToOneDouble(rnd) * 0.5 + 0.5) * blockRows);
+                    blockRows = (int) ((rnd.nextDouble() * 0.5 + 0.5) * blockRows);
                 }
 
                 final long startTs, stopTs;
                 if (o3) {
                     long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
-                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * getZeroToOneDouble(rnd));
+                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
                     if (rnd.nextBoolean()) {
                         startTs = (minTimestamp + offset + jitter);
                     } else {
@@ -109,7 +107,7 @@ public class FuzzTransactionGenerator {
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
-                    size *= getZeroToOneDouble(rnd);
+                    size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
@@ -248,8 +246,8 @@ public class FuzzTransactionGenerator {
             Rnd rnd,
             RecordMetadata tableModel,
             int metadataVersion,
-            long minTimestamp,
-            long maxTimestamp,
+            long startTs,
+            long stopTs,
             int rowCount,
             boolean o3,
             double cancelRows,
@@ -259,15 +257,16 @@ public class FuzzTransactionGenerator {
             int strLen,
             String[] symbols,
             long seed,
-            long tsRound
+            long transactionCount
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        long timestamp = minTimestamp;
+        long timestamp = startTs;
+        final long delta = stopTs - startTs;
         for (int i = 0; i < rowCount; i++) {
             if (o3) {
-                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + i;
+                timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
             } else {
-                timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
+                timestamp = timestamp + delta / rowCount;
             }
             // Use stable random seeds which depends on the transaction index and timestamp
             // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
@@ -276,7 +275,7 @@ public class FuzzTransactionGenerator {
             transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
-        transaction.rollback = getZeroToOneDouble(rnd) < rollback;
+        transaction.rollback = rnd.nextDouble() < rollback;
         transaction.structureVersion = metadataVersion;
         transactionList.add(transaction);
     }

@@ -41,7 +41,7 @@ class TableStructureAdapter implements TableStructure {
     private final int defaultPartitionBy;
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private CharSequence tableName;
     private int timestampIndex = -1;
 

@@ -50,8 +50,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
-
 // These test is designed to produce unstable runs, e.g. random generator is created
 // using current execution time.
 // This improves coverage. To debug failures in CI find the line logging random seeds
@@ -467,14 +465,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
 
     private void fullRandomFuzz(Rnd rnd) throws Exception {
         setFuzzProbabilities(
-                0.5 * getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                0.5 * getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd),
-                getZeroToOneDouble(rnd)
+                0.5 * rnd.nextDouble(),
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.5 * rnd.nextDouble(),
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                rnd.nextDouble()
         );
 
         setFuzzCounts(
@@ -528,10 +526,12 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
                 while (done.get() == 0 && errors.size() == 0) {
                     Unsafe.getUnsafe().loadFence();
+                    //noinspection StatementWithEmptyBody
                     while (job.run(0) || checkJob.run(0)) ;
                     Os.sleep(1);
                     i++;
                 }
+                //noinspection StatementWithEmptyBody
                 while (job.run(0) || checkJob.run(0)) ;
                 i++;
             }
@@ -618,14 +618,14 @@ public class WalWriterFuzzTest extends AbstractGriffinTest {
             for (int i = 0; i < tableCount; i++) {
                 String tableNameWal = tableNameBase + "_" + i;
                 setFuzzProbabilities(
-                        0.5 * getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        0.5 * getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd),
-                        getZeroToOneDouble(rnd)
+                        0.5 * rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        0.5 * rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        rnd.nextDouble()
                 );
 
                 setFuzzCounts(

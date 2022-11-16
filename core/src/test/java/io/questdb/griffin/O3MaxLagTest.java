@@ -159,7 +159,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
     @Test
     public void testFuzzParallel() throws Exception {
-        executeWithPool(0, this::testFuzz0);
+        executeWithPool(2, this::testFuzz0);
     }
 
     @Test
@@ -1152,8 +1152,8 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
         long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = rnd.nextInt(50);
-        int rowCount = txCount * rnd.nextInt(200) * 1000;
+        int txCount = Math.max(1, rnd.nextInt(50));
+        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
         try (
                 TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
                 TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
@@ -1185,6 +1185,25 @@ public class O3MaxLagTest extends AbstractO3Test {
             Rnd rnd2 = new Rnd();
             replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
             w2.commit();
+
+/*
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "(y order by ts) limit 938800,938900",
+                    sink
+            );
+
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "x limit 938800,938900",
+                    sink2
+            );
+
+            TestUtils.assertEquals(sink, sink2);
+*/
+
 
             try (
                     RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();

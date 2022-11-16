@@ -30,10 +30,8 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
-import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
-
-import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
+import io.questdb.std.*;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
     public final static int[] SUPPORTED_COLUM_TYPES = new int[]{
@@ -66,8 +64,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final String[] symbols;
     private final long timestamp;
 
-    private final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
-    private final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
 
     public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
         this.cancelRows = cancelRows;
@@ -97,7 +95,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         }
 
         int columnCount = metadata.getColumnCount();
-        if (getZeroToOneDouble(rnd) < cancelRows) {
+        if (rnd.nextDouble() < cancelRows) {
             columnCount = rnd.nextInt(metadata.getColumnCount());
         }
 
@@ -116,8 +114,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             if (index != metadata.getTimestampIndex() && index != virtualTimestampIndex) {
                 int type = metadata.getColumnType(index);
                 if (type > 0) {
-                    if (getZeroToOneDouble(rnd) > notSet) {
-                        boolean isNull = getZeroToOneDouble(rnd) < nullSet;
+                    if (rnd.nextDouble() > notSet) {
+                        boolean isNull = rnd.nextDouble() < nullSet;
 
                         switch (type) {
                             case ColumnType.CHAR:
