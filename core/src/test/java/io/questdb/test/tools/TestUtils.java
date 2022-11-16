@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
