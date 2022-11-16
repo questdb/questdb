@@ -33,10 +33,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.TableNameRecord;
-import io.questdb.cairo.wal.TableNameRegistry;
-import io.questdb.cairo.wal.WalReader;
-import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -132,8 +129,9 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
-        this.tableNameRegistry = new TableNameRegistry();
-        this.tableNameRegistry.reloadTableNameCache(configuration);
+        this.tableNameRegistry = configuration.isReadOnlyInstance() ?
+                new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+        this.tableNameRegistry.reloadTableNameCache();
 
         this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalWALApplyThreads);
     }
@@ -270,7 +268,7 @@ public class CairoEngine implements Closeable, WriterSource {
         String systemTableName = getSystemTableName(tableName);
 
         if (isWalTableName(tableName)) {
-            if (tableNameRegistry.removeName(tableName, systemTableName)) {
+            if (tableNameRegistry.removeWalTableName(tableName, systemTableName)) {
                 tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
             }
         } else {
@@ -287,7 +285,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     unlock(securityContext, tableName, null, false);
                 }
 
-                tableNameRegistry.removeName(tableName, systemTableName);
+                tableNameRegistry.deleteNonWalName(tableName, systemTableName);
                 return;
             }
             throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
@@ -479,7 +477,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public String getTableNameBySystemName(CharSequence systemTableName) {
-        return tableNameRegistry.getTableNameBySystemName(systemTableName);
+        String tableName = tableNameRegistry.getTableNameBySystemName(systemTableName);
+        if (tableName == null && !tableNameRegistry.isWalTableDropped(systemTableName)) {
+            throw CairoException.nonCritical().put("table does not exist [systemTableName=").put(systemTableName).put("]");
+        }
+        return tableName;
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -726,7 +728,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void reloadTableNames() {
-        tableNameRegistry.reloadTableNameCache(configuration);
+        tableNameRegistry.reloadTableNameCache();
     }
 
     public void removeTableSystemName(String tableName) {
@@ -773,7 +775,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void resetNameRegistryMemory() {
-        tableNameRegistry.resetMemory(configuration);
+        tableNameRegistry.resetMemory();
     }
 
     @TestOnly

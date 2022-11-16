@@ -105,7 +105,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -113,11 +113,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -286,15 +281,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertThat("bin\ttimestamp\n",
                 "x bin=b10101010101\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -318,7 +308,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -326,11 +316,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -404,7 +389,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=zzz double=1.3,int=11i,bool=false,str=\"nice\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -417,11 +402,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -445,15 +425,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -469,15 +444,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -493,15 +463,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "c\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"c\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -516,15 +481,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertThat("char\ttimestamp\n",
                 "x char=''\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -540,15 +500,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                         "c\t1970-01-01T00:00:00.000000Z\n",
                 "x char=\"coconut\"\n",
                 "x",
-                new DefaultCairoConfiguration(root) {
+                new DefaultTestCairoConfiguration(root) {
                     @Override
                     public MicrosecondClock getMicrosecondClock() {
                         return new TestMicroClock(0, 0);
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractCairoTest.configuration.mangleTableSystemNames();
                     }
                 });
     }
@@ -811,7 +766,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n" +
                 "y,sym=ok double=2.1,int=11i,bool=false,str=\"done\"\n";
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -819,11 +774,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -950,7 +900,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public MicrosecondClock getMicrosecondClock() {
                 try {
@@ -958,11 +908,6 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 } catch (NumericException e) {
                     throw CairoException.critical(0).put("numeric");
                 }
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 

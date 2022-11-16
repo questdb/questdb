@@ -358,15 +358,10 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     engine.clear();
 
                     // create default configuration with nocache
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
-                        }
-
-                        @Override
-                        public boolean mangleTableSystemNames() {
-                            return AbstractCairoTest.configuration.mangleTableSystemNames();
                         }
                     };
 
@@ -545,15 +540,10 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     engine.clear();
 
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return false;
-                        }
-
-                        @Override
-                        public boolean mangleTableSystemNames() {
-                            return AbstractCairoTest.configuration.mangleTableSystemNames();
                         }
                     };
 
@@ -590,15 +580,10 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                     engine.clear();
 
-                    CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                         @Override
                         public boolean getDefaultSymbolCacheFlag() {
                             return true;
-                        }
-
-                        @Override
-                        public boolean mangleTableSystemNames() {
-                            return AbstractCairoTest.configuration.mangleTableSystemNames();
                         }
                     };
 

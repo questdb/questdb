@@ -519,15 +519,10 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -3871,15 +3866,10 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -3925,15 +3915,10 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 

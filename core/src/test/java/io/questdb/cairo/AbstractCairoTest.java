@@ -221,7 +221,7 @@ public abstract class AbstractCairoTest {
             }
         };
 
-        configuration = new DefaultCairoConfiguration(root) {
+        configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public boolean attachPartitionCopy() {
                 return copyPartitionOnAttach == null ? super.attachPartitionCopy() : copyPartitionOnAttach;

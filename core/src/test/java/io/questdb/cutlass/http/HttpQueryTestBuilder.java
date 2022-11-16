@@ -28,7 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -93,7 +93,7 @@ public class HttpQueryTestBuilder {
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
-                cairoConfiguration = new DefaultCairoConfiguration(baseDir) {
+                cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
                     public FilesFacade getFilesFacade() {
                         return filesFacade;
                     }
@@ -121,6 +121,11 @@ public class HttpQueryTestBuilder {
                     @Override
                     public long getWriterAsyncCommandMaxTimeout() {
                         return maxWriterWaitTimeout;
+                    }
+
+                    @Override
+                    public boolean mangleTableSystemNames() {
+                        return false;
                     }
                 };
             }

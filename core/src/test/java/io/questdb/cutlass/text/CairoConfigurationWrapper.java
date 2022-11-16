@@ -53,6 +53,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAllowTableRegistrySharedWrite() {
+        return conf.getAllowTableRegistrySharedWrite();
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return conf.getAnalyticColumnPoolCapacity();
     }
@@ -718,6 +723,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getTableRegistryAutoReloadTimeout() {
+        return conf.getTableRegistryAutoReloadTimeout();
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return conf.getTelemetryConfiguration();
     }
@@ -815,6 +825,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return conf.isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isReadOnlyInstance() {
+        return conf.isReadOnlyInstance();
     }
 
     @Override

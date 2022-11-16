@@ -578,12 +578,7 @@ public class TableBackupTest {
         SqlExecutionContext sqlExecutionContext;
         try {
             if (backup) {
-                final CairoConfiguration backupConfiguration = new DefaultCairoConfiguration(finalBackupPath.toString()) {
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return mainConfiguration.mangleTableSystemNames();
-                    }
-                };
+                final CairoConfiguration backupConfiguration = new DefaultTestCairoConfiguration(finalBackupPath.toString());
                 engine = new CairoEngine(backupConfiguration);
                 sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE,
                         new BindVariableServiceImpl(backupConfiguration),

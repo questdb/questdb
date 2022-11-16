@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
@@ -73,7 +74,7 @@ public class HttpHealthCheckTestBuilder {
                 });
             }
 
-            DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
+            DefaultCairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir);
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics, 2);
                     HttpServer ignored = Services.createMinHttpServer(httpConfiguration, engine, workerPool, metrics)

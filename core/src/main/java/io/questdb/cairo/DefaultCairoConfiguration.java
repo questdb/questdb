@@ -71,6 +71,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getAllowTableRegistrySharedWrite() {
+        return false;
+    }
+
+    @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
     }
@@ -738,6 +743,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getTableRegistryAutoReloadTimeout() {
+        return 500;
+    }
+
+    @Override
     public TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }
@@ -839,6 +849,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isReadOnlyInstance() {
+        return false;
     }
 
     @Override

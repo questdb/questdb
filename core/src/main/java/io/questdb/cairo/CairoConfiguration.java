@@ -48,6 +48,8 @@ public interface CairoConfiguration {
 
     boolean enableTestFactories();
 
+    boolean getAllowTableRegistrySharedWrite();
+
     int getAnalyticColumnPoolCapacity();
 
     // the '+' is used to prevent overlap with table names
@@ -367,6 +369,8 @@ public interface CairoConfiguration {
 
     CharSequence getSystemTableNamePrefix();
 
+    long getTableRegistryAutoReloadTimeout();
+
     TelemetryConfiguration getTelemetryConfiguration();
 
     TextConfiguration getTextConfiguration();
@@ -406,6 +410,8 @@ public interface CairoConfiguration {
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isReadOnlyInstance();
 
     /**
      * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.

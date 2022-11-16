@@ -6963,7 +6963,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
@@ -6972,11 +6972,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             @Override
             public long getSpinLockTimeout() {
                 return 1000;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
         };
 

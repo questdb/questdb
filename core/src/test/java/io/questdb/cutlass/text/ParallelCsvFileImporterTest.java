@@ -2856,7 +2856,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             if (workerCount > 0) {
                 WorkerPool pool = new WorkerPool(() -> workerCount);
 
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -2886,17 +2886,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     public int getSqlCopyQueueCapacity() {
                         return queueCapacity;
                     }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractGriffinTest.configuration.mangleTableSystemNames();
-                    }
                 };
 
                 execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -2915,11 +2910,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     @Override
                     public int getSqlCopyQueueCapacity() {
                         return queueCapacity;
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return AbstractGriffinTest.configuration.mangleTableSystemNames();
                     }
                 };
                 execute(null, runnable, configuration1);

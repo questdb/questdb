@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
@@ -514,7 +511,7 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                     }
                 });
 
-                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultTestCairoConfiguration(root) {
                     @Override
                     public int getLatestByQueueCapacity() {
                         return queueSize;
@@ -533,11 +530,6 @@ public class QueryExecutionTimeoutTest extends AbstractGriffinTest {
                     @Override
                     public int getVectorAggregateQueueCapacity() {
                         return queueSize;
-                    }
-
-                    @Override
-                    public boolean mangleTableSystemNames() {
-                        return mangleTableSystemName;
                     }
                 };
 

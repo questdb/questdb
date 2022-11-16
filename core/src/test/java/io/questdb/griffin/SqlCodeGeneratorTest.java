@@ -524,15 +524,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             engine.clear();
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public boolean getDefaultSymbolCacheFlag() {
                     return false;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -3537,15 +3532,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     return super.openRO(name);
                 }
             };
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -7691,13 +7681,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractCairoTest.configuration.mangleTableSystemNames();
-                }
-            };
-
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)

@@ -22,36 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import java.io.Closeable;
+public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
+    public DefaultTestCairoConfiguration(CharSequence root) {
+        super(root);
+    }
 
-public interface TableNameRegistry extends Closeable {
-    void deleteNonWalName(CharSequence tableName, String systemTableName);
+    @Override
+    public boolean getAllowTableRegistrySharedWrite() {
+        return true;
+    }
 
-    String getSystemName(CharSequence tableName);
-
-    String getTableNameBySystemName(CharSequence systemTableName);
-
-    TableNameRecord getTableNameRecord(CharSequence tableName);
-
-    Iterable<CharSequence> getTableSystemNames();
-
-    boolean isWalSystemTableName(CharSequence systemTableName);
-
-    boolean isWalTableDropped(CharSequence systemTableName);
-
-    boolean isWalTableName(CharSequence tableName);
-
-    String registerName(String tableName, String systemTableName, boolean isWal);
-
-    void reloadTableNameCache();
-
-    void removeTableSystemName(CharSequence systemTableName);
-
-    boolean removeWalTableName(CharSequence tableName, String systemTableName);
-
-    String rename(CharSequence oldName, CharSequence newName, String systemTableName);
-
-    void resetMemory();
+    @Override
+    public boolean mangleTableSystemNames() {
+        return true;
+    }
 }

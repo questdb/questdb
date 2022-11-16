@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultTestCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -53,7 +56,7 @@ public class SecurityTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         inputRoot = TestUtils.getCsvRoot();
         AbstractGriffinTest.setUpStatic();
-        CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration readOnlyConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
                 return 10;
@@ -92,11 +95,6 @@ public class SecurityTest extends AbstractGriffinTest {
             @Override
             public long getSqlSortLightValuePageSize() {
                 return 1024;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractCairoTest.configuration.mangleTableSystemNames();
             }
 
         };
@@ -907,6 +905,8 @@ public class SecurityTest extends AbstractGriffinTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(2000)) timestamp(ts)", sqlExecutionContext);
+
+            memoryRestrictedEngine.reloadTableNames();
             assertQuery(
                     memoryRestrictedCompiler,
                     "sym2\tcount\nGZ\t1040\nRX\t960\n",

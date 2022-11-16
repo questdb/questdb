@@ -328,6 +328,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private CharSequence indexFileName;
     private short integerDefaultColumnType;
     private boolean interruptOnClosedConnection;
+    private final boolean isReadOnlyInstance;
     private boolean isStringAsTagSupported;
     private int jsonCacheLimit;
     private int jsonCacheSize;
@@ -421,6 +422,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
+    private final long tableRegistryAutoReloadTimeout;
     private int textAnalysisMaxLines;
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
@@ -435,6 +437,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
 
         this.log = log;
+        this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
+        this.tableRegistryAutoReloadTimeout = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_TIMEOUT, 500);
 
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
@@ -1472,6 +1476,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getAllowTableRegistrySharedWrite() {
+            return false;
+        }
+
+        @Override
         public int getAnalyticColumnPoolCapacity() {
             return sqlAnalyticColumnPoolCapacity;
         }
@@ -2136,6 +2145,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             return systemTableNamePrefix;
         }
 
+        @Override
+        public long getTableRegistryAutoReloadTimeout() {
+            return tableRegistryAutoReloadTimeout;
+        }
+
         public TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -2233,6 +2247,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
+        }
+
+        @Override
+        public boolean isReadOnlyInstance() {
+            return isReadOnlyInstance;
         }
 
         @Override

@@ -25,10 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -307,11 +304,11 @@ public class AbstractO3Test {
     }
 
     protected static void executeVanilla(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), LOG));
     }
 
     protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
-        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled(), LOG));
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultTestCairoConfiguration(root), Metrics.enabled(), LOG));
     }
 
     protected static void executeWithPool(

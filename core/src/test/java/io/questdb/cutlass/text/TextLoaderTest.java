@@ -952,15 +952,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractGriffinTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -1230,15 +1225,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -1342,15 +1332,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -1408,15 +1393,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -1502,15 +1482,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 }
             };
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public TextConfiguration getTextConfiguration() {
                     return textConfiguration;
-                }
-
-                @Override
-                public boolean mangleTableSystemNames() {
-                    return AbstractGriffinTest.configuration.mangleTableSystemNames();
                 }
             };
 
@@ -2081,15 +2056,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
 
@@ -3118,15 +3088,10 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TextConfiguration getTextConfiguration() {
                 return textConfiguration;
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
@@ -3284,7 +3249,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 return false;
             }
         };
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public long getCommitLag() {
                 return commitLag;
@@ -3308,11 +3273,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         return 1;
                     }
                 };
-            }
-
-            @Override
-            public boolean mangleTableSystemNames() {
-                return AbstractGriffinTest.configuration.mangleTableSystemNames();
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
