@@ -46,10 +46,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static io.questdb.cairo.TableUtils.TXNLOG_FILE_NAME;
-import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.SEQ_META_OFFSET_STRUCTURE_VERSION;
-import static io.questdb.cairo.wal.WalUtils.SEQ_META_OFFSET_WAL_LENGTH;
 import static io.questdb.cairo.wal.seq.TableTransactionLog.*;
 
 public class DatabaseSnapshotAgent implements Closeable {
@@ -205,7 +203,9 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                                 memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);
                                 long maxStructureVersion = memFile.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
-                                long txnMetaMemSize = memFile.getLong(SEQ_META_OFFSET_WAL_LENGTH);
+                                dstPath.trimTo(dstPathLen);
+                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+                                long txnMetaMemSize = memFile.getLong(maxStructureVersion * Long.BYTES);
 
                                 if (newMaxTxn >= 0) {
                                     dstPath.trimTo(dstPathLen);

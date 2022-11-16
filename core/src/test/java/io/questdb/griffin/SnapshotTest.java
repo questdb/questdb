@@ -635,25 +635,39 @@ public class SnapshotTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            drainWalQueue();
-
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+            compile("alter table " + tableName + " add column iii int");
+            executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
 
             compile("alter table " + tableName + " add column jjj int");
-            executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 42)");
+
+            executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asd', 41, 42)");
+
+            executeOperation("UPDATE " + tableName + " SET iii = 0 where iii = null", CompiledQuery.UPDATE);
+            executeOperation("UPDATE " + tableName + " SET jjj = 0 where iii = null", CompiledQuery.UPDATE);
+
+            drainWalQueue();
+
+            // all updates above should be applied to table
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
 
 
+            compile("alter table " + tableName + " add column kkk int");
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
+
+            // updates above should apply to WAL, not table
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
-            // ignored updates
-            compile("alter table " + tableName + " add column kkk int");
-            executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asdf', 1, 11)");
-            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'asdfe', 2, 22)");
+            // these updates are lost during the snapshotting
+            compile("alter table " + tableName + " add column lll int");
+            executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
 
 
             // Release all readers and writers, but keep the snapshot dir around.
@@ -663,22 +677,38 @@ public class SnapshotTest extends AbstractGriffinTest {
             snapshotInstanceId = restartedId;
             DatabaseSnapshotAgent.recoverSnapshot(engine);
 
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\n");
+            // apply updates from WAL
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
+
+            // check for updates to the restored table
+            compile("alter table " + tableName + " add column lll int");
+            executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
+            executeOperation("UPDATE " + tableName + " SET jjj = 0 where iii = 0", CompiledQuery.UPDATE);
 
             drainWalQueue();
 
-            assertSql(tableName, "x\tsym\tts\tsym2\tjjj\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tNaN\n" +
-                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\tNaN\n" +
-                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\tNaN\n" +
-                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\tNaN\n" +
-                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\tNaN\n" +
-                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t42\n");
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
         });
     }
 
