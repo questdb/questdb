@@ -361,12 +361,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             if (suspended) {
                 suspended = false;
                 if (resumeProcessor != null) {
-                    resumeProcessor.resume();
+                    resumeProcessor.resume(true);
                 }
             } else if (bufferRemainingSize > 0) {
                 doSend(bufferRemainingOffset, bufferRemainingSize);
                 if (resumeProcessor != null) {
-                    resumeProcessor.resume();
+                    resumeProcessor.resume(false);
                 }
             }
 
@@ -856,7 +856,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             }
         }
         responseAsciiSink.putLen(offset);
-        rowCount += 1;
+        rowCount++;
     }
 
     private void appendShortColumn(Record record, int columnIndex) {
@@ -1175,13 +1175,10 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         }
     }
 
-    private void doAuthentication(long msgLo, long msgLimit)
-            throws
-            BadProtocolException,
-            PeerDisconnectedException,
-            PeerIsSlowToReadException,
-            AuthenticationException,
-            SqlException {
+    private void doAuthentication(
+            long msgLo,
+            long msgLimit
+    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException, SqlException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -2364,30 +2361,40 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
         clearRecvBuffer();
     }
 
-    private void resumeCommandComplete() {
+    private void resumeCommandComplete(boolean wasSuspended) {
         prepareCommandComplete(true);
     }
 
-    private void resumeCursorExecute() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    private void resumeCursorExecute(boolean wasSuspended) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
+        if (!wasSuspended) {
+            // We resume after no space left in buffer,
+            // so we have to write the last record to the buffer once again.
+            appendSingleRecord(record, columnCount);
+        }
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, resumeCommandCompleteRef);
     }
 
-    private void resumeCursorQuery() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
-        resumeCursorQuery0();
+    private void resumeCursorQuery(boolean wasSuspended) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+        resumeCursorQuery0(wasSuspended);
         sendReadyForNewQuery();
     }
 
-    private void resumeCursorQuery0() throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    private void resumeCursorQuery0(boolean wasSuspended) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
         final Record record = currentCursor.getRecord();
         final int columnCount = currentFactory.getMetadata().getColumnCount();
+        if (!wasSuspended) {
+            // We resume after no space left in buffer,
+            // so we have to write the last record to the buffer once again.
+            appendSingleRecord(record, columnCount);
+        }
         responseAsciiSink.bookmark();
         sendCursor0(record, columnCount, resumeQueryCompleteRef);
     }
 
-    private void resumeQueryComplete() throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void resumeQueryComplete(boolean wasSuspended) throws PeerDisconnectedException, PeerIsSlowToReadException {
         prepareCommandComplete(true);
         sendReadyForNewQuery();
     }
@@ -2459,13 +2466,13 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
                     try {
                         appendRecord(record, columnCount);
                         responseAsciiSink.bookmark();
-                        if (rowCount >= maxRows) break;
                     } catch (NoSpaceLeftInResponseBufferException e) {
                         responseAsciiSink.resetToBookmark();
                         sendAndReset();
                         appendSingleRecord(record, columnCount);
                         responseAsciiSink.bookmark();
                     }
+                    if (rowCount >= maxRows) break;
                 } catch (SqlException e) {
                     clearCursorAndFactory();
                     responseAsciiSink.resetToBookmark();
@@ -2678,7 +2685,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     @FunctionalInterface
     private interface PGResumeProcessor {
-        void resume() throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException;
+        void resume(boolean wasSuspended) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException;
     }
 
     public static class NamedStatementWrapper implements Mutable {
