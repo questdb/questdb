@@ -30,6 +30,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -90,6 +91,11 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
+    @TestOnly
+    public LongList getCompletedRowIds() {
+        return completedRowIds;
+    }
+
     public boolean purge(ColumnPurgeTask task) {
         try {
             boolean done = purge0(task, ScoreboardUseMode.INTERNAL);
@@ -117,6 +123,19 @@ public class ColumnPurgeOperator implements Closeable {
     public void purgeExclusive(ColumnPurgeTask task) {
         try {
             purge0(task, ScoreboardUseMode.EXCLUSIVE);
+        } catch (Throwable ex) {
+            // Can be some IO exception
+            LOG.error().$("could not purge").$(ex).$();
+        }
+    }
+
+    @TestOnly
+    public void purgeExternal(ColumnPurgeTask task, TxReader txReader) {
+        try {
+            if (this.txReader == null && txReader != null) {
+                this.txReader = txReader;
+            }
+            purge0(task, ScoreboardUseMode.EXTERNAL);
         } catch (Throwable ex) {
             // Can be some IO exception
             LOG.error().$("could not purge").$(ex).$();
@@ -209,6 +228,16 @@ public class ColumnPurgeOperator implements Closeable {
                 final long partitionTimestamp = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
                 final long partitionTxnName = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN);
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
+
+                if (txReader.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+                    // partition is read only
+                    LOG.info().$("skipping purge of RO partition [table=").$(task.getTableName())
+                            .$(", column=").$(task.getColumnName())
+                            .$(", tableId=").$(task.getTableId())
+                            .I$();
+                    completedRowIds.add(updateRowId);
+                    continue;
+                }
 
                 setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                 int pathTrimToPartition = path.length();

@@ -206,6 +206,15 @@ public class TxReader implements Closeable, Mutable {
         return ((getPartitionMask(i) >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
     }
 
+    public boolean getPartitionIsROByPartitionTimestamp(long ts) {
+        int baseOffset = findAttachedPartitionIndex(ts);
+        if (baseOffset != -1) {
+            long partitionMask = attachedPartitions.getQuick(baseOffset + PARTITION_MASK_OFFSET);
+            return ((partitionMask >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
+        }
+        return false;
+    }
+
     public long getPartitionMask(int i) {
         return attachedPartitions.getQuick(i * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_MASK_OFFSET);
     }

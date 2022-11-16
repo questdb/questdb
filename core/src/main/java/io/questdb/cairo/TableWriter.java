@@ -1425,7 +1425,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
 
-        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
+        LOG.info().$("removing column '").utf8(name).$("' from ").utf8(path).$();
 
         // check if we are moving timestamp from a partitioned table
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -1437,7 +1437,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         commit();
 
-        this.metaSwapIndex = removeColumnFromMeta(index);
+        metaSwapIndex = removeColumnFromMeta(index);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -4976,10 +4976,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
-                long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+                if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+                    long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                    removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
+                }
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
+                // non partitioned tables do not have RO partitions
                 removeColumnFilesInPartition(columnName, columnIndex, txWriter.getLastPartitionTimestamp(), -1L);
             }
 
@@ -4996,15 +4999,17 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
-        setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        txnPartitionConditionally(path, partitionNameTxn);
-        int plen = path.length();
-        long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-        removeFileAndOrLog(ff, dFile(path, columnName, columnNameTxn));
-        removeFileAndOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
-        removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-        removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
-        path.trimTo(rootLen);
+        if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+            setPathForPartition(path, partitionBy, partitionTimestamp, false);
+            txnPartitionConditionally(path, partitionNameTxn);
+            int plen = path.length();
+            long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+            removeFileAndOrLog(ff, dFile(path, columnName, columnNameTxn));
+            removeFileAndOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileAndOrLog(ff, keyFileName(path.trimTo(plen), columnName, columnNameTxn));
+            removeFileAndOrLog(ff, valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+            path.trimTo(rootLen);
+        }
     }
 
     private int removeColumnFromMeta(int index) {
