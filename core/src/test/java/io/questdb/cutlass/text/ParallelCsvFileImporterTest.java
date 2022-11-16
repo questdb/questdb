@@ -72,7 +72,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
         int tasks = ParallelCsvFileImporter.assignPartitions(partitions, 2);
 
-        MatcherAssert.assertThat(partitions, equalTo(new ObjList<PartitionInfo>(new PartitionInfo(1, "A", 10, 0),
+        MatcherAssert.assertThat(partitions, equalTo(new ObjList<>(new PartitionInfo(1, "A", 10, 0),
                 new PartitionInfo(4, "D", 100, 0),
                 new PartitionInfo(5, "E", 5, 0),
                 new PartitionInfo(2, "B", 70, 1),
