@@ -38,12 +38,7 @@ public final class MutableUuid implements Sinkable {
     public MutableUuid() {
 
     }
-
-    public void copyFrom(MutableUuid uuid) {
-        this.mostSigBits = uuid.mostSigBits;
-        this.leastSigBits = uuid.leastSigBits;
-    }
-
+    
     @Override
     public boolean equals(Object o) {
         if (this == o) {

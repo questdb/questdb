@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
@@ -482,6 +483,10 @@ public class SqlUtil {
     }
 
     public static void implicitCastStrAsUuid(CharSequence str, MutableUuid uuid) {
+        if (str == null || str.length() == 0) {
+            uuid.of(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+            return;
+        }
         try {
             uuid.of(str);
         } catch (IllegalArgumentException e) {

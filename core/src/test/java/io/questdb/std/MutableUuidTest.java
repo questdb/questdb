@@ -31,8 +31,7 @@ import org.junit.Test;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class MutableUuidTest {
 
@@ -43,6 +42,33 @@ public class MutableUuidTest {
         assertEqualsString(-1, -1);
         assertEqualsString(Long.MAX_VALUE, Long.MAX_VALUE);
         assertEqualsString(Long.MIN_VALUE, Long.MIN_VALUE);
+    }
+
+    @Test
+    public void testEqualsAndHashcode() {
+        MutableUuid m1 = new MutableUuid();
+        MutableUuid m2 = new MutableUuid();
+        for (int i = 0; i < 100; i++) {
+            UUID uuid = UUID.randomUUID();
+            m1.of(uuid.getMostSignificantBits(), uuid.getLeastSignificantBits());
+            m2.of(uuid.toString());
+            assertEquals(m1, m1);
+            assertEquals(m1, m2);
+            assertEquals(m1.hashCode(), m2.hashCode());
+
+            m2.of(UUID.randomUUID().toString());
+            assertNotEquals(m1, m2);
+        }
+        assertNotEquals(m1, null);
+        assertNotEquals(m1, "foo");
+
+        m1.of(0, 1);
+        m1.of(0, 2);
+        assertNotEquals(m1, m2);
+
+        m1.of(1, 0);
+        m1.of(2, 0);
+        assertNotEquals(m1, m2);
     }
 
     @Test
@@ -76,6 +102,20 @@ public class MutableUuidTest {
             long msb = ThreadLocalRandom.current().nextLong();
             long lsb = ThreadLocalRandom.current().nextLong();
             assertEqualsString(msb, lsb);
+        }
+    }
+
+    @Test
+    public void testUpperCaseUuuid() {
+        // rfc4122 section 3 says:
+        // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
+
+        MutableUuid mutableUuid = new MutableUuid();
+        for (int i = 0; i < 100; i++) {
+            UUID uuid = UUID.randomUUID();
+            mutableUuid.of(uuid.toString().toUpperCase());
+            assertEquals(uuid.getMostSignificantBits(), mutableUuid.getMostSigBits());
+            assertEquals(uuid.getLeastSignificantBits(), mutableUuid.getLeastSigBits());
         }
     }
 

@@ -32,7 +32,6 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.UUID;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 public class UuidTest extends AbstractGriffinTest {
@@ -126,6 +125,24 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExplicitCastWithEmptyStringConstant() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (cast('' as uuid))");
+        assertQuery("u\n" +
+                        "\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testExplicitCastWithNullStringConstant() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (cast(null as string))");
+        assertQuery("u\n" +
+                        "\n",
+                "select * from x", null, null, true, true, true);
+    }
+
+    @Test
     public void testGroupByUuid() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
@@ -160,9 +177,7 @@ public class UuidTest extends AbstractGriffinTest {
     @Test
     public void testInsertWithExplicitCast() throws Exception {
         assertCompile("create table x (u UUID)");
-
         assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
-
         assertQuery("u\n" +
                         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
                 "select * from x", null, null, true, true, true);
@@ -175,6 +190,28 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
                 "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testNegatedEqualityComparisonExplicitCast() throws Exception {
+        MutableUuid uuid = new MutableUuid();
+        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where u != cast('11111111-1111-1111-1111-111111111111' as uuid)", null, null, true, true, false);
+    }
+
+    @Test
+    public void testNegatedEqualityComparisonImplicitCast() throws Exception {
+        MutableUuid uuid = new MutableUuid();
+        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where u != '11111111-1111-1111-1111-111111111111'", null, null, true, true, false);
     }
 
     @Test
@@ -375,19 +412,4 @@ public class UuidTest extends AbstractGriffinTest {
                         "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
                 "select * from x", null, null, true, true, true);
     }
-
-    @Test
-    public void testUpperCaseUuuid() {
-        // rfc4122 section 3 says:
-        // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
-
-        MutableUuid mutableUuid = new MutableUuid();
-        for (int i = 0; i < 100; i++) {
-            UUID uuid = UUID.randomUUID();
-            mutableUuid.of(uuid.toString().toUpperCase());
-            assertEquals(uuid.getMostSignificantBits(), mutableUuid.getMostSigBits());
-            assertEquals(uuid.getLeastSignificantBits(), mutableUuid.getLeastSigBits());
-        }
-    }
-
 }
