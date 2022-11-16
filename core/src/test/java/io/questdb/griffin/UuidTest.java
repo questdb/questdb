@@ -32,6 +32,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.UUID;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 public class UuidTest extends AbstractGriffinTest {
@@ -373,6 +374,20 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("i\tu\n" +
                         "0\ta0eebc11-4242-11f8-116d-11b9bd380a11\n",
                 "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testUpperCaseUuuid() {
+        // rfc4122 section 3 says:
+        // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
+
+        MutableUuid mutableUuid = new MutableUuid();
+        for (int i = 0; i < 100; i++) {
+            UUID uuid = UUID.randomUUID();
+            mutableUuid.of(uuid.toString().toUpperCase());
+            assertEquals(uuid.getMostSignificantBits(), mutableUuid.getMostSigBits());
+            assertEquals(uuid.getLeastSignificantBits(), mutableUuid.getLeastSigBits());
+        }
     }
 
 }
