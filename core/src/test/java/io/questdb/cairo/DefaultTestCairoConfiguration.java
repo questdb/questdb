@@ -24,9 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.FilesFacade;
+import io.questdb.std.TestFilesFacadeImpl;
+
 public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public DefaultTestCairoConfiguration(CharSequence root) {
         super(root);
+    }
+
+    @Override
+    public FilesFacade getFilesFacade() {
+        return TestFilesFacadeImpl.INSTANCE;
     }
 
     @Override

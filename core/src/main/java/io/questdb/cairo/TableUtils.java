@@ -678,6 +678,7 @@ public final class TableUtils {
             return -1L;
         }
 
+        LOG.info().$("locked '").utf8(path).$("' [fd=").$(fd).I$();
         return fd;
     }
 
@@ -861,8 +862,8 @@ public final class TableUtils {
         return Unsafe.getUnsafe().getLong(tempMem8b);
     }
 
-    public static void removeOrException(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path) && !ff.remove(path)) {
+    public static void removeOrException(FilesFacade ff, long fd, LPSZ path) {
+        if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
     }

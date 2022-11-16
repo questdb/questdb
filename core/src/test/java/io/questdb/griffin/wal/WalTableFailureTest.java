@@ -148,7 +148,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testApplyJobFailsToApplyDataFirstTime() throws Exception {
-        FilesFacade dodgyFacade = new FilesFacadeImpl() {
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
             int counter = 0;
 
             @Override
@@ -463,7 +463,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
     @Test
     public void testDataTxnFailToRenameWalColumnOnCommit() throws Exception {
-        FilesFacade dodgyFf = new FilesFacadeImpl() {
+        FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(from, "wal2" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
@@ -703,48 +703,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalTableCannotOpenSeqTxnFileToCheckTransactions() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            long fd;
-
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, META_FILE_NAME)) {
-                    fd = super.openRO(name);
-                    return fd;
-                }
-                return super.openRO(name);
-            }
-
-            @Override
-            public int readNonNegativeInt(long fd, long offset) {
-                if (fd == this.fd) {
-                    return -1;
-                }
-                return Files.readNonNegativeInt(fd, offset);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
-            createStandardWalTable(tableName);
-
-            drainWalQueue();
-
-            engine.getTableSequencerAPI().releaseInactive();
-            final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
-            checkWalTransactionsJob.run(0);
-
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
-            drainWalQueue();
-
-            assertSql(tableName, "x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
-        });
-    }
-
-    @Test
     public void testMainAddDuplicateColumnSequentiallyFailsWithSqlException() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -765,13 +723,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testMainAndWalTableAddColumnFailed() throws Exception {
         AtomicBoolean fail = new AtomicBoolean(true);
 
-        FilesFacade ffOverride = new FilesFacadeImpl() {
+        FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d") && fail.get()) {
                     return -1;
                 }
-                return Files.openRW(name, opts);
+                return super.openRW(name, opts);
             }
         };
 
@@ -809,13 +767,13 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testMainTableAddColumnFailed() throws Exception {
         AtomicBoolean fail = new AtomicBoolean(true);
 
-        FilesFacade ffOverride = new FilesFacadeImpl() {
+        FilesFacade ffOverride = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "new_column.d.1") && fail.get()) {
                     return -1;
                 }
-                return Files.openRW(name, opts);
+                return super.openRW(name, opts);
             }
         };
 
@@ -837,6 +795,21 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 drainWalQueue(walApplyJob);
                 assertSql(tableName, "x\tsym\tts\tsym2\n" +
                         "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n");
+            }
+        });
+    }
+
+    @Test
+    public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
+        String tableName = testName.getMethodName();
+        String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
+        runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (Chars.contains(name, "sym5.c")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
             }
         });
     }
@@ -940,17 +913,44 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWalTableAddColumnFailedNoDiskSpaceShouldSuspendTable() throws Exception {
-        String tableName = testName.getMethodName();
-        String query = "alter table " + tableName + " ADD COLUMN sym5 SYMBOL CAPACITY 1024";
-        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
+    public void testWalTableCannotOpenSeqTxnFileToCheckTransactions() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            long fd;
+
             @Override
-            public long openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "sym5.c")) {
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, META_FILE_NAME)) {
+                    fd = super.openRO(name);
+                    return fd;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public int readNonNegativeInt(long fd, long offset) {
+                if (fd == this.fd) {
                     return -1;
                 }
-                return Files.openRW(name, opts);
+                return super.readNonNegativeInt(fd, offset);
             }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            createStandardWalTable(tableName);
+
+            drainWalQueue();
+
+            engine.getTableSequencerAPI().releaseInactive();
+            final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            checkWalTransactionsJob.run(0);
+
+            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n");
         });
     }
 
@@ -1022,7 +1022,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     public void testWalUpdateFailedSuspendsTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1111";
-        runCheckTableSuspended(tableName, query, new FilesFacadeImpl() {
+        runCheckTableSuspended(tableName, query, new TestFilesFacadeImpl() {
             private int attempt = 0;
 
             @Override
@@ -1030,7 +1030,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 if (Chars.contains(name, "x.d.1") && attempt++ == 0) {
                     return -1;
                 }
-                return Files.openRW(name, opts);
+                return super.openRW(name, opts);
             }
         });
     }
@@ -1091,7 +1091,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     private void failToCopyDataToFile(String failToRollFile) throws Exception {
-        FilesFacade dodgyFf = new FilesFacadeImpl() {
+        FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             long fd = -1;
 
             @Override
@@ -1193,7 +1193,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
     }
 
     private void testFailToLinkSymbolFile(String fileName) throws Exception {
-        FilesFacade dodgyFf = new FilesFacadeImpl() {
+        FilesFacade dodgyFf = new TestFilesFacadeImpl() {
             @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
                 if (Chars.endsWith(src, Files.SEPARATOR + fileName)) {

@@ -350,9 +350,9 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     private static boolean couldObtainLock(Path path) {
-        final long lockFd = TableUtils.lock(FilesFacadeImpl.INSTANCE, path, false);
+        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path, false);
         if (lockFd != -1L) {
-            FilesFacadeImpl.INSTANCE.close(lockFd);
+            TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.
         }
         return false;  // Could not obtain lock.
@@ -1422,7 +1422,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             path.of(root).concat(systemTableName).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1439,7 +1439,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(engine.getSystemTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1475,7 +1475,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             path.of(root).concat(systemTableName).concat("wal").put(walId).$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 
@@ -1493,7 +1493,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             CharSequence systemTableName = engine.getSystemTableName(tableName);
             path.of(root).concat(systemTableName).concat("wal").put(walId).put(".lock").$();
-            Assert.assertEquals(Chars.toString(path), expectExists, FilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Chars.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
         }
     }
 

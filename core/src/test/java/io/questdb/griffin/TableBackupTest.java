@@ -30,8 +30,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
@@ -70,7 +70,7 @@ public class TableBackupTest {
         finalBackupPath = new Path();
         mkdirsErrno = -1;
         renameErrno = -1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             private int nextErrno = -1;
 
             @Override
@@ -502,7 +502,7 @@ public class TableBackupTest {
             try (Path path = new Path()) {
                 CharSequence systemTableName = mainEngine.getSystemTableName(tableName);
                 path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(systemTableName).slash$();
-                int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
+                int rc = TestFilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }
             try {

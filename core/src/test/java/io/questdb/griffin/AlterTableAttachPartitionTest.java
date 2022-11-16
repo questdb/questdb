@@ -70,7 +70,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLink() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -186,7 +186,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDetachIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -254,7 +254,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDropIt() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -303,7 +303,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAlterTableAttachPartitionFromSoftLinkThenDropItWhileThereIsAReader() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = "table101";
             final String partitionName = "2022-11-04";
@@ -366,7 +366,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAlterTableAttachPartitionFromSoftLinkThenUpdate() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
 
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -1330,7 +1330,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotMapTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             private long tsdFd;
 
             @Override
@@ -1358,7 +1358,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotReadTimestampColumn() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1374,7 +1374,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotReadTimestampColumnFileDoesNotExist() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
@@ -1390,7 +1390,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotRenameDetachedFolderOnAttach() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (Chars.contains(to, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1406,7 +1406,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotSwitchPartition() throws Exception {
         AtomicInteger counter = new AtomicInteger(1);
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, "dst" + testName.getMethodName()) && Chars.contains(name, "2020-01-01") && counter.decrementAndGet() == 0) {
@@ -1421,7 +1421,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachDifferentPartitionTableReaderReload() throws Exception {
-        if (FilesFacadeImpl.INSTANCE.isRestrictedFileSystem()) {
+        if (TestFilesFacadeImpl.INSTANCE.isRestrictedFileSystem()) {
             // cannot remove opened files on Windows, test  not relevant
             return;
         }
@@ -1795,7 +1795,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {

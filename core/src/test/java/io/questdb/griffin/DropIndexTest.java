@@ -191,7 +191,7 @@ public class DropIndexTest extends AbstractGriffinTest {
 
     @Test
     public void testDropIndexFailsWhenHardLinkFails() throws Exception {
-        final FilesFacade noHardLinksFF = new FilesFacadeImpl() {
+        final FilesFacade noHardLinksFF = new TestFilesFacadeImpl() {
             int numberOfCalls = 0;
 
             @Override

@@ -137,7 +137,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportAllTypesIntoExistingTableBrokenRename() throws Exception {
         AtomicInteger counter = new AtomicInteger(0);
-        FilesFacade brokenRename = new FilesFacadeImpl() {
+        FilesFacade brokenRename = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (counter.incrementAndGet() < 11) {
@@ -256,7 +256,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportCsvFailsOnStructureParsingIO() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 return -1L;
@@ -508,7 +508,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnBoundaryScanningIO() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 if (offset > 30000) {
@@ -542,7 +542,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 if (offset == 31 && len == 1940) {
@@ -566,7 +566,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileOpenInBoundaryCheckPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             int count = 0;
 
             @Override
@@ -585,7 +585,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
@@ -602,7 +602,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     //"[5] Can't remove import directory path='C:\Users\bolo\AppData\Local\Temp\junit2458364502615821703\imports1181738016629600\tab\1972\2_1' errno=5"
     public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "3_1")) {
@@ -617,7 +617,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
@@ -632,7 +632,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
@@ -648,7 +648,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, "line.c")) {
@@ -663,7 +663,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (Arrays.stream(new Exception().getStackTrace())
@@ -679,7 +679,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnSourceFileIndexingIO() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {
                 if (offset == 0 && len == 16797) {
@@ -721,7 +721,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         String tab41 = "tab41";
         String systemTableName = tab41 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
 
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
                 if (Chars.contains(path, File.separator + systemTableName + File.separator + "1970-06" + configuration.getAttachPartitionSuffix())) {
@@ -741,7 +741,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedOrCopied() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int copy(LPSZ from, LPSZ to) {
                 if (Chars.contains(from, "tab42")) {
@@ -761,7 +761,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenIntermediateFilesCantBeMovedToTargetDirForUnexpectedReason() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 return Files.FILES_RENAME_ERR_OTHER;
@@ -776,7 +776,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         String tab34 = "tab34";
         CharSequence systemTableName = tab34 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         String tab34_0 = Chars.toString(systemTableName) + "_0";
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 if (Chars.endsWith(path, tab34_0)) {
@@ -812,7 +812,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         String tab33 = "tab33";
         CharSequence systemTableName = tab33 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         CharSequence fakeExists = systemTableName + "_0";
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 if (Chars.endsWith(path, fakeExists)) {
@@ -830,7 +830,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         String tabex3 = "tabex3";
         CharSequence systemTableName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat(systemTableName).slash$()) {
-            FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
+            TestFilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
         }
 
         refreshTablesInBaseEngine();
@@ -839,7 +839,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
+        testImportThrowsException(TestFilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "invalid table name [table=../t]");
     }
 
     @Test
@@ -858,7 +858,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int mkdir(Path path, int mode) {
                 if (Chars.contains(path, "tab39")) {
@@ -873,7 +873,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileFailsWhenWorkDirectoryDoesNotExistAndCantBeCreated() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             final String tempDir = inputWorkRoot + File.separator;
 
             @Override
@@ -900,7 +900,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
         CharSequence systemTableName = "tab34" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         String mangledPartDir = systemTableName + "_0";
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override
             public boolean exists(LPSZ path) {
@@ -2223,7 +2223,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
-        executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(1, 0, TestFilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
                 executeCopy(compiler, sqlExecutionContext);
                 engine.getTextImportExecutionContext().resetActiveImportId();
@@ -2308,7 +2308,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
@@ -2337,7 +2337,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int copy(LPSZ from, LPSZ to) {
                 return -1;
@@ -2371,7 +2371,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
@@ -2386,7 +2386,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testWhenImportFailsWhileMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
-        FilesFacade brokenFf = new FilesFacadeImpl() {
+        FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
             public int copy(LPSZ from, LPSZ to) {
                 return -1;
@@ -2407,7 +2407,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testWhenRenameBreaksBecauseTempFilesAreOnDifferentFSThanDbDirThenImportStillWorks() throws Exception {
         AtomicInteger counter = new AtomicInteger(0);
-        FilesFacade brokenRename = new FilesFacadeImpl() {
+        FilesFacade brokenRename = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 if (counter.incrementAndGet() < 11) {
@@ -2685,7 +2685,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     private void testImportThrowsException(String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
-        testImportThrowsException(FilesFacadeImpl.INSTANCE, tableName, fileName, partitionBy, tsCol, tsFormat, expectedError);
+        testImportThrowsException(TestFilesFacadeImpl.INSTANCE, tableName, fileName, partitionBy, tsCol, tsFormat, expectedError);
     }
 
     private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
@@ -2844,7 +2844,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             int queueCapacity,
             TextImportRunnable runnable
     ) throws Exception {
-        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
+        executeWithPool(workerCount, queueCapacity, TestFilesFacadeImpl.INSTANCE, runnable);
     }
 
     protected void executeWithPool(

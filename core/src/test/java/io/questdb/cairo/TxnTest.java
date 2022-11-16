@@ -48,14 +48,14 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testFailedTxWriterDoesNotCorruptTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            FilesFacade errorFf = new FilesFacadeImpl() {
+            FilesFacade errorFf = new TestFilesFacadeImpl() {
                 @Override
                 public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                     return -1;
                 }
             };
 
-            FilesFacadeImpl cleanFf = new FilesFacadeImpl();
+            FilesFacadeImpl cleanFf = new TestFilesFacadeImpl();
             assertMemoryLeak(() -> {
 
                 String tableName = "txntest";
@@ -122,7 +122,7 @@ public class TxnTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom();
 
             String tableName = "testTxReadWriteConcurrent";
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();
@@ -219,7 +219,7 @@ public class TxnTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom();
 
             String tableName = "testTxReadWriteConcurrent";
-            FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             int maxPartitionCount = Math.max((int) (Files.PAGE_SIZE / 8 / 4), 4096);
             int maxSymbolCount = (int) (Files.PAGE_SIZE / 8 / 4);
             AtomicInteger partitionCountCheck = new AtomicInteger();

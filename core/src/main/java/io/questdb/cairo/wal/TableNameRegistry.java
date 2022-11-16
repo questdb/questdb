@@ -27,6 +27,8 @@ package io.questdb.cairo.wal;
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
+    void close();
+
     void deleteNonWalName(CharSequence tableName, String systemTableName);
 
     String getSystemName(CharSequence tableName);

@@ -172,7 +172,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeCannotAllocateFailure() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 private long completedFd;
 
                 @Override
@@ -320,7 +320,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeIOFailureRetried() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 int count = 0;
 
                 @Override
@@ -330,7 +330,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
                             return false;
                         }
                     }
-                    return Files.remove(name);
+                    return super.remove(name);
                 }
             };
 
@@ -913,9 +913,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
-        if (Os.type == Os.WINDOWS) {
-            engine.releaseInactive();
-        }
+        engine.releaseInactive();
         currentMicros += 10L * iteration++;
         purgeJob.run(0);
         currentMicros += 10L * iteration++;

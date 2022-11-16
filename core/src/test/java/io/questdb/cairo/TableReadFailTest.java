@@ -39,7 +39,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
         spinLockTimeout = 1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
@@ -54,7 +54,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
         spinLockTimeout = 1;
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
                 if (Chars.endsWith(path, TableUtils.META_FILE_NAME)) {
@@ -180,7 +180,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testTxnFileCannotOpenConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME)) {
@@ -194,7 +194,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testTxnFileMissingConstructor() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);

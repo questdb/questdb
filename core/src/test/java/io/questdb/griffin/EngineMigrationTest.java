@@ -30,8 +30,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -1516,7 +1516,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
 
         TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // Remove first partition
         to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);

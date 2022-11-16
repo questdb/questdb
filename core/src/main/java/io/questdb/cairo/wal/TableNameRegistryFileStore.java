@@ -83,7 +83,7 @@ public class TableNameRegistryFileStore implements Closeable {
     ) {
         FilesFacade ff = configuration.getFilesFacade();
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$();
-        tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
 
         long entryCount = tableNameMemory.getLong(0);
         long currentOffset = Long.BYTES;
@@ -127,7 +127,6 @@ public class TableNameRegistryFileStore implements Closeable {
             }
             tableNameMemory.putLong(0, systemTableNameCache.size());
         }
-
         reloadFromRootDirectory(systemTableNameCache, reverseTableNameCache);
     }
 
@@ -165,12 +164,14 @@ public class TableNameRegistryFileStore implements Closeable {
     @TestOnly
     public synchronized void resetMemory() {
         if (!isLocked()) {
-            throw CairoException.critical(0).put("table registry is not locked");
+            if (!lock()) {
+                throw CairoException.critical(0).put("table registry is not locked");
+            }
         }
         tableNameMemory.jumpTo(0L);
         final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).$();
         tableNameMemory.close();
-        tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
     }
 
     private boolean isLocked() {

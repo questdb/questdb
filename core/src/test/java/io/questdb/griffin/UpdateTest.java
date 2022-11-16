@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -200,13 +200,13 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testSymbolIndexRebuiltOnAffectedPartitionsOnly() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public boolean remove(LPSZ name) {
                     if (Chars.contains(name, "1970-01-01")) {
                         return false;
                     }
-                    return Files.remove(name);
+                    return super.remove(name);
                 }
             };
             compiler.compile("create table up as" +
@@ -319,7 +319,7 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testSymbolsRolledBackOnFailedUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
@@ -2074,7 +2074,7 @@ public class UpdateTest extends AbstractGriffinTest {
 
     private void testInsertAfterFailed(boolean closeWriter) throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "x.d.1") && Chars.contains(name, "1970-01-03")) {

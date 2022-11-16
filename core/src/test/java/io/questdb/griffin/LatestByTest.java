@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import org.junit.Test;
@@ -39,7 +39,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -69,7 +69,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySymbolEmpty() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
@@ -112,7 +112,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
             engine.releaseInactive();
 
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -148,7 +148,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySymbolUnfilteredDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -182,7 +182,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySymbolWithNoNulls() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -231,7 +231,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestWithFilterByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -265,7 +265,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestWithFilterByDoesNotNeedFullScanValueNotInSymbolTable() throws Exception {
-        ff = new FilesFacadeImpl() {
+        ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 // Query should not scan the first partition
@@ -314,7 +314,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition
@@ -347,7 +347,7 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestWithoutSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     // Query should not scan the first partition

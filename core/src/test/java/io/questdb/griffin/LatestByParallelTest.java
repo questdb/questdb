@@ -35,9 +35,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -290,7 +290,7 @@ public class LatestByParallelTest {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return TestFilesFacadeImpl.INSTANCE;
                     }
                 };
 
@@ -300,7 +300,7 @@ public class LatestByParallelTest {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return TestFilesFacadeImpl.INSTANCE;
                     }
 
                     @Override

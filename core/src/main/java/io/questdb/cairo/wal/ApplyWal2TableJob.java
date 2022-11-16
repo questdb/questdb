@@ -159,7 +159,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ).$();
 
-                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME)) {
+                        if (Chars.endsWith(tempPath, TableUtils.TXN_FILE_NAME) || Chars.endsWith(tempPath, TableUtils.META_FILE_NAME) || matchesWalLock(tempPath)) {
                             continue;
                         }
 
@@ -181,6 +181,25 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
 
         return allClean;
+    }
+
+    private static boolean matchesWalLock(CharSequence name) {
+        if (Chars.endsWith(name, ".lock")) {
+            for (int i = name.length() - ".lock".length() - 1; i > 0; i--) {
+                char c = name.charAt(i);
+                if (c < '0' || c > '9') {
+                    return Chars.equals(name, i - WAL_NAME_BASE.length() + 1, i + 1, WAL_NAME_BASE, 0, WAL_NAME_BASE.length());
+                }
+            }
+        }
+
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static AlterOperation compileAlter(TableWriter tableWriter, SqlToOperation sqlToOperation, CharSequence sql, long seqTxn) throws SqlException {

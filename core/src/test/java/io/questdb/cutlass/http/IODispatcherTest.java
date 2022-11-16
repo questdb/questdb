@@ -7069,7 +7069,7 @@ public class IODispatcherTest {
         CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
             @Override
             public FilesFacade getFilesFacade() {
-                return new FilesFacadeImpl() {
+                return new TestFilesFacadeImpl() {
                     @Override
                     public int msync(long addr, long len, boolean async) {
                         msyncCallCount.incrementAndGet();

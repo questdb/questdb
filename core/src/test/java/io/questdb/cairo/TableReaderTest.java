@@ -1509,7 +1509,6 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
             int totalColAddCount = 100;
-//                    Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
 
             String tableName = "tbl_meta_test";
             createTable(tableName, PartitionBy.HOUR);
@@ -1919,7 +1918,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path temp = new Path()) {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     @Override
                     public long openRO(LPSZ name) {
                         if (Chars.endsWith(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
@@ -1956,7 +1955,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (Path temp = new Path()) {
                 temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     long metaFd = -1;
 
                     @Override
@@ -2015,7 +2014,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 try (
                         Path path = getPath(tableName);
                         MemoryMARW mem = Vm.getMARWInstance(
-                                FilesFacadeImpl.INSTANCE,
+                                TestFilesFacadeImpl.INSTANCE,
                                 path,
                                 -1,
                                 Files.PAGE_SIZE,
@@ -2743,7 +2742,7 @@ public class TableReaderTest extends AbstractCairoTest {
             int bandStride = 1000;
             int totalCount = 0;
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.endsWith(name, "2017-12-14" + Files.SEPARATOR)) {

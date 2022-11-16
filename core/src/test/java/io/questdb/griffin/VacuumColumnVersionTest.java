@@ -401,9 +401,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
-        if (Os.type == Os.WINDOWS) {
-            engine.releaseInactive();
-        }
+        engine.releaseInactive();
         currentMicros += 10L * iteration++;
         purgeJob.run(0);
         currentMicros += 10L * iteration++;

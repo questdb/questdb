@@ -106,7 +106,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexFileFailsWhenIndexFileAlreadyExists() {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             final String partition = "2022-05-10" + File.separator + "0_1";
 
             @Override
@@ -123,7 +123,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
     @Test
     public void testIndexFileFailsWhenItCantCreatePartitionDirectory() {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
+        FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             final String partition = "2022-05-10" + File.separator;
 
             @Override

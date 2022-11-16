@@ -101,7 +101,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     @Test
     public void testCannotCreateTable() throws Exception {
         assertFailure(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
 
                     @Override
                     public int mkdirs(Path path, int mode) {
@@ -2172,7 +2172,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
                 "), cast(a as STRING)";
 
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             int mapCount = 0;
 
             @Override
@@ -2201,7 +2201,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "select rnd_symbol(4,4,4,2) a from long_sequence(10000)" +
                 "), cast(a as STRING)";
 
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             private long metaFd;
             private int metaMapCount;
             private long txnFd;
@@ -2578,7 +2578,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableFail() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int count = 8; // this count is very deliberately coincidental with
 
             // number of rows we are appending
@@ -3439,7 +3439,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testInsertAsSelectPersistentIOError() throws Exception {
         AtomicBoolean inError = new AtomicBoolean(true);
 
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int pageCount = 0;
 
             @Override
@@ -3539,7 +3539,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testInsertAsSelectTemporaryIOError() throws Exception {
         AtomicBoolean inError = new AtomicBoolean(true);
 
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int pageCount = 0;
 
             @Override

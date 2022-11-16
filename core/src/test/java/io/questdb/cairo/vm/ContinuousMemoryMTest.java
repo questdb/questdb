@@ -685,7 +685,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateRemapFailed() {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             int counter = 1;
             boolean failTruncate = false;
 

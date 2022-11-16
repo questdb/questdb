@@ -28,8 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -161,7 +161,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
             engine.releaseAllWriters();
             spinLockTimeout = 1;
 
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 int attempt = 0;
 
                 @Override
@@ -207,7 +207,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     int attempt = 0;
 
                     @Override
@@ -232,7 +232,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 }
 
                 // Now try with success.
-                ff = new FilesFacadeImpl();
+                ff = new TestFilesFacadeImpl();
                 compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
             }
@@ -248,7 +248,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
@@ -274,7 +274,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 // Now try with success.
                 engine.clear();
-                ff = new FilesFacadeImpl();
+                ff = new TestFilesFacadeImpl();
                 compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
             }
@@ -290,7 +290,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
@@ -314,10 +314,10 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 } catch (CairoException ignored) {
                 }
 
-                ff = new FilesFacadeImpl();
+                ff = new TestFilesFacadeImpl();
                 // Now try with another failure.
                 engine.releaseAllWriters();
-                ff = new FilesFacadeImpl() {
+                ff = new TestFilesFacadeImpl() {
                     @Override
                     public long openRO(LPSZ from) {
                         if (Chars.endsWith(from, TableUtils.META_FILE_NAME)) {

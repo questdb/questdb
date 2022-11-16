@@ -434,7 +434,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testCairoExceptionOnAddColumn() throws Exception {
         String table = "columnEx";
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "broken.d.1")) {
@@ -474,7 +474,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         configOverrideMaxUncommittedRows = 1;
         netMsgBufferSize.set(60);
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
@@ -510,7 +510,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     public void testCairoExceptionOnCreateTable() throws Exception {
         String table = "cairoEx";
         runInContext(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "broken.d")) {

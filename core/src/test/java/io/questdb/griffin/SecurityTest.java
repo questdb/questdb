@@ -180,7 +180,8 @@ public class SecurityTest extends AbstractGriffinTest {
         //we've to close id file, otherwise parent tearDown() fails on TestUtils.removeTestPath(root) in Windows 
         memoryRestrictedEngine.getTableIdGenerator().close();
         memoryRestrictedEngine.clear();
-        memoryRestrictedEngine.getTableSequencerAPI().close();
+        memoryRestrictedEngine.getTableSequencerAPI().releaseInactive();
+        memoryRestrictedEngine.closeNameRegistry();
         super.tearDown();
     }
 
@@ -714,7 +715,8 @@ public class SecurityTest extends AbstractGriffinTest {
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
         memoryRestrictedEngine.releaseInactive();
-        memoryRestrictedEngine.getTableSequencerAPI().close();
+        memoryRestrictedEngine.releaseInactiveTableSequencers();
+        memoryRestrictedEngine.closeNameRegistry();
         TestUtils.assertMemoryLeak(() -> {
             try {
                 circuitBreakerCallLimit = Integer.MAX_VALUE;
@@ -724,7 +726,8 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.assertEquals("engine's busy writer count", 0, engine.getBusyWriterCount());
                 Assert.assertEquals("engine's busy reader count", 0, engine.getBusyReaderCount());
                 memoryRestrictedEngine.releaseInactive();
-                memoryRestrictedEngine.getTableSequencerAPI().close();
+                memoryRestrictedEngine.releaseInactiveTableSequencers();
+                memoryRestrictedEngine.closeNameRegistry();
                 Assert.assertEquals("restricted engine's busy writer count", 0, memoryRestrictedEngine.getBusyWriterCount());
                 Assert.assertEquals("restricted engine's busy reader count", 0, memoryRestrictedEngine.getBusyReaderCount());
             } finally {

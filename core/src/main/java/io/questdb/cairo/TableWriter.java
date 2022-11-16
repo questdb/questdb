@@ -66,6 +66,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.std.Files.FILES_RENAME_OK;
 import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable {
@@ -199,8 +200,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private boolean performRecovery;
     private boolean removeDirOnCancelRow = true;
     private int rowAction = ROW_ACTION_OPEN_PARTITION;
-    private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private String tableName;
+    private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_TABLE_WRITER);
     private LongConsumer timestampSetter;
     private long todoTxn;
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
@@ -703,7 +704,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
                 } else {
-                    if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path) == Files.FILES_RENAME_OK) {
+                    if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path) == FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
                         LOG.error().$("could not rename [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
@@ -1517,13 +1518,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            LOG.error().$("partition is empty, folder does not exist [path=").$(path).I$();
+            LOG.error().$("partition is empty, folder does not exist [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
             return false;
         }
 
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
-            LOG.error().$("partition is already removed [path=").$(path).I$();
+            LOG.error().$("partition is already removed [path=").utf8(path).$(", partitionTimestamp=").$ts(timestamp).I$();
             return false;
         }
 
@@ -1991,7 +1992,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private static void renameFileOrLog(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
-            if (ff.rename(from, to) == Files.FILES_RENAME_OK) {
+            if (ff.rename(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").utf8(from).$(", to=").utf8(to).I$();
             } else {
                 LOG.critical()
@@ -4906,14 +4907,14 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void releaseLock(boolean distressed) {
         if (lockFd != -1L) {
-            ff.close(lockFd);
             if (distressed) {
+                ff.close(lockFd);
                 return;
             }
 
             try {
                 lockName(path);
-                removeOrException(ff, path);
+                removeOrException(ff, lockFd, path);
             } finally {
                 path.trimTo(rootLen);
             }
@@ -5113,10 +5114,17 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             path.concat(META_FILE_NAME).$();
             if (ff.exists(path) && !ff.remove(path)) {
-                throw CairoException.critical(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                // On Windows opened file cannot be removed
+                // but can be renamed
+                other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks()).$();
+                if (ff.rename(path, other) != FILES_RENAME_OK) {
+                    LOG.error().$("could not remove [path=").$(path).$(']').$();
+                    throw CairoException.critical(ff.errno()).put("Recovery failed. Cannot remove: ").put(path);
+                }
             }
         } finally {
             path.trimTo(rootLen);
+            other.trimTo(rootLen);
         }
     }
 
@@ -5241,7 +5249,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     continue;
                 }
 
-                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
+                if (ff.rename(path, other) != FILES_RENAME_OK) {
                     LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
@@ -5366,7 +5374,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         Path other = Path.getThreadLocal2(path.trimTo(p).$());
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
+                            if (ff.rename(other, path) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -5385,7 +5393,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         Path other = Path.getThreadLocal2(path);
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
+                            if (ff.rename(other, path) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -5449,7 +5457,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     throw CairoException.critical(ff.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
-                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
+                if (ff.rename(path, other) != FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }

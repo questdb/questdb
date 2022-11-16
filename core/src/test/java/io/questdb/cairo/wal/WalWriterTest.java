@@ -1233,7 +1233,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testExceptionThrownIfSequencerCannotBeCreated() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, WAL_INDEX_FILE_NAME)) {
@@ -1255,7 +1255,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testExceptionThrownIfSequencerCannotBeOpened() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
                 try {
@@ -1284,7 +1284,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testExceptionThrownIfSequencerCannotCreateDir() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public int errno() {
                 return 999;
@@ -1395,7 +1395,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "0" + Files.SEPARATOR + "c.d")) {
@@ -1424,7 +1424,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testOverlappingStructureChangeFails() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 try {
@@ -1458,7 +1458,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testOverlappingStructureChangeMissing() throws Exception {
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long readNonNegativeLong(long fd, long offset) {
                 try {

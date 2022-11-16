@@ -5476,7 +5476,7 @@ nodejs code:
             writerAsyncCommandBusyWaitTimeout = 1_000;
             writerAsyncCommandMaxTimeout = 30_000;
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
@@ -5497,7 +5497,7 @@ nodejs code:
             skipOnWalRun(); // Alters do not wait for WAL tables
             writerAsyncCommandMaxTimeout = configuration.getWriterAsyncCommandBusyWaitTimeout();
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
@@ -5517,7 +5517,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 1;
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {

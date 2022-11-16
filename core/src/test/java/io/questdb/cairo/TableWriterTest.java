@@ -61,7 +61,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     public static final String PRODUCT = "product";
     public static String PRODUCT_FS;
-    private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
 
     @Before
@@ -114,7 +114,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        class X extends FilesFacadeImpl {
+        class X extends TestFilesFacadeImpl {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
@@ -126,6 +126,15 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean remove(LPSZ name) {
                 return !Chars.endsWith(name, TableUtils.META_FILE_NAME) && super.remove(name);
+            }
+
+            @Override
+            public int rename(LPSZ name1, LPSZ name2) {
+                if (Chars.endsWith(name1, TableUtils.META_FILE_NAME)
+                        && !Chars.contains(name2, ".prev")) {
+                    return -1;
+                }
+                return super.rename(name1, name2);
             }
         }
         testUnrecoverableAddColumn(new X());
@@ -159,7 +168,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean touch(LPSZ path) {
                 return !Chars.contains(path, abcColumnNamePattern) && super.touch(path);
@@ -308,7 +317,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFailToRemoveSymbolMapFiles() throws Exception {
         String abcColumnNamePatternK = Files.SEPARATOR + "abc.k";
-        testAddColumnRecoverableNoFault(new FilesFacadeImpl() {
+        testAddColumnRecoverableNoFault(new TestFilesFacadeImpl() {
 
             @Override
             public boolean exists(LPSZ path) {
@@ -325,7 +334,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
@@ -339,7 +348,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail2() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
@@ -353,7 +362,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail3() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testUnrecoverableAddColumn(new FilesFacadeImpl() {
+        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
             int count = 1;
 
             @Override
@@ -376,7 +385,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFail4() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.contains(name, abcColumnNamePattern)) {
@@ -390,7 +399,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnFileOpenFailAndIndexedPrev() throws Exception {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        testUnrecoverableAddColumn(new FilesFacadeImpl() {
+        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
             int count = 2;
             int toCount = 5;
 
@@ -416,7 +425,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnHavingTroubleCreatingMetaSwap() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
 
             int count = 5;
 
@@ -452,7 +461,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnMetaOpenFail() throws Exception {
-        testUnrecoverableAddColumn(new FilesFacadeImpl() {
+        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
             int counter = 2;
 
             @Override
@@ -582,7 +591,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDeleteFail() throws Exception {
         // simulate existence of _meta.swp
-        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+        testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return Chars.contains(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
@@ -612,7 +621,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddIndexAndFailOnceByDay() throws Exception {
 
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             int count = 5;
 
             @Override
@@ -637,7 +646,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddIndexAndFailOnceByNone() throws Exception {
 
-        final FilesFacade ff = new FilesFacadeImpl() {
+        final FilesFacade ff = new TestFilesFacadeImpl() {
             int count = 1;
 
             @Override
@@ -898,7 +907,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCancelFirstRowPartitioned() throws Exception {
-        ff = new FilesFacadeImpl() {
+        ff = new TestFilesFacadeImpl() {
             long kIndexFd = -1;
 
             @Override
@@ -1268,7 +1277,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCannotCreatePartitionDir() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
@@ -1319,7 +1328,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCannotMapTxFile() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             int count = 2;
             long fd = -1;
 
@@ -1344,7 +1353,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCannotOpenColumnFile() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
                 if (Chars.endsWith(name, "productName.i")) {
@@ -1360,7 +1369,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final int N = 100;
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return !Chars.endsWith(path, "category.o") && super.exists(path);
@@ -1371,7 +1380,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCannotOpenTodo() throws Exception {
         // trick constructor into thinking "_todo" file exists
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             int counter = 2;
 
             @Override
@@ -1386,7 +1395,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testCannotOpenTxFile() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -1404,7 +1413,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final int N = 10000;
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             long fd;
 
             @Override
@@ -1430,7 +1439,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final int N = 10000;
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             long fd;
 
             @Override
@@ -1456,7 +1465,7 @@ public class TableWriterTest extends AbstractCairoTest {
         final int N = 10000;
         create(FF, PartitionBy.NONE, N);
         populateTable0(FF, N);
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             long fd;
 
             @Override
@@ -1635,7 +1644,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testConstructorTruncatedTodo() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long length(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
@@ -1796,7 +1805,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     MemoryCMARW mem = Vm.getCMARWInstance();
                     Path path = new Path().of(root).concat(systemTableName).concat(TableUtils.TODO_FILE_NAME).$()
             ) {
-                mem.smallFile(FilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -1869,7 +1878,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testMetaFileDoesNotExist() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
@@ -1882,7 +1891,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testNonStandardPageSize() throws Exception {
-        populateTable(new FilesFacadeImpl() {
+        populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
                 return super.getPageSize() * 500;
@@ -1892,7 +1901,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testNonStandardPageSize2() throws Exception {
-        populateTable(new FilesFacadeImpl() {
+        populateTable(new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
                 return 32 * 1024 * 1024;
@@ -3082,7 +3091,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testTxFileDoesNotExist() throws Exception {
-        testConstructor(new FilesFacadeImpl() {
+        testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
@@ -4260,7 +4269,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             long ts = populateTable();
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newTableWriter(new DefaultCairoConfiguration(root) {
+            try (TableWriter writer = newTableWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;

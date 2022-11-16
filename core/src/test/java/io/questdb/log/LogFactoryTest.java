@@ -388,7 +388,7 @@ public class LogFactoryTest {
         pubSeq.then(subSeq).then(pubSeq);
 
         try (final LogRollingFileWriter writer = new LogRollingFileWriter(
-                FilesFacadeImpl.INSTANCE,
+                TestFilesFacadeImpl.INSTANCE,
                 clock,
                 queue,
                 subSeq,
@@ -460,7 +460,7 @@ public class LogFactoryTest {
             final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, IntervalUtils.parseFloorPartialTimestamp("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 return w;
             }));
@@ -505,7 +505,7 @@ public class LogFactoryTest {
             }
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 w.setSpinBeforeFlush("1000000");
                 return w;
@@ -762,7 +762,7 @@ public class LogFactoryTest {
 
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
+                LogRollingFileWriter w = new LogRollingFileWriter(TestFilesFacadeImpl.INSTANCE, clock, ring, seq, level);
                 w.setLocation(logFile);
                 // 1Mb log file limit, we will create 4 of them
                 w.setBufferSize("4k");

@@ -38,8 +38,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.ObjList;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -507,7 +507,7 @@ public class SampleByTest extends AbstractGriffinTest {
 
             engine.clear();
 
-            final FilesFacade ff = new FilesFacadeImpl() {
+            final FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 10;
 
                 @Override
@@ -3854,7 +3854,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 4;
 
                 @Override
@@ -3903,7 +3903,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 int count = 10;
 
                 @Override

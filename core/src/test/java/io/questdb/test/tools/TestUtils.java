@@ -603,7 +603,7 @@ public final class TestUtils {
         if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         Assert.assertEquals(0, ff.copyRecursive(src, dst, dirMode));
     }
 
@@ -1090,7 +1090,7 @@ public final class TestUtils {
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+        MatcherAssert.assertThat("Test dir cleanup", TestFilesFacadeImpl.INSTANCE.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {

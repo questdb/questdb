@@ -40,8 +40,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.junit.rules.TemporaryFolder;
 
@@ -53,7 +53,7 @@ public class HttpQueryTestBuilder {
 
     private static final Log LOG = LogFactory.getLog(HttpQueryTestBuilder.class);
     private String copyInputRoot;
-    private FilesFacade filesFacade = new FilesFacadeImpl();
+    private FilesFacade filesFacade = new TestFilesFacadeImpl();
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
     private Metrics metrics;

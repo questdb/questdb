@@ -36,6 +36,7 @@ public class FilesFacadeImpl implements FilesFacade {
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
 
+
     @Override
     public boolean allocate(long fd, long size) {
         // do not bother allocating on Windows because mmap() will try to allocate regardless
@@ -53,6 +54,14 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean close(long fd) {
         return Files.close(fd) == 0;
+    }
+
+    @Override
+    public boolean closeRemove(long fd, LPSZ path) {
+        if (fd > -1) {
+            Files.close(fd);
+        }
+        return remove(path);
     }
 
     @Override

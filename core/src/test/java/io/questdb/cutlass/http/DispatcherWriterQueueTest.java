@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -120,7 +120,7 @@ public class DispatcherWriterQueueTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withAlterTableStartWaitTimeout(30_000)
                 .withAlterTableMaxWaitTimeout(50_000)
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
@@ -172,7 +172,7 @@ public class DispatcherWriterQueueTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withAlterTableStartWaitTimeout(30_000)
                 .withAlterTableMaxWaitTimeout(50_000)
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
@@ -206,7 +206,7 @@ public class DispatcherWriterQueueTest {
                 .withAlterTableStartWaitTimeout(100)
                 .withAlterTableMaxWaitTimeout(10)
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
@@ -299,7 +299,7 @@ public class DispatcherWriterQueueTest {
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
                 .withAlterTableStartWaitTimeout(30_000)
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "x.d.1")) {
@@ -373,7 +373,7 @@ public class DispatcherWriterQueueTest {
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
                 .withAlterTableStartWaitTimeout(30_000)
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "x.d.1")) {
@@ -646,7 +646,7 @@ public class DispatcherWriterQueueTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
                 .withAlterTableStartWaitTimeout(startWaitTimeout)
                 .withAlterTableMaxWaitTimeout(50_000L)
-                .withFilesFacade(new FilesFacadeImpl() {
+                .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
@@ -665,7 +665,7 @@ public class DispatcherWriterQueueTest {
                 errorHeader,
                 statementTimeout,
                 updatedCount,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8)
         );
     }
 

@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -42,12 +42,12 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
-    private final static FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {
 
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public TelemetryConfiguration getTelemetryConfiguration() {
                 return new DefaultTelemetryConfiguration() {
@@ -178,7 +178,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 return refVersion.get();
             }
         };
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public BuildInformation getBuildInformation() {
                 return buildInformation;

@@ -426,7 +426,7 @@ public class TableSequencerAPI implements QuietCloseable {
                     // Sequencer is distressed or dropped, close before removing from the pool.
                     // Remove from registry only if this thread closed the instance.
                     if (checkClose()) {
-                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).$();
+                        LOG.info().$("closed distressed table sequencer [table=").$(getTableName()).I$();
                         pool.seqRegistry.remove(getTableName(), this);
                     }
                 }

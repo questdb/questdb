@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import org.junit.Test;
 
 public class BrokenIntReadTest extends AbstractGriffinTest {
@@ -198,7 +198,7 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         });
     }
 
-    static class BrokenIntRead extends FilesFacadeImpl {
+    static class BrokenIntRead extends TestFilesFacadeImpl {
 
         private final int failOnCount;
         private int callCount = 0;

@@ -103,6 +103,7 @@ public class TxSerializerTest {
         createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.reloadTableNames();
     }
 
     @After

@@ -258,38 +258,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void drop(
-            CairoSecurityContext securityContext,
-            Path path,
-            CharSequence tableName
-    ) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        String systemTableName = getSystemTableName(tableName);
-
-        if (isWalTableName(tableName)) {
-            if (tableNameRegistry.removeWalTableName(tableName, systemTableName)) {
-                tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
-            }
-        } else {
-            CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
-            if (null == lockedReason) {
-                try {
-                    path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
-                    int errno;
-                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("could not remove table");
-                    }
-                } finally {
-                    unlock(securityContext, tableName, null, false);
-                }
-
-                tableNameRegistry.deleteNonWalName(tableName, systemTableName);
-                return;
-            }
-            throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
-        }
+    @TestOnly
+    public void closeNameRegistry() {
+        tableNameRegistry.close();
     }
 
     public TableWriter getBackupWriter(
@@ -587,29 +558,38 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(systemTableName, lockReason);
     }
 
-    public String lock(
+    public void drop(
             CairoSecurityContext securityContext,
-            String systemTableName,
-            String lockReason
+            Path path,
+            CharSequence tableName
     ) {
-        assert null != lockReason;
         securityContext.checkWritePermission();
+        validNameOrThrow(tableName);
+        String systemTableName = getSystemTableName(tableName);
 
-        String lockedReason = writerPool.lock(systemTableName, lockReason);
-        if (lockedReason == null) { // not locked
-            if (readerPool.lock(systemTableName)) {
-                if (metadataPool.lock(systemTableName)) {
-                    tableSequencerAPI.releaseInactive();
-                    LOG.info().$("locked [table=`").utf8(systemTableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
-                    return null;
-                }
-                readerPool.unlock(systemTableName);
+        if (isWalTableName(tableName)) {
+            if (tableNameRegistry.removeWalTableName(tableName, systemTableName)) {
+                tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
             }
-            writerPool.unlock(systemTableName);
-            return BUSY_READER;
-        }
-        return lockedReason;
+        } else {
+            CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
+            if (null == lockedReason) {
+                try {
+                    path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
+                    int errno;
+                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
+                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableName).put(", systemTableName=").put(systemTableName).put(']');
+                    }
+                } finally {
+                    unlock(securityContext, tableName, null, false);
+                }
 
+                tableNameRegistry.deleteNonWalName(tableName, systemTableName);
+                return;
+            }
+            throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
+        }
     }
 
     public boolean lockReaders(CharSequence tableName) {
@@ -664,9 +644,29 @@ public class CairoEngine implements Closeable, WriterSource {
         sqlCompilerPool.releaseInactive();
     }
 
-    @TestOnly
-    public void releaseInactiveTableSequencers() {
-        tableSequencerAPI.releaseInactive();
+    public String lock(
+            CairoSecurityContext securityContext,
+            String systemTableName,
+            String lockReason
+    ) {
+        assert null != lockReason;
+        securityContext.checkWritePermission();
+
+        String lockedReason = writerPool.lock(systemTableName, lockReason);
+        if (lockedReason == null) { // not locked
+            if (readerPool.lock(systemTableName)) {
+                if (metadataPool.lock(systemTableName)) {
+//                    tableSequencerAPI.releaseInactive();
+                    LOG.info().$("locked [table=`").utf8(systemTableName).$("`, thread=").$(Thread.currentThread().getId()).I$();
+                    return null;
+                }
+                readerPool.unlock(systemTableName);
+            }
+            writerPool.unlock(systemTableName);
+            return BUSY_READER;
+        }
+        return lockedReason;
+
     }
 
     public void releaseReadersBySystemName(CharSequence systemTableName) {
@@ -776,6 +776,12 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();
+    }
+
+    @TestOnly
+    public void releaseInactiveTableSequencers() {
+        walWriterPool.releaseInactive();
+        tableSequencerAPI.releaseInactive();
     }
 
     @TestOnly

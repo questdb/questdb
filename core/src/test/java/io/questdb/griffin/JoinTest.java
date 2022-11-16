@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
@@ -3957,7 +3957,7 @@ public class JoinTest extends AbstractGriffinTest {
     private void testJoinForCursorLeaks(String sql) throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger counter = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
                     if (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {

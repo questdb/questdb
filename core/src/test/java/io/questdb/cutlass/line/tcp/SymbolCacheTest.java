@@ -170,7 +170,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     public void testCloseResetsCapacity() throws Exception {
         final int N = 1024;
         final String tableName = "tb1";
-        final FilesFacade ff = new FilesFacadeImpl();
+        final FilesFacade ff = new TestFilesFacadeImpl();
 
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
@@ -241,7 +241,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
             long ts = TimestampFormatUtils.parseTimestamp("2020-09-10T20:00:00.000000Z");
             final long incrementUs = 10_000;
             final String constValue = "hello";
-            FilesFacade ff = new FilesFacadeImpl();
+            FilesFacade ff = new TestFilesFacadeImpl();
 
             compiler.compile("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
             CharSequence systemTableName = engine.getSystemTableName("x");
@@ -335,7 +335,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     @Test
     public void testSimpleInteraction() throws Exception {
         String tableName = "tb1";
-        FilesFacade ff = new FilesFacadeImpl();
+        FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
                  TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -491,7 +491,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     @Test
     public void testSymbolCountNonZeroWatermark() throws Exception {
         String tableName = "tb1";
-        FilesFacade ff = new FilesFacadeImpl();
+        FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
                  TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -570,7 +570,7 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     @Test
     public void testSymbolCountZeroWatermark() throws Exception {
         String tableName = "tb1";
-        FilesFacade ff = new FilesFacadeImpl();
+        FilesFacade ff = new TestFilesFacadeImpl();
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path();
                  TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)

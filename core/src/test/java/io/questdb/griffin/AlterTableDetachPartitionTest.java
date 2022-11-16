@@ -97,7 +97,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                             .concat("2022-06-03")
                             .put(DETACHED_DIR_MARKER)
                             .slash$();
-                    Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 509));
+                    Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 509));
                 }
         );
     }
@@ -108,7 +108,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             copyPartitionOnAttach = true;
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int copyRecursive(Path src, Path dst, int dirMode) {
                     if (Chars.contains(src, attachableDirSuffix)) {
@@ -146,7 +146,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachFailsCopyMeta() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             int i = 0;
 
             @Override
@@ -200,7 +200,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testAttachFailsRetried() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             int i = 0;
 
             @Override
@@ -492,7 +492,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testCannotRemoveFolder() throws Exception {
         AtomicInteger counter = new AtomicInteger();
-        ff = new FilesFacadeImpl() {
+        ff = new TestFilesFacadeImpl() {
             @Override
             public int rmdir(Path path) {
                 if (Chars.contains(path, "2022-06-03")) {
@@ -529,7 +529,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotUndoRenameAfterBrokenCopyMeta() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             private boolean copyCalled = false;
 
             @Override
@@ -584,7 +584,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachAnotherDrive() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             @Override
             public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
                 return 100018;
@@ -638,7 +638,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachAnotherDriveFailsToCopy() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             @Override
             public int copyRecursive(Path src, Path dst, int dirMode) {
                 return 100018;
@@ -682,7 +682,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDetachAttachAnotherDriveFailsToHardLink() throws Exception {
-        FilesFacadeImpl ff1 = new FilesFacadeImpl() {
+        FilesFacadeImpl ff1 = new TestFilesFacadeImpl() {
             @Override
             public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
                 return 100018;
@@ -1038,7 +1038,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             copyPartitionOnAttach = true;
             String tableName = "tabDetachAttachMissingMeta";
             attachableDirSuffix = DETACHED_DIR_MARKER;
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
                     return 100018;
@@ -1845,7 +1845,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 CharSequence systemTableName = engine.getSystemTableName(tableName);
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                 dFile(src.chop$(), "ts", -1);
                 long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
@@ -1889,7 +1889,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Path src = Path.PATH.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash$();
                 Path dst = Path.PATH2.get().of(configuration.getRoot()).concat(systemTableName).concat(timestampWrongDay).put(configuration.getAttachPartitionSuffix()).slash$();
 
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
+                FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                 Assert.assertEquals(0, ff.rename(src, dst));
                 assertFailure("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay + "'", "partition is not preset in detached txn file");
 
@@ -1948,7 +1948,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testPartitionFolderDoesNotExist() throws Exception {
         assertFailure(
-                new FilesFacadeImpl() {
+                new TestFilesFacadeImpl() {
                     @Override
                     public boolean exists(LPSZ path) {
                         if (Chars.endsWith(path, "2022-06-03")) {
@@ -2042,7 +2042,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "2022-06-04T23:59:59.000000Z\t10\tVTJW\t10\tIBBT\n";
                 assertContent(expected, tableName);
 
-                AbstractCairoTest.ff = new FilesFacadeImpl() {
+                AbstractCairoTest.ff = new TestFilesFacadeImpl() {
                     private int copyCallCount = 0;
 
                     public int copy(LPSZ from, LPSZ to) {

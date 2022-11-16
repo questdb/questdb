@@ -1436,7 +1436,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // Memory impl will round truncate size to the OS page size.
             // Therefore, truncate file manually to below the expected file size
 
-            final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k").$();
                 long fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());

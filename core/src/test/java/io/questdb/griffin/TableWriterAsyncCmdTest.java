@@ -35,8 +35,8 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -156,7 +156,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandsFailsToDropColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 int attempt = 0;
 
                 @Override
@@ -191,7 +191,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandsFailsToDropPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.contains(name, "2020-01-01")) {
@@ -223,7 +223,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     @Test
     public void testAsyncAlterCommandsFailsToRemoveColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 int attempt = -1;
 
                 @Override

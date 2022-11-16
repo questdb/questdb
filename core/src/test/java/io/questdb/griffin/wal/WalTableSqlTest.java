@@ -547,19 +547,23 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    private void testDropFailedWhileDataFileLocked(final String fileName) throws Exception {
-        AtomicBoolean latch = new AtomicBoolean();
-        FilesFacade ff = new FilesFacadeImpl() {
+    @Test
+    public void testDropedTableHappendIntheMiddleOfWalApplication() throws Exception {
+        String tableName = testName.getMethodName();
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public boolean remove(LPSZ name) {
-                if (Chars.endsWith(name, fileName) && latch.get()) {
-                    return false;
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
+                    try {
+                        compile("drop table " + tableName);
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
-                return Files.remove(name);
+                return super.openRO(name);
             }
         };
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('AB', 'BC', 'CD') sym, " +
@@ -568,34 +572,18 @@ public class WalTableSqlTest extends AbstractGriffinTest {
                     " from long_sequence(1)" +
                     ") timestamp(ts) partition by DAY WAL"
             );
-
-            drainWalQueue();
-
             String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
-            compile("drop table " + tableName);
 
-            latch.set(true);
             drainWalQueue();
 
-            latch.set(false);
             if (Os.type == Os.WINDOWS) {
                 // Release WAL writers
                 engine.releaseInactive();
+                drainWalQueue();
             }
-
-            drainWalQueue();
 
             checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
             checkWalFilesRemoved(sysTableName1);
-
-            try {
-                compile(tableName);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(0, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
-            }
-
         });
     }
 
@@ -764,44 +752,20 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testDropedTableHappendIntheMiddleOfWalApplication() throws Exception {
-        String tableName = testName.getMethodName();
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
-                    try {
-                        compile("drop table " + tableName);
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-                return Files.openRO(name);
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            compile("create table " + tableName + " as (" +
-                    "select x, " +
-                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
-                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
-                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                    " from long_sequence(1)" +
-                    ") timestamp(ts) partition by DAY WAL"
-            );
-            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+    private void checkWalFilesRemoved(String sysTableName) {
+        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
 
-            drainWalQueue();
+        engine.releaseInactiveTableSequencers();
+        try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
+            job.run(0);
+        }
 
-            if (Os.type == Os.WINDOWS) {
-                // Release WAL writers
-                engine.releaseInactive();
-                drainWalQueue();
-            }
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
 
-            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
-            checkWalFilesRemoved(sysTableName1);
-        });
+        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.SEQ_DIR);
+        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
     }
 
     @Test
@@ -1031,19 +995,55 @@ public class WalTableSqlTest extends AbstractGriffinTest {
         MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(value));
     }
 
-    private void checkWalFilesRemoved(String sysTableName) {
-        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(true));
+    private void testDropFailedWhileDataFileLocked(final String fileName) throws Exception {
+        AtomicBoolean latch = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.endsWith(name, fileName) && latch.get()) {
+                    return false;
+                }
+                return super.remove(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
 
-        engine.getTableSequencerAPI().releaseInactive();
-        try (WalPurgeJob job = new WalPurgeJob(engine, configuration.getFilesFacade(), configuration.getMicrosecondClock())) {
-            job.run(0);
-        }
+            drainWalQueue();
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
-        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
+            String sysTableName1 = Chars.toString(engine.getSystemTableName(tableName));
+            compile("drop table " + tableName);
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.SEQ_DIR);
-        MatcherAssert.assertThat(Chars.toString(sysPath), Files.exists(sysPath.$()), Matchers.is(false));
+            latch.set(true);
+            drainWalQueue();
+
+            latch.set(false);
+            if (Os.type == Os.WINDOWS) {
+                // Release WAL writers
+                engine.releaseInactive();
+            }
+
+            drainWalQueue();
+
+            checkTableFilesExist(sysTableName1, "2022-02-24", "x.d", false);
+            checkWalFilesRemoved(sysTableName1);
+
+            try {
+                compile(tableName);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(0, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
+            }
+
+        });
     }
 }

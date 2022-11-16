@@ -45,7 +45,7 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class CairoMemoryTest {
-    private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
+    private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(CairoMemoryTest.class);
     private static final int N = 1000000;
     @Rule
@@ -361,7 +361,7 @@ public class CairoMemoryTest {
                 final int N = 100000;
                 final Rnd rnd = new Rnd();
 
-                FilesFacade ff = new FilesFacadeImpl() {
+                FilesFacade ff = new TestFilesFacadeImpl() {
                     int counter = 2;
 
                     @Override

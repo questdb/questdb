@@ -258,10 +258,9 @@ public class WriterPool extends AbstractPool {
                 // unlock must remove entry because pool does not deal with null writer
 
                 if (e.lockFd != -1L) {
-                    ff.close(e.lockFd);
                     Path path = Path.getThreadLocal(root).concat(systemTableName);
                     TableUtils.lockName(path);
-                    if (!ff.remove(path)) {
+                    if (!ff.closeRemove(e.lockFd, path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }

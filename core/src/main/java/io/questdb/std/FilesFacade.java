@@ -36,6 +36,8 @@ public interface FilesFacade {
 
     boolean close(long fd);
 
+    boolean closeRemove(long fd, LPSZ path);
+
     int copy(LPSZ from, LPSZ to);
 
     long copyData(long srcFd, long destFd, long offsetSrc, long length);

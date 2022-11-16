@@ -1098,7 +1098,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             Rnd eRnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private long fd = -1;
                 private int mapCount = 0;
 
@@ -1258,7 +1258,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             int S = 512;
             Rnd rnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private long fd = -1;
 
                 @Override
@@ -1431,7 +1431,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             Rnd eRnd = new Rnd();
 
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
                 private long fd = -1;
                 private int mapCount = 0;
 

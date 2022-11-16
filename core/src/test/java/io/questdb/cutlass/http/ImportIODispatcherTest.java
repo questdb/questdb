@@ -39,7 +39,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -776,7 +776,7 @@ public class ImportIODispatcherTest {
         // I i.q.c.TableReader open partition /tmp/junit5370415536490581256/xyz/1970-01-01 [rowCount=1, partitionNameTxn=-1, transientRowCount=10000000, partitionIndex=0, partitionCount=1]
         // E i.q.c.h.p.JsonQueryProcessorState [27] internal error [q=`select count(*) from xyz where x > 0;`, ex=io.questdb.cairo.CairoException: [0] File not found: /tmp/junit5370415536490581256/xyz/1970-01-01/x.d
         AtomicLong count = new AtomicLong();
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
                 if (Chars.endsWith(path, "x.d") && count.incrementAndGet() == 4) {

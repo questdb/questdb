@@ -1027,7 +1027,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         Assume.assumeFalse(walEnabled);
 
         runInContext((receiver) -> {
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path path) {
                     return 5;

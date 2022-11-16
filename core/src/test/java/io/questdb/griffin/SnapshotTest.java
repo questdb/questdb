@@ -34,7 +34,7 @@ import org.junit.*;
 
 public class SnapshotTest extends AbstractGriffinTest {
 
-    private static final TestFilesFacadeImpl testFilesFacade = new TestFilesFacadeImpl();
+    private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private int rootLen;
 
@@ -342,6 +342,8 @@ public class SnapshotTest extends AbstractGriffinTest {
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
             CharSequence systemTableName = engine.getSystemTableName(tableName);
+
+            engine.releaseInactive();
             Assert.assertTrue(ff.remove(path.of(root).concat(systemTableName).concat(TableUtils.TXN_FILE_NAME).$()));
 
             try {
@@ -611,7 +613,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    private static class TestFilesFacadeImpl extends FilesFacadeImpl {
+    private static class TestFilesFacade extends TestFilesFacadeImpl {
 
         boolean errorOnSync = false;
 

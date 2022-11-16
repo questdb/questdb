@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -158,7 +158,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot());
                         path.concat("test").$();
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
                     compiler.compile("create table abc (b double)", sqlExecutionContext);
@@ -337,7 +337,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     try (Path path = new Path()) {
                         CharSequence systemTableName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
                         path.of(configuration.getRoot()).concat(systemTableName).$();
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 0));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
                     compiler.compile("create table автомобилей (b double)", sqlExecutionContext);

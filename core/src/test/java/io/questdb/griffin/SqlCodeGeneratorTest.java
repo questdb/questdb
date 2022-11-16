@@ -34,8 +34,8 @@ import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.TestFilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -164,7 +164,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -190,7 +190,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testBindVariableInSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -217,7 +217,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInSelect3() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -244,7 +244,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
 
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
@@ -3522,7 +3522,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByIOFailure() throws Exception {
         assertMemoryLeak(() -> {
-            FilesFacade ff = new FilesFacadeImpl() {
+            FilesFacade ff = new TestFilesFacadeImpl() {
 
                 @Override
                 public long openRO(LPSZ name) {
@@ -5368,7 +5368,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testNamedBindVariableInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)

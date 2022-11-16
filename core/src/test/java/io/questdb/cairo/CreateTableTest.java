@@ -5,6 +5,7 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -248,47 +249,7 @@ public class CreateTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableIfNotExistParallel() throws Throwable {
-        assertMemoryLeak(() -> {
-            int threadCount = 2;
-            int tableCount = 100;
-            AtomicReference<Throwable> ref = new AtomicReference<>();
-            CyclicBarrier barrier = new CyclicBarrier(threadCount);
-
-            ObjList<Thread> threads = new ObjList<>(threadCount);
-            for (int i = 0; i < threadCount; i++) {
-                threads.add(new Thread(() -> {
-                    try {
-                        barrier.await();
-                        try (
-                                SqlCompiler compiler = new SqlCompiler(engine);
-                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
-                        ) {
-                            for (int j = 0; j < tableCount; j++) {
-                                compiler.compile("create table if not exists tab" + j + " (x int)", executionContext);
-                            }
-                        }
-                    } catch (Throwable e) {
-                        ref.set(e);
-                    } finally {
-                        Path.clearThreadLocals();
-                    }
-                }));
-                threads.get(i).start();
-            }
-
-            for (int i = 0; i < threadCount; i++) {
-                threads.getQuick(i).join();
-            }
-
-            if (ref.get() != null) {
-                throw new RuntimeException(ref.get());
-            }
-        });
-    }
-
-    @Test
-    public void testCreateWanAndNonWalTablesParallel() throws Throwable {
+    public void testCreateWalAndNonWalTablesParallel() throws Throwable {
         assertMemoryLeak(() -> {
             int threadCount = 3;
             int tableCount = 100;
@@ -356,6 +317,50 @@ public class CreateTableTest extends AbstractGriffinTest {
                 throw new RuntimeException(ref.get());
             }
         });
+    }
+
+    @Test
+    public void testCreateTableIfNotExistParallel() throws Throwable {
+        assertMemoryLeak(() -> {
+            int threadCount = 2;
+            int tableCount = 100;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(threadCount);
+
+            ObjList<Thread> threads = new ObjList<>(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (
+                                SqlCompiler compiler = new SqlCompiler(engine);
+                                SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1, 1)
+                        ) {
+                            for (int j = 0; j < tableCount; j++) {
+                                compiler.compile("create table if not exists tab" + j + " (x int)", executionContext);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.get(i).start();
+            }
+
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    static {
+        LogFactory.configureSync();
     }
 
     @Test

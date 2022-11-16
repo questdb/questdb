@@ -400,7 +400,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     public void testPurgeFailed() throws Exception {
         assertMemoryLeak(() -> {
             AtomicInteger deleteAttempts = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.endsWith(name, "1970-01-10")) {
@@ -436,7 +436,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
         runPartitionPurgeJobs();
         assertMemoryLeak(() -> {
             AtomicInteger deleteAttempts = new AtomicInteger();
-            ff = new FilesFacadeImpl() {
+            ff = new TestFilesFacadeImpl() {
                 @Override
                 public int rmdir(Path name) {
                     if (Chars.endsWith(name, "1970-01-10")) {
@@ -574,9 +574,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     private void runPartitionPurgeJobs() {
         // when reader is returned to pool it remains in open state
         // holding files such that purge fails with access violation
-        if (Os.type == Os.WINDOWS) {
-            engine.releaseInactive();
-        }
+        engine.releaseInactive();
         //noinspection StatementWithEmptyBody
         while (purgeJob.run(0)) {
             // drain the purge job queue fully

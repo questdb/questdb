@@ -174,7 +174,7 @@ public class FilesTest {
                         Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.copyRecursive(src, dst, mkdirMode));
                         dst.concat("file");
                         src.concat("file");
                         TestUtils.assertFileContentsEquals(src, dst);
@@ -291,7 +291,7 @@ public class FilesTest {
                         Path p2 = new Path().of(dst).slash$()
                 ) {
                     try {
-                        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
+                        Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.hardLinkDirRecursive(src, dst, mkdirMode));
 
                         dst.concat("file");
                         src.concat("file");

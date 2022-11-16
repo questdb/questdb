@@ -121,7 +121,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         // A test FilesFacade that hides the "wal2" directory.
         String systemTableNamePath = Files.SEPARATOR + Chars.toString(engine.getSystemTableName(tableName));
-        FilesFacade testFF = new FilesFacadeImpl() {
+        FilesFacade testFF = new TestFilesFacadeImpl() {
             @Override
             public void iterateDir(LPSZ path, FindVisitor func) {
                 if (Chars.endsWith(path, systemTableNamePath)) {
@@ -304,7 +304,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         engine.releaseInactive();
 
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             private boolean firstDelete = true;
             private boolean firstErrno = true;
 
@@ -352,7 +352,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
 
         engine.releaseInactive();
 
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             private boolean firstDelete = true;
 
             @Override

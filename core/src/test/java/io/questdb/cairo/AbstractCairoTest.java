@@ -530,6 +530,7 @@ public abstract class AbstractCairoTest {
         TestUtils.createTestPath(root);
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
+        engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
         memoryUsage = -1;
@@ -546,6 +547,7 @@ public abstract class AbstractCairoTest {
         engine.getTableIdGenerator().close();
         engine.clear();
         engine.getTableSequencerAPI().releaseInactive();
+        engine.closeNameRegistry();
         if (removeDir) {
             TestUtils.removeTestPath(root);
         }

@@ -51,7 +51,7 @@ public final class Files {
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
-    private static LongHashSet openFds;
+    static LongHashSet openFds;
 
     private Files() {
         // Prevent construction.
@@ -422,9 +422,6 @@ public final class Files {
 
     private static native boolean exists0(long lpsz);
 
-    //caller must call findClose to free allocated struct
-    private native static long findFirst(long lpszName);
-
     private static native int getFileSystemStatus(long lpszName);
 
     private native static long getLastModified(long lpszName);
@@ -465,7 +462,10 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    private static boolean strcmp(long lpsz, CharSequence s) {
+    //caller must call findClose to free allocated struct
+    native static long findFirst(long lpszName);
+
+    static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
         for (int i = 0; i < len; i++) {
             byte b = Unsafe.getUnsafe().getByte(lpsz + i);
