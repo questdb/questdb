@@ -156,7 +156,7 @@ public class FuzzTransactionGenerator {
     }
 
     private static int generateNewColumnType(Rnd rnd) {
-        return FuzzInsertOperation.SUPPORTED_COLUM_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUM_TYPES.length)];
+        return FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {

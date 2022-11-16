@@ -34,7 +34,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
-    public final static int[] SUPPORTED_COLUM_TYPES = new int[]{
+    public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
             ColumnType.INT,
             ColumnType.LONG,
             ColumnType.TIMESTAMP,

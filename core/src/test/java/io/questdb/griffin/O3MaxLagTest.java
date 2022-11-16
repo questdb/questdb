@@ -1170,7 +1170,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
-                    0, // do not add columns
+                    rnd.nextDouble(),
                     0, // do not remove columns
                     0, // do not rename columns
                     1, // insert only
@@ -1190,14 +1190,14 @@ public class O3MaxLagTest extends AbstractO3Test {
             TestUtils.printSql(
                     compiler,
                     sqlExecutionContext,
-                    "(y order by ts) limit 938800,938900",
+                    "(y order by ts) limit 100",
                     sink
             );
 
             TestUtils.printSql(
                     compiler,
                     sqlExecutionContext,
-                    "x limit 938800,938900",
+                    "x limit 100",
                     sink2
             );
 
