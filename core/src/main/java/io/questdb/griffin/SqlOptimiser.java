@@ -2040,6 +2040,7 @@ class SqlOptimiser {
         }
 
         if (model.isUpdate() && !executionContext.isWalApplication()) {
+            assert lo == 0;
             try (TableRecordMetadata metadata = engine.getMetadata(executionContext.getCairoSecurityContext(), tableName)) {
                 enumerateColumns(model, metadata);
             } catch (CairoException e) {
