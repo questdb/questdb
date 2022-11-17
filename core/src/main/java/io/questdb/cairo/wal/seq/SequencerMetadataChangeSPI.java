@@ -88,7 +88,7 @@ public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
 
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
-        throw CairoException.critical(0).put("change commit lag does not update sequencer metadata");
+        throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
     }
 
     @Override

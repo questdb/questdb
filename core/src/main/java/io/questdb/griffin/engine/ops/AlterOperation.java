@@ -360,7 +360,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             tableWriter.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change commit lag [table=").$(tableName)
+            LOG.error().$("could not change o3MaxLag [table=").$(tableName)
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();

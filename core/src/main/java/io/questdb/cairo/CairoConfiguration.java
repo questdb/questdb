@@ -182,7 +182,7 @@ public interface CairoConfiguration {
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.
      *
-     * @return commit lag in microseconds
+     * @return upper bound of "commit lag" in micros
      */
     long getO3MaxLag();
 

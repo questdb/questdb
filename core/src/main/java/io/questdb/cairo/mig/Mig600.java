@@ -33,7 +33,7 @@ import static io.questdb.cairo.TableUtils.META_OFFSET_O3_MAX_LAG;
 
 final class Mig600 {
     static void migrate(MigrationContext migrationContext) {
-        MigrationActions.LOG.info().$("configuring default commit lag [table=").$(migrationContext.getTablePath()).I$();
+        MigrationActions.LOG.info().$("configuring default o3MaxLag [table=").$(migrationContext.getTablePath()).I$();
         final Path path = migrationContext.getTablePath();
         final FilesFacade ff = migrationContext.getFf();
         final long tempMem = migrationContext.getTempMemory(8);
