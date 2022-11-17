@@ -26,8 +26,8 @@ package io.questdb.cutlass.http;
 
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.network.SuspendQueryException;
 
 public interface HttpRequestProcessor {
     // after this callback is invoked the server will disconnect the client
@@ -44,15 +44,15 @@ public interface HttpRequestProcessor {
 
     default void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 
     default void onRequestRetry(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 
-    default void parkRequest(HttpConnectionContext context) {
+    default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
     default void resumeRecv(HttpConnectionContext context) {
@@ -60,9 +60,6 @@ public interface HttpRequestProcessor {
 
     default void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
-    }
-
-    default void suspendRequest(HttpConnectionContext context) {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
     }
 }

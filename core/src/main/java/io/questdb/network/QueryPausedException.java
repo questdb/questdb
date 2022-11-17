@@ -24,6 +24,6 @@
 
 package io.questdb.network;
 
-public class SuspendQueryException extends Exception {
-    public static final SuspendQueryException INSTANCE = new SuspendQueryException();
+public class QueryPausedException extends Exception {
+    public static final QueryPausedException INSTANCE = new QueryPausedException();
 }

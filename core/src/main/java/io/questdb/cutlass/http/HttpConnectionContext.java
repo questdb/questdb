@@ -286,13 +286,13 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             } catch (PeerIsSlowToReadException e2) {
                 LOG.info().$("peer is slow on running the rerun [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
-                processor.parkRequest(this);
+                processor.parkRequest(this, false);
                 resumeProcessor = processor;
                 getDispatcher().registerChannel(this, IOOperation.WRITE);
-            } catch (SuspendQueryException e) {
+            } catch (QueryPausedException e) {
                 LOG.info().$("partition is in cold storage [fd=").$(fd).$(", thread=")
                         .$(Thread.currentThread().getId()).$(']').$();
-                processor.suspendRequest(this);
+                processor.parkRequest(this, true);
                 resumeProcessor = processor;
                 getDispatcher().registerChannel(this, IOOperation.WRITE);
             } catch (ServerDisconnectException e) {
@@ -316,7 +316,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         LOG.debug().$("complete [fd=").$(fd).$(']').$();
         try {
             processor.onRequestComplete(this);
@@ -334,7 +334,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             int read,
             boolean newRequest,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         if (newRequest) {
             processor.onHeadersReady(this);
             multipartContentParser.of(headerParser.getBoundary());
@@ -374,7 +374,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             HttpMultipartContentListener multipartListener,
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         boolean keepGoing = false;
 
         if (buf > start) {
@@ -492,7 +492,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
         } catch (PeerIsSlowToReadException peerIsSlowToReadException) {
             LOG.info().$("peer is slow to receive failed to retry response [fd=").$(fd).$(']').$();
-            processor.parkRequest(this);
+            processor.parkRequest(this, false);
             resumeProcessor = processor;
             dispatcher.registerChannel(this, IOOperation.WRITE);
             canClear = false;
@@ -606,15 +606,15 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 LOG.debug().$("peer is slow reader [two]").$();
                 // it is important to assign resume processor before we fire
                 // event off to dispatcher
-                processor.parkRequest(this);
+                processor.parkRequest(this, false);
                 resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
-            } catch (SuspendQueryException e) {
+            } catch (QueryPausedException e) {
                 LOG.debug().$("partition is in cold storage").$();
                 // it is important to assign resume processor before we fire
                 // event off to dispatcher
-                processor.suspendRequest(this);
+                processor.parkRequest(this, true);
                 resumeProcessor = processor;
                 dispatcher.registerChannel(this, IOOperation.WRITE);
                 busyRecv = false;
@@ -634,11 +634,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 clear();
                 return true;
             } catch (PeerIsSlowToReadException ignore) {
-                resumeProcessor.parkRequest(this);
+                resumeProcessor.parkRequest(this, false);
                 LOG.debug().$("peer is slow reader").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
-            } catch (SuspendQueryException ignore) {
-                resumeProcessor.suspendRequest(this);
+            } catch (QueryPausedException ignore) {
+                resumeProcessor.parkRequest(this, true);
                 LOG.debug().$("partition is in cold storage").$();
                 dispatcher.registerChannel(this, IOOperation.WRITE);
             } catch (PeerDisconnectedException ignore) {
@@ -665,7 +665,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             HttpMultipartContentListener multipartListener,
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException, TooFewBytesReceivedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
             parseResult = multipartContentParser.parse(start, buf, multipartListener);

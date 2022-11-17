@@ -47,13 +47,13 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     String fileName;
     RecordMetadata metadata;
     boolean noMeta = false;
+    boolean pausedQuery = false;
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     Record record;
     RecordCursorFactory recordCursorFactory;
     Rnd rnd;
     long skip;
     long stop;
-    boolean suspended = false;
     private boolean queryCacheable = false;
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
@@ -85,7 +85,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         count = 0;
         noMeta = false;
         countRows = false;
-        suspended = false;
+        pausedQuery = false;
     }
 
     @Override

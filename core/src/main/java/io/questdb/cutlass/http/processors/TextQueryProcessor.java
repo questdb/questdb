@@ -40,7 +40,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.SuspendQueryException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
@@ -103,7 +103,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
@@ -183,7 +183,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new TextQueryProcessorState(context));
@@ -200,9 +200,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void parkRequest(HttpConnectionContext context) {
+    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         TextQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.pausedQuery = pausedQuery;
             state.rnd = sqlExecutionContext.getRandom();
         }
     }
@@ -210,7 +211,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null || state.cursor == null) {
             return;
@@ -220,10 +221,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
         LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
-        if (!state.suspended) {
+        if (!state.pausedQuery) {
             context.resumeResponseSend();
         } else {
-            state.suspended = false;
+            state.pausedQuery = false;
         }
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -307,7 +308,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
             } catch (DataUnavailableException e) {
                 socket.resetToBookmark();
-                throw SuspendQueryException.INSTANCE;
+                throw QueryPausedException.INSTANCE;
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
                     socket.sendChunk(false);
@@ -323,15 +324,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         // reached the end naturally?
         readyForNextRequest(context);
-    }
-
-    @Override
-    public void suspendRequest(HttpConnectionContext context) {
-        TextQueryProcessorState state = LV.get(context);
-        if (state != null) {
-            state.rnd = sqlExecutionContext.getRandom();
-            state.suspended = true;
-        }
     }
 
     private static boolean isExpUrl(CharSequence tok) {

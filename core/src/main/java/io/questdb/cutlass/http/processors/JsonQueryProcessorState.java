@@ -81,6 +81,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean explain = false;
     private boolean noMeta = false;
     private OperationFuture operationFuture;
+    private boolean pausedQuery = false;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
     private int queryState = QUERY_PREFIX;
@@ -92,7 +93,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private Rnd rnd;
     private long skip;
     private long stop;
-    private boolean suspended = false;
     private boolean timings = false;
 
     public JsonQueryProcessorState(
@@ -141,7 +141,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         explain = false;
         noMeta = false;
         timings = false;
-        suspended = false;
+        pausedQuery = false;
         quoteLargeNum = false;
         queryJitCompiled = false;
         operationFuture = Misc.free(operationFuture);
@@ -224,8 +224,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.info().$('[').$(getFd()).$("] ");
     }
 
-    public boolean isSuspended() {
-        return suspended;
+    public boolean isPausedQuery() {
+        return pausedQuery;
     }
 
     public void logBufferTooSmall() {
@@ -264,16 +264,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         operationFuture = fut;
     }
 
+    public void setPausedQuery(boolean pausedQuery) {
+        this.pausedQuery = pausedQuery;
+    }
+
     public void setQueryType(short type) {
         queryType = type;
     }
 
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
-    }
-
-    public void setSuspended(boolean suspended) {
-        this.suspended = suspended;
     }
 
     public void startExecutionTimer() {

@@ -980,7 +980,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 boolean hasResult = statement.execute("select * from test_data_unavailable(3, 10); " +
                         "select * from test_data_unavailable(2, 10);");
                 // TODO(puzpuzpuz): the second query get ignored here since batch statement execution doesn't
-                //  support proper suspend/resume on insufficient buffer size or data in cold storage.
+                //  support proper pause/resume on insufficient buffer size or data in cold storage.
                 assertResults(statement, hasResult,
                         data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L)));
             }

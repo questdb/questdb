@@ -45,7 +45,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.SuspendQueryException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -286,7 +286,7 @@ public class SqlCompiler implements Closeable {
             @NotNull CharSequence query,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
 
         LOG.info().$("batch [text=").$(query).I$();
 

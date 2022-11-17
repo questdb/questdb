@@ -85,7 +85,7 @@ public class PGWireServer implements Closeable {
                         return true;
                     } catch (PeerIsSlowToWriteException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.READ);
-                    } catch (PeerIsSlowToReadException | SuspendQueryException e) {
+                    } catch (PeerIsSlowToReadException | QueryPausedException e) {
                         context.getDispatcher().registerChannel(context, IOOperation.WRITE);
                     } catch (PeerDisconnectedException e) {
                         context.getDispatcher().disconnect(

@@ -138,7 +138,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(
             JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
 
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
@@ -190,11 +190,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             throw RetryOperationException.INSTANCE;
         } catch (DataUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] data is in cold storage, will retry").$();
-            throw SuspendQueryException.INSTANCE;
+            throw QueryPausedException.INSTANCE;
         } catch (CairoError | CairoException e) {
             internalError(context.getChunkedResponseSocket(), e.getFlyweightMessage(), e, state);
             readyForNextRequest(context);
-        } catch (PeerIsSlowToReadException | PeerDisconnectedException | SuspendQueryException e) {
+        } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
@@ -215,7 +215,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null) {
             LV.set(context, state = new JsonQueryProcessorState(
@@ -239,15 +239,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestRetry(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         JsonQueryProcessorState state = LV.get(context);
         execute0(state);
     }
 
     @Override
-    public void parkRequest(HttpConnectionContext context) {
+    public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
+            state.setPausedQuery(pausedQuery);
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
@@ -256,27 +257,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void resumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         final JsonQueryProcessorState state = LV.get(context);
         if (state != null) {
             // we are resuming request execution, we need to copy random to execution context
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
-            if (!state.isSuspended()) {
+            if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
             } else {
-                state.setSuspended(false);
+                state.setPausedQuery(false);
             }
             doResumeSend(state, context);
-        }
-    }
-
-    @Override
-    public void suspendRequest(HttpConnectionContext context) {
-        final JsonQueryProcessorState state = LV.get(context);
-        if (state != null) {
-            state.setSuspended(true);
-            // preserve random when we park the context
-            state.setRnd(sqlExecutionContext.getRandom());
         }
     }
 
@@ -291,7 +282,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static void doResumeSend(
             JsonQueryProcessorState state,
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         if (state.noCursor()) {
             return;
         }
@@ -305,7 +296,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             } catch (DataUnavailableException e) {
                 socket.resetToBookmark();
-                throw SuspendQueryException.INSTANCE;
+                throw QueryPausedException.INSTANCE;
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
                     socket.sendChunk(false);
@@ -371,7 +362,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void compileQuery(
             JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         boolean recompileStale = true;
         for (int retries = 0; recompileStale; retries++) {
             try {
@@ -423,7 +414,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         state.logExecuteCached();
         executeSelect(state, factory, keepAliveHeader);
@@ -433,7 +424,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         if (factory == null) {
             // COPY 'id' CANCEL; case
@@ -466,7 +457,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         executeSelect(
@@ -480,7 +471,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state,
             RecordCursorFactory factory,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
@@ -612,7 +603,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void retryQueryExecution(
             JsonQueryProcessorState state,
             OperationFuture fut
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SuspendQueryException, SqlException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException {
         final int waitResult;
         try {
             waitResult = fut.await(0);
@@ -680,6 +671,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 JsonQueryProcessorState state,
                 CompiledQuery cc,
                 CharSequence keepAliveHeader
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException, SuspendQueryException, SqlException;
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException;
     }
 }
