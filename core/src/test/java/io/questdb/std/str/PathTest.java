@@ -24,12 +24,17 @@
 
 package io.questdb.std.str;
 
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PathTest {
@@ -47,27 +52,6 @@ public class PathTest {
     @After
     public void tearDown() {
         path = Misc.free(path);
-    }
-
-    @Test
-    public void testChop() {
-        try (Path path1 = new Path()) {
-            Assert.assertEquals(0, path1.length());
-            path1.chop$();
-            Assert.assertEquals(0, path1.length());
-            path1.$();
-            Assert.assertEquals(0, path1.length());
-            path1.chop$();
-            Assert.assertEquals(0, path1.length());
-            path1.concat("arena").$();
-            Assert.assertEquals(5, path1.length());
-            for (int i = 0; i < 5; i++) {
-                path1.chop$();
-            }
-            Assert.assertEquals(5, path1.length());
-            path1.concat("calida").$();
-            Assert.assertEquals(12, path1.length());
-        }
     }
 
     @Test
@@ -204,7 +188,7 @@ public class PathTest {
             Assert.assertSame(path, path.seekNull());
             TestUtils.assertEquals("hello", path);
 
-            path.chop$().concat("next");
+            path.concat("next");
             TestUtils.assertEquals("hello" + Files.SEPARATOR + "next", path);
         }
     }
@@ -221,6 +205,44 @@ public class PathTest {
         path.concat("tableName").slash$();
         TestUtils.assertEquals("root/tableName/", path);
         Assert.assertEquals(15, path.length());
+    }
+
+    //    @Test
+    public void testThreadLocalMultiThreaded() {
+        int numThreads = 5;
+        SOCountDownLatch completed = new SOCountDownLatch(numThreads);
+        AtomicBoolean keepRunning = new AtomicBoolean(true);
+        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+        for (int i = 0; i < numThreads; i++) {
+            int threadId = i;
+            executor.submit(() -> {
+                String root = Files.SEPARATOR + "thread" + threadId + Files.SEPARATOR + "dbRoot";
+                String expected1 = root + Files.SEPARATOR + "table" + Files.SEPARATOR;
+                String expected2 = expected1 + "partition" + Files.SEPARATOR;
+                while (keepRunning.get()) {
+                    Path path = Path.getThreadLocal(root);
+                    path.concat("table").slash$();
+                    Assert.assertEquals(expected1, path);
+                    Assert.assertEquals(22, path.length());
+                    Assert.assertFalse(Files.exists(path));
+                    path.concat("partition").slash$();
+                    Assert.assertEquals(expected2, path);
+                    Assert.assertEquals(32, path.length());
+                    Os.pause();
+                }
+                completed.countDown();
+            });
+        }
+
+        String root = "" + Files.SEPARATOR;
+        for (int i = 0; i < 51; i++) {
+            Path path = Path.getThreadLocal(root);
+            path.concat("banana");
+        }
+
+        keepRunning.set(false);
+        completed.await();
+        executor.shutdown();
     }
 
     @Test

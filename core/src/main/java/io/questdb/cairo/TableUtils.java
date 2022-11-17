@@ -446,7 +446,7 @@ public final class TableUtils {
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
-            if (ff.exists(path.chop$().concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
                 return TABLE_RESERVED;

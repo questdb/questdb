@@ -164,7 +164,6 @@ public class FilesTest {
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
-                src.chop$();
 
                 File f2 = new File(Chars.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
@@ -281,7 +280,6 @@ public class FilesTest {
                 src.parent();
                 src.concat("subdir");
                 Assert.assertEquals(0, Files.mkdir(src.$(), mkdirMode));
-                src.chop$();
 
                 File f2 = new File(Chars.toString(src.concat("file2")));
                 TestUtils.writeStringToFile(f2, "efgh");
@@ -788,7 +786,7 @@ public class FilesTest {
 
             try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
                 long fd1 = Files.openRW(path.$());
-                long fd2 = Files.openRW(path.chop$().put(".2").$());
+                long fd2 = Files.openRW(path.put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 

@@ -114,15 +114,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return (char) Unsafe.getUnsafe().getByte(headPtr + index);
     }
 
-    /**
-     * Removes trailing zero from path to allow reuse of path as parent.
-     *
-     * @return instance of this
-     */
-    public Path chop$() {
-        return this;
-    }
-
     @Override
     public void close() {
         if (headPtr != 0) {

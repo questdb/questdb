@@ -376,12 +376,10 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.length();
         int len = src.length();
         long p = findFirst(src.$());
-        src.chop$();
 
         if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
             return -1;
         }
-        dst.chop$();
 
         if (p > 0) {
             try {
@@ -409,7 +407,6 @@ public class FilesFacadeImpl implements FilesFacade {
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
 
-                            dst.chop$();
                             if ((res = runRecursive(src, dst, dirMode, operation)) < 0) {
                                 return res;
                             }

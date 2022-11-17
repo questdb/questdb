@@ -783,7 +783,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             TableUtils.txnPartitionConditionally(path, partitionNameTxn);
 
             if (ff.exists(path.$())) {
-                path.chop$();
 
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {

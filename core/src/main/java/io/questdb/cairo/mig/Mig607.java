@@ -132,7 +132,7 @@ final class Mig607 {
      */
     public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
         try {
-            if (ff.exists(topFile(path.chop$(), name))) {
+            if (ff.exists(topFile(path, name))) {
                 final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long n;
