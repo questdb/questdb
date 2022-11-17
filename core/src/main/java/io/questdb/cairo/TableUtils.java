@@ -271,7 +271,10 @@ public final class TableUtils {
             path.trimTo(rootLen);
             mem.putInt(count);
             mem.putInt(structure.getPartitionBy());
-            mem.putInt(structure.getTimestampIndex());
+            int timestampIndex = structure.getTimestampIndex();
+            assert timestampIndex == -1 ||
+                    (timestampIndex >= 0 && timestampIndex < count && structure.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+            mem.putInt(timestampIndex);
             mem.putInt(tableVersion);
             mem.putInt(tableId);
             mem.putInt(structure.getMaxUncommittedRows());
