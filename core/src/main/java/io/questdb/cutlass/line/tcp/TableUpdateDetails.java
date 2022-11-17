@@ -37,7 +37,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -182,10 +181,6 @@ public class TableUpdateDetails implements Closeable {
         return assignedToJob;
     }
 
-    public boolean isClosed() {
-        return writerThreadId == Integer.MIN_VALUE;
-    }
-
     public boolean isWriterInError() {
         return writerInError;
     }
@@ -206,11 +201,6 @@ public class TableUpdateDetails implements Closeable {
 
     public void setWriterInError() {
         writerInError = true;
-    }
-
-    @TestOnly
-    public void setWriterThreadId(int writerThreadId) {
-        this.writerThreadId = writerThreadId;
     }
 
     public void tick() {

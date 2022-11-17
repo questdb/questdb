@@ -394,9 +394,6 @@ class LineTcpMeasurementScheduler implements Closeable {
         }
 
         final int writerThreadId = tab.getWriterThreadId();
-        if (tab.isClosed()) {
-            throw CairoException.nonCritical().put("ILP listener is closing!");
-        }
         long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
             try {

@@ -1155,6 +1155,54 @@ public class PropServerConfigurationTest {
         new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
     }
 
+    @Test
+    public void testDedicatedPoolIsUsedForIlpIoWorkersIfWritersUseOne() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.writer.worker.count", "1");
+        properties.setProperty("line.tcp.io.worker.count", "0");
+
+        PropServerConfiguration conf = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+
+        Assert.assertEquals(1, conf.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(1, conf.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+    }
+
+    @Test
+    public void testDedicatedPoolsAreUsedForBothIlpIoAndWriters() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.writer.worker.count", "5");
+        properties.setProperty("line.tcp.io.worker.count", "5");
+
+        PropServerConfiguration conf = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+
+        Assert.assertEquals(5, conf.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(5, conf.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+    }
+
+    @Test
+    public void testSharedPoolIsUsedForBothIlpIoAndWriters() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.writer.worker.count", "0");
+        properties.setProperty("line.tcp.io.worker.count", "0");
+
+        PropServerConfiguration conf = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+
+        Assert.assertEquals(0, conf.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(0, conf.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+    }
+
+    @Test
+    public void testSharedPoolIsUsedForIlpIoWorkersIfWritersUseOne() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.writer.worker.count", "0");
+        properties.setProperty("line.tcp.io.worker.count", "1");
+
+        PropServerConfiguration conf = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+
+        Assert.assertEquals(0, conf.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
+        Assert.assertEquals(0, conf.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
+    }
+
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
         try {
             properties.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT.getPropertyPath(), value);
