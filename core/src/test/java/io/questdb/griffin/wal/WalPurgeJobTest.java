@@ -490,7 +490,7 @@ public class WalPurgeJobTest extends AbstractGriffinTest {
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
 
-            // After draining the wall queue, all the WAL data is still there.
+            // After draining the wal queue, all the WAL data is still there.
             drainWalQueue();
             assertSql(tableName, "x\tts\tsss\n" +
                     "1\t2022-02-24T00:00:00.000000Z\t\n" +
