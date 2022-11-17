@@ -2353,7 +2353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return httpReadOnlySecurityContext;
+            return httpReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 
@@ -3256,7 +3256,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return pgReadOnlySecurityContext;
+            return pgReadOnlySecurityContext || isReadOnlyInstance;
         }
     }
 

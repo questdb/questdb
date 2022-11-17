@@ -5,7 +5,6 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -357,10 +356,6 @@ public class CreateTableTest extends AbstractGriffinTest {
                 throw new RuntimeException(ref.get());
             }
         });
-    }
-
-    static {
-        LogFactory.configureSync();
     }
 
     @Test

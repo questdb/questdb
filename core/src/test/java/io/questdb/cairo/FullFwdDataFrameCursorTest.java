@@ -1025,12 +1025,22 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 @Override
+                public boolean closeRemove(long fd, LPSZ name) {
+                    if (Chars.endsWith(name, ".lock")) {
+                        invoked = true;
+                        super.close(fd);
+                        return false;
+                    }
+                    return super.closeRemove(fd, name);
+                }
+
+                @Override
                 public boolean wasCalled() {
                     return invoked;
                 }
             };
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return ff;
@@ -1044,7 +1054,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             eRnd.syncWith(rnd);
 
             long timestamp = 0;
-            boolean closeFailed = false;
+            boolean closedFailed = false;
             try (TableWriter writer = newTableWriter(configuration, "ABC", metrics)) {
                 for (int i = 0; i < (long) N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1055,12 +1065,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     r.append();
                 }
                 writer.commit();
-                // closing should fail
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "remove");
-                closeFailed = true;
+                closedFailed = true;
             }
-            Assert.assertTrue(closeFailed);
+            Assert.assertTrue("closing writer should have failed", closedFailed);
 
             newTableWriter(AbstractCairoTest.configuration, "ABC", metrics).close();
 

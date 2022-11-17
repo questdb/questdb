@@ -656,6 +656,7 @@ public class DispatcherWriterQueueTest {
                     }
                 });
 
+        //noinspection CharsetObjectCanBeUsed
         runUpdateOnBusyTable(
                 alterVerifyAction,
                 onTick,
@@ -665,7 +666,7 @@ public class DispatcherWriterQueueTest {
                 errorHeader,
                 statementTimeout,
                 updatedCount,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8)
+                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
         );
     }
 

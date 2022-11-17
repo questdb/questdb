@@ -129,9 +129,14 @@ public class CairoEngine implements Closeable, WriterSource {
             throw e;
         }
 
-        this.tableNameRegistry = configuration.isReadOnlyInstance() ?
-                new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
-        this.tableNameRegistry.reloadTableNameCache();
+        try {
+            this.tableNameRegistry = configuration.isReadOnlyInstance() ?
+                    new TableNameRegistryRO(configuration) : new TableNameRegistryRW(configuration);
+            this.tableNameRegistry.reloadTableNameCache();
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
 
         this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalWALApplyThreads);
     }

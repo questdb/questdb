@@ -110,7 +110,8 @@ public class TxSerializerTest {
     public void tearDown() {
         engine.getTableIdGenerator().close();
         engine.clear();
-        engine.getTableSequencerAPI().close();
+        engine.getTableSequencerAPI().releaseInactive();
+        engine.closeNameRegistry();
         removeTestPath(root);
     }
 
