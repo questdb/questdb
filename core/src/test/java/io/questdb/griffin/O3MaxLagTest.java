@@ -917,7 +917,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         int maxBatchedRows = 10;
         int maxConcurrentBatches = 4;
         int nRowsPerCommit = 100;
-        long maxO3Lag = microsBetweenRows * (nRowsPerCommit / 2);
+        long o3MaxLag = microsBetweenRows * (nRowsPerCommit / 2);
 
         String sql = "create table x as (" +
                 "select" +
@@ -987,7 +987,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 if (nRowsAppended >= nRowsPerCommit) {
                     LOG.info().$("committing with lag").$();
                     nRowsAppended = 0;
-                    writer.ic(maxO3Lag);
+                    writer.ic(o3MaxLag);
                     nCommitsWithLag++;
                 }
             }

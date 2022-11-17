@@ -1226,7 +1226,7 @@ public final class SqlParser {
             tok = tok(lexer, "into or o3MaxLag");
             if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
-                model.setMaxO3Lag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                model.setO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "into");
             }
         }

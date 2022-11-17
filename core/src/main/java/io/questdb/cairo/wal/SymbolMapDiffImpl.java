@@ -58,6 +58,11 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         return cursor.readNextSymbolMapDiffEntry(entry);
     }
 
+    @Override
+    public void drain() {
+        cursor.drain();
+    }
+
     void of(int columnIndex, int cleanSymbolCount, int size) {
         this.columnIndex = columnIndex;
         this.cleanSymbolCount = cleanSymbolCount;

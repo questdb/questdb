@@ -1267,14 +1267,14 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long maxO3Lag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, maxO3Lag, circuitBreaker);
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, maxO3Lag, circuitBreaker);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         }
         writer.commit();
 
@@ -1288,7 +1288,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long maxO3Lag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
@@ -1300,7 +1300,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.ic(maxO3Lag);
+                writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1315,7 +1315,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long maxO3Lag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
@@ -1329,7 +1329,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.ic(maxO3Lag);
+                writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1977,7 +1977,7 @@ public class SqlCompiler implements Closeable {
                                     copier,
                                     writerTimestampIndex,
                                     model.getBatchSize(),
-                                    model.getMaxO3Lag(),
+                                    model.getO3MaxLag(),
                                     circuitBreaker
                             );
                         } else {

@@ -4930,7 +4930,12 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
     }
 
-    private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi, Path walPath) {
+    private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(
+            SymbolMapDiffCursor symbolMapDiffCursor,
+            long rowLo,
+            long rowHi,
+            Path walPath
+    ) {
         ObjList<MemoryCR> o3ColumnOverrides = null;
 
         if (symbolMapDiffCursor != null) {
@@ -4940,8 +4945,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType == -ColumnType.SYMBOL) {
                     // Scroll the cursor, don't apply, symbol is deleted
-                    // todo: optimise
-                    while (symbolMapDiff.nextEntry() != null) ;
+                    symbolMapDiff.drain();
                     continue;
                 }
 

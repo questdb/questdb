@@ -51,6 +51,23 @@ public class WalEventCursor {
         this.eventMem = eventMem;
     }
 
+    public void drain() {
+        long o = offset;
+        while (true) {
+            if (memSize >= o + Integer.BYTES) {
+                final int value = eventMem.getInt(o);
+                o += Integer.BYTES;
+                if (value == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
+                    offset = o;
+                    break;
+                }
+            } else {
+                throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+                        .put(", required=").put(o + Integer.BYTES);
+            }
+        }
+    }
+
     public DataInfo getDataInfo() {
         if (type != DATA) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
