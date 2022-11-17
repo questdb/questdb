@@ -1171,8 +1171,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
-                    0, // do not remove columns
-                    0, // do not rename columns
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
                     1, // insert only
                     5,
                     new String[]{"ABC", "CDE", "XYZ"}
@@ -1203,8 +1203,6 @@ public class O3MaxLagTest extends AbstractO3Test {
 
             TestUtils.assertEquals(sink, sink2);
 */
-
-
             try (
                     RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
                     RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();

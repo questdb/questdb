@@ -170,9 +170,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
      */
     @Override
     public T getQuick(int index) {
-        if (index >= pos) {
-            System.out.println("index: "+index + ", pos: "+pos);
-        }
         assert index < pos;
         return buffer[index];
     }

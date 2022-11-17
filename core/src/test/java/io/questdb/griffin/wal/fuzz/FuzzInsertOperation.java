@@ -55,7 +55,6 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.BOOLEAN
     };
     private final double cancelRows;
-    private final RecordMetadata metadata;
     private final double notSet;
     private final double nullSet;
     private final long s0;
@@ -67,13 +66,21 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
 
-    public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
+    public FuzzInsertOperation(
+            long seed1,
+            long seed2,
+            long timestamp,
+            double notSet,
+            double nullSet,
+            double cancelRows,
+            int strLen,
+            String[] symbols
+    ) {
         this.cancelRows = cancelRows;
         this.strLen = strLen;
         this.symbols = symbols;
         this.s0 = seed1;
         this.s1 = seed2;
-        this.metadata = metadata;
         this.timestamp = timestamp;
         this.notSet = notSet;
         this.nullSet = nullSet;
@@ -84,6 +91,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();
+        RecordMetadata metadata = tableWriter.getMetadata();
 
         final IntList tempList = tlIntList.get();
         final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
