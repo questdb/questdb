@@ -43,6 +43,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -61,6 +62,7 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
+    private AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
@@ -190,7 +192,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
-                            LOG.error()
+                            LOG.critical()
                                     .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
                                     .$(", dst=").$(dstPath)
                                     .$(", errno=").$(ff.errno())
@@ -199,20 +201,23 @@ public class DatabaseSnapshotAgent implements Closeable {
                             try {
                                 srcPath.trimTo(srcPathLen);
                                 openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                long newMaxTxn = memFile.getLong(0L);
+                                long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
                                 memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);
+                                // get maxStructureVersion from restored dbRoot/tableName/txn_seq/_meta
                                 long maxStructureVersion = memFile.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION);
                                 dstPath.trimTo(dstPathLen);
                                 openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+                                // get txnMetaMemSize from dbRoot/tableName/txn_seq/_txnlog.meta.i
                                 long txnMetaMemSize = memFile.getLong(maxStructureVersion * Long.BYTES);
 
                                 if (newMaxTxn >= 0) {
                                     dstPath.trimTo(dstPathLen);
                                     openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-
+                                    // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
                                     long oldMaxTxn = memFile.getLong(MAX_TXN_OFFSET);
                                     if (newMaxTxn < oldMaxTxn) {
+                                        // update header of dbRoot/tableName/txn_seq/_txnlog with new values
                                         memFile.putLong(MAX_TXN_OFFSET, newMaxTxn);
                                         memFile.putLong(MAX_STRUCTURE_VERSION_OFFSET, maxStructureVersion);
                                         memFile.putLong(TXN_META_SIZE_OFFSET, txnMetaMemSize);
@@ -285,6 +290,7 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
+            activePrepareFlag.set(false); // reset snapshot prepare flag
             if (snapshotReaders.size() == 0) {
                 LOG.info().$("Snapshot has no tables, SNAPSHOT COMPLETE is ignored.").$();
             }
@@ -296,8 +302,13 @@ public class DatabaseSnapshotAgent implements Closeable {
             // Release locked readers if any.
             unsafeReleaseReaders();
             // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null && walPurgeJobRunLock.isLocked()) {
-                walPurgeJobRunLock.unlock();
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // completeSnapshot can be called several time in a row.
+                }
             }
         } finally {
             lock.unlock();
@@ -314,7 +325,8 @@ public class DatabaseSnapshotAgent implements Closeable {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
-            if (snapshotReaders.size() > 0) {
+            // activePrepareFlag is used to detect active snapshot prepare called on an empty DB
+            if (activePrepareFlag.get()) {
                 throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
             }
 
@@ -343,9 +355,12 @@ public class DatabaseSnapshotAgent implements Closeable {
                     // Suspend the WalPurgeJob
                     if (walPurgeJobRunLock != null) {
                         final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
-                        if (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                            LOG.error().$("snapshot failed to acquire lock").$();
-                            throw SqlException.position(0).put("Snapshot command cancelled due to timeout");
+                        while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
+                            try {
+                                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                            } catch (CairoException ex) {
+                                throw SqlException.position(0).put(ex.getFlyweightMessage());
+                            }
                         }
                     }
 
@@ -396,11 +411,11 @@ public class DatabaseSnapshotAgent implements Closeable {
                                     metadata.clear();
                                     long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableName, metadata);
                                     path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                    metadata.switchTo(path, path.length());
+                                    metadata.switchTo(path, path.length()); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
                                     metadata.close(Vm.TRUNCATE_TO_POINTER);
 
                                     mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                    mem.putLong(lastTxn);
+                                    mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
                                     mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                 }
                             } else {
@@ -418,6 +433,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                             throw CairoException.critical(ff.errno()).put("Could not sync");
                         }
 
+                        activePrepareFlag.set(true);
                         LOG.info().$("snapshot copying finished").$();
                     } catch (Throwable e) {
                         // Resume the WalPurgeJob
