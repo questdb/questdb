@@ -57,7 +57,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path(int capacity) {
         assert capacity > 0;
         this.capacity = capacity;
-        headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+        headPtr = tailPtr = Unsafe.malloc(capacity, MemoryTag.NATIVE_PATH);
     }
 
     public static void clearThreadLocals() {
@@ -86,9 +86,9 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path $() {
         if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {
-            long requiredSize = tailPtr - headPtr + 1;
+            long requiredSize = tailPtr - headPtr;
             if (requiredSize >= capacity) {
-                extend((int) (requiredSize + 15));
+                extend((int) (requiredSize + 16));
             }
             Unsafe.getUnsafe().putByte(tailPtr, NULL);
         }
@@ -126,7 +126,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (headPtr != 0) {
-            Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);
+            Unsafe.free(headPtr, capacity, MemoryTag.NATIVE_PATH);
             headPtr = tailPtr = 0;
             len = 0;
         }
@@ -192,9 +192,9 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.length();
         if (headPtr == 0) {
-            headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.malloc(len, MemoryTag.NATIVE_PATH);
             capacity = len;
-        } else if (this.capacity < len) {
+        } else if (capacity < len) {
             extend(len);
         }
 
@@ -263,7 +263,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public Path put(char c) {
         assert c != NULL;
-        if (1 + len >= capacity) {
+        if (len >= capacity) {
             extend(16 + len);
         }
         Unsafe.getUnsafe().putByte(tailPtr++, (byte) c);
@@ -304,7 +304,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path seekNull() {
         int count = 0;
-        while (count < capacity + 1) {
+        while (count < capacity) {
             if (Unsafe.getUnsafe().getByte(headPtr + count) == NULL) {
                 len = count;
                 tailPtr = headPtr + len;
@@ -353,7 +353,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     private void checkClosed() {
         if (headPtr == NULL) {
-            headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
+            headPtr = tailPtr = Unsafe.malloc(capacity, MemoryTag.NATIVE_PATH);
             len = 0;
         }
     }
@@ -367,7 +367,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     void extend(int newCapacity) {
         assert newCapacity > capacity;
-        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
+        headPtr = Unsafe.realloc(headPtr, capacity, newCapacity, MemoryTag.NATIVE_PATH);
         tailPtr = headPtr + len;
         capacity = newCapacity;
     }
