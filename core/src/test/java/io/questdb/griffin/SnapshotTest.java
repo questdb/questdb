@@ -25,9 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.wal.WalPurgeJobTest;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -47,6 +50,30 @@ public class SnapshotTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         path = new Path();
         ff = testFilesFacade;
+
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 0;
+            }
+
+            @Override
+            public long getTimeout() {
+                return 100;
+            }
+        };
+
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+            @Override
+            protected boolean testConnection(long fd) {
+                return false;
+            }
+
+            {
+                setTimeout(-100);//trigger timeout on first check
+            }
+
+        };
         AbstractGriffinTest.setUpStatic();
     }
 
@@ -65,6 +92,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
+        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
     }
 
     @After
@@ -72,6 +100,12 @@ public class SnapshotTest extends AbstractGriffinTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
+        try {
+            // reset activePrepareFlag for all tests
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test
@@ -187,13 +221,6 @@ public class SnapshotTest extends AbstractGriffinTest {
             CountDownLatch latch1 = new CountDownLatch(1);
             CountDownLatch latch2 = new CountDownLatch(1);
 
-            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public long getTimeout() {
-                    return 10000;
-                }
-            };
-
             snapshotAgent.setWalPurgeJobRunLock(lock);
 
             Thread t = new Thread(() -> {
@@ -211,13 +238,14 @@ public class SnapshotTest extends AbstractGriffinTest {
             try {
                 t.start();
                 latch2.await();
+                ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException ex) {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot command cancelled due to timeout"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] timeout, query aborted [fd=-1]"));
             } finally {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.assertFalse(lock.isLocked());
@@ -470,7 +498,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshot command cancelled due to timeout"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
             }
             compiler.compile("snapshot complete", sqlExecutionContext);
             Assert.assertFalse(lock.isLocked());
@@ -709,6 +737,54 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
                     "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
                     "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
+
+            // WalWriter.applyMetadataChangeLog should be triggered
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter1.getTableName()), 0);
+                    addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
+                    walWriter1.apply(addColumnC.build(), true);
+                    walWriter1.commit();
+
+                    TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
+
+                    row.putLong(0, 777L);
+                    row.putSym(1, "XXX");
+                    row.putSym(3, "YYY");
+                    row.putInt(4, 0);
+                    row.putInt(5, 1);
+                    row.putInt(6, 2);
+                    row.putInt(7, 3);
+                    row.putInt(8, 42);
+                    row.append();
+                    walWriter1.commit();
+
+                    TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
+                    row2.putLong(0, 999L);
+                    row2.putSym(1, "AAA");
+                    row2.putSym(3, "BBB");
+                    row2.putInt(4, 10);
+                    row2.putInt(5, 11);
+                    row2.putInt(6, 12);
+                    row2.putInt(7, 13);
+                    row2.append();
+                    walWriter2.commit();
+                }
+            }
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
+                    "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
+                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n");
         });
     }
 
