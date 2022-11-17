@@ -63,7 +63,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    public static final String SHARED_POOL_NAME = "shared";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
@@ -965,14 +964,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     ilpTcpWorkerCount = 6;
                 }
                 this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, ilpTcpWorkerCount);
-                if (this.lineTcpIOWorkerCount < 1 && this.lineTcpWriterWorkerCount > 0) {
-                    this.lineTcpIOWorkerCount = 1;
-                    log.info().$("shared and dedicated pools mixed for line tcp io and writers, will use dedicated pool with 1 worker for io").$();
-                } else if (this.lineTcpIOWorkerCount > 0 && this.lineTcpWriterWorkerCount < 1) {
-                    this.lineTcpIOWorkerCount = 0;
-                    log.info().$("shared and dedicated pools mixed for line tcp io and writers, will use shared pool for io").$();
-                }
-
                 cpuUsed += this.lineTcpIOWorkerCount;
                 this.lineTcpIOWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerCount);
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
@@ -3550,7 +3541,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
         @Override
         public String getPoolName() {
-            return SHARED_POOL_NAME;
+            return "shared";
         }
 
         @Override

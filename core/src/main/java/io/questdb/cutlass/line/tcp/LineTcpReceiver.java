@@ -25,9 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.Metrics;
-import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -54,11 +52,6 @@ public class LineTcpReceiver implements Closeable {
             WorkerPool ioWorkerPool,
             WorkerPool writerWorkerPool
     ) {
-        if (PropServerConfiguration.SHARED_POOL_NAME.equals(ioWorkerPool.getPoolName()) !=
-                PropServerConfiguration.SHARED_POOL_NAME.equals(writerWorkerPool.getPoolName())) {
-            throw CairoException.critical(0).put("ILP writer and io workers shouldn't mix shared and dedicated pools");
-        }
-
         this.scheduler = null;
         this.metrics = engine.getMetrics();
         ObjectFactory<LineTcpConnectionContext> factory;

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -52,8 +51,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.hamcrest.MatcherAssert;
-import org.hamcrest.Matchers;
 import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -187,41 +184,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 throw new RuntimeException(e);
             }
         }, false, 250);
-    }
-
-    @Test
-    public void testCreateReceiverUsingDedicatedPoolsForIoAndWriter() {
-        try (TestWorkerPool ioPool = new TestWorkerPool("io", 1);
-             TestWorkerPool writerPool = new TestWorkerPool("worker", 1);
-             LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool)) {
-            //
-        }
-    }
-
-    @Test
-    public void testCreateReceiverUsingSharedAndDedicatedPoolForIoAndWriterFails() {
-        try (TestWorkerPool dedicatedPool = new TestWorkerPool("worker", 1);
-             TestWorkerPool sharedPool = new TestWorkerPool(PropServerConfiguration.SHARED_POOL_NAME, 1);
-             LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedPool, dedicatedPool)) {
-            Assert.fail();
-        } catch (CairoException e) {
-            MatcherAssert.assertThat(e.getMessage(), Matchers.containsString("shouldn't mix shared and dedicated pools"));
-        }
-
-        try (TestWorkerPool dedicatedPool = new TestWorkerPool("worker", 1);
-             TestWorkerPool sharedPool = new TestWorkerPool(PropServerConfiguration.SHARED_POOL_NAME, 1);
-             LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, dedicatedPool, sharedPool)) {
-            Assert.fail();
-        } catch (CairoException e) {
-            MatcherAssert.assertThat(e.getMessage(), Matchers.containsString("shouldn't mix shared and dedicated pools"));
-        }
-    }
-
-    @Test
-    public void testCreateReceiverUsingSharedPoolForIoAndWriter() {
-        try (LineTcpReceiver ignored = new LineTcpReceiver(lineConfiguration, engine, sharedWorkerPool, sharedWorkerPool)) {
-            //
-        }
     }
 
     @Test
@@ -560,13 +522,26 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testShutdownWithDedicatedPoolsInCorrectOrder() throws Exception {
+    public void testShutdownWithDedicatedPoolsCloseIoPoolFirst() throws Exception {
         long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
+
+            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+        });
+    }
+
+    @Test
+    public void testShutdownWithDedicatedPoolsCloseWriterPoolFirst() throws Exception {
+        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+
+        assertMemoryLeak(() -> {
+            WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
+            WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
+            shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool, true);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -578,7 +553,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         assertMemoryLeak(() -> {
             WorkerPool sharedPool = new TestWorkerPool("shared", 2, engine.getMetrics());
-            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool);
+            shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool, true);
 
             Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
         });
@@ -1384,11 +1359,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         send(receiver, lineData, tableName, WAIT_NO_WAIT);
     }
 
-    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool) throws SqlException {
+    private void shutdownReceiverWhileSenderIsSendingData(WorkerPool ioPool, WorkerPool writerPool, boolean closeIoPoolFirst) throws SqlException {
         String tableName = "tab";
         LineTcpReceiver receiver = new LineTcpReceiver(lineConfiguration, engine, ioPool, writerPool);
 
-        if (ioPool == writerPool) {//shared pool
+        if (ioPool == writerPool) {
             O3Utils.setupWorkerPool(ioPool, engine, null, null);
         }
         ioPool.start(LOG);
@@ -1408,7 +1383,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             new Thread(() -> {
                 try {
-                    ioPool.halt();
+                    (closeIoPoolFirst ? ioPool : writerPool).halt();
 
                     long start = System.currentTimeMillis();
                     while (engine.getMetrics().health().unhandledErrorsCount() == 0) {
@@ -1419,7 +1394,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     }
 
                     if (writerPool != ioPool) {
-                        writerPool.halt();
+                        (closeIoPoolFirst ? writerPool : ioPool).halt();
                     }
 
                     receiver.close();
