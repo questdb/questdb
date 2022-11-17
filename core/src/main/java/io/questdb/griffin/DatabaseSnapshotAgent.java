@@ -229,7 +229,7 @@ public class DatabaseSnapshotAgent implements Closeable {
 
     public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             throw SqlException.position(0).put("Snapshots are not supported on Windows");
         }
 

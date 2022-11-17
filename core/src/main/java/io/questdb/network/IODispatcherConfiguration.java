@@ -65,7 +65,7 @@ public interface IODispatcherConfiguration {
     int getLimit();
 
     default int getListenBacklog() {
-        if (Os.type == Os.WINDOWS && getHint()) {
+        if (Os.isWindows() && getHint()) {
             // Windows OS might have a limit of 200 concurrent connections. To overcome
             // this limit we set backlog value to a hint as described here:
             /// https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen

@@ -173,7 +173,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean isRestrictedFileSystem() {
-        return Os.type == Os.WINDOWS;
+        return Os.isWindows();
     }
 
     @Override

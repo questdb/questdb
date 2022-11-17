@@ -356,7 +356,7 @@ public class Bootstrap {
         path.of(rootDir).$();
         // path will contain file system name
         long fsStatus = Files.getFileSystemStatus(path);
-        path.seekZ();
+        path.seekNull();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();

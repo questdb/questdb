@@ -2700,7 +2700,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private int copyOverwrite(Path to) {
         int res = ff.copy(other, to);
-        if (Os.type == Os.WINDOWS && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
+        if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
             // Windows throws an error the destination file already exists, other platforms do not
             if (!ff.remove(to)) {
                 // If file is open, return here so that errno is 5 in the error message

@@ -292,7 +292,7 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
             try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableName)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
                 Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(path));
-                if (Os.type == Os.WINDOWS) {
+                if (Os.isWindows()) {
                     engine.releaseAllReaders();
                 }
 

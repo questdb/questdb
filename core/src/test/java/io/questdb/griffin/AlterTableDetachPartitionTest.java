@@ -2213,7 +2213,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     private void runPartitionPurgeJobs() {
         // when reader is returned to pool it remains in open state
         // holding files such that purge fails with access violation
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             engine.releaseInactive();
         }
         //noinspection StatementWithEmptyBody

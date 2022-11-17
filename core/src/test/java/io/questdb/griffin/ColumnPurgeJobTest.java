@@ -170,7 +170,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeCannotAllocateFailure() throws Exception {
-        int deadline = Os.type == Os.WINDOWS ? 152 : 105;
+        int deadline = Os.isWindows() ? 152 : 105;
         assertMemoryLeak(() -> {
             currentMicros = 0;
             ff = new FilesFacadeImpl() {
@@ -899,7 +899,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             engine.releaseInactive();
         }
         currentMicros += 10L * iteration++;

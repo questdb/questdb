@@ -50,6 +50,27 @@ public class PathTest {
     }
 
     @Test
+    public void testChop() {
+        try (Path path1 = new Path()) {
+            Assert.assertEquals(0, path1.length());
+            path1.chop$();
+            Assert.assertEquals(0, path1.length());
+            path1.$();
+            Assert.assertEquals(0, path1.length());
+            path1.chop$();
+            Assert.assertEquals(0, path1.length());
+            path1.concat("arena").$();
+            Assert.assertEquals(5, path1.length());
+            for (int i = 0; i < 5; i++) {
+                path1.chop$();
+            }
+            Assert.assertEquals(5, path1.length());
+            path1.concat("calida").$();
+            Assert.assertEquals(12, path1.length());
+        }
+    }
+
+    @Test
     public void testConcatNoSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").concat("123").$());
     }
@@ -63,7 +84,7 @@ public class PathTest {
     public void testDollarIdempotent() {
         final CharSequence tableName = "table_name";
         final AtomicInteger extendCount = new AtomicInteger();
-        try (Path path = new Path(0) {
+        try (Path path = new Path(1) {
             @Override
             void extend(int len) {
                 super.extend(len);
@@ -71,7 +92,7 @@ public class PathTest {
             }
         }) {
             path.of(tableName).$();
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 5; i++) {
                 path.$();
                 Assert.assertEquals(1, extendCount.get());
             }
@@ -155,6 +176,15 @@ public class PathTest {
     }
 
     @Test
+    public void testPathSizeMustBeGreaterThanZero() {
+        try (Path ignore = new Path()) {
+            Assert.fail();
+        } catch (AssertionError ignore) {
+            // expected
+        }
+    }
+
+    @Test
     public void testPathThreadLocalDoesNotAllocateOnRelease() {
         final long count = Unsafe.getMallocCount();
         Path.clearThreadLocals();
@@ -171,7 +201,7 @@ public class PathTest {
             String inject = "hello\0";
             Chars.asciiStrCpy(inject, 0, inject.length(), path.address());
 
-            Assert.assertSame(path, path.seekZ());
+            Assert.assertSame(path, path.seekNull());
             TestUtils.assertEquals("hello", path);
 
             path.chop$().concat("next");
@@ -182,6 +212,15 @@ public class PathTest {
     @Test
     public void testSimple() {
         TestUtils.assertEquals("xyz", path.of("xyz").$());
+    }
+
+    @Test
+    public void testThreadLocal() {
+        Path.getThreadLocal("some/random/text/which/should/be/ignored");
+        path = Path.getThreadLocal("root");
+        path.concat("tableName").slash$();
+        TestUtils.assertEquals("root/tableName/", path);
+        Assert.assertEquals(15, path.length());
     }
 
     @Test

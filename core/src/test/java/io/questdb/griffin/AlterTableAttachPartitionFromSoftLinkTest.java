@@ -425,7 +425,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
 
                         // check that the column files still exist within the partition folder (attached from soft link)
                         final int pathLen = path.length();
-                        Assert.assertTrue(ff.exists(path.concat("s.d").$()));
+                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
 
@@ -459,7 +459,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                         }
 
                         // check that the column files still exist within the partition folder (attached from soft link)
-                        Assert.assertTrue(ff.exists(path.concat("s.d").$()));
+                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
                     }
@@ -700,6 +700,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                 .$();
         Assert.assertEquals(0, ff.softLink(other, path));
         Assert.assertFalse(ff.isSoftLink(other));
-        Assert.assertTrue(Os.type == Os.WINDOWS || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
+        Assert.assertTrue(Os.isWindows() || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
     }
 }

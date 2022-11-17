@@ -603,7 +603,7 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories2() throws JsonException, ServerConfigurationException {
-        Assume.assumeTrue(Os.type == Os.WINDOWS);
+        Assume.assumeTrue(Os.isWindows());
 
         Properties properties = new Properties();
 

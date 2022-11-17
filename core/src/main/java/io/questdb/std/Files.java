@@ -244,7 +244,7 @@ public final class Files {
             if (c == Files.SEPARATOR) {
 
                 // do not attempt to create '/' on linux or 'C:\' on Windows
-                if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
+                if ((i == 0 && Os.isPosix()) || (i == 2 && Os.isWindows() && path.charAt(1) == ':')) {
                     continue;
                 }
 

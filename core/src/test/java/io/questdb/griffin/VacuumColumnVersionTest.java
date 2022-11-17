@@ -398,7 +398,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             engine.releaseInactive();
         }
         currentMicros += 10L * iteration++;
@@ -408,7 +408,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void runTableVacuum(String tableName) throws SqlException {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             engine.releaseInactive();
         }
         compile("VACUUM TABLE " + tableName);

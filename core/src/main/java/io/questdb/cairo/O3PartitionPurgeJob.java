@@ -30,7 +30,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
@@ -48,21 +47,18 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
-    private final MutableCharSink[] sink;
     private final ObjList<TxReader> txnReaders;
     private final ObjList<TxnScoreboard> txnScoreboards;
 
     public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.configuration = messageBus.getConfiguration();
-        this.sink = new MutableCharSink[workerCount];
         this.fileNameSinks = new StringSink[workerCount];
         this.partitionList = new ObjList<>(workerCount);
         this.txnScoreboards = new ObjList<>(workerCount);
         this.txnReaders = new ObjList<>(workerCount);
 
         for (int i = 0; i < workerCount; i++) {
-            sink[i] = new StringSink();
             fileNameSinks[i] = new StringSink();
             partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
             txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
@@ -208,6 +204,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int lo,
             int hi
     ) {
+        // TODO check isRO here
         boolean partitionInTxnFile = txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) > 0;
         if (partitionInTxnFile) {
             processPartition0(
@@ -288,21 +285,19 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private void discoverPartitions(
             FilesFacade ff,
-            MutableCharSink sink,
             StringSink fileNameSink,
             DirectLongList partitionList,
             CharSequence root,
             CharSequence tableName,
             TxnScoreboard txnScoreboard,
             TxReader txReader,
-            int partitionBy) {
-
+            int partitionBy
+    ) {
         LOG.info().$("processing [table=").$(tableName).I$();
         Path path = Path.getThreadLocal(root);
-        path.concat(tableName).slash$();
-        sink.clear();
-        partitionList.clear();
+        path.of(root).concat(tableName).slash$();
         DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        partitionList.clear();
 
         long p = ff.findFirst(path);
         if (p > 0) {
@@ -332,9 +327,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int lo = 0;
         int n = (int) partitionList.size();
 
-        path.of(root).concat(tableName);
-        int tableRootLen = path.length();
         try {
+            path.of(root).concat(tableName);
+            int tableRootLen = path.length();
             txnScoreboard.ofRO(path);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, this.configuration.getMillisecondClock(), this.configuration.getSpinLockTimeout());
@@ -396,7 +391,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),
-                sink[workerId],
                 fileNameSinks[workerId],
                 partitionList.get(workerId),
                 configuration.getRoot(),

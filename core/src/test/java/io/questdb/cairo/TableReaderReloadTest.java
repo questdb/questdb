@@ -110,7 +110,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     private void testReloadAfterTruncate(int partitionBy, long increment) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             return;
         }
         final Rnd rnd = new Rnd();
@@ -152,7 +152,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     private void testTruncateInsertReload(int partitionBy, long increment) {
-        if (Os.type == Os.WINDOWS) {
+        if (Os.isWindows()) {
             return;
         }
 

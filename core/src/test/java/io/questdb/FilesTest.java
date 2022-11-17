@@ -862,7 +862,7 @@ public class FilesTest {
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
         Assert.assertEquals(0, Files.mkdirs(coldRoot, 509));
         Assert.assertEquals(0, Files.softLink(srcFilePath, softLinkFilePath));
-        Assert.assertTrue(Os.type == Os.WINDOWS || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
+        Assert.assertTrue(Os.isWindows() || Files.isSoftLink(softLinkFilePath)); // TODO: isSoftLink is not working on windows
     }
 
     private static void createTempFile(Path path, String fileName, String fileContent) {
