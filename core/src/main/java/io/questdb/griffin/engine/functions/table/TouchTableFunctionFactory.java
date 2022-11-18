@@ -132,7 +132,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             for (long i = 0; i < pageCount; i++) {
                 final byte v = Unsafe.getUnsafe().getByte(baseAddress + i * pageSize);
                 // Use the same blackhole as in async offload's column pre-touch.
-                AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.add(v);
+                AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(v);
             }
 
             return pageCount;
