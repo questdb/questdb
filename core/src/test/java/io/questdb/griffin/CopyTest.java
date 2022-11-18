@@ -1004,7 +1004,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testSetAllParallelCopyOptions() throws SqlException {
         boolean[] useUpperCase = new boolean[]{true, false};
-        Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "YEAR", PartitionBy.YEAR};
+        Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "WEEK", PartitionBy.WEEK, "YEAR", PartitionBy.YEAR};
         Object[] onError = new Object[]{"SKIP_COLUMN", Atomicity.SKIP_COL, "SKIP_ROW", Atomicity.SKIP_ROW, "ABORT", Atomicity.SKIP_ALL};
 
         for (boolean upperCase : useUpperCase) {
