@@ -233,6 +233,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadDateInInterval() {
+        try {
+            modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[12] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBadEndDate() {
+        try {
+            modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            TestUtils.assertEquals("[42] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
     public void testBadEpochInLess() {
         try {
             modelOf("'1663676011000000' < timestamp");
@@ -254,22 +274,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBadDateInInterval() {
+    public void testBadEqualsEpoch() {
         try {
-            modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
-            Assert.fail();
+            modelOf("timestamp = '1583077401000000'");
+            Assert.fail("Exception expected");
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(12, e.getPosition());
         }
     }
 
     @Test
-    public void testBadEndDate() {
+    public void testBadNotEqualsEpoch() {
         try {
-            modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
+            modelOf("timestamp != '1583077401000000'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertEquals("[42] Invalid date", e.getMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(13, e.getPosition());
         }
     }
 
@@ -321,30 +343,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
             Assert.assertEquals(14, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testBadEqualsEpoch() {
-        try{
-            modelOf("timestamp = '1583077401000000'");
-            Assert.fail("Exception expected");
-        }
-        catch (SqlException e){
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
-            Assert.assertEquals(12, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testBadNotEqualsEpoch() {
-        try{
-            modelOf("timestamp != '1583077401000000'");
-            Assert.fail("Exception expected");
-        }
-        catch (SqlException e){
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
-            Assert.assertEquals(13, e.getPosition());
         }
     }
 
@@ -625,27 +623,27 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
-        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
-    }
-
-    @Test
-    public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
-        runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
-    }
-
-    @Test
     public void testDesTimestampGreaterAndLess() throws Exception {
         runWhereTest("timestamp > '2015-02-23' and timestamp < '2015-02-24'",
                 "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
+    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+    }
+
+    @Test
     public void testDesTimestampWithEpochGreaterAndLess() throws Exception {
         runWhereTest("timestamp > 1424649600000000 and timestamp < 1424736000000000",
                 "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
     }
 
     @Test
@@ -680,6 +678,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertFilter(m, "'Y'ex=");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test
+    public void testEqualsEpochTimestamp() throws Exception {
+        runWhereTest("timestamp = 1424649600000000", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -762,12 +765,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testEqualsToEpochInterval() throws Exception {
         runWhereTest("timestamp in 1424649600000000",
                 "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
-    }
-
-
-    @Test
-    public void testEqualsEpochTimestamp() throws Exception {
-        runWhereTest("timestamp = 1424649600000000", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1339,6 +1336,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotEqualsEpochTimestamp() throws Exception {
+        runWhereIntervalTest0("timestamp != 1583077401000000", "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
     public void testNotEqualsOverlapWithIn() throws Exception {
         IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'y' and ex != 'blah'");
         assertFilter(m, "'blah'ex!=");
@@ -1351,12 +1353,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertNull(m.filter);
         Assert.assertEquals("[y]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
-
-    @Test
-    public void testNotEqualsEpochTimestamp() throws Exception {
-        runWhereIntervalTest0("timestamp != 1583077401000000", "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-    }
-
 
     @Test
     public void testNotIn() throws Exception {
@@ -1580,15 +1576,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleQuoteInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+    public void testSingleEpochInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in (1388579400000000, 1388665800000000)");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
         Assert.assertNull(m.filter);
     }
 
     @Test
-    public void testSingleEpochInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in (1388579400000000, 1388665800000000)");
+    public void testSingleQuoteInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
         Assert.assertNull(m.filter);
     }
@@ -1610,6 +1606,17 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
+    }
+
+    @Test
+    public void testTimestampEpochEqualsLongConst() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        try {
+            runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
+                    "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
     }
 
     @Test
@@ -1635,17 +1642,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         try {
             runWhereCompareToModelTest("timestamp = now()",
                     "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
-    }
-
-    @Test
-    public void testTimestampEpochEqualsLongConst() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
-                    "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
         } finally {
             currentMicros = -1;
         }

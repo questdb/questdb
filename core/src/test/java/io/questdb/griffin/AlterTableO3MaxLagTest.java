@@ -37,6 +37,26 @@ import org.junit.Test;
 
 public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
     @Test
+    public void setMaxUncommittedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tableSetMaxUncommittedRows";
+            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createX(tbl);
+            }
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
+                compile(alterCommand, sqlExecutionContext);
+
+                assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
+                        "maxUncommittedRows\n11111\n");
+                rdr.reload();
+                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
+            }
+            assertX(tableName);
+        });
+    }
+
+    @Test
     public void setMaxUncommittedRowsAndO3MaxLag() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tableSetMaxUncommittedRows";
@@ -78,78 +98,6 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
 
             assertX(tableName);
         });
-    }
-
-    @Test
-    public void setO3MaxLag() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "setO3MaxLagTable";
-            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createX(tbl);
-            }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
-                compile(alterCommand, sqlExecutionContext);
-
-                assertSql("SELECT o3MaxLag FROM tables() WHERE name = '" + tableName + "'",
-                        "o3MaxLag\n111000000\n");
-                rdr.reload();
-                Assert.assertEquals(111000000L, rdr.getMetadata().getO3MaxLag());
-            }
-            assertX(tableName);
-        });
-    }
-
-    @Test
-    public void setO3MaxLagWrongSetSyntax() throws Exception {
-        assertFailure("ALTER TABLE X SET o3MaxLag = 111ms",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                18,
-                "'param' expected");
-    }
-
-    @Test
-    public void setO3MaxLagWrongSetSyntax2() throws Exception {
-        assertFailure("ALTER TABLE X PARAM o3MaxLag = 111ms",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                14,
-                "'set' or 'rename' expected");
-    }
-
-    @Test
-    public void setO3MaxLagWrongTimeQualifier() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111days",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                27,
-                "interval qualifier");
-    }
-
-    @Test
-    public void setMaxUncommittedRows() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tableSetMaxUncommittedRows";
-            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createX(tbl);
-            }
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM maxUncommittedRows = 11111";
-                compile(alterCommand, sqlExecutionContext);
-
-                assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = '" + tableName + "'",
-                        "maxUncommittedRows\n11111\n");
-                rdr.reload();
-                Assert.assertEquals(11111, rdr.getMetadata().getMaxUncommittedRows());
-            }
-            assertX(tableName);
-        });
-    }
-
-    @Test
-    public void setO3MaxLagWrongTimeQualifier2() throws Exception {
-        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
-                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
-                29,
-                "interval qualifier");
     }
 
     @Test
@@ -351,6 +299,58 @@ public class AlterTableO3MaxLagTest extends AbstractGriffinTest {
                 "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
                 24,
                 "invalid value [value=-,parameter=maxUncommittedRows]");
+    }
+
+    @Test
+    public void setO3MaxLag() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "setO3MaxLagTable";
+            try (TableModel tbl = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createX(tbl);
+            }
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                String alterCommand = "ALTER TABLE " + tableName + " SET PARAM o3MaxLag = 111s";
+                compile(alterCommand, sqlExecutionContext);
+
+                assertSql("SELECT o3MaxLag FROM tables() WHERE name = '" + tableName + "'",
+                        "o3MaxLag\n111000000\n");
+                rdr.reload();
+                Assert.assertEquals(111000000L, rdr.getMetadata().getO3MaxLag());
+            }
+            assertX(tableName);
+        });
+    }
+
+    @Test
+    public void setO3MaxLagWrongSetSyntax() throws Exception {
+        assertFailure("ALTER TABLE X SET o3MaxLag = 111ms",
+                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
+                18,
+                "'param' expected");
+    }
+
+    @Test
+    public void setO3MaxLagWrongSetSyntax2() throws Exception {
+        assertFailure("ALTER TABLE X PARAM o3MaxLag = 111ms",
+                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
+                14,
+                "'set' or 'rename' expected");
+    }
+
+    @Test
+    public void setO3MaxLagWrongTimeQualifier() throws Exception {
+        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111days",
+                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
+                27,
+                "interval qualifier");
+    }
+
+    @Test
+    public void setO3MaxLagWrongTimeQualifier2() throws Exception {
+        assertFailure("ALTER TABLE X SET PARAM o3MaxLag = 111ml",
+                "CREATE TABLE X (ts TIMESTAMP, i INT, l LONG) timestamp(ts) PARTITION BY MONTH",
+                29,
+                "interval qualifier");
     }
 
     @Test

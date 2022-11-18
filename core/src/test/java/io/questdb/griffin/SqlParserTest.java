@@ -56,11 +56,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWithFollowedByInvalidToken() throws Exception {
-        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
-    }
-
-    @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
                 "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
@@ -1984,19 +1979,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableWitInvalidO3MaxLag() throws Exception {
-        assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
-                89,
-                "invalid interval qualifier asif");
-    }
-
-    @Test
     public void testCreateTableWitInvalidMaxUncommittedRows() throws Exception {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
                 95,
                 "could not parse maxUncommittedRows value \"asif\"");
+    }
+
+    @Test
+    public void testCreateTableWitInvalidO3MaxLag() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
+                89,
+                "invalid interval qualifier asif");
     }
 
     @Test
@@ -7484,6 +7479,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testWithFollowedByInvalidToken() throws Exception {
+        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
     }
 
     @Test

@@ -91,11 +91,6 @@ public class TableModel implements TableStructure, Closeable {
         return (int) columnBits.getQuick(index * 2);
     }
 
-    @Override
-    public long getO3MaxLag() {
-        return configuration.getO3MaxLag();
-    }
-
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
@@ -116,6 +111,11 @@ public class TableModel implements TableStructure, Closeable {
 
     public String getName() {
         return name;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return configuration.getO3MaxLag();
     }
 
     @Override

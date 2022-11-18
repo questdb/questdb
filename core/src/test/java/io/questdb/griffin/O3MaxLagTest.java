@@ -93,6 +93,66 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
+    public void testContinuousBatchedCommitContended() throws Exception {
+        executeWithPool(0, this::testContinuousBatchedCommit0);
+    }
+
+    @Test
+    public void testContinuousBatchedCommitParallel() throws Exception {
+        executeWithPool(2, this::testContinuousBatchedCommit0);
+    }
+
+    @Test
+    public void testFuzzParallel() throws Exception {
+        executeWithPool(2, this::testFuzz0);
+    }
+
+    @Test
+    public void testLargeLagWithRowLimitContended() throws Exception {
+        executeWithPool(0, this::testLargeLagWithRowLimit);
+    }
+
+    @Test
+    public void testLargeLagWithinPartitionContended() throws Exception {
+        executeWithPool(0, this::testLargeLagWithinPartition);
+    }
+
+    @Test
+    public void testLargeLagWithinPartitionParallel() throws Exception {
+        executeWithPool(2, this::testLargeLagWithinPartition);
+    }
+
+    @Test
+    public void testNoLagContended() throws Exception {
+        executeWithPool(0, this::testNoLag0);
+    }
+
+    @Test
+    public void testNoLagEndingAtPartitionBoundaryContended() throws Exception {
+        executeWithPool(0, this::testNoLagEndingAtPartitionBoundary);
+    }
+
+    @Test
+    public void testNoLagEndingAtPartitionBoundaryParallel() throws Exception {
+        executeWithPool(2, this::testNoLagEndingAtPartitionBoundary);
+    }
+
+    @Test
+    public void testNoLagParallel() throws Exception {
+        executeWithPool(2, this::testNoLag0);
+    }
+
+    @Test
+    public void testNoLagWithRollbackContended() throws Exception {
+        executeWithPool(0, this::testNoLagWithRollback);
+    }
+
+    @Test
+    public void testNoLagWithRollbackParallel() throws Exception {
+        executeWithPool(2, this::testNoLagWithRollback);
+    }
+
+    @Test
     public void testO3MaxLagEndingAtPartitionBoundaryContended() throws Exception {
         executeWithPool(0, this::testO3MaxLagEndingAtPartitionBoundary0);
     }
@@ -153,68 +213,8 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testContinuousBatchedCommitContended() throws Exception {
-        executeWithPool(0, this::testContinuousBatchedCommit0);
-    }
-
-    @Test
-    public void testFuzzParallel() throws Exception {
-        executeWithPool(2, this::testFuzz0);
-    }
-
-    @Test
     public void testRollbackFuzzParallel() throws Exception {
         executeWithPool(2, this::testRollbackFuzz);
-    }
-
-    @Test
-    public void testContinuousBatchedCommitParallel() throws Exception {
-        executeWithPool(2, this::testContinuousBatchedCommit0);
-    }
-
-    @Test
-    public void testLargeLagWithRowLimitContended() throws Exception {
-        executeWithPool(0, this::testLargeLagWithRowLimit);
-    }
-
-    @Test
-    public void testLargeLagWithinPartitionContended() throws Exception {
-        executeWithPool(0, this::testLargeLagWithinPartition);
-    }
-
-    @Test
-    public void testLargeLagWithinPartitionParallel() throws Exception {
-        executeWithPool(2, this::testLargeLagWithinPartition);
-    }
-
-    @Test
-    public void testNoLagContended() throws Exception {
-        executeWithPool(0, this::testNoLag0);
-    }
-
-    @Test
-    public void testNoLagEndingAtPartitionBoundaryContended() throws Exception {
-        executeWithPool(0, this::testNoLagEndingAtPartitionBoundary);
-    }
-
-    @Test
-    public void testNoLagEndingAtPartitionBoundaryParallel() throws Exception {
-        executeWithPool(2, this::testNoLagEndingAtPartitionBoundary);
-    }
-
-    @Test
-    public void testNoLagParallel() throws Exception {
-        executeWithPool(2, this::testNoLag0);
-    }
-
-    @Test
-    public void testNoLagWithRollbackContended() throws Exception {
-        executeWithPool(0, this::testNoLagWithRollback);
-    }
-
-    @Test
-    public void testNoLagWithRollbackParallel() throws Exception {
-        executeWithPool(2, this::testNoLagWithRollback);
     }
 
     @Test
@@ -401,6 +401,17 @@ public class O3MaxLagTest extends AbstractO3Test {
                 });
     }
 
+    private static void replayTransactions(Rnd rnd, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            FuzzTransaction tx = transactions.getQuick(i);
+            ObjList<FuzzTransactionOperation> ops = tx.operationList;
+            for (int j = 0, k = ops.size(); j < k; j++) {
+                ops.getQuick(j).apply(rnd, w, virtualTimestampIndex);
+            }
+            w.ic();
+        }
+    }
+
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
             long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
@@ -585,6 +596,203 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
     }
 
+    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        int nTotalRows = 50000;
+        int nInitialStateRows = 150;
+        long microsBetweenRows = 100000000;
+        int maxBatchedRows = 10;
+        int maxConcurrentBatches = 4;
+        int nRowsPerCommit = 100;
+        long o3MaxLag = microsBetweenRows * (nRowsPerCommit / 2);
+
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(" + nTotalRows + ")" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        sql = "create table y as (select * from x where  i<=" + nInitialStateRows + " order by ts asc) timestamp(ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+        LOG.info().$("committed initial state").$();
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=" + nInitialStateRows, sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        Rnd rnd = new Rnd();
+        IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
+        int atRow = nInitialStateRows;
+        batchRowEnd.add(-atRow); // negative row means this has been committed
+        while (atRow < nTotalRows) {
+            int nRows = rnd.nextInt(maxBatchedRows) + 1;
+            atRow += nRows;
+            batchRowEnd.add(atRow);
+        }
+
+        int nCommitsWithLag = 0;
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            int nHeadBatch = 1;
+            int nRowsAppended = 0;
+            while (nHeadBatch < batchRowEnd.size()) {
+                int nBatch = nHeadBatch + rnd.nextInt(maxConcurrentBatches);
+                while (nBatch >= batchRowEnd.size() || batchRowEnd.get(nBatch) < 0) {
+                    nBatch--;
+                }
+                assert nBatch >= nHeadBatch;
+                if (nBatch == nHeadBatch) {
+                    do {
+                        nHeadBatch++;
+                    } while (nHeadBatch < batchRowEnd.size() && batchRowEnd.get(nHeadBatch) < 0);
+                }
+                int fromRow = Math.abs(batchRowEnd.get(nBatch - 1));
+                int toRow = batchRowEnd.get(nBatch);
+                batchRowEnd.set(nBatch, -toRow);
+
+                LOG.info().$("inserting rows from ").$(fromRow).$(" to ").$(toRow).$();
+                sql = "select * from x where ts>=cast(" + fromRow * microsBetweenRows + " as timestamp) and ts<cast(" + toRow * microsBetweenRows + " as timestamp)";
+                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+
+                nRowsAppended += toRow - fromRow;
+                if (nRowsAppended >= nRowsPerCommit) {
+                    LOG.info().$("committing with lag").$();
+                    nRowsAppended = 0;
+                    writer.ic(o3MaxLag);
+                    nCommitsWithLag++;
+                }
+            }
+            writer.commit();
+        }
+        LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
+
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testFuzz0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        long microsBetweenRows = 1000000L;
+        int nTotalRows = 12000;
+        // create initial table "x"
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(" + nTotalRows + ")" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
+        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
+
+        try (
+                RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        ) {
+            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+        }
+
+        Rnd rnd = TestUtils.generateRandom(LOG);
+
+        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
+        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
+        int txCount = Math.max(1, rnd.nextInt(50));
+        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
+        try (
+                TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
+        ) {
+            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    w.getMetadata(),
+                    rnd,
+                    minTs,
+                    maxTs,
+                    rowCount,
+                    txCount,
+                    true,
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    1, // insert only
+                    5,
+                    new String[]{"ABC", "CDE", "XYZ"}
+            );
+
+            Rnd rnd1 = new Rnd();
+            replayTransactions(rnd1, w, transactions, -1);
+            w.commit();
+
+            Rnd rnd2 = new Rnd();
+            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
+            w2.commit();
+
+/*
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "(y order by ts) limit 100",
+                    sink
+            );
+
+            TestUtils.printSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "x limit 100",
+                    sink2
+            );
+
+            TestUtils.assertEquals(sink, sink2);
+*/
+            try (
+                    RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                    RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+            ) {
+                TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+            }
+        }
+    }
+
     private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
@@ -623,6 +831,209 @@ public class O3MaxLagTest extends AbstractO3Test {
             writer.commit();
         }
         assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(500)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x where i>250 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.ic();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            writer.commit();
+        }
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testNoLag0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(500)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x where i>150 and i<=495 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=495", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            sql = "select * from x where i>495 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+        }
+
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(500)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        // i=184 is the last entry in date 1970-01-06
+        sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x where i>150 and i<=184 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=184", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            sql = "select * from x where i>184 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+        }
+        assertXY(compiler, sqlExecutionContext);
+    }
+
+    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(500)" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
+            sql = "select * from x where i>250 and i<=375 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+            TestUtils.assertEquals(sink, sink2);
+
+            sql = "select * from x where i>375 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.rollback();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
+            TestUtils.assertEquals("count\n375\n", sink);
+
+            sql = "select * from x where i>380 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.commit();
+            TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
+            TestUtils.assertEquals("count\n495\n", sink);
+        }
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375 or i>380", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
+
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=375 or i>380)", sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
+        TestUtils.assertEquals(sink, sink2);
     }
 
     private void testO3MaxLagEndingAtPartitionBoundary0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -910,15 +1321,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testContinuousBatchedCommit0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        int nTotalRows = 50000;
-        int nInitialStateRows = 150;
-        long microsBetweenRows = 100000000;
-        int maxBatchedRows = 10;
-        int maxConcurrentBatches = 4;
-        int nRowsPerCommit = 100;
-        long o3MaxLag = microsBetweenRows * (nRowsPerCommit / 2);
-
+    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
@@ -933,68 +1336,28 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                 " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
                 " rnd_byte(2,50) l," +
                 " rnd_bin(10, 20, 2) m," +
                 " rnd_str(5,16,2) n," +
                 " rnd_char() t" +
-                " from long_sequence(" + nTotalRows + ")" +
+                " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
 
-        sql = "create table y as (select * from x where  i<=" + nInitialStateRows + " order by ts asc) timestamp(ts) partition by DAY";
+        sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
         compiler.compile(sql, sqlExecutionContext);
-        LOG.info().$("committed initial state").$();
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=" + nInitialStateRows, sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        Rnd rnd = new Rnd();
-        IntList batchRowEnd = new IntList((int) ((nTotalRows - nInitialStateRows) * 0.6 * maxBatchedRows));
-        int atRow = nInitialStateRows;
-        batchRowEnd.add(-atRow); // negative row means this has been committed
-        while (atRow < nTotalRows) {
-            int nRows = rnd.nextInt(maxBatchedRows) + 1;
-            atRow += nRows;
-            batchRowEnd.add(atRow);
-        }
-
-        int nCommitsWithLag = 0;
         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            int nHeadBatch = 1;
-            int nRowsAppended = 0;
-            while (nHeadBatch < batchRowEnd.size()) {
-                int nBatch = nHeadBatch + rnd.nextInt(maxConcurrentBatches);
-                while (nBatch >= batchRowEnd.size() || batchRowEnd.get(nBatch) < 0) {
-                    nBatch--;
-                }
-                assert nBatch >= nHeadBatch;
-                if (nBatch == nHeadBatch) {
-                    do {
-                        nHeadBatch++;
-                    } while (nHeadBatch < batchRowEnd.size() && batchRowEnd.get(nHeadBatch) < 0);
-                }
-                int fromRow = Math.abs(batchRowEnd.get(nBatch - 1));
-                int toRow = batchRowEnd.get(nBatch);
-                batchRowEnd.set(nBatch, -toRow);
-
-                LOG.info().$("inserting rows from ").$(fromRow).$(" to ").$(toRow).$();
-                sql = "select * from x where ts>=cast(" + fromRow * microsBetweenRows + " as timestamp) and ts<cast(" + toRow * microsBetweenRows + " as timestamp)";
-                insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-
-                nRowsAppended += toRow - fromRow;
-                if (nRowsAppended >= nRowsPerCommit) {
-                    LOG.info().$("committing with lag").$();
-                    nRowsAppended = 0;
-                    writer.ic(o3MaxLag);
-                    nCommitsWithLag++;
-                }
-            }
+            sql = "select * from x where i>490 order by f";
+            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
+            writer.ic();
             writer.commit();
         }
-        LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
-
         assertXY(compiler, sqlExecutionContext);
     }
 
@@ -1092,369 +1455,6 @@ public class O3MaxLagTest extends AbstractO3Test {
             w.commit();
         }
         assertXY(compiler, sqlExecutionContext);
-    }
-
-    private static void replayTransactions(Rnd rnd, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            FuzzTransaction tx = transactions.getQuick(i);
-            ObjList<FuzzTransactionOperation> ops = tx.operationList;
-            for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, w, virtualTimestampIndex);
-            }
-            w.ic();
-        }
-    }
-
-    private void testFuzz0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, NumericException {
-        long microsBetweenRows = 1000000L;
-        int nTotalRows = 12000;
-        // create initial table "x"
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(" + nTotalRows + ")" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
-        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
-
-        try (
-                RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
-            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-        }
-
-        Rnd rnd = TestUtils.generateRandom(LOG);
-
-        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
-        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = Math.max(1, rnd.nextInt(50));
-        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
-        try (
-                TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
-                TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
-        ) {
-            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
-                    w.getMetadata(),
-                    rnd,
-                    minTs,
-                    maxTs,
-                    rowCount,
-                    txCount,
-                    true,
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    1, // insert only
-                    5,
-                    new String[]{"ABC", "CDE", "XYZ"}
-            );
-
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, w, transactions, -1);
-            w.commit();
-
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
-            w2.commit();
-
-/*
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "(y order by ts) limit 100",
-                    sink
-            );
-
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "x limit 100",
-                    sink2
-            );
-
-            TestUtils.assertEquals(sink, sink2);
-*/
-            try (
-                    RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                    RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-            ) {
-                TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-            }
-        }
-    }
-
-    private void testO3MaxLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>490 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.ic();
-            writer.commit();
-        }
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testLargeLagWithinPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>250 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.ic();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from x", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select i, ts from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
-            writer.commit();
-        }
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testNoLag0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>150 and i<=495 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=495", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
-            sql = "select * from x where i>495 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-        }
-
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testNoLagEndingAtPartitionBoundary(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        // i=184 is the last entry in date 1970-01-06
-        sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>150 and i<=184 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=184", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
-            sql = "select * from x where i>184 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-        }
-        assertXY(compiler, sqlExecutionContext);
-    }
-
-    private void testNoLagWithRollback(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(500000000000L,100000000L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(500)" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y", "testing")) {
-            sql = "select * from x where i>250 and i<=375 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375", sink);
-            TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-            TestUtils.assertEquals(sink, sink2);
-
-            sql = "select * from x where i>375 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.rollback();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
-            TestUtils.assertEquals("count\n375\n", sink);
-
-            sql = "select * from x where i>380 order by f";
-            insertUncommitted(compiler, sqlExecutionContext, sql, writer);
-            writer.commit();
-            TestUtils.printSql(compiler, sqlExecutionContext, "select count(*) from y", sink);
-            TestUtils.assertEquals("count\n495\n", sink);
-        }
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=375 or i>380", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
-
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (select * from x where i<=375 or i>380)", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
     }
 
     private void testVarColumnMergeWithColumnTops(

@@ -3249,11 +3249,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getO3MaxLag() {
-                return expectedO3MaxLag;
-            }
-
-            @Override
             public FilesFacade getFilesFacade() {
                 return ff;
             }
@@ -3261,6 +3256,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
             @Override
             public int getMaxUncommittedRows() {
                 return maxUncommittedRows;
+            }
+
+            @Override
+            public long getO3MaxLag() {
+                return expectedO3MaxLag;
             }
 
             @Override

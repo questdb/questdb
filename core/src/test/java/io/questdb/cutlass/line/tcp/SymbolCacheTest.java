@@ -688,14 +688,6 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void ic() {
-        }
-
-        @Override
-        public void ic(long o3MaxLag) {
-        }
-
-        @Override
         public TableRecordMetadata getMetadata() {
             return null;
         }
@@ -718,6 +710,14 @@ public class SymbolCacheTest extends AbstractGriffinTest {
         @Override
         public long getUncommittedRowCount() {
             return 0;
+        }
+
+        @Override
+        public void ic() {
+        }
+
+        @Override
+        public void ic(long o3MaxLag) {
         }
 
         @Override

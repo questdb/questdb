@@ -54,6 +54,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN
     };
+    private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -62,9 +64,6 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final int strLen;
     private final String[] symbols;
     private final long timestamp;
-
-    private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
-    private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
 
     public FuzzInsertOperation(
             long seed1,

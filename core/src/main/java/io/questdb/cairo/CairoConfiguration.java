@@ -178,6 +178,14 @@ public interface CairoConfiguration {
 
     int getO3CopyQueueCapacity();
 
+    default double getO3LagDecreaseFactor() {
+        return 0.5;
+    }
+
+    default double getO3LagIncreaseFactor() {
+        return 1.5;
+    }
+
     /**
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.

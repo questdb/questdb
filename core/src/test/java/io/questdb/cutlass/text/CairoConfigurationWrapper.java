@@ -138,11 +138,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getO3MaxLag() {
-        return conf.getO3MaxLag();
-    }
-
-    @Override
     public int getCommitMode() {
         return conf.getCommitMode();
     }
@@ -348,6 +343,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getO3MaxLag() {
+        return conf.getO3MaxLag();
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return conf.getO3MinLag();
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return conf.getO3OpenColumnQueueCapacity();
     }
@@ -360,11 +365,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3PurgeDiscoveryQueueCapacity() {
         return conf.getO3PurgeDiscoveryQueueCapacity();
-    }
-
-    @Override
-    public long getO3MinLag() {
-        return conf.getO3MinLag();
     }
 
     @Override

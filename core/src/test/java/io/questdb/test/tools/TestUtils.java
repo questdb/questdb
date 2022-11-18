@@ -252,105 +252,6 @@ public final class TestUtils {
         }
     }
 
-    private static void assertColumnValues(
-            RecordMetadata metadataExpected,
-            RecordMetadata metadataActual,
-            Record lr,
-            Record rr,
-            long rowIndex,
-            boolean symbolsAsStrings
-    ) {
-        int columnType = 0;
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            String columnName = metadataExpected.getColumnName(i);
-            try {
-                columnType = metadataExpected.getColumnType(i);
-                int tagType = ColumnType.tagOf(columnType);
-                switch (tagType) {
-                    case ColumnType.DATE:
-                        Assert.assertEquals(rr.getDate(i), lr.getDate(i));
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
-                        break;
-                    case ColumnType.DOUBLE:
-                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
-                        break;
-                    case ColumnType.FLOAT:
-                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
-                        break;
-                    case ColumnType.INT:
-                        Assert.assertEquals(rr.getInt(i), lr.getInt(i));
-                        break;
-                    case ColumnType.GEOINT:
-                        Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
-                        break;
-                    case ColumnType.STRING:
-                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSym(i) : lr.getStr(i);
-                        CharSequence expected = rr.getStr(i);
-                        TestUtils.assertEquals(expected, actual);
-                        break;
-                    case ColumnType.SYMBOL:
-                        Assert.assertEquals(rr.getSym(i), lr.getSym(i));
-                        break;
-                    case ColumnType.SHORT:
-                        Assert.assertEquals(rr.getShort(i), lr.getShort(i));
-                        break;
-                    case ColumnType.CHAR:
-                        Assert.assertEquals(rr.getChar(i), lr.getChar(i));
-                        break;
-                    case ColumnType.GEOSHORT:
-                        Assert.assertEquals(rr.getGeoShort(i), lr.getGeoShort(i));
-                        break;
-                    case ColumnType.LONG:
-                        Assert.assertEquals(rr.getLong(i), lr.getLong(i));
-                        break;
-                    case ColumnType.GEOLONG:
-                        Assert.assertEquals(rr.getGeoLong(i), lr.getGeoLong(i));
-                        break;
-                    case ColumnType.GEOBYTE:
-                        Assert.assertEquals(rr.getGeoByte(i), lr.getGeoByte(i));
-                        break;
-                    case ColumnType.BYTE:
-                        Assert.assertEquals(rr.getByte(i), lr.getByte(i));
-                        break;
-                    case ColumnType.BOOLEAN:
-                        Assert.assertEquals(rr.getBool(i), lr.getBool(i));
-                        break;
-                    case ColumnType.BINARY:
-                        Assert.assertTrue(areEqual(rr.getBin(i), lr.getBin(i)));
-                        break;
-                    case ColumnType.LONG256:
-                        assertEquals(rr.getLong256A(i), lr.getLong256A(i));
-                        break;
-                    case ColumnType.LONG128:
-                        Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
-                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
-                        break;
-                    default:
-                        // Unknown record type.
-                        assert false;
-                        break;
-                }
-            } catch (AssertionError e) {
-                throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
-            }
-        }
-    }
-
-    private static RecordMetadata copySymAstStr(RecordMetadata src) {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
-            metadata.add(
-                    new TableColumnMetadata(
-                            src.getColumnName(i),
-                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
-                    )
-            );
-        }
-        return metadata;
-    }
-
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath()).$();
@@ -1279,6 +1180,92 @@ public final class TestUtils {
         }
     }
 
+    private static void assertColumnValues(
+            RecordMetadata metadataExpected,
+            RecordMetadata metadataActual,
+            Record lr,
+            Record rr,
+            long rowIndex,
+            boolean symbolsAsStrings
+    ) {
+        int columnType = 0;
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            String columnName = metadataExpected.getColumnName(i);
+            try {
+                columnType = metadataExpected.getColumnType(i);
+                int tagType = ColumnType.tagOf(columnType);
+                switch (tagType) {
+                    case ColumnType.DATE:
+                        Assert.assertEquals(rr.getDate(i), lr.getDate(i));
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        Assert.assertEquals(rr.getTimestamp(i), lr.getTimestamp(i));
+                        break;
+                    case ColumnType.DOUBLE:
+                        Assert.assertEquals(rr.getDouble(i), lr.getDouble(i), Numbers.MAX_SCALE);
+                        break;
+                    case ColumnType.FLOAT:
+                        Assert.assertEquals(rr.getFloat(i), lr.getFloat(i), 4);
+                        break;
+                    case ColumnType.INT:
+                        Assert.assertEquals(rr.getInt(i), lr.getInt(i));
+                        break;
+                    case ColumnType.GEOINT:
+                        Assert.assertEquals(rr.getGeoInt(i), lr.getGeoInt(i));
+                        break;
+                    case ColumnType.STRING:
+                        CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? lr.getSym(i) : lr.getStr(i);
+                        CharSequence expected = rr.getStr(i);
+                        TestUtils.assertEquals(expected, actual);
+                        break;
+                    case ColumnType.SYMBOL:
+                        Assert.assertEquals(rr.getSym(i), lr.getSym(i));
+                        break;
+                    case ColumnType.SHORT:
+                        Assert.assertEquals(rr.getShort(i), lr.getShort(i));
+                        break;
+                    case ColumnType.CHAR:
+                        Assert.assertEquals(rr.getChar(i), lr.getChar(i));
+                        break;
+                    case ColumnType.GEOSHORT:
+                        Assert.assertEquals(rr.getGeoShort(i), lr.getGeoShort(i));
+                        break;
+                    case ColumnType.LONG:
+                        Assert.assertEquals(rr.getLong(i), lr.getLong(i));
+                        break;
+                    case ColumnType.GEOLONG:
+                        Assert.assertEquals(rr.getGeoLong(i), lr.getGeoLong(i));
+                        break;
+                    case ColumnType.GEOBYTE:
+                        Assert.assertEquals(rr.getGeoByte(i), lr.getGeoByte(i));
+                        break;
+                    case ColumnType.BYTE:
+                        Assert.assertEquals(rr.getByte(i), lr.getByte(i));
+                        break;
+                    case ColumnType.BOOLEAN:
+                        Assert.assertEquals(rr.getBool(i), lr.getBool(i));
+                        break;
+                    case ColumnType.BINARY:
+                        Assert.assertTrue(areEqual(rr.getBin(i), lr.getBin(i)));
+                        break;
+                    case ColumnType.LONG256:
+                        assertEquals(rr.getLong256A(i), lr.getLong256A(i));
+                        break;
+                    case ColumnType.LONG128:
+                        Assert.assertEquals(rr.getLong128Hi(i), lr.getLong128Hi(i));
+                        Assert.assertEquals(rr.getLong128Lo(i), lr.getLong128Lo(i));
+                        break;
+                    default:
+                        // Unknown record type.
+                        assert false;
+                        break;
+                }
+            } catch (AssertionError e) {
+                throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
+            }
+        }
+    }
+
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1303,6 +1290,19 @@ public final class TestUtils {
             columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
+    }
+
+    private static RecordMetadata copySymAstStr(RecordMetadata src) {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0, n = src.getColumnCount(); i < n; i++) {
+            metadata.add(
+                    new TableColumnMetadata(
+                            src.getColumnName(i),
+                            src.getColumnType(i) != ColumnType.SYMBOL ? src.getColumnType(i) : ColumnType.STRING
+                    )
+            );
+        }
+        return metadata;
     }
 
     private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {

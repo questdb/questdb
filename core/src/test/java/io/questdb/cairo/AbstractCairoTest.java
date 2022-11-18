@@ -85,8 +85,8 @@ public abstract class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
-    protected static long configOverrideO3MaxLag = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
+    protected static long configOverrideO3MaxLag = -1;
     protected static CairoConfiguration configuration;
     protected static Boolean copyPartitionOnAttach = null;
     protected static long currentMicros = -1;
@@ -173,6 +173,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     public static void printMemoryUsage() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
@@ -182,6 +183,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     public static void printMemoryUsageDiff() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
@@ -268,11 +270,6 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public long getO3MaxLag() {
-                return configOverrideO3MaxLag >= 0 ? configOverrideO3MaxLag : super.getO3MaxLag();
-            }
-
-            @Override
             public int getCopyPoolCapacity() {
                 return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
@@ -322,6 +319,11 @@ public abstract class AbstractCairoTest {
             @Override
             public MillisecondClock getMillisecondClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
+            }
+
+            @Override
+            public long getO3MaxLag() {
+                return configOverrideO3MaxLag >= 0 ? configOverrideO3MaxLag : super.getO3MaxLag();
             }
 
             @Override
@@ -464,7 +466,7 @@ public abstract class AbstractCairoTest {
 
             @Override
             public boolean isO3QuickSortEnabled() {
-                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
+                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled == 0 && super.isO3QuickSortEnabled());
             }
 
             @Override
@@ -628,16 +630,19 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0)) {
             // run until empty
         }
 
         final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+        //noinspection StatementWithEmptyBody
         while (checkWalTransactionsJob.run(0)) {
             // run until empty
         }
 
         // run once again as there might be notifications to handle now
+        //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0)) {
             // run until empty
         }
@@ -651,6 +656,7 @@ public abstract class AbstractCairoTest {
 
     protected static void runWalPurgeJob(FilesFacade ff) {
         WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
+        //noinspection StatementWithEmptyBody
         while (job.run(0)) {
             // run until empty
         }

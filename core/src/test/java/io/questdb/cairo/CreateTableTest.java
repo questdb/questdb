@@ -375,19 +375,6 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertSymbolParameters(parameters);
     }
 
-    private void assertColumnTypes(String[][] columnTypes) throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                for (int i = 0; i < columnTypes.length; i++) {
-                    String[] arr = columnTypes[i];
-                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
-                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
-                }
-            }
-        });
-    }
-
     @Test
     public void testCreateTableLikeTableWithWALDisabled() throws Exception {
         createWALNonWal(false);
@@ -458,14 +445,15 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("s\n", "select * from tab", "create table tab (s symbol) ", null);
     }
 
-    private void assertFailure(String sql, int position) throws Exception {
+    private void assertColumnTypes(String[][] columnTypes) throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                compile(sql, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                for (int i = 0; i < columnTypes.length; i++) {
+                    String[] arr = columnTypes[i];
+                    Assert.assertEquals(arr[0], metadata.getColumnName(i));
+                    Assert.assertEquals(arr[1], ColumnType.nameOf(metadata.getColumnType(i)));
+                }
             }
         });
     }
@@ -490,6 +478,18 @@ public class CreateTableTest extends AbstractGriffinTest {
                         Assert.assertFalse("Column " + columnName + " shouldn't be indexed!", metadata.isColumnIndexed(i));
                     }
                 }
+            }
+        });
+    }
+
+    private void assertFailure(String sql, int position) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compile(sql, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
         });
     }
@@ -543,6 +543,15 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertWalEnabled(isWalEnabled);
     }
 
+    private String getColumnDefinitions(String[][] columnTypes) {
+        StringBuilder result = new StringBuilder();
+        for (String[] arr : columnTypes) {
+            result.append(arr[0]).append(" ").append(arr[1]).append(",");
+        }
+        result = new StringBuilder(result.substring(0, result.length() - 1));
+        return result.toString();
+    }
+
     private void testCreateTableLikeTableWithCachedSymbol(boolean isSymbolCached) throws Exception {
         String symbolCacheParameterValue = isSymbolCached ? "CACHE" : "NOCACHE";
 
@@ -553,15 +562,6 @@ public class CreateTableTest extends AbstractGriffinTest {
         assertQuery("a\ty\tt\n", "select * from tab", "create table tab ( like x)", "t");
         SymbolParameters parameters = new SymbolParameters(null, isSymbolCached, false, null);
         assertSymbolParameters(parameters);
-    }
-
-    private String getColumnDefinitions(String[][] columnTypes) {
-        StringBuilder result = new StringBuilder();
-        for (String[] arr : columnTypes) {
-            result.append(arr[0]).append(" ").append(arr[1]).append(",");
-        }
-        result = new StringBuilder(result.substring(0, result.length() - 1));
-        return result.toString();
     }
 
     private static class SymbolParameters {
