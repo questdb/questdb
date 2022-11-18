@@ -117,7 +117,7 @@ In IntelliJ IDEA you can :
 - automate formatting (preferrable):
   - open File | Settings
   - choose Tools | Actions On Save 
-  - select  Reformat, Optimized Imports & Rearrange Code
+  - select  Reformat & Rearrange Code
   - click Apply
 
   or
