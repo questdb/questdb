@@ -107,6 +107,22 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 
 The web console will be available at [localhost:9000](http://localhost:9000).
 
+### Code formatting
+
+Code is formatted using configuration files in `.idea` directory .
+To minimize conflicts when merging and problems in CI all contributed code should be formatted
+before submitting PR.
+
+In IntelliJ IDEA you can : 
+- automate formatting (preferrable):
+  - open File | Settings
+  - choose Tools | Actions On Save 
+  - select  Reformat, Optimized Imports & Rearrange Code
+  - click Apply
+
+  or
+- format files manually by selecting them and choosing Code | Reformat File .
+
 ### Compiling C-libraries
 
 C-libraries will have to be compiled for each platform separately. Cmake will
@@ -141,6 +157,7 @@ The development environment for frontend can run on it's own, but will require Q
    [environment setup](#environment-setup) section of this document
 2. Run published QuestDB version, for example, with docker. More details
    can be found in the [readme of this repository](./README.md)
+
 
 # Before you submit
 
