@@ -207,6 +207,7 @@ class WalWriterEvents implements Closeable {
     void rollback() {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
