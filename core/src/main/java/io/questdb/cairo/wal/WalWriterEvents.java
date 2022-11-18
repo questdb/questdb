@@ -38,7 +38,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.EVENT_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
@@ -60,6 +60,7 @@ class WalWriterEvents implements Closeable {
     }
 
     private void init() {
+        eventMem.putLong(WALE_HEADER_SIZE + Integer.BYTES);
         eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
         txn = 0;
@@ -188,6 +189,7 @@ class WalWriterEvents implements Closeable {
         writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
         return txn++;
     }
 
@@ -208,6 +210,7 @@ class WalWriterEvents implements Closeable {
     void rollback() {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
@@ -221,6 +224,7 @@ class WalWriterEvents implements Closeable {
         writeNamedVariables(bindVariableService);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
         return txn++;
     }
 
