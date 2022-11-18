@@ -820,8 +820,8 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        long s0 = 588764242319L;
-        long s1 = 1668789622663L;
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
         log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
         System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);
