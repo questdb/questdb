@@ -1732,8 +1732,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         model.setWhereClause(null);
         model.getLatestBy().clear();
 
-        // if there are > 1 columns in the latest by statement we cannot use indexes
+        // if there are > 1 columns in the latest by statement, we cannot use indexes
         if (latestBy.size() > 1 || !ColumnType.isSymbol(metadata.getColumnType(latestByIndex))) {
+            boolean symbolKeysOnly = true;
+            for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                symbolKeysOnly &= ColumnType.isSymbol(keyTypes.getColumnType(i));
+            }
+            if (symbolKeysOnly) {
+                IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+                for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                    partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+                }
+                return new LatestByAllSymbolsFilteredRecordCursorFactory(
+                        metadata,
+                        configuration,
+                        dataFrameCursorFactory,
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        keyTypes,
+                        partitionByColumnIndexes,
+                        filter,
+                        columnIndexes
+                );
+            }
             return new LatestByAllFilteredRecordCursorFactory(
                     metadata,
                     configuration,
@@ -1774,6 +1794,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final int nKeyValues = intrinsicModel.keyValueFuncs.size();
+            final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
             if (indexed) {
 
                 assert nKeyValues > 0;
@@ -1852,22 +1873,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert nKeyValues > 0;
 
             // we have "latest by" column values, but no index
-            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
 
-            if (nKeyValues > 1) {
+            if (nKeyValues > 1 || nExcludedKeyValues > 0) {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
                         intrinsicModel.keyValueFuncs,
+                        intrinsicModel.keyExcludedValueFuncs,
                         filter,
                         columnIndexes
                 );
             }
 
+            assert nExcludedKeyValues == 0;
+
             // we have a single symbol key
             final Function symbolKeyFunc = intrinsicModel.keyValueFuncs.get(0);
+            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(latestByIndex));
             final int symbolKey = symbolKeyFunc.isRuntimeConstant()
                     ? SymbolTable.VALUE_NOT_FOUND
                     : symbolMapReader.keyOf(symbolKeyFunc.getStr(null));
@@ -3936,6 +3960,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndexes
                 );
             }
+        }
+
+        boolean symbolKeysOnly = true;
+        for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            symbolKeysOnly &= ColumnType.isSymbol(keyTypes.getColumnType(i));
+        }
+        if (symbolKeysOnly) {
+            IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+            for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+            }
+            return new LatestByAllSymbolsFilteredRecordCursorFactory(
+                    myMeta,
+                    configuration,
+                    new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion()),
+                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
+                    keyTypes,
+                    partitionByColumnIndexes,
+                    null,
+                    columnIndexes
+            );
         }
 
         return new LatestByAllFilteredRecordCursorFactory(

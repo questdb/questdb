@@ -52,14 +52,158 @@ public class LatestByTest extends AbstractGriffinTest {
             };
             compile("create table t as (" +
                     "select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
-                    ") timestamp(ts) Partition by DAY");
+                    ") timestamp(ts) partition by DAY");
 
-            assertQuery("s\tts\n" +
-                            "a\t1970-01-02T23:00:00.000000Z\n" +
-                            "b\t1970-01-03T00:00:00.000000Z\n",
-                    "t " +
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n" +
+                            "1970-01-03T00:00:00.000000Z\tb\n",
+                    "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleSymbolsDoesNotNeedFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            assertQuery("ts\ts2\ts\n" +
+                            "1970-01-02T18:00:00.000000Z\td\ta\n" +
+                            "1970-01-02T19:00:00.000000Z\td\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\tc\ta\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\tb\n",
+                    "select ts, s2, s from t " +
+                            "where s in ('a', 'b') " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleSymbolsUnfilteredDoesNotNeedFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            assertQuery("ts\ts2\ts\n" +
+                            "1970-01-02T18:00:00.000000Z\td\ta\n" +
+                            "1970-01-02T19:00:00.000000Z\td\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\tc\ta\n" +
+                            "1970-01-03T00:00:00.000000Z\tc\tb\n",
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleSymbolsWithNullInSymbolsDoesNotNeedFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "from long_sequence(100)" +
+                    ") timestamp(ts) partition by DAY");
+
+            assertQuery("s\ts2\ts3\tts\n" +
+                            "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
+                            "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
+                            "\t\td\t1970-01-04T05:00:00.000000Z\n" +
+                            "a\t\t\t1970-01-04T07:00:00.000000Z\n" +
+                            "a\t\td\t1970-01-04T11:00:00.000000Z\n" +
+                            "a\tc\t\t1970-01-04T17:00:00.000000Z\n" +
+                            "b\tc\td\t1970-01-04T20:00:00.000000Z\n" +
+                            "b\t\t\t1970-01-04T23:00:00.000000Z\n" +
+                            "\t\t\t1970-01-05T00:00:00.000000Z\n" +
+                            "a\tc\td\t1970-01-05T01:00:00.000000Z\n" +
+                            "b\t\td\t1970-01-05T02:00:00.000000Z\n" +
+                            "\tc\td\t1970-01-05T03:00:00.000000Z\n",
+                    "t " +
+                            "where s in ('a', 'b', null) " +
+                            "latest on ts partition by s3, s2, s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleSymbolsWithNullInSymbolsUnfilteredDoesNotNeedFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                    "from long_sequence(100)" +
+                    ") timestamp(ts) partition by DAY");
+
+            assertQuery("s\ts2\ts3\tts\n" +
+                            "\tc\t\t1970-01-03T19:00:00.000000Z\n" +
+                            "b\tc\t\t1970-01-04T00:00:00.000000Z\n" +
+                            "\t\td\t1970-01-04T05:00:00.000000Z\n" +
+                            "a\t\t\t1970-01-04T07:00:00.000000Z\n" +
+                            "a\t\td\t1970-01-04T11:00:00.000000Z\n" +
+                            "a\tc\t\t1970-01-04T17:00:00.000000Z\n" +
+                            "b\tc\td\t1970-01-04T20:00:00.000000Z\n" +
+                            "b\t\t\t1970-01-04T23:00:00.000000Z\n" +
+                            "\t\t\t1970-01-05T00:00:00.000000Z\n" +
+                            "a\tc\td\t1970-01-05T01:00:00.000000Z\n" +
+                            "b\t\td\t1970-01-05T02:00:00.000000Z\n" +
+                            "\tc\td\t1970-01-05T03:00:00.000000Z\n",
+                    "t " +
+                            "latest on ts partition by s3, s2, s",
                     "ts",
                     true,
                     true);
@@ -99,7 +243,6 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySymbolManyDistinctValues() throws Exception {
         assertMemoryLeak(() -> {
-
             compile("create table t as (" +
                     "select " +
                     "x, " +
@@ -223,6 +366,90 @@ public class LatestByTest extends AbstractGriffinTest {
                             "1970-01-02T23:00:00.000000Z\t48\ta\n",
                     "select ts, x, s from t latest on ts partition by s order by s desc",
                     null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithInAndNotInAllBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "a");
+            bindVariableService.setStr("sym2", "b");
+            bindVariableService.setStr("sym3", "b");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s in (:sym1, :sym2) and s != :sym3 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithInAndNotInAllBindVariablesEmptyResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "a");
+            bindVariableService.setStr("sym2", "a");
+            assertQuery("ts\ts\n",
+                    "select ts, s from t " +
+                            "where s = :sym1 and s != :sym2 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithInAndNotInAllBindVariablesNonEmptyResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym1", "a");
+            bindVariableService.setStr("sym2", "b");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s = :sym1 and s != :sym2 " +
+                            "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByWithInAndNotInBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "c");
+            assertQuery("ts\ts\n" +
+                            "1970-01-02T22:00:00.000000Z\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\ta\n",
+                    "select ts, s from t " +
+                            "where s in ('a', 'b', 'c') and s != :sym " +
+                            "latest on ts partition by s",
+                    "ts",
                     true,
                     true);
         });

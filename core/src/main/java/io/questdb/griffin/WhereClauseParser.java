@@ -129,21 +129,23 @@ final class WhereClauseParser implements Mutable {
                 || compareWithNode.type == ExpressionNode.OPERATION;
     }
 
-    //checks if symbol column with idx index has more distinct values or has higher capacity than current key column    
+    /**
+     * Checks if a symbol column with idx index has more distinct values
+     * or has higher capacity than the current key column.
+     */
     private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, TableReader reader, int idx) {
         SymbolMapReader colReader = reader.getSymbolMapReader(idx);
         SymbolMapReader keyReader = reader.getSymbolMapReader(meta.getColumnIndex(model.keyColumn));
         int colCount = colReader.getSymbolCount();
         int keyCount = keyReader.getSymbolCount();
-        return colCount > keyCount ||
-                (colCount == keyCount &&
-                        colReader.getSymbolCapacity() > keyReader.getSymbolCapacity());
+        return colCount > keyCount
+                || (colCount == keyCount && colReader.getSymbolCapacity() > keyReader.getSymbolCapacity());
     }
 
     private static boolean nodesEqual(ExpressionNode left, ExpressionNode right) {
-        return (left.type == ExpressionNode.LITERAL || left.type == ExpressionNode.CONSTANT) &&
-                (right.type == ExpressionNode.LITERAL || right.type == ExpressionNode.CONSTANT) &&
-                Chars.equals(left.token, right.token);
+        return (left.type == ExpressionNode.LITERAL || left.type == ExpressionNode.CONSTANT)
+                && (right.type == ExpressionNode.LITERAL || right.type == ExpressionNode.CONSTANT)
+                && Chars.equals(left.token, right.token);
     }
 
     private static long parseStringAsTimestamp(CharSequence str, int position) throws SqlException {
@@ -177,7 +179,6 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-
         ExpressionNode col = node.args.getLast();
         if (col.type != ExpressionNode.LITERAL) {
             return false;
@@ -311,7 +312,7 @@ final class WhereClauseParser implements Mutable {
                                 // if values do overlap, keep only our value
                                 // otherwise invalidate entire model
                                 if (tempKeyValues.contains(value)) {
-                                    // when we have "x in ('a,'b') and x = 'a')" the x='b' can never happen
+                                    // when we have "x in ('a,'b') and x = 'a')" the x='b' can never happen,
                                     // so we have to clear all other key values
                                     if (tempKeyValues.size() > 1) {
                                         tempKeyValues.clear();
@@ -333,9 +334,15 @@ final class WhereClauseParser implements Mutable {
                                         }
                                         removeNodes(b, keyExclNodes);
                                     }
-                                    node.intrinsicValue = IntrinsicModel.TRUE;
-                                    model.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
+                                    if (b.type == ExpressionNode.BIND_VARIABLE) {
+                                        tempKeyValues.add(value);
+                                        tempKeyValuePos.add(b.position);
+                                        node.intrinsicValue = IntrinsicModel.TRUE;
+                                    } else {
+                                        node.intrinsicValue = IntrinsicModel.TRUE;
+                                        model.intrinsicValue = IntrinsicModel.FALSE;
+                                        return false;
+                                    }
                                 }
                             } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
                                 model.keyColumn = columnName;
@@ -351,7 +358,7 @@ final class WhereClauseParser implements Mutable {
                             keyNodes.add(node);
                             return true;
                         }
-                        //fall through
+                        // fall through
                     default:
                         return false;
                 }
@@ -760,7 +767,7 @@ final class WhereClauseParser implements Mutable {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(model.keyColumn, columnName)) {
                                 if (tempKeyExcludedValues.contains(value)) {
-                                    // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen
+                                    // when we have "x not in ('a,'b') and x != 'a')" the x='b' can never happen,
                                     // so we have to clear all other key values
                                     if (tempKeyExcludedValues.size() > 1) {
                                         tempKeyExcludedValues.clear();
@@ -805,7 +812,7 @@ final class WhereClauseParser implements Mutable {
                             keyExclNodes.add(node);
                             return false;
                         }
-                        //fall through
+                        // fall through
                     default:
                         return false;
                 }
@@ -1236,7 +1243,8 @@ final class WhereClauseParser implements Mutable {
                     functionParser,
                     executionContext,
                     tempKeyExcludedValuePos.getQuick(i),
-                    tempKeyExcludedValues.get(i));
+                    tempKeyExcludedValues.get(i)
+            );
             model.keyExcludedValueFuncs.add(func);
         }
         tempKeyExcludedValues.clear();
@@ -1287,7 +1295,6 @@ final class WhereClauseParser implements Mutable {
         try {
             // Timestamp string
             ts = IntervalUtils.parseFloorPartialTimestamp(node.token, 1, len - 1);
-
         } catch (NumericException e) {
             try {
                 // Timestamp epoch (long)
@@ -1300,7 +1307,6 @@ final class WhereClauseParser implements Mutable {
         if (!equalsTo) {
             ts += isLo ? 1 : -1;
         }
-
         return ts;
     }
 
@@ -1408,7 +1414,8 @@ final class WhereClauseParser implements Mutable {
         tempNodes.clear();
         for (int i = 0, size = nodes.size(); i < size; i++) {
             ExpressionNode expressionNode = nodes.get(i);
-            if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token)) || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
+            if ((expressionNode.lhs != null && Chars.equals(expressionNode.lhs.token, b.token))
+                    || (expressionNode.rhs != null && Chars.equals(expressionNode.rhs.token, b.token))) {
                 expressionNode.intrinsicValue = IntrinsicModel.TRUE;
                 tempNodes.add(expressionNode);
             }
