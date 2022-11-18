@@ -26,6 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
@@ -127,6 +129,17 @@ final class WhereClauseParser implements Mutable {
                 || compareWithNode.type == ExpressionNode.OPERATION;
     }
 
+    //checks if symbol column with idx index has more distinct values or has higher capacity than current key column    
+    private static boolean isMoreSelective(IntrinsicModel model, RecordMetadata meta, TableReader reader, int idx) {
+        SymbolMapReader colReader = reader.getSymbolMapReader(idx);
+        SymbolMapReader keyReader = reader.getSymbolMapReader(meta.getColumnIndex(model.keyColumn));
+        int colCount = colReader.getSymbolCount();
+        int keyCount = keyReader.getSymbolCount();
+        return colCount > keyCount ||
+                (colCount == keyCount &&
+                        colReader.getSymbolCapacity() > keyReader.getSymbolCapacity());
+    }
+
     private static boolean nodesEqual(ExpressionNode left, ExpressionNode right) {
         return (left.type == ExpressionNode.LITERAL || left.type == ExpressionNode.CONSTANT) &&
                 (right.type == ExpressionNode.LITERAL || right.type == ExpressionNode.CONSTANT) &&
@@ -217,7 +230,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0( // left == right
@@ -229,7 +243,8 @@ final class WhereClauseParser implements Mutable {
                 m,
                 functionParser,
                 executionContext,
-                latestByMultiColumn
+                latestByMultiColumn,
+                reader
         )
                 ||
                 analyzeEquals0( // right == left
@@ -241,7 +256,8 @@ final class WhereClauseParser implements Mutable {
                         m,
                         functionParser,
                         executionContext,
-                        latestByMultiColumn
+                        latestByMultiColumn,
+                        reader
                 );
     }
 
@@ -254,7 +270,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
@@ -320,7 +337,7 @@ final class WhereClauseParser implements Mutable {
                                     model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
-                            } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
+                            } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
                                 model.keyColumn = columnName;
                                 tempKeyValues.clear();
                                 tempKeyValuePos.clear();
@@ -378,7 +395,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
 
         if (node.paramCount < 2) {
@@ -397,8 +415,8 @@ final class WhereClauseParser implements Mutable {
             throw SqlException.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(model, col, node, false, functionParser, metadata, executionContext)
-                || analyzeListOfValues(model, column, metadata, node, latestByMultiColumn)
-                || analyzeInLambda(model, column, metadata, node, latestByMultiColumn);
+                || analyzeListOfValues(model, column, metadata, node, latestByMultiColumn, reader)
+                || analyzeInLambda(model, column, metadata, node, latestByMultiColumn, reader);
     }
 
     private boolean analyzeInInterval(
@@ -502,7 +520,8 @@ final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata m,
             ExpressionNode node,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
 
         int columnIndex = m.getColumnIndex(columnName);
@@ -518,7 +537,7 @@ final class WhereClauseParser implements Mutable {
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
                     && (!Chars.equalsIgnoreCase(model.keyColumn, columnName))
-                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && !isMoreSelective(model, m, reader, columnIndex)) {
                 return false;
             }
 
@@ -571,7 +590,8 @@ final class WhereClauseParser implements Mutable {
             CharSequence columnName,
             RecordMetadata m,
             ExpressionNode node,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
@@ -582,7 +602,7 @@ final class WhereClauseParser implements Mutable {
             //
             if (model.keyColumn != null
                     && (newColumn = !Chars.equals(model.keyColumn, columnName))
-                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && !isMoreSelective(model, m, reader, columnIndex)) {
                 return false;
             }
 
@@ -654,7 +674,8 @@ final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -671,7 +692,7 @@ final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader);
         }
 
         return ok;
@@ -684,11 +705,12 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean canUseIndex
+            boolean canUseIndex,
+            TableReader reader
     ) throws SqlException {
         checkNodeValid(node);
-        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex)
-                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex);
+        return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m, functionParser, executionContext, canUseIndex, reader)
+                || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m, functionParser, executionContext, canUseIndex, reader);
     }
 
     private boolean analyzeNotEquals0(
@@ -700,7 +722,8 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             FunctionParser functionParser,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
         if (nodesEqual(a, b)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
@@ -765,7 +788,7 @@ final class WhereClauseParser implements Mutable {
                                     node.intrinsicValue = IntrinsicModel.TRUE;
                                     return false;
                                 }
-                            } else if (model.keyColumn == null || m.getIndexValueBlockCapacity(index) > m.getIndexValueBlockCapacity(model.keyColumn)) {
+                            } else if (model.keyColumn == null || isMoreSelective(model, m, reader, index)) {
                                 model.keyColumn = columnName;
                                 tempKeyValues.clear();
                                 tempKeyValuePos.clear();
@@ -799,7 +822,8 @@ final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
 
         ExpressionNode node = notNode.rhs;
@@ -824,7 +848,7 @@ final class WhereClauseParser implements Mutable {
         if (ok) {
             notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
-            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn);
+            analyzeNotListOfValues(model, column, m, node, notNode, latestByMultiColumn, reader);
         }
 
         return ok;
@@ -836,14 +860,15 @@ final class WhereClauseParser implements Mutable {
             RecordMetadata m,
             ExpressionNode node,
             ExpressionNode notNode,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, m, latestByMultiColumn)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equals(model.keyColumn, columnName))
-                    && m.getIndexValueBlockCapacity(columnIndex) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
+                    && !isMoreSelective(model, m, reader, columnIndex)) {
                 return;
             }
 
@@ -1351,10 +1376,11 @@ final class WhereClauseParser implements Mutable {
                                         FunctionParser functionParser,
                                         RecordMetadata metadata,
                                         SqlExecutionContext executionContext,
-                                        boolean latestByMultiColumn) throws SqlException {
+                                        boolean latestByMultiColumn,
+                                        TableReader reader) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINSIC_OP_IN:
-                return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
+                return analyzeIn(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_GREATER_EQ:
                 return analyzeGreater(model, node, true, functionParser, metadata, executionContext);
             case INTRINSIC_OP_GREATER:
@@ -1364,13 +1390,13 @@ final class WhereClauseParser implements Mutable {
             case INTRINSIC_OP_LESS:
                 return analyzeLess(model, node, false, functionParser, metadata, executionContext);
             case INTRINSIC_OP_EQUAL:
-                return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
+                return analyzeEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT_EQ:
-                return analyzeNotEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn);
+                return analyzeNotEquals(translator, model, node, m, functionParser, executionContext, latestByMultiColumn, reader);
             case INTRINSIC_OP_NOT:
-                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn))
+                return (isInKeyword(node.rhs.token) && analyzeNotIn(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader))
                         ||
-                        (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn));
+                        (isBetweenKeyword(node.rhs.token) && analyzeNotBetween(translator, model, node, m, functionParser, metadata, executionContext, latestByMultiColumn, reader));
             case INTRINSIC_OP_BETWEEN:
                 return analyzeBetween(translator, model, node, m, functionParser, metadata, executionContext);
             default:
@@ -1549,7 +1575,8 @@ final class WhereClauseParser implements Mutable {
             FunctionParser functionParser,
             RecordMetadata metadata,
             SqlExecutionContext executionContext,
-            boolean latestByMultiColumn
+            boolean latestByMultiColumn,
+            TableReader reader
     ) throws SqlException {
         this.tempKeyValues.clear();
         this.tempKeyExcludedValues.clear();
@@ -1572,7 +1599,7 @@ final class WhereClauseParser implements Mutable {
                 functionParser,
                 metadata,
                 executionContext,
-                latestByMultiColumn)) {
+                latestByMultiColumn, reader)) {
             createKeyValueBindVariables(model, functionParser, executionContext);
             return model;
         }
@@ -1589,7 +1616,8 @@ final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn)) {
+                            latestByMultiColumn,
+                            reader)) {
                         stack.push(node.rhs);
                     }
                     node = removeAndIntrinsics(
@@ -1600,7 +1628,8 @@ final class WhereClauseParser implements Mutable {
                             functionParser,
                             metadata,
                             executionContext,
-                            latestByMultiColumn) ? null : node.lhs;
+                            latestByMultiColumn,
+                            reader) ? null : node.lhs;
                 } else {
                     node = stack.poll();
                 }
