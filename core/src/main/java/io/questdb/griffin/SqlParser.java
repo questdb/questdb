@@ -1106,23 +1106,20 @@ public final class SqlParser {
 
                 if (isCalendarKeyword(tok)) {
                     tok = optTok(lexer);
-
-                    if (tok != null && !isSemicolon(tok)) {
-                        if (isTimeKeyword(tok)) {
-                            expectZone(lexer);
-                            model.setSampleByTimezoneName(expectExpr(lexer));
-                            tok = optTok(lexer);
-
-                            if (tok != null && isWithKeyword(tok)) {
-                                tok = parseWithOffset(lexer, model);
-                            } else {
-                                model.setSampleByOffset(nextConstant("'00:00'"));
-                            }
-                        } else if (isWithKeyword(tok)) {
+                    if (tok == null) {
+                        model.setSampleByTimezoneName(null);
+                        model.setSampleByOffset(nextConstant("'00:00'"));
+                    } else if (isTimeKeyword(tok)) {
+                        expectZone(lexer);
+                        model.setSampleByTimezoneName(expectExpr(lexer));
+                        tok = optTok(lexer);
+                        if (tok != null && isWithKeyword(tok)) {
                             tok = parseWithOffset(lexer, model);
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset' expected");
+                            model.setSampleByOffset(nextConstant("'00:00'"));
                         }
+                    } else if (isWithKeyword(tok)) {
+                        tok = parseWithOffset(lexer, model);
                     } else {
                         model.setSampleByTimezoneName(null);
                         model.setSampleByOffset(nextConstant("'00:00'"));

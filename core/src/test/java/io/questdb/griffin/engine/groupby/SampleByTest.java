@@ -2285,6 +2285,21 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
     public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
         assertQuery("k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
