@@ -73,9 +73,9 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
+    private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
-    private final BoolList symbolMapNullFlags = new BoolList();
     private final String tableName;
     private final TableSequencerAPI tableSequencerAPI;
     private final int walId;

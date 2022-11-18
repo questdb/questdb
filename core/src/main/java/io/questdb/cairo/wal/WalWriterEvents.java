@@ -45,8 +45,8 @@ class WalWriterEvents implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
-    private BoolList symbolMapNullFlags;
     private long startOffset = 0;
+    private BoolList symbolMapNullFlags;
     private long txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 

@@ -32,8 +32,8 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     private final Entry entry = new Entry();
     private int cleanSymbolCount;
     private int columnIndex = -1;
-    private int size;
     private boolean nullFlag;
+    private int size;
 
     SymbolMapDiffImpl(WalEventCursor cursor) {
         this.cursor = cursor;
