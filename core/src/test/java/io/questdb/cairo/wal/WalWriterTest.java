@@ -101,11 +101,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                }
 
-                // Windows does not allow to map beyond file length
-                // simulate it with asserts for all other platforms
-                MatcherAssert.assertThat(offset + len, lessThanOrEqualTo(super.length(fd)));
+                    // Windows does not allow to map beyond file length
+                    // simulate it with asserts for all other platforms
+                    MatcherAssert.assertThat(offset + len, lessThanOrEqualTo(super.length(fd)));
+                }
                 return super.mmap(fd, len, offset, flags, memoryTag);
             }
 
