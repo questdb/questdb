@@ -22,40 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.griffin.engine.functions.str;
 
-public interface WorkerPoolConfiguration {
-    default String getPoolName() {
-        return "worker";
-    }
-
-    default long getSleepThreshold() {
-        return 10000;
-    }
-
-    default long getSleepTimeout() {
-        return 10;
-    }
-
-    default int[] getWorkerAffinity() {
-        return null;
-    }
-
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
-    }
+public enum TrimType {
+    TRIM,
+    LTRIM,
+    RTRIM
 }

@@ -197,8 +197,8 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 Assert.fail("Update failed [e=" + e + ", sql=" + sql + "]");
                 throw new RuntimeException(e);
             } finally {
-                updatesDone.countDown();
                 Path.clearThreadLocals();
+                updatesDone.countDown();
             }
         }).start();
     }
@@ -226,9 +226,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         // wait for update threads to finish
         updatesDone.await();
 
-        // Repeat all updates after all lines are guaranteed to be landed in the tables
+        // wait for ingestion to finish
         super.waitDone();
 
+        // repeat all updates after all lines are guaranteed to be landed in the tables
         final SqlCompiler compiler = compilers[0];
         final SqlExecutionContext executionContext = executionContexts[0];
         for (String sql : updatesQueue) {

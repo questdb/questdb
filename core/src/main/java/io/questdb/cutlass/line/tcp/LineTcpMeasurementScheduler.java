@@ -70,6 +70,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
 
+    private final ObjList<TableUpdateDetails>[] assignedTables;
+
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
@@ -108,6 +110,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
             pubSeq[i] = ps;
@@ -135,6 +138,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             SCSequence subSeq = new SCSequence();
             ps.then(subSeq).then(ps);
 
+            assignedTables[i] = new ObjList<>();
+
             final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                     i,
                     q,
@@ -142,7 +147,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     milliClock,
                     commitIntervalDefault,
                     this,
-                    engine.getMetrics()
+                    engine.getMetrics(),
+                    assignedTables[i]
             );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
@@ -155,27 +161,29 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void close() {
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            closeLocals(
-                    tableUpdateDetailsUtf16);
-            closeLocals(
-                    idleTableUpdateDetailsUtf16);
+            closeLocals(tableUpdateDetailsUtf16);
+            closeLocals(idleTableUpdateDetailsUtf16);
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
         Misc.free(path);
         Misc.free(ddlMem);
+        for (int i = 0, n = assignedTables.length; i < n; i++) {
+            Misc.freeObjList(assignedTables[i]);
+            assignedTables[i].clear();
+        }
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
     }
 
     public boolean doMaintenance(
-            CharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
+            DirectByteCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf8,
             int readerWorkerId,
             long millis
     ) {
         for (int n = 0, sz = tableUpdateDetailsUtf8.size(); n < sz; n++) {
-            final CharSequence tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
+            final String tableNameUtf8 = tableUpdateDetailsUtf8.keys().get(n);
             final TableUpdateDetails tab = tableUpdateDetailsUtf8.get(tableNameUtf8);
             if (millis - tab.getLastMeasurementMillis() >= writerIdleTimeout) {
                 tableUpdateDetailsLock.writeLock().lock();
