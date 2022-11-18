@@ -294,6 +294,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                                         maxUncommitted,
                                         new Rnd());
                                 compiler.compile("drop table x", sqlExecutionContext);
+                                compiler.compile("drop table y", sqlExecutionContext);
                             }
                         }
                     }
@@ -361,6 +362,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                             new Rnd()
                     );
                     compiler.compile("drop table x", sqlExecutionContext);
+                    compiler.compile("drop table y", sqlExecutionContext);
                 });
     }
 
@@ -453,13 +455,36 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
-        TestUtils.assertEquals(sink, sink2);
+/*
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select * from x limit 100",
+                sink
+        );
 
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from x", sink);
-        TestUtils.printSql(compiler, sqlExecutionContext, "select count() from y", sink2);
+        TestUtils.printSql(
+                compiler,
+                sqlExecutionContext,
+                "select * from y limit 100",
+                sink2
+        );
+
         TestUtils.assertEquals(sink, sink2);
+*/
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select * from x",
+                "select * from y"
+        );
+
+        TestUtils.assertEquals(
+                compiler,
+                sqlExecutionContext,
+                "select count() from x",
+                "select count() from y"
+        );
     }
 
     private void insertUncommitted(
@@ -718,14 +743,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
         compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
 
-        try (
-                RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
-            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-        }
+        TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
 
         Rnd rnd = TestUtils.generateRandom(LOG);
 
@@ -765,14 +783,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
             w2.commit();
 
-            try (
-                    RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();
-                    RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                    RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-            ) {
-                TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-            }
+            TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
         }
     }
 
@@ -1347,6 +1358,10 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         for (int i = 0; i < 50; i++) {
+            System.out.println(i);
+            if(i==14) {
+                System.out.println("ok");
+            }
             final int nTotalRows = rnd.nextInt(79000);
             final long microsBetweenRows = rnd.nextLong(3090985);
             final double fraction = rnd.nextDouble();
@@ -1403,29 +1418,18 @@ public class O3MaxLagTest extends AbstractO3Test {
 
             final long o3Uncommitted = w.getO3RowCount();
 
+            long expectedRowCount = w.size() - o3Uncommitted;
+
             w.rollback();
 
-            // actual
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "y",
-                    sink
-            );
+            Assert.assertEquals(expectedRowCount, w.size());
 
-            // expected
-            // take the rows we inserted, order them by timestamp and then take all, but last "uncommitted" rows
-            TestUtils.printSql(
+            TestUtils.assertEquals(
                     compiler,
                     sqlExecutionContext,
                     "(z limit " + lim + ") order by ts limit " + (lim - o3Uncommitted),
-                    sink2
+                    "y"
             );
-
-            TestUtils.assertEquals(sink2, sink);
-
-            sink.clear();
-            sink2.clear();
 
             // insert remaining data (that we did not try to insert yet)
             insertUncommitted(compiler, sqlExecutionContext, "z limit " + lim + ", " + nTotalRows, w);
@@ -1515,29 +1519,29 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "select count() from x where str = 'aa'", sink,
                 "count\n" +
                         aaCount + "\n");
-        TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink2);
+        compiler.compile("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test")) {
             int halfCount = appendCount / 2;
             appendRows(tw, halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
 
-            TestUtils.assertSql(
+            TestUtils.assertEquals(
                     compiler,
                     sqlExecutionContext,
-                    "select * from x where str = 'aa'",
-                    sink,
-                    sink2);
+                    "y",
+                    "select * from x where str = 'aa'"
+            );
 
             appendRows(tw, appendCount - halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
 
-            TestUtils.assertSql(
+            TestUtils.assertEquals(
                     compiler,
                     sqlExecutionContext,
-                    "select * from x where str = 'aa'",
-                    sink,
-                    sink2);
+                    "y",
+                    "select * from x where str = 'aa'"
+            );
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1548,12 +1552,12 @@ public class O3MaxLagTest extends AbstractO3Test {
             engine.releaseAllWriters();
         }
 
-        TestUtils.assertSql(
+        TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
-                "select * from x where str = 'aa'",
-                sink,
-                sink2);
+                "y",
+                "select * from x where str = 'aa'"
+        );
     }
 
     private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
