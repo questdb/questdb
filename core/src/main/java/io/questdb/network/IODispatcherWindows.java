@@ -63,10 +63,14 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         long cursor;
         boolean useful = false;
         while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
+            if (operation == IOOperation.WRITE_LOWPRIO) {
+                operation = IOOperation.WRITE;
+            } else {
+                useful = true;
+            }
             interestSubSeq.done(cursor);
 
             int r = pending.addRow();
@@ -148,11 +152,10 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         for (int i = 0, n = pending.size(); i < n; ) {
             final long ts = pending.get(i, M_TIMESTAMP);
             final long fd = pending.get(i, M_FD);
-            final int _new_op = fds.get(fd);
+            final int newOp = fds.get(fd);
             assert fd != serverFd;
 
-            if (_new_op == -1) {
-
+            if (newOp == -1) {
                 // check if expired
                 if (ts < deadline) {
                     doDisconnect(pending.get(i), DISCONNECT_SRC_IDLE);
@@ -174,12 +177,13 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
                 // publish event
                 // and remove from pending
                 final C context = pending.get(i);
+                useful |= !context.isLowPriority();
 
-                if ((_new_op & SelectAccessor.FD_READ) > 0) {
+                if ((newOp & SelectAccessor.FD_READ) > 0) {
                     publishOperation(IOOperation.READ, context);
                 }
 
-                if ((_new_op & SelectAccessor.FD_WRITE) > 0) {
+                if ((newOp & SelectAccessor.FD_WRITE) > 0) {
                     publishOperation(IOOperation.WRITE, context);
                 }
                 pending.deleteRow(i);

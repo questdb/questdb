@@ -93,10 +93,14 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         int count = 0;
         int offset = 0;
         while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
             final IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
+            if (operation == IOOperation.WRITE_LOWPRIO) {
+                operation = IOOperation.WRITE;
+            } else {
+                useful = true;
+            }
             interestSubSeq.done(cursor);
 
             long id = fdid++;
@@ -169,6 +173,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 // this is server socket, accept if there aren't too many already
                 if (fd == serverFd) {
                     accept(timestamp);
+                    useful = true;
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
@@ -180,7 +185,9 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                         continue;
                     }
 
-                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, pending.get(row));
+                    C context = pending.get(row);
+                    useful |= !context.isLowPriority();
+                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? IOOperation.READ : IOOperation.WRITE, context);
                     pending.deleteRow(row);
                     watermark--;
                 }
@@ -190,7 +197,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
             if (watermark < pending.size()) {
                 enqueuePending(watermark);
             }
-            useful = true;
         }
 
         // process timed out connections

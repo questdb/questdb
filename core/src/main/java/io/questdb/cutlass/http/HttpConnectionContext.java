@@ -219,6 +219,11 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     }
 
     @Override
+    public boolean isLowPriority() {
+        return resumeProcessor != null;
+    }
+
+    @Override
     public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
         HttpConnectionContext r = super.of(fd, dispatcher);
         this.responseSink.of(fd);
@@ -294,7 +299,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                         .$(Thread.currentThread().getId()).$(']').$();
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                getDispatcher().registerChannel(this, IOOperation.WRITE);
+                getDispatcher().registerChannel(this, IOOperation.WRITE_LOWPRIO);
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(fd).$(']').$();
                 dispatcher.disconnect(this, DISCONNECT_REASON_KICKED_OUT_AT_RERUN);
@@ -616,7 +621,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
                 // event off to dispatcher
                 processor.parkRequest(this, true);
                 resumeProcessor = processor;
-                dispatcher.registerChannel(this, IOOperation.WRITE);
+                dispatcher.registerChannel(this, IOOperation.WRITE_LOWPRIO);
                 busyRecv = false;
             }
         } catch (HttpException e) {
@@ -640,7 +645,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
             } catch (QueryPausedException ignore) {
                 resumeProcessor.parkRequest(this, true);
                 LOG.debug().$("partition is in cold storage").$();
-                dispatcher.registerChannel(this, IOOperation.WRITE);
+                dispatcher.registerChannel(this, IOOperation.WRITE_LOWPRIO);
             } catch (PeerDisconnectedException ignore) {
                 handlePeerDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
             } catch (ServerDisconnectException ignore) {

@@ -69,12 +69,18 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     }
 
     private boolean processRegistrations(long timestamp) {
+        boolean useful = false;
         long cursor;
         int offset = 0;
         while ((cursor = interestSubSeq.next()) > -1) {
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
+            if (operation == IOOperation.WRITE_LOWPRIO) {
+                operation = IOOperation.WRITE;
+            } else {
+                useful = true;
+            }
             interestSubSeq.done(cursor);
 
             int fd = (int) context.getFd();
@@ -98,7 +104,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         if (offset > 0) {
             LOG.debug().$("reg").$();
         }
-        return offset > 0;
+
+        return useful;
     }
 
     @Override
@@ -135,6 +142,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
                     accept(timestamp);
+                    useful = true;
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
@@ -145,9 +153,11 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                         continue;
                     }
 
+                    C context = pending.get(row);
+                    useful |= !context.isLowPriority();
                     publishOperation(
                             (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
-                            pending.get(row)
+                            context
                     );
                     pending.deleteRow(row);
                     watermark--;
@@ -158,7 +168,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
             if (watermark < pending.size()) {
                 enqueuePending(watermark);
             }
-            useful = true;
         }
 
         // process timed out connections
