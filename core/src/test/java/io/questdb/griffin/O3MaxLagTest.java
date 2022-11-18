@@ -765,23 +765,6 @@ public class O3MaxLagTest extends AbstractO3Test {
             replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
             w2.commit();
 
-/*
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "(y order by ts) limit 100",
-                    sink
-            );
-
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "x limit 100",
-                    sink2
-            );
-
-            TestUtils.assertEquals(sink, sink2);
-*/
             try (
                     RecordCursorFactory f1 = compiler.compile("y order by ts", sqlExecutionContext).getRecordCursorFactory();
                     RecordCursorFactory f2 = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory();

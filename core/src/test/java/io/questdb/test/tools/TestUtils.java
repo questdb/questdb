@@ -1302,6 +1302,7 @@ public final class TestUtils {
                     )
             );
         }
+        metadata.setTimestampIndex(src.getTimestampIndex());
         return metadata;
     }
 

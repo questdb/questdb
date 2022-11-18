@@ -55,6 +55,7 @@ public class FuzzTransactionGenerator {
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int metaVersion = 0;
+        RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 
         long lastTimestamp = minTimestamp;
         double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert;
@@ -69,23 +70,23 @@ public class FuzzTransactionGenerator {
             double transactionType = rnd.nextDouble();
             if (transactionType < probabilityOfRemovingColumn) {
                 // generate column remove
-                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, metadata);
+                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
-                    metadata = newTableMetadata;
+                    meta = newTableMetadata;
                 }
             } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn) {
                 // generate column rename
-                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, metadata);
+                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
-                    metadata = newTableMetadata;
+                    meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn && getNonDeletedColumnCount(metadata) < MAX_COLUMNS) {
+            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 // generate column add
-                metadata = generateAddColumn(transactionList, metaVersion++, rnd, metadata);
+                meta = generateAddColumn(transactionList, metaVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
