@@ -1113,6 +1113,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return txWriter.getPartitionCount();
     }
 
+    public boolean getPartitionIsRO(int partitionIndex) {
+        return partitionIndex >= 0 && txWriter.getPartitionIsRO(partitionIndex);
+    }
+
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }

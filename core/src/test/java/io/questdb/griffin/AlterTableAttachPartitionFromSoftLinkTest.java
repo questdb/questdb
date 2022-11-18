@@ -377,11 +377,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             txn++;
 
                             // update a row toward the end of the partition
+                            // takes no effect, no commit
                             executeOperation(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
                                     CompiledQuery.UPDATE
                             );
-                            txn++;
 
                             // insert a row at the beginning of the partition, this will result in the original folder being
                             // copied across to table data space (hot), with a new txn, the original folder's content are NOT
@@ -415,7 +415,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                     "l\ti\ts\tts\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
-                                            "13\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" + // <-- update was skipped, l would have been 13
                                             "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n" +
                                             "0\t0\tø\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
                             );
@@ -423,7 +423,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                     "l\ti\ts\tts\n" +
                                             "-1\t-1\tµ\t2022-10-17T00:00:00.100005Z\n" +
                                             "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
-                                            "13\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
+                                            "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" + // <-- update was skipped, l would have been 13
                                             "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                             "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n"
                             );
@@ -750,6 +750,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             });
 
                             // execute an update directly on the cold storage partition
+                            // it will not fail, but it will not take effect either, and
+                            // a line will be logged:
+                            // skipping RO partition [partitionIndex=0, rowPartitionTs=2022-10-17T00:00:00.000000Z]
                             executeOperation(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
                                     CompiledQuery.UPDATE
@@ -759,7 +762,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
                                     "l\ti\ts\tts\n" +
-                                            "13\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
+                                            "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" + // update is skipped, l would have been 13
                                             "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
                                             "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                             "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +

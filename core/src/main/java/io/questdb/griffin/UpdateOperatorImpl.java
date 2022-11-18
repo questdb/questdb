@@ -144,6 +144,14 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
                     final long currentRow = Rows.toLocalRowID(rowId);
 
+                    if (rowPartitionIndex >= 0 && tableWriter.getPartitionIsRO(rowPartitionIndex)) {
+                        LOG.info()
+                                .$("skipping RO partition [partitionIndex=").$(rowPartitionIndex)
+                                .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                .I$();
+                        continue;
+                    }
+
                     if (rowPartitionIndex != partitionIndex) {
                         if (partitionIndex > -1) {
                             LOG.info()
