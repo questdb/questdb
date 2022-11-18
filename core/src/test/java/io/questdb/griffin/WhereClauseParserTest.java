@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -52,6 +53,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static TableReader noDesignatedTimestampNorIdxReader;
     private static RecordMetadata noTimestampMetadata;
     private static TableReader noTimestampReader;
+    private static RecordMetadata nonEmptyMetadata;
+    private static TableReader nonEmptyReader;
     private static TableReader reader;
     private static SqlExecutionContext sqlExecutionContext;
     private static RecordMetadata unindexedMetadata;
@@ -69,6 +72,21 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
+
+        //same as x but with different number of values in symbol maps  
+        try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
+            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
+                    .timestamp();
+
+            CairoTestUtils.create(model);
+        }
+
         try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL)
                     .col("bid", ColumnType.DOUBLE)
@@ -82,26 +100,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
 
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).indexed(true, 16)
+            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
                     .col("bid", ColumnType.DOUBLE)
                     .col("ask", ColumnType.DOUBLE)
                     .col("bidSize", ColumnType.INT)
                     .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).indexed(true, 4)
-                    .col("ex", ColumnType.SYMBOL).indexed(true, 4)
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
 
             CairoTestUtils.create(model);
         }
 
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).indexed(true, 16)
+            model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
                     .col("bid", ColumnType.DOUBLE)
                     .col("ask", ColumnType.DOUBLE)
                     .col("bidSize", ColumnType.INT)
                     .col("askSize", ColumnType.INT)
-                    .col("mode", ColumnType.SYMBOL).indexed(true, 4)
-                    .col("ex", ColumnType.SYMBOL).indexed(true, 4);
+                    .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4);
             CairoTestUtils.create(model);
         }
 
@@ -112,9 +130,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("bidSize", ColumnType.INT)
                     .col("askSize", ColumnType.INT)
                     .col("mode", ColumnType.SYMBOL)
-                    .col("ex", ColumnType.SYMBOL).indexed(true, 4)
+                    .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
             CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "v", Metrics.disabled())) {
+            TableWriter.Row row = writer.newRow(0);
+            row.putSym(0, "sym1");
+            row.putSym(5, "mode1");
+            row.append();
+
+            row = writer.newRow(1);
+            row.putSym(0, "sym2");
+            row.putSym(5, "mode1");
+            row.append();
+
+            writer.commit();
         }
 
         reader = new TableReader(configuration, "x");
@@ -128,6 +160,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         noDesignatedTimestampNorIdxReader = new TableReader(configuration, "w");
         noDesignatedTimestampNorIdxMetadata = noDesignatedTimestampNorIdxReader.getMetadata();
+
+        nonEmptyReader = new TableReader(configuration, "v");
+        nonEmptyMetadata = nonEmptyReader.getMetadata();
 
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(engine);
@@ -148,6 +183,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         noTimestampReader.close();
         unindexedReader.close();
         noDesignatedTimestampNorIdxReader.close();
+        nonEmptyReader.close();
         compiler.close();
         sqlExecutionContext.close();
         TestUtils.removeTestPath(root);
@@ -233,6 +269,26 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadDateInInterval() {
+        try {
+            modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[12] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBadEndDate() {
+        try {
+            modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            TestUtils.assertEquals("[42] Invalid date", e.getMessage());
+        }
+    }
+
+    @Test
     public void testBadEpochInLess() {
         try {
             modelOf("'1663676011000000' < timestamp");
@@ -254,22 +310,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBadDateInInterval() {
+    public void testBadEqualsEpoch() {
         try {
-            modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
-            Assert.fail();
+            modelOf("timestamp = '1583077401000000'");
+            Assert.fail("Exception expected");
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Invalid date", e.getMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(12, e.getPosition());
         }
     }
 
     @Test
-    public void testBadEndDate() {
+    public void testBadNotEqualsEpoch() {
         try {
-            modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
+            modelOf("timestamp != '1583077401000000'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
-            TestUtils.assertEquals("[42] Invalid date", e.getMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
+            Assert.assertEquals(13, e.getPosition());
         }
     }
 
@@ -321,30 +379,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
             Assert.assertEquals(14, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testBadEqualsEpoch() {
-        try{
-            modelOf("timestamp = '1583077401000000'");
-            Assert.fail("Exception expected");
-        }
-        catch (SqlException e){
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
-            Assert.assertEquals(12, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testBadNotEqualsEpoch() {
-        try{
-            modelOf("timestamp != '1583077401000000'");
-            Assert.fail("Exception expected");
-        }
-        catch (SqlException e){
-            TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date");
-            Assert.assertEquals(13, e.getPosition());
         }
     }
 
@@ -464,59 +498,67 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testConstVsLambda() throws Exception {
-        runWhereSymbolTest("ex in (1,2) and sym in (select * from xyz)", "ex in (1,2)");
+        runWhereSymbolTest("sym in (1,2) and ex in (select * from xyz)", "sym in (1,2)");
     }
 
     @Test
     public void testConstVsLambda2() throws Exception {
-        runWhereSymbolTest("sym in (1,2) and sym in (select * from xyz)", "sym in (1,2)");
+        runWhereSymbolTest("ex in (1,2) and ex in (select * from xyz)", "ex in (1,2)");
     }
 
     @Test
     public void testContradictingNullSearch() throws Exception {
-        IntrinsicModel m = modelOf("sym = null and sym != null and ex != 'blah'");
+        IntrinsicModel m = modelOf("ex = null and ex != null and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=");
+        assertFilter(m, "'blah'sym!=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testContradictingNullSearch10() throws Exception {
-        IntrinsicModel m = modelOf("sym = null and sym != null and ex = 'blah'");
+        IntrinsicModel m = modelOf("ex = null and ex != null and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'ex=");
+        assertFilter(m, "'blah'sym=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testContradictingNullSearch11() throws Exception {
-        IntrinsicModel m = modelOf("sym = null and null != sym and ex = 'blah'");
+        IntrinsicModel m = modelOf("ex = null and null != ex and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'ex=");
+        assertFilter(m, "'blah'sym=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testContradictingNullSearch2() throws Exception {
-        IntrinsicModel m = modelOf("null = sym and null != sym and ex != 'blah'");
+        IntrinsicModel m = modelOf("null = ex and null != ex and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=");
+        assertFilter(m, "'blah'sym!=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
-    public void testContradictingNullSearch3() throws Exception {
+    public void testContradictingNullSearch3a() throws Exception {
         IntrinsicModel m = modelOf("sym = null and ex = 'blah' and sym != null");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "nullsym!=nullsym=and");
+        Assert.assertEquals("[blah]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test
+    public void testContradictingNullSearch3b() throws Exception {
+        IntrinsicModel m = modelOf("ex = null and sym = 'blah' and ex != null");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'ex=");
+        assertFilter(m, "'blah'sym=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
     public void testContradictingNullSearch4() throws Exception {
-        IntrinsicModel m = modelOf("sym != null and sym = null and ex != 'blah'");
+        IntrinsicModel m = modelOf("ex != null and ex = null and sym != 'blah'");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        assertFilter(m, "'blah'ex!=");
+        assertFilter(m, "'blah'sym!=");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -546,9 +588,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testContradictingSearch14() throws Exception {
-        IntrinsicModel m = modelOf("sym = 'ho' and not ex in ('blah') and not sym in (null, 'ho')");
+        IntrinsicModel m = modelOf("ex = 'ho' and not sym in ('blah') and not ex in (null, 'ho')");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
-        assertFilter(m, "'blah'exinnot");
+        assertFilter(m, "'blah'syminnot");
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -617,27 +659,27 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
-        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
-    }
-
-    @Test
-    public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
-        runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
-                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
-    }
-
-    @Test
     public void testDesTimestampGreaterAndLess() throws Exception {
         runWhereTest("timestamp > '2015-02-23' and timestamp < '2015-02-24'",
                 "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
     }
 
     @Test
+    public void testDesTimestampGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= '2015-02-23' and timestamp <= '2015-02-24'",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
+    }
+
+    @Test
     public void testDesTimestampWithEpochGreaterAndLess() throws Exception {
         runWhereTest("timestamp > 1424649600000000 and timestamp < 1424736000000000",
                 "[{lo=2015-02-23T00:00:00.000001Z, hi=2015-02-23T23:59:59.999999Z}]");
+    }
+
+    @Test
+    public void testDesTimestampWithEpochGreaterAndLessOrEqual() throws Exception {
+        runWhereTest("timestamp >= 1424649600000000 and timestamp <= 1424736000000000",
+                "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-24T00:00:00.000000Z}]");
     }
 
     @Test
@@ -661,17 +703,30 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testEqualsChoiceOfColumns() throws Exception {
         IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
-        assertFilter(m, "'Y'ex=");
+        assertFilter(m, "'X'sym=");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[Y]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test//both indexed columns have the same number of symbols (0) but different capacities
+    public void testEqualsChoiceOfColumns2() throws Exception {
+        IntrinsicModel m = modelOf("mode = 'X' and ex = 'Y'");
+        assertFilter(m, "'X'mode=");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[Y]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test//indexed columns have different number of symbols  
+    public void testEqualsChoiceOfColumns3() throws Exception {
+        IntrinsicModel m = nonEmptyModelOf("sym = 'X' and ex = 'Y' and mode = 'Z'");
+        assertFilter(m, "'Z'mode='Y'ex=and");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
-    public void testEqualsChoiceOfColumns2() throws Exception {
-        IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
-        assertFilter(m, "'Y'ex=");
-        TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
+    public void testEqualsEpochTimestamp() throws Exception {
+        runWhereTest("timestamp = 1424649600000000", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -754,12 +809,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testEqualsToEpochInterval() throws Exception {
         runWhereTest("timestamp in 1424649600000000",
                 "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
-    }
-
-
-    @Test
-    public void testEqualsEpochTimestamp() throws Exception {
-        runWhereTest("timestamp = 1424649600000000", "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
     }
 
     @Test
@@ -1124,12 +1173,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaVsConst() throws Exception {
-        runWhereSymbolTest("sym in (select a from xyz) and ex in (1,2)", "ex in (1,2)");
+        runWhereSymbolTest("ex in (select a from xyz) and sym in (1,2)", "sym in (1,2)");
     }
 
     @Test
     public void testLambdaVsLambda() throws Exception {
-        runWhereSymbolTest("ex in (select * from abc) and sym in (select * from xyz)", "ex in (select-choose * from (abc))");
+        runWhereSymbolTest("sym in (select * from abc) and ex in (select * from xyz)", "sym in (select-choose * from (abc))");
     }
 
     @Test
@@ -1325,15 +1374,21 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testNotEqualsDoesNotOverlapWithIn() throws Exception {
-        IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'z' and ex != 'blah'");
-        assertFilter(m, "'blah'ex!=");
+        IntrinsicModel m = modelOf("ex in ('x','y') and ex != 'z' and sym != 'blah'");
+        assertFilter(m, "'blah'sym!=");
         Assert.assertEquals("[x,y]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
     @Test
+    public void testNotEqualsEpochTimestamp() throws Exception {
+        runWhereIntervalTest0("timestamp != 1583077401000000", "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
     public void testNotEqualsOverlapWithIn() throws Exception {
-        IntrinsicModel m = modelOf("sym in ('x','y') and sym != 'y' and ex != 'blah'");
-        assertFilter(m, "'blah'ex!=");
+        IntrinsicModel m = modelOf("ex in ('x','y') and ex != 'y' and sym != 'blah'");
+        assertFilter(m, "'blah'sym!=");
+        Assert.assertEquals("ex", m.keyColumn.toString());
         Assert.assertEquals("[x]", keyValueFuncsToString(m.keyValueFuncs));
     }
 
@@ -1343,12 +1398,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         Assert.assertNull(m.filter);
         Assert.assertEquals("[y]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
-
-    @Test
-    public void testNotEqualsEpochTimestamp() throws Exception {
-        runWhereIntervalTest0("timestamp != 1583077401000000", "[{lo=, hi=2020-03-01T15:43:20.999999Z},{lo=2020-03-01T15:43:21.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
-    }
-
 
     @Test
     public void testNotIn() throws Exception {
@@ -1568,15 +1617,15 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleQuoteInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
+    public void testSingleEpochInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in (1388579400000000, 1388665800000000)");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
         Assert.assertNull(m.filter);
     }
 
     @Test
-    public void testSingleEpochInterval() throws Exception {
-        IntrinsicModel m = modelOf("timestamp in (1388579400000000, 1388665800000000)");
+    public void testSingleQuoteInterval() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z')");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
         Assert.assertNull(m.filter);
     }
@@ -1585,8 +1634,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testThreeIntrinsics() throws Exception {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
-        TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a,b]", keyValueFuncsToString(m.keyValueFuncs));
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-01T12:30:00.000000Z},{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
@@ -1594,10 +1643,21 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testThreeIntrinsics2() throws Exception {
         IntrinsicModel m;
         m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100 and ask < 110");
-        assertFilter(m, "110ask<100bid>'c'exinandand");
-        TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals("[a,b]", keyValueFuncsToString(m.keyValueFuncs));
+        assertFilter(m, "110ask<100bid>'b''a'syminandand");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
+    }
+
+    @Test
+    public void testTimestampEpochEqualsLongConst() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        try {
+            runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
+                    "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
+        } finally {
+            currentMicros = -1;
+        }
     }
 
     @Test
@@ -1618,17 +1678,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereCompareToModelTest("timestamp = now()",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
-    }
-
-    @Test
-    public void testTimestampEpochEqualsLongConst() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
-        try {
-            runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
-                    "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
-        } finally {
-            currentMicros = -1;
-        }
     }
 
     @Test
@@ -1835,7 +1884,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoDiffColLambdas() throws Exception {
         IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
-        TestUtils.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("ex", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals(ExpressionNode.QUERY, m.filter.rhs.type);
@@ -2039,7 +2088,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                false);
+                false,
+                reader);
     }
 
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
@@ -2053,7 +2103,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                false);
+                false,
+                noDesignatedTimestampNorIdxReader);
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
@@ -2067,7 +2118,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                false);
+                false,
+                noTimestampReader);
+    }
+
+    private IntrinsicModel nonEmptyModelOf(CharSequence seq) throws SqlException {
+        queryModel.clear();
+        return e.extract(
+                column -> column,
+                compiler.testParseExpression(seq, queryModel),
+                nonEmptyMetadata,
+                null,
+                nonEmptyMetadata.getTimestampIndex(),
+                functionParser,
+                metadata,
+                sqlExecutionContext,
+                false,
+                nonEmptyReader);
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
@@ -2105,7 +2172,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private void runWhereSymbolTest(String where, String toRpn) throws SqlException {
         IntrinsicModel m = modelOf(where);
-        TestUtils.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("ex", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
         TestUtils.assertEquals(toRpn, GriffinParserTestUtils.toRpn(m.filter));
@@ -2173,7 +2240,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 functionParser,
                 metadata,
                 sqlExecutionContext,
-                false);
+                false,
+                unindexedReader);
     }
 
     @FunctionalInterface

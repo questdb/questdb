@@ -35,6 +35,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
@@ -93,7 +94,7 @@ public class WalEventCursor {
 
     public void reset() {
         memSize = eventMem.size();
-        nextOffset = Integer.BYTES; // skip wal meta version
+        nextOffset = WALE_HEADER_SIZE; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
     }
