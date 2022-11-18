@@ -158,7 +158,6 @@ The development environment for frontend can run on it's own, but will require Q
 2. Run published QuestDB version, for example, with docker. More details
    can be found in the [readme of this repository](./README.md)
 
-
 # Before you submit
 
 ## Testing
