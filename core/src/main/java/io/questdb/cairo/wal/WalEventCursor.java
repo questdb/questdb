@@ -61,6 +61,10 @@ public class WalEventCursor {
                     offset = o;
                     break;
                 }
+
+                final int strLength = eventMem.getStrLen(o);
+                final long storageLength = Vm.getStorageLength(strLength);
+                o += storageLength;
             } else {
                 throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
                         .put(", required=").put(o + Integer.BYTES);
