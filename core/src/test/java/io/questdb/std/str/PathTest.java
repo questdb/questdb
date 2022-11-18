@@ -31,11 +31,13 @@ import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class PathTest {
 
@@ -200,49 +202,98 @@ public class PathTest {
 
     @Test
     public void testThreadLocal() {
-        Path.getThreadLocal("some/random/text/which/should/be/ignored");
-        path = Path.getThreadLocal("root");
-        path.concat("tableName").slash$();
-        TestUtils.assertEquals("root/tableName/", path);
-        Assert.assertEquals(15, path.length());
+        String root = "" + Files.SEPARATOR;
+        Path path = Path.getThreadLocal(root);
+        path.concat("banana");
+        Assert.assertEquals(7, path.length());
+        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
+        path.$();
+        Assert.assertEquals(7, path.length());
+        Assert.assertEquals("" + Files.SEPARATOR + "banana", path.toString());
     }
 
-    //    @Test
+    @Test
     public void testThreadLocalMultiThreaded() {
-        int numThreads = 5;
+        int numThreads = 9;
+        SOCountDownLatch started = new SOCountDownLatch(numThreads);
         SOCountDownLatch completed = new SOCountDownLatch(numThreads);
         AtomicBoolean keepRunning = new AtomicBoolean(true);
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        for (int i = 0; i < numThreads; i++) {
-            int threadId = i;
-            executor.submit(() -> {
-                String root = Files.SEPARATOR + "thread" + threadId + Files.SEPARATOR + "dbRoot";
-                String expected1 = root + Files.SEPARATOR + "table" + Files.SEPARATOR;
-                String expected2 = expected1 + "partition" + Files.SEPARATOR;
-                while (keepRunning.get()) {
-                    Path path = Path.getThreadLocal(root);
-                    path.concat("table").slash$();
-                    Assert.assertEquals(expected1, path);
-                    Assert.assertEquals(22, path.length());
-                    Assert.assertFalse(Files.exists(path));
-                    path.concat("partition").slash$();
-                    Assert.assertEquals(expected2, path);
-                    Assert.assertEquals(32, path.length());
-                    Os.pause();
-                }
-                completed.countDown();
+        AtomicInteger failCount = new AtomicInteger();
+        ExecutorService executor = null;
+        ConcurrentHashMap<Integer, AtomicLong> stats = new ConcurrentHashMap<>();
+        if (numThreads > 0) {
+            ThreadFactory threadFactory = Executors.defaultThreadFactory();
+            executor = Executors.newFixedThreadPool(numThreads, runnable -> {
+                Thread thread = threadFactory.newThread(runnable);
+                thread.setDaemon(true);
+                return thread;
             });
+            for (int i = 0; i < numThreads; i++) {
+                int threadId = i;
+                executor.submit(() -> {
+                    String threadName = "thread" + threadId;
+                    Thread.currentThread().setName(threadName);
+                    String root = Files.SEPARATOR + threadName + Files.SEPARATOR + "dbRoot"; // 15
+                    String expected1 = root + Files.SEPARATOR + "table" + Files.SEPARATOR; // 22
+                    String expected2 = expected1 + "partition" + Files.SEPARATOR; // 32
+                    started.countDown();
+                    try {
+                        while (keepRunning.get()) {
+                            Path path = Path.getThreadLocal(root);
+                            path.concat("table").slash$();
+                            Assert.assertEquals(expected1, path.toString());
+                            Assert.assertEquals(22, path.length());
+                            Assert.assertFalse(Files.exists(path));
+                            path.concat("partition").slash$();
+                            Assert.assertEquals(expected2, path.toString());
+                            Assert.assertEquals(32, path.length());
+                            AtomicLong count = stats.get(threadId);
+                            if (count == null) {
+                                stats.put(threadId, count = new AtomicLong());
+                            }
+                            count.incrementAndGet();
+                            Os.pause();
+                        }
+                    } catch (Throwable err) {
+                        failCount.incrementAndGet();
+                        err.printStackTrace();
+                        Assert.fail(err.getMessage());
+                    } finally {
+                        completed.countDown();
+                    }
+                });
+            }
+            started.await();
         }
 
-        String root = "" + Files.SEPARATOR;
-        for (int i = 0; i < 51; i++) {
-            Path path = Path.getThreadLocal(root);
-            path.concat("banana");
+        try {
+            String root = "" + Files.SEPARATOR;
+            String expected1 = root + "banana" + Files.SEPARATOR;
+            String expected2 = expected1 + "party" + Files.SEPARATOR;
+            for (int i = 0; i < 10; i++) {
+                Path path = Path.getThreadLocal(root);
+                path.concat("banana").slash$();
+                Assert.assertEquals(expected1, path.toString());
+                Assert.assertEquals(8, path.length());
+                Assert.assertFalse(Files.exists(path));
+                path.concat("party").slash$();
+                Assert.assertEquals(expected2, path.toString());
+                Assert.assertEquals(14, path.length());
+                Os.sleep(20L);
+            }
+        } finally {
+            keepRunning.set(false);
+            if (numThreads > 0) {
+                completed.await();
+                executor.shutdown();
+            }
+            Assert.assertEquals(0, failCount.get());
+            for (int i = 0; i < numThreads; i++) {
+                AtomicLong count = stats.get(i);
+                Assert.assertNotNull(count);
+                Assert.assertTrue(count.get() > 0);
+            }
         }
-
-        keepRunning.set(false);
-        completed.await();
-        executor.shutdown();
     }
 
     @Test
