@@ -30,6 +30,7 @@ import io.questdb.std.*;
 import io.questdb.tasks.ColumnPurgeTask;
 import org.junit.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
@@ -67,6 +68,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "TUNGSTEN",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // add column ss of type symbol
                             executeOperation("ALTER TABLE " + tableName + " ADD COLUMN ss SYMBOL", CompiledQuery.ALTER);
 
@@ -111,6 +121,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "SNOW",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // detach the partition which was attached from soft link,
                             // will result in the link being removed
                             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
@@ -175,6 +194,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "BILBAO",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // drop the index on symbol column s
                             executeOperation(
                                     "ALTER TABLE " + tableName + " ALTER COLUMN s DROP INDEX",
@@ -220,6 +248,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "IGLOO",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // drop the partition which was attached from soft link
                             compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -249,7 +286,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
     public void testDropPartitionWhileThereIsAReader() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = "table101";
+            final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
             attachPartitionFromSoftLink(
                     tableName,
@@ -260,6 +297,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "FINLAND",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                                 // drop the partition which was attached via soft link
                                 compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
@@ -317,6 +363,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "S3",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // insert a row at the end of the partition
                             executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + partitionName + "T23:59:59.500001Z')");
                             txn++;
@@ -384,6 +439,120 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
     }
 
     @Test
+    public void testPurgePartitions() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            String tableName = testName.getMethodName();
+            String[] partitionName = {
+                    "2022-10-17",
+                    "2022-10-18",
+                    "2022-10-19",
+                    "2022-10-20",
+                    "2022-10-21",
+                    "2022-10-22",
+            };
+            int partitionCount = partitionName.length;
+            String expectedMinTimestamp = "2022-10-17T00:00:51.839900Z";
+            String expectedMaxTimestamp = "2022-10-22T23:59:59.000000Z";
+            String otherLocation = "CON-CHIN-CHINA";
+            int txn = 0;
+            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(
+                        1,
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                                .timestamp("ts"),
+                        10000,
+                        partitionName[0],
+                        partitionCount
+                );
+            }
+            txn++;
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
+
+            // detach all partitions but last two and them from soft link
+            path.of(configuration.getRoot()).concat(tableName);
+            int pathLen = path.length();
+            for (int i = 0; i < partitionCount - 2; i++) {
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                txn++;
+                copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName[i], otherLocation);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                txn++;
+
+                // verify that the link has been renamed to what we expect
+                // note that the default value for server.conf
+                path.trimTo(pathLen).concat(partitionName[i]);
+                TableUtils.txnPartitionConditionally(path, txn - 1);
+                Assert.assertTrue(Files.exists(path.$()));
+            }
+
+            // verify RO flag
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                for (int i = 0; i < partitionCount - 2; i++) {
+                    Assert.assertTrue(txFile.getPartitionIsRO(i));
+                }
+                Assert.assertFalse(txFile.getPartitionIsRO(partitionCount - 2));
+                Assert.assertFalse(txFile.getPartitionIsRO(partitionCount - 1));
+            }
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
+
+            // create a reader, which will prevent partitions from being immediately purged
+            try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                // drop all partitions but the most recent
+                for (int i = 0, expectedTxn = 2; i < partitionCount - 2; i++, expectedTxn += 2) {
+                    compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[i] + "'", sqlExecutionContext);
+                    path.trimTo(pathLen).concat(partitionName[i]);
+                    TableUtils.txnPartitionConditionally(path, expectedTxn);
+                    Assert.assertTrue(Files.exists(path.$()));
+                }
+                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName[partitionCount - 2] + "'", sqlExecutionContext);
+                path.trimTo(pathLen).concat(partitionName[partitionCount - 2]);
+                Assert.assertTrue(Files.exists(path.$()));
+            }
+            engine.releaseAllReaders();
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            "2022-10-22T00:00:33.726600Z\t2022-10-22T23:59:59.000000Z\t1667\n");
+
+            // purge partitions
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseInactive();
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1)) {
+                while (purgeJob.run(0)) {
+                    Os.pause();
+                }
+            }
+
+            // verify cold storage still exists
+            other.of(new File(temp.getRoot(), otherLocation).getAbsolutePath()).concat(tableName);
+            int otherLen = other.length();
+            AtomicInteger fileCount = new AtomicInteger();
+            for (int i = 0; i < partitionCount - 2; i++) {
+                other.trimTo(otherLen).concat(partitionName[i]).put(TableUtils.DETACHED_DIR_MARKER).$();
+                Assert.assertTrue(Files.exists(other));
+                fileCount.set(0);
+                ff.walk(other, (file, type) -> fileCount.incrementAndGet());
+                Assert.assertTrue(fileCount.get() > 0);
+            }
+            // verify all partitions but last one are gone
+            for (int i = 0; i < partitionCount - 1; i++) {
+                path.trimTo(pathLen).concat(partitionName[i]).$();
+                Assert.assertFalse(Files.exists(path));
+            }
+        });
+    }
+
+    @Test
     public void testRemoveColumn() throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
@@ -398,6 +567,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "REFRIGERATOR",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // remove column s of type symbol
                             executeOperation(
                                     "ALTER TABLE " + tableName + " DROP COLUMN s",
@@ -482,6 +660,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "ESPAÑA",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             // add column ss of type symbol
                             executeOperation(
                                     "ALTER TABLE " + tableName + " RENAME COLUMN s TO ss",
@@ -532,6 +719,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     "LEGEND",
                     txn -> {
                         try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
                                             "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
@@ -650,15 +846,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
-            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
-                    "l\ti\ts\tts\n" +
-                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
-                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
-                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
-                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
-            );
-
             // handover to actual test
             test.accept(txn);
         });
@@ -670,7 +857,14 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
 
         // copy .detached folder to the different location
         // then remove the original .detached folder
-        final CharSequence s3Buckets = temp.newFolder(otherLocation).getAbsolutePath();
+
+        CharSequence tmp;
+        try {
+            tmp = temp.newFolder(otherLocation).getAbsolutePath();
+        } catch (IOException e) {
+            tmp = new File(temp.getRoot(), otherLocation).getAbsolutePath();
+        }
+        final CharSequence s3Buckets = tmp;
         final String detachedPartitionName = partitionName + TableUtils.DETACHED_DIR_MARKER;
         copyPartitionAndMetadata( // this creates s3Buckets
                 configuration.getRoot(),

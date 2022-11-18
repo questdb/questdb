@@ -47,7 +47,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private static final int OVERHEAD = 4;
     private int capacity;
     private long headPtr;
-    private int len;
     private long tailPtr;
 
     public Path() {
@@ -57,7 +56,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path(int capacity) {
         assert capacity > 0;
         this.capacity = capacity;
-        headPtr = tailPtr = Unsafe.malloc(capacity, MemoryTag.NATIVE_PATH);
+        headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
     }
 
     public static void clearThreadLocals() {
@@ -86,7 +85,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     public Path $() {
         if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {
-            long requiredSize = tailPtr - headPtr;
+            long requiredSize = length();
             if (requiredSize >= capacity) {
                 extend((int) (requiredSize + 16));
             }
@@ -117,9 +116,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public void close() {
         if (headPtr != NULL) {
-            Unsafe.free(headPtr, capacity, MemoryTag.NATIVE_PATH);
+            Unsafe.free(headPtr, capacity + 1, MemoryTag.NATIVE_PATH);
             headPtr = tailPtr = NULL;
-            len = 0;
         }
     }
 
@@ -131,15 +129,16 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         ensureSeparator();
         long p = pUtf8NameZ;
         while (true) {
-            if (len + OVERHEAD >= capacity) {
-                extend(len * 2 + OVERHEAD);
-            }
             byte b = Unsafe.getUnsafe().getByte(p++);
             if (b == NULL) {
                 break;
             }
+
+            int requiredCapacity = length();
+            if (requiredCapacity + OVERHEAD >= capacity) {
+                extend(requiredCapacity * 2 + OVERHEAD);
+            }
             Unsafe.getUnsafe().putByte(tailPtr++, (byte) (b == '/' && Os.isWindows() ? '\\' : b));
-            len++;
         }
         return this;
     }
@@ -157,18 +156,16 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     @Override
     public final int length() {
-        return len;
+        return (int) (tailPtr - headPtr);
     }
 
     public Path of(CharSequence str) {
         checkClosed();
         if (str == this) {
-            len = str.length();
-            tailPtr = headPtr + len;
+            tailPtr = headPtr + str.length();
             return this;
         } else {
             tailPtr = headPtr;
-            len = 0;
             return concat(str);
         }
     }
@@ -183,7 +180,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         // Copy binary array representation instead of trying to UTF8 encode it
         int len = other.length();
         if (headPtr == NULL) {
-            headPtr = Unsafe.malloc(len, MemoryTag.NATIVE_PATH);
+            headPtr = Unsafe.malloc(len + 1, MemoryTag.NATIVE_PATH);
             capacity = len;
         } else if (capacity < len) {
             extend(len);
@@ -192,7 +189,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         if (len > 0) {
             Unsafe.getUnsafe().copyMemory(other.address(), headPtr, len);
         }
-        this.len = len;
         tailPtr = headPtr + len;
         return this;
     }
@@ -200,25 +196,23 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path of(CharSequence str, int from, int to) {
         checkClosed();
         tailPtr = headPtr;
-        len = 0;
         return concat(str, from, to);
     }
 
     public Path parent() {
-        if (len > 0) {
-            int idx = len - 1;
-            byte last = Unsafe.getUnsafe().getByte(headPtr + idx);
+        if (tailPtr > headPtr) {
+            long p = tailPtr - 1;
+            byte last = Unsafe.getUnsafe().getByte(p);
             if (last == Files.SEPARATOR || last == NULL) {
-                if (idx < 2) {
+                if (p < headPtr + 2) {
                     return this;
                 }
-                idx--;
+                p--;
             }
-            while (idx > 0 && (char) Unsafe.getUnsafe().getByte(headPtr + idx) != Files.SEPARATOR) {
-                idx--;
+            while (p > headPtr && (char) Unsafe.getUnsafe().getByte(p) != Files.SEPARATOR) {
+                p--;
             }
-            len = idx;
-            tailPtr = headPtr + len;
+            tailPtr = p;
         }
         return this;
     }
@@ -230,35 +224,35 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     @Override
     public Path put(CharSequence str) {
         int l = str.length();
-        if (l + len >= capacity) {
-            extend(l + len);
+        int requiredCapacity = length() + l;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity);
         }
         Chars.asciiStrCpy(str, l, tailPtr);
         tailPtr += l;
-        len += l;
         return this;
     }
 
     @Override
     public CharSink put(CharSequence cs, int lo, int hi) {
         int l = hi - lo;
-        if (l + len >= capacity) {
-            extend(l + len);
+        int requiredCapacity = length() + l;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity);
         }
         Chars.asciiStrCpy(cs, lo, l, tailPtr);
         tailPtr += l;
-        len += l;
         return this;
     }
 
     @Override
     public Path put(char c) {
         assert c != NULL;
-        if (len >= capacity) {
-            extend(16 + len);
+        int requiredCapacity = length() + 1;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity + 15);
         }
         Unsafe.getUnsafe().putByte(tailPtr++, (byte) c);
-        len++;
         return this;
     }
 
@@ -276,8 +270,9 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     @Override
     public CharSink put(char[] chars, int start, int len) {
-        if (len + this.len >= capacity) {
-            extend(len);
+        int requiredCapacity = length() + len;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity);
         }
         Chars.asciiCopyTo(chars, start, len, tailPtr);
         tailPtr += len;
@@ -297,8 +292,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         int count = 0;
         while (count < capacity) {
             if (Unsafe.getUnsafe().getByte(headPtr + count) == NULL) {
-                len = count;
-                tailPtr = headPtr + len;
+                tailPtr = headPtr + count;
                 break;
             }
             count++;
@@ -337,28 +331,26 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path trimTo(int len) {
-        this.len = len;
         tailPtr = headPtr + len;
         return this;
     }
 
     private void checkClosed() {
         if (headPtr == NULL) {
-            headPtr = tailPtr = Unsafe.malloc(capacity, MemoryTag.NATIVE_PATH);
-            len = 0;
+            headPtr = tailPtr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);
         }
     }
 
     protected final void ensureSeparator() {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
             Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
-            len++;
         }
     }
 
     void extend(int newCapacity) {
         assert newCapacity > capacity;
-        headPtr = Unsafe.realloc(headPtr, capacity, newCapacity, MemoryTag.NATIVE_PATH);
+        int len = length();
+        headPtr = Unsafe.realloc(headPtr, capacity + 1, newCapacity + 1, MemoryTag.NATIVE_PATH);
         tailPtr = headPtr + len;
         capacity = newCapacity;
     }
