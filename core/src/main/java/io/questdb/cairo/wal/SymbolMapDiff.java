@@ -25,6 +25,8 @@
 package io.questdb.cairo.wal;
 
 public interface SymbolMapDiff {
+    boolean containsNullValue();
+
     int getCleanSymbolCount();
 
     int getColumnIndex();

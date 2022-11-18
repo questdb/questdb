@@ -2786,6 +2786,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final MapWriter mapWriter = symbolMapWriters.get(columnIndex);
         boolean identical = true;
 
+        if (symbolMapDiff.containsNullValue()) {
+            mapWriter.put(null);
+        }
+
         SymbolMapDiffEntry entry;
         while ((entry = symbolMapDiff.nextEntry()) != null) {
             final CharSequence symbolValue = entry.getSymbol();

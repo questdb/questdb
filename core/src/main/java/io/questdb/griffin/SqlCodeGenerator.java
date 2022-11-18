@@ -1282,7 +1282,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
 
-            final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+            final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
+                    && (!model.isUpdate() || executionContext.isWalApplication());
             final boolean canCompile = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (useJit && canCompile) {
                 CompiledFilter jitFilter = null;

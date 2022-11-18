@@ -202,10 +202,11 @@ public class WalEventCursor {
         if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
             return null;
         }
+        final boolean nullFlag = readBool();
         final int cleanTableSymbolCount = readInt();
         final int size = readInt();
 
-        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size);
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size, nullFlag);
         return symbolMapDiff;
     }
 

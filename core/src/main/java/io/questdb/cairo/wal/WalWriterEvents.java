@@ -45,6 +45,7 @@ class WalWriterEvents implements Closeable {
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
+    private BoolList symbolMapNullFlags;
     private long startOffset = 0;
     private long txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
@@ -155,6 +156,7 @@ class WalWriterEvents implements Closeable {
                 final int initialCount = initialSymbolCounts.get(i);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
                     eventMem.putInt(i);
+                    eventMem.putBool(symbolMapNullFlags.get(i));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
@@ -189,9 +191,10 @@ class WalWriterEvents implements Closeable {
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
+        this.symbolMapNullFlags = symbolMapNullFlags;
     }
 
     void openEventFile(Path path, int pathLen) {

@@ -33,9 +33,15 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     private int cleanSymbolCount;
     private int columnIndex = -1;
     private int size;
+    private boolean nullFlag;
 
     SymbolMapDiffImpl(WalEventCursor cursor) {
         this.cursor = cursor;
+    }
+
+    @Override
+    public boolean containsNullValue() {
+        return nullFlag;
     }
 
     @Override
@@ -58,10 +64,11 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         return cursor.readNextSymbolMapDiffEntry(entry);
     }
 
-    void of(int columnIndex, int cleanSymbolCount, int size) {
+    void of(int columnIndex, int cleanSymbolCount, int size, boolean nullFlag) {
         this.columnIndex = columnIndex;
         this.cleanSymbolCount = cleanSymbolCount;
         this.size = size;
+        this.nullFlag = nullFlag;
         entry.clear();
     }
 
