@@ -90,7 +90,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 preTouchColumnTypes.add(columnType);
             }
         }
-        this.filterAtom = new AsyncJitFilterAtom(filter, perWorkerFilters, compiledFilter, bindVarMemory, bindVarFunctions, preTouchColumnTypes);
+        this.filterAtom = new AsyncJitFilterAtom(
+                configuration,
+                filter,
+                perWorkerFilters,
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                preTouchColumnTypes
+        );
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -243,6 +251,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final CompiledFilter compiledFilter;
 
         public AsyncJitFilterAtom(
+                CairoConfiguration configuration,
                 Function filter,
                 ObjList<Function> perWorkerFilters,
                 CompiledFilter compiledFilter,
@@ -250,7 +259,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 ObjList<Function> bindVarFunctions,
                 @Nullable IntList preTouchColumnTypes
         ) {
-            super(filter, perWorkerFilters, preTouchColumnTypes);
+            super(configuration, filter, perWorkerFilters, preTouchColumnTypes);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
