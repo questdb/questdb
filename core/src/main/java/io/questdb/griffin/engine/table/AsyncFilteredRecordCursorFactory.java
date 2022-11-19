@@ -80,7 +80,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 preTouchColumnTypes.add(columnType);
             }
         }
-        this.filterAtom = new AsyncFilterAtom(filter, perWorkerFilters, preTouchColumnTypes);
+        this.filterAtom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, preTouchColumnTypes);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;

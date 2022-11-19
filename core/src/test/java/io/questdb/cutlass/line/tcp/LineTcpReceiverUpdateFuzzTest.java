@@ -170,7 +170,9 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
-        final Rnd rnd = TestUtils.generateRandom();
+        // use different random
+        System.out.println("thread random");
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         new Thread(() -> {
             String sql = "";
             try {
