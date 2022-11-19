@@ -73,7 +73,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
 
-        //same as x but with different number of values in symbol maps  
+        // same as x but with different number of values in symbol maps
         try (TableModel model = new TableModel(configuration, "v", PartitionBy.NONE)) {
             model.col("sym", ColumnType.SYMBOL).symbolCapacity(1).indexed(true, 16)
                     .col("bid", ColumnType.DOUBLE)
@@ -709,21 +709,98 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEqualsAndNotEquals() throws Exception {
+    public void testEqualsAndNotEqualsBindVariable1() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym = 'a' and sym != $1");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBindVariable2() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym = $1 and sym != 'a'");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBindVariableAnotherColumnInTheMiddle1() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym = 'a' and ex = 'c' and sym != $1");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$1sym!='a'sym=and");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBindVariableAnotherColumnInTheMiddle2() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym = $1 and ex = 'c' and sym != 'a'");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'a'sym!=$1sym=and");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBothBindVariables() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        bindVariableService.setStr(1, "b");
+        IntrinsicModel m = modelOf("sym = $1 and ex = 'c' and sym != $2");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$2sym!=$1sym=and");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBothBindVariablesAnotherColumnInTheMiddle() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        bindVariableService.setStr(1, "b");
+        IntrinsicModel m = modelOf("sym = $1 and ex = 'c' and sym != $2");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$2sym!=$1sym=and");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBothConstants() throws Exception {
         IntrinsicModel m = modelOf("sym = 'a' and sym != 'b'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
     }
 
     @Test
-    public void testEqualsAndNotEqualsBindVariables() throws Exception {
+    public void testEqualsAndNotEqualsBothConstantsAnotherColumnInTheMiddle() throws Exception {
+        IntrinsicModel m = modelOf("sym = 'a' and ex = 'c' and sym != 'b'");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'b'sym!='a'sym=and");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testEqualsAndNotEqualsBothFunctionsWithBindVariables() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr(0, "a");
         bindVariableService.setStr(1, "b");
-        IntrinsicModel m = modelOf("sym = $1 and sym != $2");
+        IntrinsicModel m = modelOf("sym = concat($1, 'c') and sym != concat($2, 'c')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
-        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
-        Assert.assertEquals("[b]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+        Assert.assertEquals("[concat]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[concat]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
 
     @Test
@@ -926,7 +1003,75 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInAndNotIn() throws Exception {
+    public void testInAndNotInBindVariable1() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym in ('a') and sym not in ($1)");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$1syminnot");
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBindVariable2() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym in ($1) and sym not in ('a')");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        Assert.assertNull(m.filter);
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBindVariableAnotherColumnInTheMiddle1() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym in ('a') and ex = 'c' and sym not in ($1)");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$1syminnot'a'syminand");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBindVariableAnotherColumnInTheMiddle2() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        IntrinsicModel m = modelOf("sym in ($1) and ex = 'c' and sym not in ('a')");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'a'syminnot$1syminand");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBothBindVariables() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        bindVariableService.setStr(1, "b");
+        IntrinsicModel m = modelOf("sym in ($1) and sym not in ($2)");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$2syminnot");
+        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBothBindVariablesAnotherColumnInTheMiddle() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "a");
+        bindVariableService.setStr(1, "b");
+        IntrinsicModel m = modelOf("sym in ($1) and ex = 'c' and sym not in ($2)");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "$2syminnot$1syminand");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBothConstants() throws Exception {
         IntrinsicModel m = modelOf("sym in ('a') and sym not in ('b')");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
         Assert.assertNull(m.filter);
@@ -935,14 +1080,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInAndNotInBindVariables() throws Exception {
+    public void testInAndNotInBothConstantsAnotherColumnInTheMiddle() throws Exception {
+        IntrinsicModel m = modelOf("sym in ('a') and ex = 'c' and sym not in ('b')");
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        assertFilter(m, "'b'syminnot'a'syminand");
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
+    public void testInAndNotInBothFunctionsWithBindVariables() throws Exception {
         bindVariableService.clear();
         bindVariableService.setStr(0, "a");
         bindVariableService.setStr(1, "b");
-        IntrinsicModel m = modelOf("sym in ($1) and sym not in($2)");
+        IntrinsicModel m = modelOf("sym in (concat($1, 'c')) and sym not in (concat($2, 'c'))");
         Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
-        assertFilter(m, "$2syminnot");
-        Assert.assertEquals("[a]", keyValueFuncsToString(m.keyValueFuncs));
+        assertFilter(m, "'c'$2concatsyminnot'c'$1concatsyminand");
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
         Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
     }
 
