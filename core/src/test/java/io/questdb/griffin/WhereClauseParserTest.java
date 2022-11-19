@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.model.*;
-import io.questdb.std.LongList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -83,7 +80,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                     .col("mode", ColumnType.SYMBOL).symbolCapacity(4).indexed(true, 4)
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(5).indexed(true, 4)
                     .timestamp();
-
             CairoTestUtils.create(model);
         }
 
@@ -166,14 +162,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
         bindVariableService = new BindVariableServiceImpl(configuration);
         compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new SqlExecutionContextImpl(
-                engine, 1)
+        sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                 .with(
                         AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
     }
 
     @AfterClass
@@ -2273,6 +2269,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    private static IntList intList(Integer... values) {
+        IntList list = new IntList(values.length);
+        for (int value : values) {
+            list.add(value);
+        }
+        return list;
+    }
+
     private static void swap(String[] arr, int i, int j) {
         String tmp = arr[i];
         arr[i] = arr[j];
@@ -2330,7 +2334,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false,
-                reader);
+                reader
+        );
     }
 
     private IntrinsicModel noDesignatedTimestampNotIdxModelOf(CharSequence seq) throws SqlException {
@@ -2345,7 +2350,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false,
-                noDesignatedTimestampNorIdxReader);
+                noDesignatedTimestampNorIdxReader
+        );
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
@@ -2360,7 +2366,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false,
-                noTimestampReader);
+                noTimestampReader
+        );
     }
 
     private IntrinsicModel nonEmptyModelOf(CharSequence seq) throws SqlException {
@@ -2375,7 +2382,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false,
-                nonEmptyReader);
+                nonEmptyReader
+        );
     }
 
     private IntrinsicModel runWhereCompareToModelTest(String where, String expected) throws SqlException {
@@ -2484,7 +2492,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 metadata,
                 sqlExecutionContext,
                 false,
-                unindexedReader);
+                unindexedReader
+        );
     }
 
     @FunctionalInterface

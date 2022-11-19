@@ -114,6 +114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
     private final IntList tempKeyIndex = new IntList();
     private final IntList tempKeyIndexesInBase = new IntList();
@@ -154,6 +155,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void clear() {
         whereClauseParser.clear();
+        symbolEstimator.clear();
         intListPool.clear();
     }
 
@@ -1715,9 +1717,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion(), intrinsicModel.buildIntervalModel(), timestampIndex);
+            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(
+                    tableName,
+                    model.getTableId(),
+                    model.getTableVersion(),
+                    intrinsicModel.buildIntervalModel(),
+                    timestampIndex
+            );
         } else {
-            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(tableName, model.getTableId(), model.getTableVersion());
+            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(
+                    tableName,
+                    model.getTableId(),
+                    model.getTableVersion()
+            );
         }
 
         assert model.getLatestBy() != null && model.getLatestBy().size() > 0;
@@ -1739,10 +1751,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 symbolKeysOnly &= ColumnType.isSymbol(keyTypes.getColumnType(i));
             }
             if (symbolKeysOnly) {
-                IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+                final IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
                 for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
                     partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
                 }
+                final IntList partitionBySymbolCounts = symbolEstimator.estimate(
+                        model,
+                        intrinsicModel.filter,
+                        metadata,
+                        partitionByColumnIndexes
+                );
                 return new LatestByAllSymbolsFilteredRecordCursorFactory(
                         metadata,
                         configuration,
@@ -1750,6 +1768,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
                         keyTypes,
                         partitionByColumnIndexes,
+                        partitionBySymbolCounts,
                         filter,
                         columnIndexes
                 );
@@ -3978,6 +3997,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
                     keyTypes,
                     partitionByColumnIndexes,
+                    null,
                     null,
                     columnIndexes
             );

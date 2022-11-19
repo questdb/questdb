@@ -46,13 +46,21 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes partitionByColumnTypes,
             @NotNull IntList partitionByColumnIndexes,
+            @Nullable IntList partitionBySymbolCounts,
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         Map map = MapFactory.createMap(configuration, partitionByColumnTypes);
-        assert partitionByColumnTypes.getColumnCount() == partitionByColumnIndexes.size();
-        this.cursor = new LatestByAllSymbolsFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes, partitionByColumnIndexes);
+        this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
+                map,
+                rows,
+                recordSink,
+                filter,
+                columnIndexes,
+                partitionByColumnIndexes,
+                partitionBySymbolCounts
+        );
     }
 
     @Override

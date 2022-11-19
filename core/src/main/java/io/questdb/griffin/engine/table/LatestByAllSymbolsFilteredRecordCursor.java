@@ -44,10 +44,10 @@ import org.jetbrains.annotations.Nullable;
 class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
-
     private final Function filter;
     private final Map map;
     private final IntList partitionByColumnIndexes;
+    private final IntList partitionBySymbolCounts;
     private final RecordSink recordSink;
 
     public LatestByAllSymbolsFilteredRecordCursor(
@@ -56,13 +56,15 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             @NotNull RecordSink recordSink,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
-            @NotNull IntList partitionByColumnIndexes
+            @NotNull IntList partitionByColumnIndexes,
+            @Nullable IntList partitionBySymbolCounts
     ) {
         super(rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter != null ? filter : NO_OP_FILTER;
         this.partitionByColumnIndexes = partitionByColumnIndexes;
+        this.partitionBySymbolCounts = partitionBySymbolCounts;
     }
 
     @Override
@@ -77,13 +79,15 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     private long countSymbolCombinations() {
         long combinations = 1;
         for (int i = 0, n = partitionByColumnIndexes.size(); i < n; i++) {
+            int symbolCount = partitionBySymbolCounts != null ? partitionBySymbolCounts.getQuick(i) : Integer.MAX_VALUE;
+            assert symbolCount > 0;
             int columnIndex = partitionByColumnIndexes.getQuick(i);
             StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
             int distinctSymbols = symbolMapReader.getSymbolCount();
             if (symbolMapReader.containsNullValue()) {
                 distinctSymbols++;
             }
-            combinations *= distinctSymbols;
+            combinations *= Math.min(symbolCount, distinctSymbols);
         }
         return combinations;
     }

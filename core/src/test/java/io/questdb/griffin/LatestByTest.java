@@ -67,7 +67,7 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByMultipleSymbolsDoesNotNeedFullScan() throws Exception {
+    public void testLatestByMultipleSymbolsDoesNotNeedFullScan1() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
                 @Override
@@ -83,14 +83,44 @@ public class LatestByTest extends AbstractGriffinTest {
             compile("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
+            executeInsert("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
             assertQuery("ts\ts2\ts\n" +
                             "1970-01-02T18:00:00.000000Z\td\ta\n" +
-                            "1970-01-02T19:00:00.000000Z\td\tb\n" +
+                            "1970-01-02T23:00:00.000000Z\tc\ta\n",
+                    "select ts, s2, s from t " +
+                            "where s = 'a' and s2 in ('c', 'd') " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testLatestByMultipleSymbolsDoesNotNeedFullScan2() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // Query should not scan the first partition
+                    // all the latest values are in the second, third partition
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return -1;
+                    }
+                    return Files.openRO(name);
+                }
+            };
+            compile("create table t as (" +
+                    "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
+                    ") timestamp(ts) partition by DAY");
+            executeInsert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
+
+            assertQuery("ts\ts2\ts\n" +
                             "1970-01-02T23:00:00.000000Z\tc\ta\n" +
                             "1970-01-03T00:00:00.000000Z\tc\tb\n",
                     "select ts, s2, s from t " +
-                            "where s in ('a', 'b') " +
+                            "where s2 = 'c' " +
                             "latest on ts partition by s, s2",
                     "ts",
                     true,

@@ -554,7 +554,7 @@ final class WhereClauseParser implements Mutable {
                 return false;
             }
 
-            // check if we already have indexed column and it is of worse selectivity
+            // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null
                     && (!Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, m, reader, columnIndex)) {
@@ -625,7 +625,6 @@ final class WhereClauseParser implements Mutable {
                     && !isMoreSelective(model, m, reader, columnIndex)) {
                 return false;
             }
-
 
             int i = node.paramCount - 1;
             tempKeys.clear();
@@ -1213,7 +1212,6 @@ final class WhereClauseParser implements Mutable {
             }
         }
         return node;
-
     }
 
     private ExpressionNode collapseWithinNodes(ExpressionNode node) {
@@ -1492,7 +1490,6 @@ final class WhereClauseParser implements Mutable {
                 prefixes.add(hashColumnType);
             }
 
-
             int c = node.paramCount - 1;
 
             if (c == 1) {
@@ -1636,8 +1633,8 @@ final class WhereClauseParser implements Mutable {
             createKeyValueBindVariables(model, functionParser, executionContext);
             return model;
         }
-        ExpressionNode root = node;
 
+        ExpressionNode root = node;
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
                 if (isAndKeyword(node.token)) {
