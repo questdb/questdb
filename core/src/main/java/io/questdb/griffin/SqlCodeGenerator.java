@@ -3459,7 +3459,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
-        if (model.isUpdate()) {
+        if (model.isUpdate() && !executionContext.isWalApplication()) {
             try (
                     TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tab);
                     TableRecordMetadata metadata = engine.getMetadata(executionContext.getCairoSecurityContext(), tab, model.getTableVersion())
@@ -3582,7 +3582,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     functionParser,
                     myMeta,
                     executionContext,
-                    latestByColumnCount > 1
+                    latestByColumnCount > 1,
+                    reader
             );
 
             // intrinsic parser can collapse where clause when removing parts it can replace
