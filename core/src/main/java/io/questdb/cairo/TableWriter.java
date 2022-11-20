@@ -1662,6 +1662,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
+                txWriter.reconcileOptimisticPartitions(defaultCommitMode, denseSymbolMapWriters);
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -5442,7 +5443,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         .$(", actualFixedSize=").$(fixedRowCount)
                         .I$();
 
-                txWriter.reset(fixedRowCount, transientRowCount, maxTimestamp, defaultCommitMode, denseSymbolMapWriters);
+                txWriter.reset(
+                        fixedRowCount,
+                        transientRowCount,
+                        maxTimestamp,
+                        defaultCommitMode,
+                        denseSymbolMapWriters
+                );
                 return maxTimestamp;
             }
         }

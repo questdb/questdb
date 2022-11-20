@@ -455,23 +455,6 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     private void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-/*
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select * from x limit 100",
-                sink
-        );
-
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                "select * from y limit 100",
-                sink2
-        );
-
-        TestUtils.assertEquals(sink, sink2);
-*/
         TestUtils.assertEquals(
                 compiler,
                 sqlExecutionContext,
@@ -608,9 +591,9 @@ public class O3MaxLagTest extends AbstractO3Test {
                 o3.commit();
                 ordered.commit();
             }
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+            TestUtils.assertEquals(compiler, sqlExecutionContext, "ordered", "o3");
             engine.releaseAllWriters();
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "ordered", "o3", LOG);
+            TestUtils.assertEquals(compiler, sqlExecutionContext, "ordered", "o3");
 
             engine.releaseAllReaders();
             try (TableWriter o3 = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "o3", "testing");
@@ -1358,10 +1341,6 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         for (int i = 0; i < 50; i++) {
-            System.out.println(i);
-            if(i==14) {
-                System.out.println("ok");
-            }
             final int nTotalRows = rnd.nextInt(79000);
             final long microsBetweenRows = rnd.nextLong(3090985);
             final double fraction = rnd.nextDouble();

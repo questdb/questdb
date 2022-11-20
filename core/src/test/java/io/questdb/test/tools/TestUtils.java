@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -1300,8 +1301,8 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        long s0 = 363901920247L;
-        long s1 = 1668800745119L;
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
         log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
         System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);

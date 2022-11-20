@@ -1798,12 +1798,11 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             // check that X and Y are the same
-            TestUtils.assertSqlCursors(
+            TestUtils.assertEquals(
                     compiler,
                     executionContext,
                     "x",
-                    "y",
-                    LOG
+                    "y"
             );
 
             // repeat the same rows
@@ -3761,7 +3760,7 @@ public class O3FailureTest extends AbstractO3Test {
         final int symbolLen = symbols.length;
 
 
-        Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
+        Rnd rnd = TestUtils.generateRandom(LOG);
         int batches = 0;
         int batchCount = 75;
         while (batches < batchCount) {
