@@ -39,6 +39,7 @@ import static io.questdb.griffin.SqlKeywords.*;
 public final class SqlParser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    private static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -1106,26 +1107,23 @@ public final class SqlParser {
 
                 if (isCalendarKeyword(tok)) {
                     tok = optTok(lexer);
-
-                    if (tok != null && !isSemicolon(tok)) {
-                        if (isTimeKeyword(tok)) {
-                            expectZone(lexer);
-                            model.setSampleByTimezoneName(expectExpr(lexer));
-                            tok = optTok(lexer);
-
-                            if (tok != null && isWithKeyword(tok)) {
-                                tok = parseWithOffset(lexer, model);
-                            } else {
-                                model.setSampleByOffset(nextConstant("'00:00'"));
-                            }
-                        } else if (isWithKeyword(tok)) {
+                    if (tok == null) {
+                        model.setSampleByTimezoneName(null);
+                        model.setSampleByOffset(ZERO_OFFSET);
+                    } else if (isTimeKeyword(tok)) {
+                        expectZone(lexer);
+                        model.setSampleByTimezoneName(expectExpr(lexer));
+                        tok = optTok(lexer);
+                        if (tok != null && isWithKeyword(tok)) {
                             tok = parseWithOffset(lexer, model);
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'time zone' or 'with offset' expected");
+                            model.setSampleByOffset(ZERO_OFFSET);
                         }
+                    } else if (isWithKeyword(tok)) {
+                        tok = parseWithOffset(lexer, model);
                     } else {
                         model.setSampleByTimezoneName(null);
-                        model.setSampleByOffset(nextConstant("'00:00'"));
+                        model.setSampleByOffset(ZERO_OFFSET);
                     }
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
