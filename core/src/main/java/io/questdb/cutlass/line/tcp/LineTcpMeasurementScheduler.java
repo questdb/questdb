@@ -50,6 +50,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final LineTcpReceiverConfiguration configuration;
@@ -69,8 +70,6 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final long writerIdleTimeout;
     private LineTcpReceiver.SchedulerListener listener;
-
-    private final ObjList<TableUpdateDetails>[] assignedTables;
 
     LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
