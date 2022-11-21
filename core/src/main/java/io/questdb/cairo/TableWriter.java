@@ -1662,7 +1662,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 rollbackIndexes();
                 rollbackSymbolTables();
                 columnVersionWriter.readUnsafe();
-                txWriter.reconcileOptimisticPartitions(defaultCommitMode, denseSymbolMapWriters);
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -2491,10 +2490,20 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         if (inTransaction()) {
             final boolean o3 = hasO3();
-            if (o3 && o3Commit(o3MaxLag)) {
-                // Bookmark masterRef to track how many rows is in uncommitted state
-                this.committedMasterRef = masterRef;
-                return getTxn();
+            if (o3) {
+                final boolean noop = o3Commit(o3MaxLag);
+                if (noop) {
+                    // Bookmark masterRef to track how many rows is in uncommitted state
+                    this.committedMasterRef = masterRef;
+                    return getTxn();
+                } else if (o3MaxLag > 0) {
+                    // It is possible that O3 commit will create partition just before
+                    // the last one, leaving last partition row count 0 when doing ic().
+                    // That's when the data from the last partition is moved to in-memory lag.
+                    // One way to detect this is to check if index of the "last" partition is not
+                    // last partition in the attached partition list.
+                    txWriter.reconcileOptimisticPartitions();
+                }
             }
 
             if (commitMode != CommitMode.NOSYNC) {

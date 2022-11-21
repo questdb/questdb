@@ -548,32 +548,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionTableVersion++;
     }
 
-    // It is possible that O3 will create partition just before
-    // the last one, leaving last partition row count 0.
+    // It is possible that O3 commit will create partition just before
+    // the last one, leaving last partition row count 0 when doing ic().
+    // That's when the data from the last partition is moved to in-memory lag.
     // One way to detect this is to check if index of the "last" partition is not
     // last partition in the attached partition list.
-    void reconcileOptimisticPartitions(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        int p = getPartitionIndex(getLastPartitionTimestamp());
-        if (p < getPartitionCount() - 1) {
-            // accumulate value, which we have to subtract
-            // from fixedRowCount (total count of rows of non-active partitions)
-            long rowCount = 0;
-            for (int i = p, n = getPartitionCount() - 1; i < n; i++) {
-                rowCount += getPartitionSize(i);
-            }
+    void reconcileOptimisticPartitions() {
+        int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
+        if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
+            int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
+            if (maxTimestampPartitionIndex < getPartitionCount() - 1) {
+                // accumulate value, which we have to subtract
+                // from fixedRowCount (total count of rows of non-active partitions)
+                long rowCount = 0;
+                for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
+                    rowCount += getPartitionSize(i);
+                }
+                attachedPartitions.setPos(maxTimestampPartitionIndex + LONGS_PER_TX_ATTACHED_PARTITION);
+                partitionTableVersion++;
 
-            for (int i = p + 1, n = getPartitionCount(); i < n; i++) {
-                removeAttachedPartitions(getPartitionTimestamp(i));
+                // remove partitions
+                this.fixedRowCount -= rowCount;
+                this.maxTimestamp = getMaxTimestamp();
+                this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
             }
-
-            // remove partitions
-            reset(
-                    getFixedRowCount() - rowCount,
-                    getPartitionSize(p),
-                    getMaxTimestamp(),
-                    commitMode,
-                    symbolCountProviders
-            );
         }
     }
 
