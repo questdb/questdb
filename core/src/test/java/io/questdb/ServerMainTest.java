@@ -37,6 +37,8 @@ import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.HashMap;
+import java.util.Map;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
@@ -116,6 +118,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 Assert.assertNotNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());
                 Assert.assertFalse(serverMain.hasBeenClosed());
+                serverMain.start();
+            }
+        });
+    }
+
+    @Test
+    public void testServerMainStartHttpDisabled() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put("QDB_HTTP_ENABLED", "false");
+            Bootstrap bootstrap = new Bootstrap(null, env, "-d", root.toString(), Bootstrap.SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION);
+            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+                Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
                 serverMain.start();
             }
         });
