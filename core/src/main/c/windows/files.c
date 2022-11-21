@@ -55,16 +55,76 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return -1;
 }
 
-int set_file_pos(HANDLE fd, jlong offset) {
+
+jboolean set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
         return 1;
     }
-    long highPos = (long) (offset >> 32);
-    int r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    LONG highPos = (LONG) (offset >> 32);
+    DWORD r = SetFilePointer(fd, (LONG) offset, &highPos, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
     if (r == INVALID_SET_FILE_POINTER) {
         SaveLastError();
+        return FALSE;
     }
-    return r;
+    return TRUE;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong fdFrom, jlong fdTo, jlong fromOffset, jlong length) {
+
+    char buf[16*4096];
+    DWORD read_sz;
+    LONG64 rd_off = fromOffset;
+    LONG64 wrt_off = 0;
+    LONG64 hi;
+
+    if ( length < 0 ){
+        hi = _I64_MAX;
+    } else {
+        hi = fromOffset + length;
+    }
+
+    if (!set_file_pos((HANDLE) fdFrom, fromOffset)){
+        return -1;
+    }
+
+    while (ReadFile((HANDLE) fdFrom, &buf, sizeof buf, &read_sz, NULL) &&
+           read_sz > 0) {
+        char *out_ptr = buf;
+        if (rd_off + read_sz > hi) {
+            read_sz = hi - rd_off;
+        }
+
+        DWORD write_sz;
+        do {
+            if (!WriteFile((HANDLE) fdTo, &buf, read_sz, &write_sz, NULL)){
+                SaveLastError();
+                return rd_off - fromOffset;
+            }
+            if (write_sz >= 0) {
+                read_sz -= write_sz;
+                out_ptr += write_sz;
+                wrt_off += write_sz;
+            } else if (errno != EINTR) {
+                break;
+            }
+        } while (read_sz > 0);
+
+        if (read_sz > 0) {
+            // error
+            SaveLastError();
+            return -1;
+        }
+
+        rd_off += write_sz;
+        if (rd_off >= hi) {
+            /* Success! */
+            break;
+        }
+    }
+
+    SaveLastError();
+    return rd_off - fromOffset;
 }
 
 HANDLE openUtf8(jlong lpszName, DWORD dwDesiredAccess, DWORD dwShareMode, DWORD dwCreationDisposition) {
@@ -131,7 +191,24 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
     return -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
+        (JNIEnv *e, jclass cl,
+         jlong fd,
+         jlong offset) {
+    DWORD count;
+    jint result;
+    if (set_file_pos((HANDLE) fd, offset) &&
+        ReadFile((HANDLE) fd, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+        if (count != 4) {
+            return -1;
+        }
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong offset) {
@@ -269,6 +346,82 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     }
     SaveLastError();
     return -1;
+}
+
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
+
+    int len = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, buf, len);
+
+        HANDLE handle = CreateFileW(
+                    buf,
+                    GENERIC_READ,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_READONLY | FILE_FLAG_OPEN_REPARSE_POINT,
+                    NULL
+        );
+
+
+        if (handle == INVALID_HANDLE_VALUE) {
+            SaveLastError();
+            return FALSE;
+        }
+
+        FILE_BASIC_INFO info;
+        jboolean result = GetFileInformationByHandleEx(handle, FileBasicInfo, &info, sizeof(FILE_BASIC_INFO));
+        if (!result) {
+            SaveLastError();
+        } else {
+            result = info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
+        }
+
+        int tmpErr = errno;
+        CloseHandle(handle);
+        errno = tmpErr;
+        return result;
+    }
+    return FALSE;
+}
+
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszSoftLink) {
+
+    size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);
+    if (lenSrc < 1) {
+        return -1;
+    }
+    wchar_t bufSrc[lenSrc];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
+
+    size_t lenSoftLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, NULL, 0);
+    if (lenSoftLink < 1) {
+        return -1;
+    }
+
+
+    wchar_t bufSoftLink[lenSoftLink];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSoftLink, -1, bufSoftLink, (int) lenSoftLink);
+
+    if (CreateSymbolicLinkW(bufSoftLink, bufSrc, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        return 0;
+    }
+
+    SaveLastError();
+
+
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
+    // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
+    // If the path points to a symbolic link, the symbolic link is deleted, not the target.
+    return Java_io_questdb_std_Files_remove(e, cl, lpszSoftLink) ? 0 : -1;
 }
 
 
@@ -631,6 +784,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ?
            com_questdb_std_Files_DT_DIR : com_questdb_std_Files_DT_REG;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *e, jclass cl, jlong findPtr) {
+    return ((FIND *) findPtr)->find_data->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock

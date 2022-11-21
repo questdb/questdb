@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
@@ -36,10 +37,10 @@ import org.jetbrains.annotations.Nullable;
 class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor {
 
     private final int columnIndex;
-    private final IntIntHashMap map;
-    private final IntHashSet symbolKeys;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
+    private final IntIntHashMap map;
+    private final IntHashSet symbolKeys;
 
     public LatestByValuesFilteredRecordCursor(
             int columnIndex,
@@ -63,32 +64,6 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
         filter.toTop();
     }
 
-    @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
-        prepare();
-        filter.init(this, executionContext);
-
-        DataFrame frame;
-        while ((frame = this.dataFrameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                recordA.setRecordIndex(row);
-                if (filter.getBool(recordA)) {
-                    int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
-                    int index = map.keyIndex(key);
-                    if (index < 0 && map.valueAt(index) == 0) {
-                        rows.add(Rows.toRowID(partitionIndex, row));
-                        map.putAt(index, key, 1);
-                    }
-                }
-            }
-        }
-    }
-
     private void prepare() {
         if (deferredSymbolKeys != null) {
             // We need to clean up the map when there are deferred keys since
@@ -101,6 +76,34 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
 
         for (int i = 0, n = symbolKeys.size(); i < n; i++) {
             map.put(symbolKeys.get(i), 0);
+        }
+    }
+
+    @Override
+    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        prepare();
+        filter.init(this, executionContext);
+
+        DataFrame frame;
+        while ((frame = this.dataFrameCursor.next()) != null) {
+            final int partitionIndex = frame.getPartitionIndex();
+            final long rowLo = frame.getRowLo();
+            final long rowHi = frame.getRowHi() - 1;
+
+            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
+            for (long row = rowHi; row >= rowLo; row--) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                recordA.setRecordIndex(row);
+                if (filter.getBool(recordA)) {
+                    int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
+                    int index = map.keyIndex(key);
+                    if (index < 0 && map.valueAt(index) == 0) {
+                        rows.add(Rows.toRowID(partitionIndex, row));
+                        map.putAt(index, key, 1);
+                    }
+                }
+            }
         }
     }
 }

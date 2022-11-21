@@ -51,21 +51,20 @@ import java.io.Closeable;
 
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
+    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
-    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
-
+    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final MillisecondClock clock;
     private final SqlCompiler compiler;
     private final JsonQueryProcessorConfiguration configuration;
-    private final int floatScale;
-    private final SqlExecutionContextImpl sqlExecutionContext;
-    private final MillisecondClock clock;
     private final int doubleScale;
-    private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final int floatScale;
     private final Metrics metrics;
+    private final SqlExecutionContextImpl sqlExecutionContext;
 
     @TestOnly
     public TextQueryProcessor(
@@ -98,18 +97,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     public void close() {
         Misc.free(compiler);
         Misc.free(circuitBreaker);
-    }
-
-    private static boolean isExpUrl(CharSequence tok) {
-        if (tok.length() != 4) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == '/'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i) | 32) == 'p';
     }
 
     public void execute(
@@ -212,6 +199,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
+    public void parkRequest(HttpConnectionContext context) {
+        TextQueryProcessorState state = LV.get(context);
+        if (state != null) {
+            state.rnd = sqlExecutionContext.getRandom();
+        }
+    }
+
+    @Override
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -240,7 +235,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             socket.putQuoted(state.metadata.getColumnName(state.columnIndex));
                         }
@@ -283,7 +278,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         for (; state.columnIndex < columnCount; state.columnIndex++) {
                             socket.bookmark();
                             if (state.columnIndex > 0) {
-                                socket.put(',');
+                                socket.put(state.delimiter);
                             }
                             putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                         }
@@ -320,11 +315,30 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
-    @Override
-    public void parkRequest(HttpConnectionContext context) {
-        TextQueryProcessorState state = LV.get(context);
-        if (state != null) {
-            state.rnd = sqlExecutionContext.getRandom();
+    private static boolean isExpUrl(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == '/'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i) | 32) == 'p';
+    }
+
+    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
+        if (value == GeoHashes.NULL) {
+            socket.put("null");
+        } else {
+            int bitFlags = GeoHashes.getBitFlags(type);
+            socket.put('\"');
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
+            }
+            socket.put('\"');
         }
     }
 
@@ -341,24 +355,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private LogRecord critical(TextQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
-    }
-
-    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(status_code, "text/csv; charset=utf-8");
-        if (state.fileName != null && state.fileName.length() > 0) {
-            socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
-        } else {
-            socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
-        }
-
-        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        socket.sendHeader();
-    }
-
-    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, "text/csv; charset=utf-8");
-        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
-        socket.sendHeader();
     }
 
     private LogRecord info(TextQueryProcessorState state) {
@@ -434,6 +430,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         if (fileName != null && fileName.length() > 0) {
             state.fileName = fileName.toString();
         }
+
+        DirectByteCharSequence delimiter = request.getUrlParam("delimiter");
+        state.delimiter = ',';
+
+        if (delimiter != null && delimiter.length() == 1) {
+            state.delimiter = delimiter.charAt(0);
+        }
+
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
@@ -527,21 +531,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponseSocket socket, long value, int type) {
-        if (value == GeoHashes.NULL) {
-            socket.put("null");
-        } else {
-            int bitFlags = GeoHashes.getBitFlags(type);
-            socket.put('\"');
-            if (bitFlags < 0) {
-                GeoHashes.appendCharsUnsafe(value, -bitFlags, socket);
-            } else {
-                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, socket);
-            }
-            socket.put('\"');
-        }
-    }
-
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put("DDL Success\n");
         socket.sendChunk(true);
@@ -580,5 +569,23 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", message=`").$(container.getFlyweightMessage()).$('`')
                 .$(']').$();
         sendException(socket, container.getPosition(), container.getFlyweightMessage(), state);
+    }
+
+    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(status_code, "text/csv; charset=utf-8");
+        if (state.fileName != null && state.fileName.length() > 0) {
+            socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
+        } else {
+            socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
+        }
+
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
+    }
+
+    protected void headerNoContentDisposition(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(200, "text/csv; charset=utf-8");
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
+        socket.sendHeader();
     }
 }

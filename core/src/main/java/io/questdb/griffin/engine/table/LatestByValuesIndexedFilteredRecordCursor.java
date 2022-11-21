@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -40,10 +41,10 @@ import org.jetbrains.annotations.Nullable;
 class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
-    private final IntHashSet found = new IntHashSet();
-    private final IntHashSet symbolKeys;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
+    private final IntHashSet found = new IntHashSet();
+    private final IntHashSet symbolKeys;
 
     public LatestByValuesIndexedFilteredRecordCursor(
             int columnIndex,
@@ -66,9 +67,27 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
         filter.toTop();
     }
 
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
+        int index = found.keyIndex(symbolKey);
+        if (index > -1) {
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            while (cursor.hasNext()) {
+                final long row = cursor.next();
+                recordA.setRecordIndex(row);
+                if (filter.getBool(recordA)) {
+                    rows.add(Rows.toRowID(partitionIndex, row));
+                    found.addAt(index, symbolKey);
+                    break;
+                }
+            }
+        }
+    }
+
     @Override
     protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
         filter.init(this, executionContext);
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
 
         int keyCount = symbolKeys.size();
         if (deferredSymbolKeys != null) {
@@ -80,6 +99,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
@@ -100,21 +120,5 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractRecordListCursor
             }
         }
         rows.sortAsUnsigned();
-    }
-
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
-        int index = found.keyIndex(symbolKey);
-        if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-            while (cursor.hasNext()) {
-                final long row = cursor.next();
-                recordA.setRecordIndex(row);
-                if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
-                    found.addAt(index, symbolKey);
-                    break;
-                }
-            }
-        }
     }
 }

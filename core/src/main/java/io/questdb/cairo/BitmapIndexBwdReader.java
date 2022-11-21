@@ -90,9 +90,9 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
-        protected long valueCount;
         protected long minValue;
         protected long next;
+        protected long valueCount;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
@@ -142,6 +142,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
+        private void seekValue(long count, long offset) {
+            this.valueCount = count;
+            this.valueBlockOffset = offset;
+        }
+
         void of(int key, long minValue, long maxValue, long keyCount) {
             if (keyCount == 0) {
                 valueCount = 0;
@@ -183,11 +188,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                 }
                 this.minValue = minValue;
             }
-        }
-
-        private void seekValue(long count, long offset) {
-            this.valueCount = count;
-            this.valueBlockOffset = offset;
         }
     }
 

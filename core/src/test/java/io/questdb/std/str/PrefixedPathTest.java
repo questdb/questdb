@@ -29,10 +29,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PrefixedPathTest {
-    private static String transform(final String s) {
-        return Os.type == Os.WINDOWS ? s.replaceAll("/", "\\\\") : s;
-    }
-
     @Test
     public void testBorderlineChild() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 12)) {
@@ -75,6 +71,10 @@ public class PrefixedPathTest {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
             assertThat(path, "/home/xterm/public/xyz", "xyz");
         }
+    }
+
+    private static String transform(final String s) {
+        return Os.type == Os.WINDOWS ? s.replaceAll("/", "\\\\") : s;
     }
 
     private void assertThat(PrefixedPath path, String expected, CharSequence concat) {

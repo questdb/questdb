@@ -87,10 +87,10 @@ public class WorkerPoolOneToThreePerformanceTest {
     }
 
     static class BusyConsumer extends Thread {
-        private final Sequence sequence;
-        private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
         private final CountDownLatch latch;
+        private final RingQueue<Event> queue;
+        private final Sequence sequence;
 
         BusyConsumer(Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
             this.sequence = sequence;

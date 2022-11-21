@@ -28,9 +28,9 @@ import io.questdb.std.Rows;
 
 public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
-    private long txn = TableUtils.INITIAL_TXN;
-    private long lastRowId = -1;
     private long dataVersion = -1;
+    private long lastRowId = -1;
+    private long txn = TableUtils.INITIAL_TXN;
 
     public void bookmark() {
         lastRowId = recordA.getRowId();

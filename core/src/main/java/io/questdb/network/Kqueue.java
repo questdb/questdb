@@ -34,14 +34,14 @@ import java.io.Closeable;
 
 public final class Kqueue implements Closeable {
     private static final Log LOG = LogFactory.getLog(Kqueue.class);
+    private final int bufferSize;
+    private final int capacity;
     private final long changeList;
     private final long eventList;
     private final int kq;
-    private final int capacity;
     private final KqueueFacade kqf;
-    private final int bufferSize;
-    private long writeAddress;
     private long readAddress;
+    private long writeAddress;
 
     public Kqueue(int capacity) {
         this(KqueueFacadeImpl.INSTANCE, capacity);
@@ -84,14 +84,6 @@ public final class Kqueue implements Closeable {
         return register(1);
     }
 
-    public int removeListen(long sfd) {
-        writeAddress = changeList;
-        commonFd(sfd, 0);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
-        return register(1);
-    }
-
     public int poll() {
         return kqf.kevent(kq, 0, 0, eventList, capacity);
     }
@@ -104,6 +96,14 @@ public final class Kqueue implements Closeable {
 
     public int register(int n) {
         return kqf.kevent(kq, changeList, n, 0, 0);
+    }
+
+    public int removeListen(long sfd) {
+        writeAddress = changeList;
+        commonFd(sfd, 0);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+        return register(1);
     }
 
     public void setReadOffset(int offset) {

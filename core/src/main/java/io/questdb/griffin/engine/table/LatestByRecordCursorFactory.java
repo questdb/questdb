@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -44,11 +44,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
     private final RecordCursorFactory base;
-    private final int timestampIndex;
     private final LatestByRecordCursor cursor;
     private final RecordSink recordSink;
     private final DirectLongList rowIndexes;
     private final long rowIndexesInitialCapacity;
+    private final int timestampIndex;
 
     public LatestByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -69,13 +69,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
         this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
-        rowIndexes.close();
-        cursor.close();
     }
 
     @Override
@@ -118,6 +111,16 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return base.usesCompiledFilter();
+    }
+
     private void buildMap(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         long index = 0;
         while (baseCursor.hasNext()) {
@@ -144,13 +147,10 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public boolean usesCompiledFilter() {
-        return base.usesCompiledFilter();
+    protected void _close() {
+        base.close();
+        rowIndexes.close();
+        cursor.close();
     }
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {
@@ -159,26 +159,16 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         private final Map latestByMap;
         private RecordCursor baseCursor;
         private Record baseRecord;
-        private long index = 0;
-        private DirectLongList rowIndexes;
-        private long rowIndexesPos = 0;
-        private long rowIndexesCapacityThreshold;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private long index = 0;
         private boolean isOpen;
+        private DirectLongList rowIndexes;
+        private long rowIndexesCapacityThreshold;
+        private long rowIndexesPos = 0;
 
         public LatestByRecordCursor(Map latestByMap) {
             this.latestByMap = latestByMap;
             this.isOpen = true;
-        }
-
-        public void of(RecordCursor baseCursor, DirectLongList rowIndexes, long rowIndexesCapacityThreshold, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.baseCursor = baseCursor;
-            this.baseRecord = baseCursor.getRecord();
-            this.rowIndexes = rowIndexes;
-            this.circuitBreaker = circuitBreaker;
-            this.index = 0;
-            this.rowIndexesPos = 0;
-            this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
         }
 
         @Override
@@ -208,11 +198,6 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
-        }
-
-        @Override
         public boolean hasNext() {
             if (rowIndexesPos == rowIndexes.size()) {
                 return false;
@@ -230,15 +215,30 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void toTop() {
-            baseCursor.toTop();
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        public void of(RecordCursor baseCursor, DirectLongList rowIndexes, long rowIndexesCapacityThreshold, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.baseCursor = baseCursor;
+            this.baseRecord = baseCursor.getRecord();
+            this.rowIndexes = rowIndexes;
+            this.circuitBreaker = circuitBreaker;
             this.index = 0;
             this.rowIndexesPos = 0;
+            this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
         }
 
         @Override
         public long size() {
             return rowIndexes.size();
+        }
+
+        @Override
+        public void toTop() {
+            baseCursor.toTop();
+            this.index = 0;
+            this.rowIndexesPos = 0;
         }
     }
 }

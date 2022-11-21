@@ -26,6 +26,6 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.std.str.DirectByteCharSequence;
 
-public interface TimestampCompatibleAdapter extends TypeAdapter{
+public interface TimestampCompatibleAdapter extends TypeAdapter {
     long getTimestamp(DirectByteCharSequence value) throws Exception;
 }

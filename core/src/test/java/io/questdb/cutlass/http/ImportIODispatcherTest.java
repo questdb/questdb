@@ -60,8 +60,6 @@ import static io.questdb.test.tools.TestUtils.getSendDelayNetworkFacade;
 
 public class ImportIODispatcherTest {
     private static final Log LOG = LogFactory.getLog(ImportIODispatcherTest.class);
-    private static final String RequestFooter = "\r\n" +
-            "--------------------------27d997ca93d2689d--";
     private static final String PostHeader = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -70,6 +68,13 @@ public class ImportIODispatcherTest {
             "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
             "Expect: 100-continue\r\n" +
             "\r\n";
+    private static final String REQUEST_FOOTER = "\r\n" +
+            "--------------------------27d997ca93d2689d--";
+    private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
+            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "\r\n" +
+            "Col1,Pickup_DateTime,DropOff_datetime\r\n";
     private static final String Request1SchemaPart = "--------------------------27d997ca93d2689d\r\n" +
             "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
             "Content-Type: application/octet-stream\r\n" +
@@ -90,11 +95,6 @@ public class ImportIODispatcherTest {
             "  }\r\n" +
             "]\r\n" +
             "\r\n";
-    private static final String Request1DataHeader = "--------------------------27d997ca93d2689d\r\n" +
-            "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-            "Content-Type: application/octet-stream\r\n" +
-            "\r\n" +
-            "Col1,Pickup_DateTime,DropOff_datetime\r\n";
     private static final String Request1Header = PostHeader +
             Request1SchemaPart +
             Request1DataHeader;
@@ -123,7 +123,7 @@ public class ImportIODispatcherTest {
             "B00014,2017-02-01 14:58:00,\r\n" +
             "B00014,2017-02-01 15:33:00,\r\n" +
             "B00014,2017-02-01 15:45:00,\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
     private static final String Request2Header = "POST /upload?name=trips HTTP/1.1\r\n" +
             "Host: localhost:9001\r\n" +
             "User-Agent: curl/7.64.0\r\n" +
@@ -190,7 +190,9 @@ public class ImportIODispatcherTest {
             "B00014,,,,2017-02-01 14:58:00\r\n" +
             "B00014,,,,2017-02-01 15:33:00\r\n" +
             "B00014,,,,2017-02-01 15:45:00\r\n" +
-            RequestFooter;
+            REQUEST_FOOTER;
+    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
+    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -281,9 +283,6 @@ public class ImportIODispatcherTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+STRING)";
-    private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
-
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
@@ -707,10 +706,10 @@ public class ImportIODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
-                    final String requestTemplate = reqeusts[0];
+                    final String requestTemplate = requests[0];
                     final String ddlCols = ddl[0];
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -735,10 +734,10 @@ public class ImportIODispatcherTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run((engine) -> {
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
-                    final String requestTemplate = reqeusts[0];
+                    final String requestTemplate = requests[0];
                     final String ddlCols = ddl[0];
 
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -955,7 +954,7 @@ public class ImportIODispatcherTest {
                                         String requestTemplate =
                                                 headers[tableIndex].replace("POST /upload?name=trips ", "POST /upload?name=" + tableName + " ")
                                                         + generateImportCsv(low, hi, csvTemplate[tableIndex])
-                                                        + RequestFooter;
+                                                        + REQUEST_FOOTER;
 
                                         new SendAndReceiveRequestBuilder()
                                                 .withCompareLength(15)
@@ -1011,14 +1010,14 @@ public class ImportIODispatcherTest {
                 .run((engine) -> {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger success = new AtomicInteger();
-                    String[] reqeusts = new String[]{ValidImportRequest1, ValidImportRequest2};
+                    String[] requests = new String[]{ValidImportRequest1, ValidImportRequest2};
                     String[] response = new String[]{ValidImportResponse1, ValidImportResponse2};
                     String[] ddl = new String[]{DdlCols1, DdlCols2};
 
                     for (int i = 0; i < parallelCount; i++) {
                         final int thread = i;
                         final String respTemplate = response[i];
-                        final String requestTemplate = reqeusts[i];
+                        final String requestTemplate = requests[i];
                         final String ddlCols = ddl[i];
                         final String tableName = "trip" + i;
 

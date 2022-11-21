@@ -30,8 +30,8 @@ import io.questdb.std.str.CharSink;
 import java.util.concurrent.atomic.LongAdder;
 
 class CounterImpl implements Counter {
-    private final CharSequence name;
     private final LongAdder counter;
+    private final CharSequence name;
 
     CounterImpl(CharSequence name) {
         this.name = name;

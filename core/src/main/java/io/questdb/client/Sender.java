@@ -42,7 +42,7 @@ import java.security.PrivateKey;
 
 /**
  * ILP client to feed data to a remote QuestDB instance.
- *
+ * <p>
  * Use {@link #builder()} method to create a new instance.
  * <br>
  * How to use the Sender:
@@ -58,7 +58,7 @@ import java.security.PrivateKey;
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
  * <br>
- *
+ * <p>
  * Sender implements the <code>java.io.Closeable</code> interface. Thus, you must call the {@link #close()} method
  * when you no longer need it.
  * <br>
@@ -66,96 +66,68 @@ import java.security.PrivateKey;
  * a mechanism for passing Sender instances among thread. An object pool could have this role.
  * <br>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
- *
  */
 public interface Sender extends Closeable {
 
     /**
-     * Select the table for a new row. This is always the first method to start a error. It's an error to call other
-     * methods without calling this method first.
+     * Construct a Builder object to create a new Sender instance.
      *
-     * @param table name of the table
-     * @return this instance for method chaining
+     * @return Builder object to create a new Sender instance.
      */
-    Sender table(CharSequence table);
+    static LineSenderBuilder builder() {
+        return new LineSenderBuilder();
+    }
 
     /**
-     * Add a column with an integer value.
+     * Finalize the current row and assign an explicit timestamp.
+     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+     * <br>
+     * From a client perspective timestamp is an opaque number, and it's interpreted only on a QuestDB server.
+     * QuestDB server default behaviour is to treat the timestamp as a number of nanoseconds since 1st Jan 1970 UTC.
+     * This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
+     * <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
      *
-     * @param name name of the column
-     * @param value value to add
-     * @return this instance for method chaining
+     * @param timestamp time since 1st Jan 1970 UTC (epoch)
      */
-    Sender longColumn(CharSequence name, long value);
-
-    /**
-     * Add a column with a string value.
-     *
-     * @param name name of the column
-     * @param value value to add
-     * @return this instance for method chaining
-     */
-    Sender stringColumn(CharSequence name, CharSequence value);
-
-    /**
-     * Add a column with a floating point value.
-     *
-     * @param name name of the column
-     * @param value value to add
-     * @return this instance for method chaining
-     */
-    Sender doubleColumn(CharSequence name, double value);
-
-    /**
-     * Add a column with a boolean value.
-     *
-     * @param name name of the column
-     * @param value value to add
-     * @return this instance for method chaining
-     */
-    Sender boolColumn(CharSequence name, boolean value);
-
-    /**
-     * Add a column with a non-designated timestamp value.
-     *
-     *
-     * @param name name of the column
-     * @param value value to add (in microseconds since epoch)
-     * @return this instance for method chaining
-     */
-    Sender timestampColumn(CharSequence name, long value);
-
-    /**
-     * Add a column with a symbol value. You must call add symbols before adding any other column types.
-     *
-     * @param name name of the column
-     * @param value value to add
-     * @return this instance for method chaining
-     */
-    Sender symbol(CharSequence name, CharSequence value);
+    void at(long timestamp);
 
     /**
      * Finalize the current row and let QuestDB server assign a timestamp. If you need to set timestamp
      * explicitly then see {@link #at(long)}.
      * <br>
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
-     *
      */
     void atNow();
 
     /**
-     *  Finalize the current row and assign an explicit timestamp.
-     *  After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
-     *  <br>
-     *  From a client perspective timestamp is an opaque number, and it's interpreted only on a QuestDB server.
-     *  QuestDB server default behaviour is to treat the timestamp as a number of nanoseconds since 1st Jan 1970 UTC.
-     *  This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
-     *  <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
+     * Add a column with a boolean value.
      *
-     * @param timestamp time since 1st Jan 1970 UTC (epoch)
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
      */
-    void at(long timestamp);
+    Sender boolColumn(CharSequence name, boolean value);
 
+    /**
+     * Close this Sender.
+     * <br>
+     * This must be called before dereferencing Sender, otherwise resources might leak.
+     * Upon returning from this method the Sender is closed and cannot be used anymore.
+     * Close method is idempotent, calling this method multiple times has no effect.
+     * Calling any other on a closed Sender will throw {@link LineSenderException}
+     * <br>
+     */
+    @Override
+    void close();
+
+    /**
+     * Add a column with a floating point value.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    Sender doubleColumn(CharSequence name, double value);
 
     /**
      * Force flushing internal buffers to a server.
@@ -169,30 +141,72 @@ public interface Sender extends Closeable {
      * automatic flush.
      *
      * @see LineSenderBuilder#bufferCapacity(int)
-     *
      */
     void flush();
 
     /**
-     * Close this Sender.
-     * <br>
-     * This must be called before dereferencing Sender, otherwise resources might leak.
-     * Upon returning from this method the Sender is closed and cannot be used anymore.
-     * Close method is idempotent, calling this method multiple times has no effect.
-     * Calling any other on a closed Sender will throw {@link LineSenderException}
-     * <br>
+     * Add a column with an integer value.
      *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
      */
-    @Override
-    void close();
+    Sender longColumn(CharSequence name, long value);
 
     /**
-     * Construct a Builder object to create a new Sender instance.
+     * Add a column with a string value.
      *
-     * @return Builder object to create a new Sender instance.
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
      */
-    static LineSenderBuilder builder() {
-        return new LineSenderBuilder();
+    Sender stringColumn(CharSequence name, CharSequence value);
+
+    /**
+     * Add a column with a symbol value. You must call add symbols before adding any other column types.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    Sender symbol(CharSequence name, CharSequence value);
+
+    /**
+     * Select the table for a new row. This is always the first method to start a error. It's an error to call other
+     * methods without calling this method first.
+     *
+     * @param table name of the table
+     * @return this instance for method chaining
+     */
+    Sender table(CharSequence table);
+
+    /**
+     * Add a column with a non-designated timestamp value.
+     *
+     * @param name  name of the column
+     * @param value value to add (in microseconds since epoch)
+     * @return this instance for method chaining
+     */
+    Sender timestampColumn(CharSequence name, long value);
+
+    /**
+     * Configure TLS mode.
+     * Most users should not need to use anything but the default mode.
+     */
+    enum TlsValidationMode {
+
+        /**
+         * Sender validates a server certificate chain and throws an exception
+         * when a certificate is not trusted.
+         */
+        DEFAULT,
+
+        /**
+         * Suitable for testing. In this mode Sender does not validate a server certificate chain.
+         * This is inherently insecure and should never be used in a production environment.
+         * Useful in test environments with self-signed certificates.
+         */
+        INSECURE
     }
 
     /**
@@ -206,29 +220,25 @@ public interface Sender extends Closeable {
      *      sender.table(tableName).column("value", 42).atNow();
      *  }
      * }</pre>
-     *
      */
     final class LineSenderBuilder {
         // indicates that buffer capacity was not set explicitly
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
-        // indicate that port was not set explicitly
-        private static final byte PORT_DEFAULT = 0;
-
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
         private static final int DEFAULT_PORT = 9009;
-
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
-
-        private int port = PORT_DEFAULT;
+        // indicate that port was not set explicitly
+        private static final byte PORT_DEFAULT = 0;
+        private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private String host;
+        private String keyId;
+        private int port = PORT_DEFAULT;
         private PrivateKey privateKey;
         private boolean shouldDestroyPrivKey;
-        private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private boolean tlsEnabled;
-        private String trustStorePath;
-        private String keyId;
-        private char[] trustStorePassword;
         private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
+        private char[] trustStorePassword;
+        private String trustStorePath;
 
         private LineSenderBuilder() {
 
@@ -241,7 +251,7 @@ public interface Sender extends Closeable {
          * <br>
          * Optionally, you can also include a port. In this can you separate a port from the address by using a colon.
          * Example: my.example.org:54321.
-         *
+         * <p>
          * If you can include a port then you must not call {@link LineSenderBuilder#port(int)}.
          *
          * @param address address of a QuestDB server
@@ -281,67 +291,6 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Set port where a QuestDB server is listening on.
-         *
-         * @param port port where a QuestDB server is listening on.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder port(int port) {
-            if (this.port != 0) {
-                throw new LineSenderException("post is already configured ")
-                        .put("[configured-port=").put(port).put("]");
-            }
-            this.port = port;
-            return this;
-        }
-
-        /**
-         * Configure authentication. This is needed when QuestDB server required clients to authenticate.
-         *
-         * @param keyId keyId the client will send to a server.
-         * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
-         */
-        public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
-            if (this.keyId != null) {
-                throw new LineSenderException("authentication keyId was already configured ")
-                        .put("[configured-keyId=").put(this.keyId).put("]");
-            }
-            this.keyId = keyId;
-            return new LineSenderBuilder.AuthBuilder();
-        }
-
-        /**
-         * Instruct a client to use TLS when connecting to a QuestDB server
-         *
-         * @return this instance for method chaining.
-         */
-        public LineSenderBuilder enableTls() {
-            if (tlsEnabled) {
-                throw new LineSenderException("tls was already enabled");
-            }
-            tlsEnabled = true;
-            return this;
-        }
-
-        /**
-         * Configure capacity of an internal buffer.
-         * Bigger buffer increase batching effect.
-         *
-         * @see Sender#flush()
-         *
-         * @param bufferCapacity buffer capacity in bytes.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder bufferCapacity(int bufferCapacity) {
-            if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
-                throw new LineSenderException("buffer capacity was already configured ")
-                        .put("[configured-capacity=").put(this.bufferCapacity).put("]");
-            }
-            this.bufferCapacity = bufferCapacity;
-            return this;
-        }
-
-        /**
          * Advanced TLS configuration. Most users should not need to use this.
          *
          * @return instance of {@link AdvancedTlsSettings} to advanced TLS configuration
@@ -355,6 +304,23 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("TLS validation was already disabled");
             }
             return new AdvancedTlsSettings();
+        }
+
+        /**
+         * Configure capacity of an internal buffer.
+         * Bigger buffer increase batching effect.
+         *
+         * @param bufferCapacity buffer capacity in bytes.
+         * @return this instance for method chaining
+         * @see Sender#flush()
+         */
+        public LineSenderBuilder bufferCapacity(int bufferCapacity) {
+            if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
+                throw new LineSenderException("buffer capacity was already configured ")
+                        .put("[configured-capacity=").put(this.bufferCapacity).put("]");
+            }
+            this.bufferCapacity = bufferCapacity;
+            return this;
         }
 
         /**
@@ -405,6 +371,56 @@ public interface Sender extends Closeable {
             return sender;
         }
 
+        /**
+         * Configure authentication. This is needed when QuestDB server required clients to authenticate.
+         *
+         * @param keyId keyId the client will send to a server.
+         * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
+         */
+        public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
+            if (this.keyId != null) {
+                throw new LineSenderException("authentication keyId was already configured ")
+                        .put("[configured-keyId=").put(this.keyId).put("]");
+            }
+            this.keyId = keyId;
+            return new LineSenderBuilder.AuthBuilder();
+        }
+
+        /**
+         * Instruct a client to use TLS when connecting to a QuestDB server
+         *
+         * @return this instance for method chaining.
+         */
+        public LineSenderBuilder enableTls() {
+            if (tlsEnabled) {
+                throw new LineSenderException("tls was already enabled");
+            }
+            tlsEnabled = true;
+            return this;
+        }
+
+        /**
+         * Set port where a QuestDB server is listening on.
+         *
+         * @param port port where a QuestDB server is listening on.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder port(int port) {
+            if (this.port != 0) {
+                throw new LineSenderException("post is already configured ")
+                        .put("[configured-port=").put(port).put("]");
+            }
+            this.port = port;
+            return this;
+        }
+
+        private static RuntimeException rethrow(Throwable t) {
+            if (t instanceof LineSenderException) {
+                throw (LineSenderException) t;
+            }
+            throw new LineSenderException(t);
+        }
+
         private void configureDefaults() {
             if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
@@ -433,49 +449,6 @@ public interface Sender extends Closeable {
             }
         }
 
-        private static RuntimeException rethrow(Throwable t) {
-            if (t instanceof LineSenderException) {
-                throw (LineSenderException)t;
-            }
-            throw new LineSenderException(t);
-        }
-
-        /**
-         * Auxiliary class to configure client authentication.
-         * If you have an instance of {@link PrivateKey} then you can pass it directly.
-         * Alternative a private key encoded as a string token can be used too.
-         *
-         */
-        public class AuthBuilder {
-
-            /**
-             * Configures a private key for authentication.
-             *
-             * @param privateKey privateKey to use for authentication
-             * @return an instance of LineSenderBuilder for further configuration
-             */
-            public LineSenderBuilder privateKey(PrivateKey privateKey) {
-                LineSenderBuilder.this.privateKey = privateKey;
-                return LineSenderBuilder.this;
-            }
-
-            /**
-             * Authenticate by using a token.
-             *
-             * @param token authentication token
-             * @return an instance of LineSenderBuilder for further configuration
-             */
-            public LineSenderBuilder authToken(String token) {
-                try {
-                    LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
-                } catch (IllegalArgumentException e) {
-                    throw new LineSenderException("could not import token", e);
-                }
-                LineSenderBuilder.this.shouldDestroyPrivKey = true;
-                return LineSenderBuilder.this;
-            }
-        }
-
         public class AdvancedTlsSettings {
             /**
              * Configure a custom truststore. This is only needed when using {@link #enableTls()} when your default
@@ -484,7 +457,7 @@ public interface Sender extends Closeable {
              * The path can be either a path on a local filesystem. Or you can prefix it with "classpath:" to instruct
              * the Sender to load a trust store from a classpath.
              *
-             * @param trustStorePath a path to a trust store.
+             * @param trustStorePath     a path to a trust store.
              * @param trustStorePassword a password to for the trustore
              * @return an instance of LineSenderBuilder for further configuration
              */
@@ -510,28 +483,40 @@ public interface Sender extends Closeable {
             }
 
         }
-    }
-
-    /**
-     * Configure TLS mode.
-     * Most users should not need to use anything but the default mode.
-     *
-     */
-    enum TlsValidationMode {
 
         /**
-         * Sender validates a server certificate chain and throws an exception
-         * when a certificate is not trusted.
-         *
+         * Auxiliary class to configure client authentication.
+         * If you have an instance of {@link PrivateKey} then you can pass it directly.
+         * Alternative a private key encoded as a string token can be used too.
          */
-        DEFAULT,
+        public class AuthBuilder {
 
-        /**
-         * Suitable for testing. In this mode Sender does not validate a server certificate chain.
-         * This is inherently insecure and should never be used in a production environment.
-         * Useful in test environments with self-signed certificates.
-         *
-         */
-        INSECURE
+            /**
+             * Authenticate by using a token.
+             *
+             * @param token authentication token
+             * @return an instance of LineSenderBuilder for further configuration
+             */
+            public LineSenderBuilder authToken(String token) {
+                try {
+                    LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
+                } catch (IllegalArgumentException e) {
+                    throw new LineSenderException("could not import token", e);
+                }
+                LineSenderBuilder.this.shouldDestroyPrivKey = true;
+                return LineSenderBuilder.this;
+            }
+
+            /**
+             * Configures a private key for authentication.
+             *
+             * @param privateKey privateKey to use for authentication
+             * @return an instance of LineSenderBuilder for further configuration
+             */
+            public LineSenderBuilder privateKey(PrivateKey privateKey) {
+                LineSenderBuilder.this.privateKey = privateKey;
+                return LineSenderBuilder.this;
+            }
+        }
     }
 }

@@ -32,30 +32,6 @@ import org.junit.Test;
 public class CharSequenceIntHashMapTest {
 
     @Test
-    public void testPutMutableCharSequence() {
-        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
-
-        StringSink ss = new StringSink();
-        ss.put("a");
-
-        lowerCaseMap.putIfAbsent(ss, 1);
-
-        ss.clear();
-        ss.put("bb");
-
-        lowerCaseMap.putIfAbsent(ss, 2);
-
-        Assert.assertEquals(1, lowerCaseMap.get("a"));
-        Assert.assertEquals(2, lowerCaseMap.get("bb"));
-
-        ObjList<CharSequence>  keys =  lowerCaseMap.keys();
-        Assert.assertEquals(2, keys.size());
-        Assert.assertEquals("a", keys.get(0));
-        Assert.assertEquals("bb", keys.get(1));
-    }
-
-
-    @Test
     public void testAll() {
 
         Rnd rnd = new Rnd();
@@ -238,5 +214,26 @@ public class CharSequenceIntHashMapTest {
         }
     }
 
+    @Test
+    public void testPutMutableCharSequence() {
+        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
+        StringSink ss = new StringSink();
+        ss.put("a");
+
+        lowerCaseMap.putIfAbsent(ss, 1);
+
+        ss.clear();
+        ss.put("bb");
+
+        lowerCaseMap.putIfAbsent(ss, 2);
+
+        Assert.assertEquals(1, lowerCaseMap.get("a"));
+        Assert.assertEquals(2, lowerCaseMap.get("bb"));
+
+        ObjList<CharSequence> keys = lowerCaseMap.keys();
+        Assert.assertEquals(2, keys.size());
+        Assert.assertEquals("a", keys.get(0));
+        Assert.assertEquals("bb", keys.get(1));
+    }
 }

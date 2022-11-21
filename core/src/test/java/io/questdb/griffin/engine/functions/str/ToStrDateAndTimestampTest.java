@@ -28,7 +28,6 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -57,6 +56,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "yy",
                 "yyy",
                 "yyyy",
+                // "YYYY", only used in PartitionBy as it relates to ISO Weeks
                 "M",
                 "MM",
                 "MMM",
@@ -68,7 +68,7 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "u",
                 "D",
                 "w",
-                "W",
+                // "ww", only used in PartitionBy as it relates to ISO Weeks
                 "a",
                 "H",
                 "HH",
@@ -92,14 +92,14 @@ public class ToStrDateAndTimestampTest extends AbstractGriffinTest {
                 "Z",
                 "x",
                 "xx",
-                "merge_copy_var_column",
+                "xxx",
                 // "U", these also don't make sense for millis
                 // "UUU"
         };
         TimestampFormatCompiler tsc = new TimestampFormatCompiler();
         DateFormatCompiler dsc = new DateFormatCompiler();
         DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getLocale("en-GB");
-        for(String op: opList) {
+        for (String op : opList) {
             DateFormat fmt = tsc.compile(op, true);
             DateFormat fmt2 = dsc.compile(op, true);
             for (String s : inputs) {

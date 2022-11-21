@@ -35,20 +35,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursor cursor;
     private final int columnIndex;
-    private final Function filter;
+    private final IntList columnIndexes;
+    private final DataFrameRecordCursor cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
+    private final boolean dynamicExcludedKeys;
+    private final IntHashSet excludedKeys = new IntHashSet();
+    private final Function filter;
+    private final boolean followedOrderByAdvice;
+    private final IntHashSet includedKeys = new IntHashSet();
+    private final int indexDirection;
+    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
+    private final int maxSymbolNotEqualsCount;
     // Points at the next factory to be reused.
     private int cursorFactoriesIdx;
-    private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
-    private final IntHashSet includedKeys = new IntHashSet();
-    private final IntHashSet excludedKeys = new IntHashSet();
-    private final boolean dynamicExcludedKeys;
-    private final boolean followedOrderByAdvice;
-    private final int indexDirection;
-    private final int maxSymbolNotEqualsCount;
-    private final IntList columnIndexes;
 
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -88,20 +88,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(filter);
-        Misc.freeObjList(keyExcludedValueFunctions);
-    }
-
-    @Override
     public boolean followedOrderByAdvice() {
         return followedOrderByAdvice;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return true;
     }
 
     public void recalculateIncludedValues(TableReader tableReader) {
@@ -138,6 +126,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         }
     }
 
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
     private void upsertRowCursorFactory(int symbolKey) {
         if (cursorFactoriesIdx < cursorFactories.size()) {
             // Reuse the existing factory.
@@ -169,6 +162,13 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         }
         cursorFactories.add(rowCursorFactory);
         cursorFactoriesIdx++;
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+        Misc.freeObjList(keyExcludedValueFunctions);
     }
 
     @Override

@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -37,8 +37,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor implements Reopenable {
-    private final Map map;
     private final RecordSink keyMapSink;
+    private final Map map;
     private final RecordCursor mapCursor;
     private boolean isOpen;
 
@@ -46,6 +46,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
@@ -59,6 +60,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
@@ -69,6 +71,15 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         this.mapCursor = map.getCursor();
         this.record.of(map.getRecord());
         this.isOpen = true;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -102,8 +113,6 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         this.nextSampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
-
-        int n = groupByFunctions.size();
         while (true) {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
@@ -115,9 +124,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
                 if (value.getLong(0) != localEpoch) {
                     value.putLong(0, localEpoch);
-                    GroupByUtils.updateNew(groupByFunctions, n, value, baseRecord);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord);
                 } else {
-                    GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
                 }
 
                 // carry on with the loop if we still have data
@@ -134,7 +143,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                timestamp = adjustDST(timestamp, n, null, next);
+                timestamp = adjustDST(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                 }
@@ -174,18 +183,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     }
 
     @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
+    protected void updateValueWhenClockMovesBack(MapValue value) {
         final MapKey key = map.withKey();
         keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
-    }
-
-    @Override
-    public void close() {
-        if (isOpen) {
-            map.close();
-            super.close();
-            isOpen = false;
-        }
+        super.updateValueWhenClockMovesBack(key.createValue());
     }
 }

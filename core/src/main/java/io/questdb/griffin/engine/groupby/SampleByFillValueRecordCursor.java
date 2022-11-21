@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -38,8 +38,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
-    private final Map map;
     private final RecordSink keyMapSink;
+    private final Map map;
     private final RecordCursor mapCursor;
     private final Record mapRecord;
     private boolean isOpen;
@@ -48,6 +48,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
@@ -62,6 +63,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 timestampIndex,
                 timestampSampler,
                 groupByFunctions,
+                groupByFunctionsUpdater,
                 placeholderFunctions,
                 timezoneNameFunc,
                 timezoneNameFuncPos,
@@ -74,6 +76,15 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         this.mapCursor = map.getCursor();
         this.mapRecord = map.getRecord();
         this.isOpen = true;
+    }
+
+    @Override
+    public void close() {
+        if (isOpen) {
+            map.close();
+            super.close();
+            isOpen = false;
+        }
     }
 
     @Override
@@ -108,7 +119,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
         this.nextSampleLocalEpoch = localEpoch;
 
         // looks like we need to populate key map
-        int n = groupByFunctions.size();
         while (true) {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
@@ -120,9 +130,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
                 if (value.getLong(0) != localEpoch) {
                     value.putLong(0, localEpoch);
-                    GroupByUtils.updateNew(groupByFunctions, n, value, baseRecord);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord);
                 } else {
-                    GroupByUtils.updateExisting(groupByFunctions, n, value, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
                 }
 
                 // carry on with the loop if we still have data
@@ -139,7 +149,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 // unchanged. Timestamp columns uses this variable
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
                 // and build another map
-                timestamp = adjustDST(timestamp, n, null, next);
+                timestamp = adjustDST(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);
                 }
@@ -154,13 +164,6 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             this.map.reopen();
             isOpen = true;
         }
-    }
-
-    @Override
-    protected void updateValueWhenClockMovesBack(MapValue value, int n) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
-        super.updateValueWhenClockMovesBack(key.createValue(), n);
     }
 
     @Override
@@ -199,11 +202,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     }
 
     @Override
-    public void close() {
-        if (isOpen) {
-            map.close();
-            super.close();
-            isOpen = false;
-        }
+    protected void updateValueWhenClockMovesBack(MapValue value) {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        super.updateValueWhenClockMovesBack(key.createValue());
     }
 }

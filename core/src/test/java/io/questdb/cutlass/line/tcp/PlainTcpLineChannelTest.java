@@ -30,7 +30,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.fail;
 
 public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
@@ -39,44 +39,6 @@ public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
             return -1;
         }
     };
-
-    @Test
-    public void testConstructorLeak_IP_DescriptorsExhausted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                new PlainTcpLineChannel(FD_EXHAUSTED_NET_FACADE, -1, 1000, 1000);
-                fail("the channel should fail to instantiate when NF fails to create a new socket");
-            } catch (LineSenderException ignored) {
-                // expected
-            }
-        });
-    }
-
-    @Test
-    public void testConstructorLeak_IP_CannotConnect() throws Exception {
-        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                new PlainTcpLineChannel(nf, -1, 1000, 1000);
-                fail("the channel should have failed to connect to address -1");
-            } catch (LineSenderException ignored) {
-                // expected
-            }
-        });
-    }
-
-    @Test
-    public void testConstructorLeak_Hostname_DescriptorsExhausted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                new PlainTcpLineChannel(FD_EXHAUSTED_NET_FACADE, "localhost", 1000, 1000);
-                fail("the channel should fail to instantiate when NF fails to create a new socket");
-            } catch (LineSenderException ignored) {
-                // expected
-            }
-        });
-    }
-
 
     @Test
     public void testConstructorLeak_Hostname_CannotConnect() throws Exception {
@@ -98,6 +60,43 @@ public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
             try {
                 new PlainTcpLineChannel(nf, "nonsense-fails-to-resolve", 1000, 1000);
                 fail("the host should not resolved and the channel should have failed to connect");
+            } catch (LineSenderException ignored) {
+                // expected
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorLeak_Hostname_DescriptorsExhausted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new PlainTcpLineChannel(FD_EXHAUSTED_NET_FACADE, "localhost", 1000, 1000);
+                fail("the channel should fail to instantiate when NF fails to create a new socket");
+            } catch (LineSenderException ignored) {
+                // expected
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorLeak_IP_CannotConnect() throws Exception {
+        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new PlainTcpLineChannel(nf, -1, 1000, 1000);
+                fail("the channel should have failed to connect to address -1");
+            } catch (LineSenderException ignored) {
+                // expected
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorLeak_IP_DescriptorsExhausted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new PlainTcpLineChannel(FD_EXHAUSTED_NET_FACADE, -1, 1000, 1000);
+                fail("the channel should fail to instantiate when NF fails to create a new socket");
             } catch (LineSenderException ignored) {
                 // expected
             }

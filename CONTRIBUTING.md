@@ -19,6 +19,8 @@ If you're not sure whether you should raise an issue, you can also join our
 community **[Slack channel](https://slack.questdb.io/)** and post your questions
 there.
 
+If you find any **security bug**, kindly refer to [SECURITY.md](https://github.com/questdb/questdb/blob/master/SECURITY.md) file for more info.
+
 We aim to respond to your issues and questions soonest. If you wish to receive a
 faster response, we recommend you always describe your steps and provide
 information about your environment in the bug reports. And if you're proposing a
@@ -104,6 +106,22 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 ```
 
 The web console will be available at [localhost:9000](http://localhost:9000).
+
+### Code formatting
+
+Code is formatted using configuration files in `.idea` directory .
+To minimize conflicts when merging and problems in CI all contributed code should be formatted
+before submitting PR.
+
+In IntelliJ IDEA you can : 
+- automate formatting (preferrable):
+  - open File | Settings
+  - choose Tools | Actions On Save 
+  - select  Reformat & Rearrange Code
+  - click Apply
+
+  or
+- format files manually by selecting them and choosing Code | Reformat File .
 
 ### Compiling C-libraries
 

@@ -34,15 +34,13 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
- * 
- * This lock is not re-entrant. 
- * If a thread holds a write lock and it tries to grab a lock again it will deadlock. 
+ * This lock is not reentrant.
+ * If a thread holds a write lock and it tries to grab a lock again it will deadlock.
  * If a thread holding a read lock tries to upgrade its lock to a write lock it must first release its read lock or it will deadlock.
  * Threads waiting on a write lock have priority over threads waiting on a read lock.
  * Threads waiting on a write lock are not resumed fairly.
- * 
- * @author Patrick Mackinlay
  *
+ * @author Patrick Mackinlay
  */
 public class SimpleReadWriteLock implements ReadWriteLock {
     private final int MAX_READERS = Integer.MAX_VALUE / 2 - 1;
@@ -77,7 +75,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock() {
+        public Condition newCondition() {
             throw new UnsupportedOperationException();
         }
 
@@ -87,13 +85,13 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public void unlock() {
-            nReaders.decrementAndGet();
+        public boolean tryLock() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
-        public Condition newCondition() {
-            throw new UnsupportedOperationException();
+        public void unlock() {
+            nReaders.decrementAndGet();
         }
     }
 
@@ -115,6 +113,16 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
+        public Condition newCondition() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean tryLock(long time, @NotNull TimeUnit unit) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public boolean tryLock() {
             if (!lock.compareAndSet(false, true)) {
                 return false;
@@ -129,19 +137,9 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public boolean tryLock(long time, @NotNull TimeUnit unit) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void unlock() {
             nReaders.addAndGet(-MAX_READERS);
             lock.set(false);
-        }
-
-        @Override
-        public Condition newCondition() {
-            throw new UnsupportedOperationException();
         }
 
     }

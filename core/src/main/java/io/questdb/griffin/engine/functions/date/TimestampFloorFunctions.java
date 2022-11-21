@@ -33,7 +33,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 
 /**
  * Functions used by both data_trunc() and timestamp_floor() as these functions have overlapping behaviour.
- *
  */
 final class TimestampFloorFunctions {
     private TimestampFloorFunctions() {
@@ -61,6 +60,17 @@ final class TimestampFloorFunctions {
         abstract protected long floor(long timestamp);
     }
 
+    static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorCenturyFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorCentury(timestamp);
+        }
+    }
+
     static class TimestampFloorDDFunction extends AbstractTimestampFloorFunction {
         public TimestampFloorDDFunction(Function arg) {
             super(arg);
@@ -72,25 +82,25 @@ final class TimestampFloorFunctions {
         }
     }
 
-    static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMMFunction(Function arg) {
+    static class TimestampFloorDayOfWeekFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorDayOfWeekFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp);
+            return Timestamps.floorDOW(timestamp);
         }
     }
 
-    static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorYYYYFunction(Function arg) {
+    static class TimestampFloorDecadeFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorDecadeFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp);
+            return Timestamps.floorDecade(timestamp);
         }
     }
 
@@ -116,14 +126,14 @@ final class TimestampFloorFunctions {
         }
     }
 
-    static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorSSFunction(Function arg) {
+    static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorMMFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp);
+            return Timestamps.floorMM(timestamp);
         }
     }
 
@@ -138,14 +148,14 @@ final class TimestampFloorFunctions {
         }
     }
 
-    static class TimestampFloorDayOfWeekFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorDayOfWeekFunction(Function arg) {
+    static class TimestampFloorMillenniumFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
+        public TimestampFloorMillenniumFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorDOW(timestamp);
+            return Timestamps.floorMillennium(timestamp);
         }
     }
 
@@ -160,36 +170,25 @@ final class TimestampFloorFunctions {
         }
     }
 
-    static class TimestampFloorDecadeFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorDecadeFunction(Function arg) {
+    static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorSSFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorDecade(timestamp);
+            return Timestamps.floorSS(timestamp);
         }
     }
 
-    static class TimestampFloorCenturyFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorCenturyFunction(Function arg) {
+    static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
+        public TimestampFloorYYYYFunction(Function arg) {
             super(arg);
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorCentury(timestamp);
-        }
-    }
-
-    static class TimestampFloorMillenniumFunction extends TimestampFloorFunctions.AbstractTimestampFloorFunction {
-        public TimestampFloorMillenniumFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMillennium(timestamp);
+            return Timestamps.floorYYYY(timestamp);
         }
     }
 }

@@ -41,10 +41,10 @@ import org.jetbrains.annotations.Nullable;
  * and in many cases can stop before scanning all the data when it finds all the expected values
  */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final ObjList<Function> symbolFunctions;
-    private final Function filter;
     private final LatestByValueListRecordCursor cursor;
+    private final Function filter;
     private final int frameSymbolIndex;
+    private final ObjList<Function> symbolFunctions;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -74,29 +74,12 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
-    protected void _close() {
-        super._close();
-        Misc.free(filter);
-        this.cursor.destroy();
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
 
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        lookupDeferredSymbol(dataFrameCursor, executionContext);
-        cursor.of(dataFrameCursor, executionContext);
-        return cursor;
-    }
-
     private void lookupDeferredSymbol(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        // If symbol values are restricted by a list in the qyert by syntax
+        // If symbol values are restricted by a list in the query by syntax
         // sym in ('val1', 'val2', 'val3')
         // or similar we need to resolve string values into int symbol keys to search the table faster.
         // Resolve values to int keys and save them in cursor.getSymbolKeys() set.
@@ -116,5 +99,22 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
                 }
             }
         }
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
+        this.cursor.destroy();
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        lookupDeferredSymbol(dataFrameCursor, executionContext);
+        cursor.of(dataFrameCursor, executionContext);
+        return cursor;
     }
 }

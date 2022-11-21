@@ -54,23 +54,21 @@ import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
-
+    private static final int MATCH_EXACT_MATCH = 3;
+    private static final int MATCH_FUZZY_MATCH = 1;
     // order of values matters here, partial match must have greater value than fuzzy match
     private static final int MATCH_NO_MATCH = 0;
-    private static final int MATCH_FUZZY_MATCH = 1;
     private static final int MATCH_PARTIAL_MATCH = 2;
-    private static final int MATCH_EXACT_MATCH = 3;
-
-    private final ObjList<Function> mutableArgs = new ObjList<>();
-    private final IntList mutableArgPositions = new IntList();
+    private final CairoConfiguration configuration;
+    private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
+    private final Long256Impl long256Sink = new Long256Impl();
+    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
+    private final IntList mutableArgPositions = new IntList();
+    private final ObjList<Function> mutableArgs = new ObjList<>();
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final CairoConfiguration configuration;
-    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
-    private final FunctionFactoryCache functionFactoryCache;
     private final IntList undefinedVariables = new IntList();
-    private final Long256Impl long256Sink = new Long256Impl();
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
@@ -150,15 +148,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
-        if (name != null && name.length() > 0) {
-            switch (name.charAt(0)) {
-                case ':':
-                    return createNamedParameter(position, name);
-                case '$':
-                    return parseIndexedParameter(position, name);
-                default:
-                    return new StrConstant(name);
-            }
+        if (name != null) {
+            if (name.length() > 0) {
+                switch (name.charAt(0)) {
+                    case ':':
+                        return createNamedParameter(position, name);
+                    case '$':
+                        return parseIndexedParameter(position, name);
+                    default:
+                        return new StrConstant(name);
+                }
+            } else return StrConstant.EMPTY;
         }
         return NullConstant.NULL;
     }
@@ -311,25 +311,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
-    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put("unknown function name");
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        Misc.freeObjList(args);
-        return ex;
-    }
-
     private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, FunctionFactoryDescriptor descriptor) {
         SqlException ex = SqlException.position(node.position);
         ex.put("unexpected argument for function: ");
@@ -363,6 +344,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (arg.isConstant()) {
                     ex.put(" constant");
                 }
+            }
+        }
+        ex.put(')');
+        Misc.freeObjList(args);
+        return ex;
+    }
+
+    private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put("unknown function name");
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
             }
         }
         ex.put(')');

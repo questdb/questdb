@@ -37,21 +37,6 @@ import org.junit.Test;
 public class LatestByTest extends AbstractGriffinTest {
 
     @Test
-    public void testSymbolInPredicate_singleElement() throws Exception {
-        assertMemoryLeak(() -> {
-            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
-            compiler.compile(createStmt, sqlExecutionContext);
-            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
-            String expected = "symbol\tside\ttimestamp\n" +
-                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
-            String query = "SELECT * FROM trades\n" +
-                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
-                    "LATEST ON timestamp PARTITION BY symbol;";
-            assertSql(query, expected);
-        });
-    }
-
-    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -317,6 +302,16 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestWithJoinIndexed() throws Exception {
+        testLatestByWithJoin(true);
+    }
+
+    @Test
+    public void testLatestWithJoinNonIndexed() throws Exception {
+        testLatestByWithJoin(false);
+    }
+
+    @Test
     public void testLatestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -383,6 +378,21 @@ public class LatestByTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testSymbolInPredicate_singleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
+            compiler.compile(createStmt, sqlExecutionContext);
+            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            String expected = "symbol\tside\ttimestamp\n" +
+                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
+            String query = "SELECT * FROM trades\n" +
+                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
+                    "LATEST ON timestamp PARTITION BY symbol;";
+            assertSql(query, expected);
+        });
+    }
+
     private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
         StringSink sink = new StringSink();
         try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
@@ -398,5 +408,34 @@ public class LatestByTest extends AbstractGriffinTest {
             }
         }
         return sink.toString();
+    }
+
+    private void testLatestByWithJoin(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table r (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into r values ('xyz', 1, '2022-11-02T01:01:01')");
+            compiler.compile("create table t (symbol symbol, value long, ts timestamp)" +
+                    (indexed ? ", index(symbol) " : " ") + "timestamp(ts) partition by day", sqlExecutionContext);
+            executeInsert("insert into t values ('xyz', 42, '2022-11-02T01:01:01')");
+
+            String query = "with r as (select symbol, value v from r where symbol = 'xyz' latest on ts partition by symbol),\n" +
+                    " t as (select symbol, value v from t where symbol = 'xyz' latest on ts partition by symbol)\n" +
+                    "select r.symbol, r.v subscribers, t.v followers\n" +
+                    "from r\n" +
+                    "join t on symbol";
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "symbol\tsubscribers\tfollowers\n" +
+                                "xyz\t1\t42\n",
+                        factory,
+                        false,
+                        true,
+                        false
+                );
+            }
+        });
     }
 }

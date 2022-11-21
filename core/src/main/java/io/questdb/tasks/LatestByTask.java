@@ -24,26 +24,27 @@
 
 package io.questdb.tasks;
 
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 
 public class LatestByTask {
+    private long argsAddress;
+    private ExecutionCircuitBreaker circuitBreaker;
+    private CountDownLatchSPI doneLatch;
+    private int hashLength;
+    private long hashesAddress;
     private long keyBaseAddress;
     private long keysMemorySize;
-    private long valueBaseAddress;
-    private long valuesMemorySize;
-    private long argsAddress;
-    private long unIndexedNullCount;
-    private long rowHi;
-    private long rowLo;
     private int partitionIndex;
-    private int valueBlockCapacity;
-    private long hashesAddress;
-    private int hashLength;
     private long prefixesAddress;
     private long prefixesCount;
-
-    private CountDownLatchSPI doneLatch;
+    private long rowHi;
+    private long rowLo;
+    private long unIndexedNullCount;
+    private long valueBaseAddress;
+    private int valueBlockCapacity;
+    private long valuesMemorySize;
 
     public void of(
             long keyBaseAddress,
@@ -60,7 +61,8 @@ public class LatestByTask {
             int hashLength,
             long prefixesAddress,
             long prefixesCount,
-            CountDownLatchSPI doneLatch
+            CountDownLatchSPI doneLatch,
+            ExecutionCircuitBreaker circuitBreaker
     ) {
         this.keyBaseAddress = keyBaseAddress;
         this.keysMemorySize = keysMemorySize;
@@ -77,25 +79,28 @@ public class LatestByTask {
         this.prefixesAddress = prefixesAddress;
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
+        this.circuitBreaker = circuitBreaker;
     }
 
     public boolean run() {
-        GeoHashNative.latestByAndFilterPrefix(
-                keyBaseAddress,
-                keysMemorySize,
-                valueBaseAddress,
-                valuesMemorySize,
-                argsAddress,
-                unIndexedNullCount,
-                rowHi,
-                rowLo,
-                partitionIndex,
-                valueBlockCapacity,
-                hashesAddress,
-                hashLength,
-                prefixesAddress,
-                prefixesCount
-        );
+        if (!circuitBreaker.checkIfTripped()) {
+            GeoHashNative.latestByAndFilterPrefix(
+                    keyBaseAddress,
+                    keysMemorySize,
+                    valueBaseAddress,
+                    valuesMemorySize,
+                    argsAddress,
+                    unIndexedNullCount,
+                    rowHi,
+                    rowLo,
+                    partitionIndex,
+                    valueBlockCapacity,
+                    hashesAddress,
+                    hashLength,
+                    prefixesAddress,
+                    prefixesCount
+            );
+        }
 
         doneLatch.countDown();
         return true;

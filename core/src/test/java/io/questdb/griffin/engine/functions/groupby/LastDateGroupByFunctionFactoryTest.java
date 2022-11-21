@@ -85,33 +85,6 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSomeNull() throws SqlException {
-
-        compiler.compile("create table tab (f date)", sqlExecutionContext);
-
-        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
-            for (int i = 100; i > 10; i--) {
-                TableWriter.Row r = w.newRow();
-                if (i % 4 == 0) {
-                    r.putLong(0, i);
-                }
-                r.append();
-            }
-            w.commit();
-        }
-
-        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertEquals(1, cursor.size());
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(Numbers.LONG_NaN, record.getDate(0));
-            }
-        }
-    }
-
-
-    @Test
     public void testSampleFill() throws Exception {
         assertQuery("b\tlast\tk\n" +
                         "\t1970-01-01T13:12:42.067Z\t1970-01-03T00:00:00.000000Z\n" +
@@ -270,5 +243,31 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractGriffinTest {
                         "KFMQ\t1970-01-01T02:24:28.146Z\t1970-01-04T06:00:00.000000Z\n",
                 false
         );
+    }
+
+    @Test
+    public void testSomeNull() throws SqlException {
+
+        compiler.compile("create table tab (f date)", sqlExecutionContext);
+
+        try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tab", "testing")) {
+            for (int i = 100; i > 10; i--) {
+                TableWriter.Row r = w.newRow();
+                if (i % 4 == 0) {
+                    r.putLong(0, i);
+                }
+                r.append();
+            }
+            w.commit();
+        }
+
+        try (RecordCursorFactory factory = compiler.compile("select last(f) from tab", sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record record = cursor.getRecord();
+                Assert.assertEquals(1, cursor.size());
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(Numbers.LONG_NaN, record.getDate(0));
+            }
+        }
     }
 }

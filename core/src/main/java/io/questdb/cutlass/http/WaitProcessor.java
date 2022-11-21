@@ -36,16 +36,16 @@ import java.util.PriorityQueue;
 
 public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
 
-    private final RingQueue<RetryHolder> inQueue;
-    private final Sequence inPubSequence;
-    private final Sequence inSubSequence;
-    private final PriorityQueue<Retry> nextRerun;
-    private final RingQueue<RetryHolder> outQueue;
-    private final Sequence outPubSequence;
-    private final Sequence outSubSequence;
     private final MillisecondClock clock;
-    private final long maxWaitCapMs;
     private final double exponentialWaitMultiplier;
+    private final Sequence inPubSequence;
+    private final RingQueue<RetryHolder> inQueue;
+    private final Sequence inSubSequence;
+    private final long maxWaitCapMs;
+    private final PriorityQueue<Retry> nextRerun;
+    private final Sequence outPubSequence;
+    private final RingQueue<RetryHolder> outQueue;
+    private final Sequence outSubSequence;
 
     public WaitProcessor(WaitProcessorConfiguration configuration) {
         this.clock = configuration.getClock();
@@ -98,6 +98,13 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 return useful;
             }
         }
+    }
+
+    private static int compareRetriesInQueue(Retry r1, Retry r2) {
+        // r1, r2 are always not null, null retries are not queued
+        RetryAttemptAttributes a1 = r1.getAttemptDetails();
+        RetryAttemptAttributes a2 = r2.getAttemptDetails();
+        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
     }
 
     private long calculateNextTimestamp(RetryAttemptAttributes attemptAttributes) {
@@ -183,11 +190,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         }
     }
 
-    @Override
-    protected boolean runSerially() {
-        return processInQueue() || sendToOutQueue();
-    }
-
     private boolean sendToOutQueue() {
         boolean useful = false;
         final long now = clock.getTicks();
@@ -229,10 +231,8 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
         }
     }
 
-    private static int compareRetriesInQueue(Retry r1, Retry r2) {
-        // r1, r2 are always not null, null retries are not queued
-        RetryAttemptAttributes a1 = r1.getAttemptDetails();
-        RetryAttemptAttributes a2 = r2.getAttemptDetails();
-        return Long.compare(a1.nextRunTimestamp, a2.nextRunTimestamp);
+    @Override
+    protected boolean runSerially() {
+        return processInQueue() || sendToOutQueue();
     }
 }

@@ -45,25 +45,16 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSql() throws Exception {
+        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from memory_metrics()", null, null, null, false, true, true, false, null);
+    }
+
+    @Test
     public void testValues() throws Exception {
         try (MemoryMetricsRecordCursorFactory factory = new MemoryMetricsRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             assertCursor(cursor);
         }
-    }
-
-    @Test
-    public void testSql() throws Exception {
-        printSqlResult(MemoryMetricsRecordCursorFactoryTest::expectedTableContent, "select * from memory_metrics()", null, null, null, false, true, true, false, null);
-    }
-
-    private static String expectedTableContent() {
-        StringBuilder sb = new StringBuilder("memory_tag").append('\t').append("bytes").append('\n');
-        sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
-        for (int i = 0; i < MemoryTag.SIZE; i++) {
-            sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
-        }
-        return sb.toString();
     }
 
     private static void assertCursor(RecordCursor cursor) {
@@ -88,5 +79,14 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
         assertEquals(ColumnType.LONG, metadata.getColumnType(1));
         assertEquals("bytes", metadata.getColumnName(1));
+    }
+
+    private static String expectedTableContent() {
+        StringBuilder sb = new StringBuilder("memory_tag").append('\t').append("bytes").append('\n');
+        sb.append("TOTAL_USED").append('\t').append(Unsafe.getMemUsed()).append('\n');
+        for (int i = 0; i < MemoryTag.SIZE; i++) {
+            sb.append(MemoryTag.nameOf(i)).append('\t').append(Unsafe.getMemUsedByTag(i)).append('\n');
+        }
+        return sb.toString();
     }
 }

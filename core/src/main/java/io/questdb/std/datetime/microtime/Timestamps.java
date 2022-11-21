@@ -33,41 +33,41 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 final public class Timestamps {
 
-    public static final long WEEK_MICROS = 604800000000L;
     public static final long DAY_MICROS = 86400000000L;
+    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
+    public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
+    public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
-    public static final long MILLI_MICROS = 1000;
-    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
-    public static final int STATE_INIT = 0;
-    public static final int STATE_UTC = 1;
+    public static final long STARTUP_TIMESTAMP;
+    public static final int STATE_DELIM = 4;
+    public static final int STATE_END = 6;
     public static final int STATE_GMT = 2;
     public static final int STATE_HOUR = 3;
-    public static final int STATE_DELIM = 4;
+    public static final int STATE_INIT = 0;
     public static final int STATE_MINUTE = 5;
-    public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
-    public static final long O3_MIN_TS = 0L;
-    public static final long STARTUP_TIMESTAMP;
+    public static final int STATE_UTC = 1;
+    public static final long WEEK_MICROS = 604800000000L;
+    private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
     private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
     private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
     private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
-    private static final long YEAR_MICROS = 365 * DAY_MICROS;
-    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
-    private static final int DAY_HOURS = 24;
-    private static final int HOUR_MINUTES = 60;
-    private static final int MINUTE_SECONDS = 60;
+    private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
+    private static final int DAY_HOURS = 24;
+    private static final int HOUR_MINUTES = 60;
+    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final char BEFORE_ZERO = '0' - 1;
-    private static final char AFTER_NINE = '9' + 1;
+    private static final int MINUTE_SECONDS = 60;
+    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
+    private static final long YEAR_MICROS = 365 * DAY_MICROS;
 
     private Timestamps() {
     }
@@ -338,23 +338,6 @@ final public class Timestamps {
         return (int) ((micros - yearMicros) / DAY_MICROS) + 1;
     }
 
-    public static int getDayOfYear(long micros) {
-        int year = getYear(micros);
-        boolean leap = isLeapYear(year);
-        long yearStart = yearMicros(year, leap);
-        return (int)((micros - yearStart) / DAY_MICROS) + 1;
-    }
-
-    public static int getWeekOfYear(long micros) {
-        return getDayOfYear(micros) / 7 + 1;
-    }
-
-    public static int getWeekOfMonth(long micros) {
-        int year = getYear(micros);
-        boolean leap = isLeapYear(year);
-        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
-    }
-
     public static int getDayOfTheWeekOfEndOfYear(int year) {
         return (year + Math.abs(year / 4) - Math.abs(year / 100) + Math.abs(year / 400)) % 7;
     }
@@ -385,6 +368,13 @@ final public class Timestamps {
             }
         }
         return 1 + (int) ((d + 4) % 7);
+    }
+
+    public static int getDayOfYear(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        long yearStart = yearMicros(year, leap);
+        return (int) ((micros - yearStart) / DAY_MICROS) + 1;
     }
 
     public static long getDaysBetween(long a, long b) {
@@ -429,6 +419,16 @@ final public class Timestamps {
         return Math.abs(a - b) / HOUR_MICROS;
     }
 
+    /**
+     * Due to epoch starting on Thursday while ISO week starts on Monday, there is an offset between epoch and ISO week micros when flooring.
+     *
+     * @param micros epoch microseconds
+     * @return 4 days micros offset for Monday through Wednesday and -3 days micros offset for Thursday through Sunday
+     */
+    public static long getIsoWeekMicrosOffset(long micros) {
+        return ((getDayOfWeek(micros) <= 3) ? 4 : -3) * DAY_MICROS;
+    }
+
     // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
     // so in early January or late December the ISO year may be different from the Gregorian year.
     // See the getWeek() method for more information.
@@ -446,6 +446,25 @@ final public class Timestamps {
         return y;
     }
 
+    /**
+     * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
+     *
+     * @param year of timestamp
+     * @return difference in the days from the start of the year (January 1st) and the first ISO week
+     */
+    public static int getIsoYearDayOffset(int year) {
+        int dayOfTheWeekOfEndOfPreviousYear = getDayOfTheWeekOfEndOfYear(year - 1);
+        return ((dayOfTheWeekOfEndOfPreviousYear <= 3) ? 0 : 7) - dayOfTheWeekOfEndOfPreviousYear;
+    }
+
+    public static int getMicrosOfMilli(long micros) {
+        if (micros > -1) {
+            return (int) (micros % MILLI_MICROS);
+        } else {
+            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
+        }
+    }
+
     public static long getMicrosOfMinute(long micros) {
         if (micros > -1) {
             return micros % MINUTE_MICROS;
@@ -456,9 +475,9 @@ final public class Timestamps {
 
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
-            return (int) (micros % MILLI_MICROS);
+            return (int) (micros % SECOND_MICROS);
         } else {
-            return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
+            return (int) (SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS));
         }
     }
 
@@ -603,6 +622,16 @@ final public class Timestamps {
         return w;
     }
 
+    public static int getWeekOfMonth(long micros) {
+        int year = getYear(micros);
+        boolean leap = isLeapYear(year);
+        return getDayOfMonth(micros, year, getMonthOfYear(micros, year, leap), leap) / 7 + 1;
+    }
+
+    public static int getWeekOfYear(long micros) {
+        return getDayOfYear(micros) / 7 + 1;
+    }
+
     public static int getWeeks(int y) {
         if (getDayOfTheWeekOfEndOfYear(y) == 4 || getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
             return 53;
@@ -674,6 +703,53 @@ final public class Timestamps {
         } else {
             return millis + (7 - (thisDow - dow)) * DAY_MICROS;
         }
+    }
+
+    public static long parseNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (lim == p) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(p) == '-';
+        int i = p;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim || Numbers.notDigit(sequence.charAt(i))) {
+            throw NumericException.INSTANCE;
+        }
+
+        int val = 0;
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+
+            if (Numbers.notDigit(c)) {
+                break;
+            }
+
+            // val * 10 + (c - '0')
+            int r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        final int len = i - p;
+
+        if (len > 9 || val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+
+        while (i - p < 9) {
+            val *= 10;
+            i++;
+        }
+
+        val /= 1000;
+
+        return Numbers.encodeLowHighInts(negative ? val : -val, len);
     }
 
     public static long parseOffset(CharSequence in) {
@@ -855,12 +931,6 @@ final public class Timestamps {
         return sink.toString();
     }
 
-    public static String toUSecString(long micros) {
-        CharSink sink = Misc.getThreadLocalBuilder();
-        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
-        return sink.toString();
-    }
-
     public static long toTimezone(long utcTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
         return toTimezone(utcTimestamp, locale, timezone, 0, timezone.length());
     }
@@ -883,6 +953,12 @@ final public class Timestamps {
         return utc + offset;
     }
 
+    public static String toUSecString(long micros) {
+        CharSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.appendDateTimeUSec(sink, micros);
+        return sink.toString();
+    }
+
     public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
         return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
     }
@@ -902,7 +978,7 @@ final public class Timestamps {
                     RESOLUTION_MICROS
             );
             offset = zoneRules.getOffset(timestampWithTimezone);
-            // getOffst really needs UTC date, not local
+            // getOffset really needs UTC date, not local
             offset = zoneRules.getOffset(timestampWithTimezone - offset);
             return timestampWithTimezone - offset;
 
@@ -938,12 +1014,12 @@ final public class Timestamps {
         return micros;
     }
 
-    private static boolean isDigit(char c) {
-        return c > BEFORE_ZERO && c < AFTER_NINE;
-    }
-
     private static long getTimeMicros(long micros) {
         return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
+    }
+
+    private static boolean isDigit(char c) {
+        return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
     static {

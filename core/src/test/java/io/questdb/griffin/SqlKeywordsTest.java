@@ -39,43 +39,33 @@ import static io.questdb.griffin.SqlKeywords.*;
 public class SqlKeywordsTest {
 
     @Test
-    public void testPrev() {
-        Assert.assertFalse(isPrevKeyword("123"));
-        Assert.assertFalse(isPrevKeyword("1234"));
-        Assert.assertFalse(isPrevKeyword("p123"));
-        Assert.assertFalse(isPrevKeyword("pr12"));
-        Assert.assertFalse(isPrevKeyword("pre1"));
-        Assert.assertTrue(isPrevKeyword("prev"));
-    }
+    public void testIs() throws Exception {
+        Map<String, String> specialCases = new HashMap<>();
+        specialCases.put("isColonColon", "::");
+        specialCases.put("isConcatOperator", "||");
+        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
+        specialCases.put("isQuote", "'");
+        specialCases.put("isSearchPath", "search_path");
+        specialCases.put("isSemicolon", ";");
+        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
+        specialCases.put("isTextArray", "text[]");
+        specialCases.put("isTransactionIsolation", "transaction_isolation");
 
-    @Test
-    public void testLinear() {
-        Assert.assertFalse(isLinearKeyword("12345"));
-        Assert.assertFalse(isLinearKeyword("123456"));
-        Assert.assertFalse(isLinearKeyword("l12345"));
-        Assert.assertFalse(isLinearKeyword("li1234"));
-        Assert.assertFalse(isLinearKeyword("lin123"));
-        Assert.assertFalse(isLinearKeyword("line12"));
-        Assert.assertFalse(isLinearKeyword("linea1"));
-        Assert.assertTrue(isLinearKeyword("linear"));
-    }
-
-    @Test
-    public void testIsFormatKeywordIsCaseInsensitive() {
-        Assert.assertTrue(isFormatKeyword("format"));
-        Assert.assertTrue(isFormatKeyword("formaT"));
-        Assert.assertTrue(isFormatKeyword("FORMAT"));
-        Assert.assertTrue(isFormatKeyword("forMAT"));
-        Assert.assertFalse(isFormatKeyword("forMa"));
-    }
-
-    @Test
-    public void testIsFloatKeywordIsCaseInsensitive() {
-        Assert.assertTrue(isFloatKeyword("float"));
-        Assert.assertTrue(isFloatKeyword("floaT"));
-        Assert.assertTrue(isFloatKeyword("FLOAT"));
-        Assert.assertTrue(isFloatKeyword("floAT"));
-        Assert.assertFalse(isFloatKeyword("flot"));
+        Method[] methods = SqlKeywords.class.getMethods();
+        Arrays.sort(methods, Comparator.comparing(Method::getName));
+        for (Method method : methods) {
+            String name;
+            int m = method.getModifiers() & Modifier.methodModifiers();
+            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
+                String keyword;
+                if (name.endsWith("Keyword")) {
+                    keyword = name.substring(2, name.length() - 7).toLowerCase();
+                } else {
+                    keyword = specialCases.get(name);
+                }
+                Assert.assertTrue((boolean) method.invoke(null, keyword));
+            }
+        }
     }
 
     @Test
@@ -94,6 +84,24 @@ public class SqlKeywordsTest {
         Assert.assertTrue(isFloat8Keyword("FLOAT8"));
         Assert.assertTrue(isFloat8Keyword("floAT8"));
         Assert.assertFalse(isFloat8Keyword("float"));
+    }
+
+    @Test
+    public void testIsFloatKeywordIsCaseInsensitive() {
+        Assert.assertTrue(isFloatKeyword("float"));
+        Assert.assertTrue(isFloatKeyword("floaT"));
+        Assert.assertTrue(isFloatKeyword("FLOAT"));
+        Assert.assertTrue(isFloatKeyword("floAT"));
+        Assert.assertFalse(isFloatKeyword("flot"));
+    }
+
+    @Test
+    public void testIsFormatKeywordIsCaseInsensitive() {
+        Assert.assertTrue(isFormatKeyword("format"));
+        Assert.assertTrue(isFormatKeyword("formaT"));
+        Assert.assertTrue(isFormatKeyword("FORMAT"));
+        Assert.assertTrue(isFormatKeyword("forMAT"));
+        Assert.assertFalse(isFormatKeyword("forMa"));
     }
 
     @Test
@@ -168,32 +176,24 @@ public class SqlKeywordsTest {
     }
 
     @Test
-    public void testIs() throws Exception {
-        Map<String, String> specialCases = new HashMap<>();
-        specialCases.put("isColonColon", "::");
-        specialCases.put("isConcatOperator", "||");
-        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
-        specialCases.put("isQuote", "'");
-        specialCases.put("isSearchPath", "search_path");
-        specialCases.put("isSemicolon", ";");
-        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
-        specialCases.put("isTextArray", "text[]");
-        specialCases.put("isTransactionIsolation", "transaction_isolation");
+    public void testLinear() {
+        Assert.assertFalse(isLinearKeyword("12345"));
+        Assert.assertFalse(isLinearKeyword("123456"));
+        Assert.assertFalse(isLinearKeyword("l12345"));
+        Assert.assertFalse(isLinearKeyword("li1234"));
+        Assert.assertFalse(isLinearKeyword("lin123"));
+        Assert.assertFalse(isLinearKeyword("line12"));
+        Assert.assertFalse(isLinearKeyword("linea1"));
+        Assert.assertTrue(isLinearKeyword("linear"));
+    }
 
-        Method[] methods = SqlKeywords.class.getMethods();
-        Arrays.sort(methods, Comparator.comparing(Method::getName));
-        for (Method method : methods) {
-            String name;
-            int m = method.getModifiers() & Modifier.methodModifiers();
-            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
-                String keyword;
-                if (name.endsWith("Keyword")) {
-                    keyword = name.substring(2, name.length() - 7).toLowerCase();
-                } else {
-                    keyword = specialCases.get(name);
-                }
-                Assert.assertTrue((boolean) method.invoke(null, keyword));
-            }
-        }
+    @Test
+    public void testPrev() {
+        Assert.assertFalse(isPrevKeyword("123"));
+        Assert.assertFalse(isPrevKeyword("1234"));
+        Assert.assertFalse(isPrevKeyword("p123"));
+        Assert.assertFalse(isPrevKeyword("pr12"));
+        Assert.assertFalse(isPrevKeyword("pre1"));
+        Assert.assertTrue(isPrevKeyword("prev"));
     }
 }

@@ -68,18 +68,6 @@ public class LongLongHashMap extends AbstractLongHashSet {
         return index < 0 ? values[-index - 1] : noEntryValue;
     }
 
-    @Override
-    protected void erase(int index) {
-        keys[index] = this.noEntryKeyValue;
-    }
-
-    @Override
-    protected void move(int from, int to) {
-        keys[to] = keys[from];
-        values[to] = values[from];
-        erase(from);
-    }
-
     private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
@@ -102,5 +90,17 @@ public class LongLongHashMap extends AbstractLongHashSet {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    protected void erase(int index) {
+        keys[index] = this.noEntryKeyValue;
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        keys[to] = keys[from];
+        values[to] = values[from];
+        erase(from);
     }
 }

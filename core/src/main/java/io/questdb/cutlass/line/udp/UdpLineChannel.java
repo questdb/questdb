@@ -32,9 +32,8 @@ import io.questdb.network.NetworkFacade;
 
 public final class UdpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(UdpLineChannel.class);
-
-    private final NetworkFacade nf;
     private final long fd;
+    private final NetworkFacade nf;
     private final long sockaddr;
 
     public UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) {
@@ -71,10 +70,8 @@ public final class UdpLineChannel implements LineChannel {
     }
 
     @Override
-    public void send(long ptr, int len) {
-        if (nf.sendTo(fd, ptr, len, sockaddr) != len) {
-            throw new LineSenderException("send error").errno(nf.errno());
-        }
+    public int errno() {
+        return nf.errno();
     }
 
     @Override
@@ -83,7 +80,9 @@ public final class UdpLineChannel implements LineChannel {
     }
 
     @Override
-    public int errno() {
-        return nf.errno();
+    public void send(long ptr, int len) {
+        if (nf.sendTo(fd, ptr, len, sockaddr) != len) {
+            throw new LineSenderException("send error").errno(nf.errno());
+        }
     }
 }

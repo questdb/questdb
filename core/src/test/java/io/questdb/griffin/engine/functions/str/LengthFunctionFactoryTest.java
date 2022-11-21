@@ -30,6 +30,32 @@ import org.junit.Test;
 public class LengthFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
+    public void testBinSimple() throws Exception {
+        assertQuery(
+                "bin\tlength\n" +
+                        "00000000 41 1d\t2\n" +
+                        "00000000 8a 17 fa d8\t4\n" +
+                        "00000000 ce f1\t2\n" +
+                        "\t-1\n" +
+                        "00000000 91\t1\n" +
+                        "00000000 db f3 04 1b\t4\n" +
+                        "00000000 de a0\t2\n" +
+                        "\t-1\n" +
+                        "00000000 15 68\t2\n" +
+                        "00000000 af 19 c4 95\t4\n",
+                "select bin,length(bin) from x",
+                "create table x as (" +
+                        "select rnd_bin(1,5,5) as bin\n" +
+                        "from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testStrSimple() throws Exception {
         assertQuery(
                 "str\tlength\n" +
@@ -67,32 +93,6 @@ public class LengthFunctionFactoryTest extends AbstractGriffinTest {
                 "select sym,length(sym) from x",
                 "create table x as (" +
                         "select rnd_symbol(5,1,3,5) as sym\n" +
-                        "from long_sequence(10)" +
-                        ")",
-                null,
-                true,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testBinSimple() throws Exception {
-        assertQuery(
-                "bin\tlength\n" +
-                        "00000000 41 1d\t2\n" +
-                        "00000000 8a 17 fa d8\t4\n" +
-                        "00000000 ce f1\t2\n" +
-                        "\t-1\n" +
-                        "00000000 91\t1\n" +
-                        "00000000 db f3 04 1b\t4\n" +
-                        "00000000 de a0\t2\n" +
-                        "\t-1\n" +
-                        "00000000 15 68\t2\n" +
-                        "00000000 af 19 c4 95\t4\n",
-                "select bin,length(bin) from x",
-                "create table x as (" +
-                        "select rnd_bin(1,5,5) as bin\n" +
                         "from long_sequence(10)" +
                         ")",
                 null,

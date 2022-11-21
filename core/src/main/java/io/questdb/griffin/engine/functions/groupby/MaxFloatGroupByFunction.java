@@ -58,6 +58,16 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+        return rec.getFloat(valueIndex);
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.FLOAT);
@@ -71,16 +81,6 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(valueIndex);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override

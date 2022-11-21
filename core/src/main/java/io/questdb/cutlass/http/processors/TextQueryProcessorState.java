@@ -39,20 +39,21 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
-    boolean countRows = false;
-    boolean noMeta = false;
-    RecordCursorFactory recordCursorFactory;
-    RecordMetadata metadata;
-    RecordCursor cursor;
+    int columnIndex;
     long count;
+    boolean countRows = false;
+    RecordCursor cursor;
+    char delimiter = ',';
+    String fileName;
+    RecordMetadata metadata;
+    boolean noMeta = false;
+    int queryState = JsonQueryProcessorState.QUERY_PREFIX;
+    Record record;
+    RecordCursorFactory recordCursorFactory;
+    Rnd rnd;
     long skip;
     long stop;
-    Record record;
-    Rnd rnd;
-    int queryState = JsonQueryProcessorState.QUERY_PREFIX;
-    int columnIndex;
     private boolean queryCacheable = false;
-    String fileName;
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;

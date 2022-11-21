@@ -26,16 +26,40 @@ package io.questdb.network;
 
 public class KqueueAccessor {
     public static final short EVFILT_READ;
-    public static final short SIZEOF_KEVENT;
     public static final int EV_EOF = -32751;
-    static final short EV_ONESHOT;
+    public static final short SIZEOF_KEVENT;
+    static final short DATA_OFFSET;
     static final short EVFILT_WRITE;
+    static final short EV_ADD;
+    static final short EV_DELETE;
+    static final short EV_ONESHOT;
     static final short FD_OFFSET;
     static final short FILTER_OFFSET;
     static final short FLAGS_OFFSET;
-    static final short DATA_OFFSET;
-    static final short EV_ADD;
-    static final short EV_DELETE;
+
+    static native short getDataOffset();
+
+    static native short getEvAdd();
+
+    static native short getEvDelete();
+
+    static native short getEvOneshot();
+
+    static native short getEvfiltRead();
+
+    static native short getEvfiltWrite();
+
+    static native short getFdOffset();
+
+    static native short getFilterOffset();
+
+    static native short getFlagsOffset();
+
+    static native short getSizeofKevent();
+
+    static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents);
+
+    static native int kqueue();
 
     static {
         EVFILT_READ = getEvfiltRead();
@@ -49,29 +73,5 @@ public class KqueueAccessor {
         EV_ONESHOT = getEvOneshot();
         EV_DELETE = getEvDelete();
     }
-
-    static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents);
-
-    static native int kqueue();
-
-    static native short getEvfiltRead();
-
-    static native short getEvfiltWrite();
-
-    static native short getSizeofKevent();
-
-    static native short getFdOffset();
-
-    static native short getFilterOffset();
-
-    static native short getEvAdd();
-
-    static native short getEvOneshot();
-
-    static native short getFlagsOffset();
-
-    static native short getDataOffset();
-
-    static native short getEvDelete();
 
 }

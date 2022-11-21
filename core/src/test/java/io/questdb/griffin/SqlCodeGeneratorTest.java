@@ -58,152 +58,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAnalyticFunctionWithPartitionAndOrderByNonSymbol() throws Exception {
-        assertQuery("row_number\tprice\tts\n" +
-                        "1\t42\t1970-01-01T00:00:00.000000Z\n" +
-                        "2\t42\t1970-01-02T03:46:40.000000Z\n" +
-                        "3\t42\t1970-01-03T07:33:20.000000Z\n" +
-                        "4\t42\t1970-01-04T11:20:00.000000Z\n" +
-                        "5\t42\t1970-01-05T15:06:40.000000Z\n" +
-                        "6\t42\t1970-01-06T18:53:20.000000Z\n" +
-                        "7\t42\t1970-01-07T22:40:00.000000Z\n" +
-                        "8\t42\t1970-01-09T02:26:40.000000Z\n" +
-                        "9\t42\t1970-01-10T06:13:20.000000Z\n" +
-                        "10\t42\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by price order by ts), price, ts from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " 42 price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolNoWildcard() throws Exception {
-        assertQuery("row_number\n" +
-                        "3\n" +
-                        "6\n" +
-                        "2\n" +
-                        "1\n" +
-                        "5\n" +
-                        "1\n" +
-                        "4\n" +
-                        "3\n" +
-                        "2\n" +
-                        "1\n",
-                "select row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardFirst() throws Exception {
-        assertQuery("price\tsymbol\tts\trow_number\n" +
-                        "0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\t3\n" +
-                        "0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\t6\n" +
-                        "0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\t2\n" +
-                        "0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\t1\n" +
-                        "0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\t5\n" +
-                        "0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\t1\n" +
-                        "0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\t4\n" +
-                        "0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\t3\n" +
-                        "0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\t2\n" +
-                        "0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\t1\n",
-                "select *, row_number() over (partition by symbol order by symbol) from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithPartitionAndOrderBySymbolWildcardLast() throws Exception {
-        assertQuery("row_number\tprice\tsymbol\tts\n" +
-                        "3\t0.8043224099968393\tCC\t1970-01-01T00:00:00.000000Z\n" +
-                        "6\t0.2845577791213847\tBB\t1970-01-02T03:46:40.000000Z\n" +
-                        "2\t0.9344604857394011\tCC\t1970-01-03T07:33:20.000000Z\n" +
-                        "1\t0.7905675319675964\tAA\t1970-01-04T11:20:00.000000Z\n" +
-                        "5\t0.8899286912289663\tBB\t1970-01-05T15:06:40.000000Z\n" +
-                        "1\t0.11427984775756228\tCC\t1970-01-06T18:53:20.000000Z\n" +
-                        "4\t0.4217768841969397\tBB\t1970-01-07T22:40:00.000000Z\n" +
-                        "3\t0.7261136209823622\tBB\t1970-01-09T02:26:40.000000Z\n" +
-                        "2\t0.6693837147631712\tBB\t1970-01-10T06:13:20.000000Z\n" +
-                        "1\t0.8756771741121929\tBB\t1970-01-11T10:00:00.000000Z\n",
-                "select row_number() over (partition by symbol order by symbol), * from trades",
-                "create table trades as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(42) price," +
-                        " rnd_symbol('AA','BB','CC') symbol," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testAnalyticFunctionWithFilter() throws Exception {
-        assertQuery("author\tsym\tcommits\trk\n" +
-                        "user2\tETH\t3\t2\n" +
-                        "user1\tETH\t3\t1\n",
-                "with active_devs as (" +
-                        "    select author, sym, count() as commits" +
-                        "    from dev_stats" +
-                        "    where author is not null and author != 'github-actions[bot]'" +
-                        "    order by commits desc" +
-                        "    limit 100" +
-                        "), active_ranked as (" +
-                        "    select author, sym, commits, row_number() over (partition by sym order by commits desc) as rk" +
-                        "    from active_devs" +
-                        ") select * from active_ranked where sym = 'ETH'",
-                "create table dev_stats as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('ETH','BTC') sym," +
-                        " rnd_symbol('user1','user2') author," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
-                        ") timestamp(ts) partition by day",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -928,7 +782,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
         assertFailure(
-                "with tab as (x where b in ('BB')) tab latest by b",
+                "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1966,6 +1820,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "), index(c)",
                 24,
                 "boolean expression expected"
+        );
+    }
+
+    @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 > t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 >= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
         );
     }
 
@@ -5274,6 +5153,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "2019-10-22T23:00:33.400000Z\tMiami\tOmron\t18.90154105169603\n"
             );
         });
+    }
+
+    @Test
+    public void testLessNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 < t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 <= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     @Test

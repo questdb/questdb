@@ -24,27 +24,28 @@
 
 package io.questdb.cairo.pool;
 
+@FunctionalInterface
 public interface PoolListener {
-    byte SRC_WRITER = 1;
-    byte SRC_READER = 2;
-
-    short EV_RETURN = 1;
-    short EV_OUT_OF_POOL_CLOSE = 2;
-    short EV_UNEXPECTED_CLOSE = 3;
-    short EV_LOCK_SUCCESS = 6;
-    short EV_LOCK_BUSY = 7;
-    short EV_UNLOCKED = 8;
-    short EV_NOT_LOCKED = 9;
     short EV_CREATE = 10;
-    short EV_GET = 11;
-    short EV_NOT_LOCK_OWNER = 12;
     short EV_CREATE_EX = 14;
     short EV_EXPIRE = 17;
-    short EV_LOCK_CLOSE = 19;
     short EV_EX_RESEND = 21;
-    short EV_POOL_OPEN = 23;
-    short EV_POOL_CLOSED = 24;
     short EV_FULL = 25;
+    short EV_GET = 11;
+    short EV_LOCK_BUSY = 7;
+    short EV_LOCK_CLOSE = 19;
+    short EV_LOCK_SUCCESS = 6;
+    short EV_NOT_LOCKED = 9;
+    short EV_NOT_LOCK_OWNER = 12;
+    short EV_OUT_OF_POOL_CLOSE = 2;
+    short EV_POOL_CLOSED = 24;
+    short EV_POOL_OPEN = 23;
+    short EV_RETURN = 1;
+    short EV_UNEXPECTED_CLOSE = 3;
+    short EV_UNLOCKED = 8;
+    byte SRC_METADATA = 3;
+    byte SRC_READER = 2;
+    byte SRC_WRITER = 1;
 
     void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position);
 }

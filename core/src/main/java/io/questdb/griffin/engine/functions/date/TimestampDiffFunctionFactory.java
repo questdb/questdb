@@ -78,15 +78,20 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         long diff(long a, long b);
     }
 
-    private static class DiffVarVarFunction extends LongFunction implements BinaryFunction {
-        private final Function left;
-        private final Function right;
-        private final LongDiffFunction func;
+    private static class DateDiffFunc extends LongFunction implements TernaryFunction {
+        final Function center;
+        final Function left;
+        final Function right;
 
-        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func) {
+        public DateDiffFunc(Function left, Function center, Function right) {
             this.left = left;
+            this.center = center;
             this.right = right;
-            this.func = func;
+        }
+
+        @Override
+        public Function getCenter() {
+            return center;
         }
 
         @Override
@@ -95,18 +100,19 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public long getLong(Record rec) {
+            final char l = left.getChar(rec);
+            final long c = center.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return Timestamps.getPeriodBetween(l, c, r);
         }
 
         @Override
-        public long getLong(Record rec) {
-            final long l = left.getTimestamp(rec);
-            final long r = right.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return func.diff(l, r);
+        public Function getRight() {
+            return right;
         }
     }
 
@@ -136,15 +142,15 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DateDiffFunc extends LongFunction implements TernaryFunction {
-        final Function left;
-        final Function center;
-        final Function right;
+    private static class DiffVarVarFunction extends LongFunction implements BinaryFunction {
+        private final LongDiffFunction func;
+        private final Function left;
+        private final Function right;
 
-        public DateDiffFunc(Function left, Function center, Function right) {
+        public DiffVarVarFunction(Function left, Function right, LongDiffFunction func) {
             this.left = left;
-            this.center = center;
             this.right = right;
+            this.func = func;
         }
 
         @Override
@@ -153,24 +159,18 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getCenter() {
-            return center;
+        public long getLong(Record rec) {
+            final long l = left.getTimestamp(rec);
+            final long r = right.getTimestamp(rec);
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+            return func.diff(l, r);
         }
 
         @Override
         public Function getRight() {
             return right;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final char l = left.getChar(rec);
-            final long c = center.getTimestamp(rec);
-            final long r = right.getTimestamp(rec);
-            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
-            }
-            return Timestamps.getPeriodBetween(l, c, r);
         }
     }
 

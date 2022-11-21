@@ -218,11 +218,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getWallEnabledDefault() {
-        return conf.getWallEnabledDefault();
-    }
-
-    @Override
     public int getDoubleToStrCastScale() {
         return conf.getDoubleToStrCastScale();
     }
@@ -263,6 +258,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getInactiveWalWriterTTL() {
+        return conf.getInactiveWalWriterTTL();
+    }
+
+    @Override
     public long getInactiveWriterTTL() {
         return conf.getInactiveWriterTTL();
     }
@@ -273,26 +273,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getSqlCopyInputRoot() {
-        return conf.getSqlCopyInputRoot();
-    }
-
-    @Override
-    public CharSequence getSqlCopyInputWorkRoot() {
-        return conf.getSqlCopyInputWorkRoot();
-    }
-
-    @Override
-    public long getSqlCopyMaxIndexChunkSize() {
-        return conf.getSqlCopyMaxIndexChunkSize();
-    }
-
-    @Override
-    public int getSqlCopyQueueCapacity() {
-        return conf.getSqlCopyQueueCapacity();
-    }
-
-    @Override
     public int getInsertPoolCapacity() {
         return conf.getInsertPoolCapacity();
     }
@@ -300,6 +280,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return conf.getLatestByQueueCapacity();
+    }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return conf.getMaxCrashFiles();
     }
 
     @Override
@@ -320,6 +305,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return conf.getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getMetadataPoolCapacity() {
+        return conf.getMetadataPoolCapacity();
     }
 
     @Override
@@ -365,11 +355,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3PartitionQueueCapacity() {
         return conf.getO3PartitionQueueCapacity();
-    }
-
-    @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return conf.getO3PartitionUpdateQueueCapacity();
     }
 
     @Override
@@ -435,11 +420,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return conf.getRndFunctionMemoryPageSize();
-    }
-
-    @Override
-    public int getReplaceFunctionMaxBufferLength() {
-        return conf.getReplaceFunctionMaxBufferLength();
     }
 
     @Override
@@ -525,6 +505,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return conf.getSqlCopyBufferSize();
+    }
+
+    @Override
+    public CharSequence getSqlCopyInputRoot() {
+        return conf.getSqlCopyInputRoot();
+    }
+
+    @Override
+    public CharSequence getSqlCopyInputWorkRoot() {
+        return conf.getSqlCopyInputWorkRoot();
+    }
+
+    @Override
+    public int getSqlCopyLogRetentionDays() {
+        return conf.getSqlCopyLogRetentionDays();
+    }
+
+    @Override
+    public long getSqlCopyMaxIndexChunkSize() {
+        return conf.getSqlCopyMaxIndexChunkSize();
+    }
+
+    @Override
+    public int getSqlCopyQueueCapacity() {
+        return conf.getSqlCopyQueueCapacity();
     }
 
     @Override
@@ -633,11 +638,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapKeyCapacity() {
-        return conf.getSqlSmallMapKeyCapacity();
-    }
-
-    @Override
     public int getSqlMapMaxPages() {
         return conf.getSqlMapMaxPages();
     }
@@ -673,6 +673,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallMapKeyCapacity() {
+        return conf.getSqlSmallMapKeyCapacity();
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return conf.getSqlSortKeyMaxPages();
     }
@@ -703,6 +708,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getStrFunctionMaxBufferLength() {
+        return conf.getStrFunctionMaxBufferLength();
+    }
+
+    @Override
     public CharSequence getSystemTableNamePrefix() {
         return conf.getSystemTableNamePrefix();
     }
@@ -725,6 +735,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getVectorAggregateQueueCapacity() {
         return conf.getVectorAggregateQueueCapacity();
+    }
+
+    @Override
+    public boolean getWalEnabledDefault() {
+        return conf.getWalEnabledDefault();
+    }
+
+    @Override
+    public long getWalPurgeInterval() {
+        return conf.getWalPurgeInterval();
+    }
+
+    @Override
+    public int getWalRecreateDistressedSequencerAttempts() {
+        return conf.getWalRecreateDistressedSequencerAttempts();
+    }
+
+    @Override
+    public long getWalSegmentRolloverRowCount() {
+        return conf.getWalSegmentRolloverRowCount();
+    }
+
+    @Override
+    public int getWalTxnNotificationQueueCapacity() {
+        return conf.getWalTxnNotificationQueueCapacity();
     }
 
     @Override
@@ -768,6 +803,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isIOURingEnabled() {
+        return conf.isIOURingEnabled();
+    }
+
+    @Override
     public boolean isO3QuickSortEnabled() {
         return conf.isO3QuickSortEnabled();
     }
@@ -798,17 +838,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCopyLogRetentionDays() {
-        return conf.getSqlCopyLogRetentionDays();
-    }
-
-    @Override
-    public boolean isIOURingEnabled() {
-        return conf.isIOURingEnabled();
-    }
-
-    @Override
-    public int getMaxCrashFiles() {
-        return conf.getMaxCrashFiles();
+    public boolean isWalSupported() {
+        return conf.isWalSupported();
     }
 }

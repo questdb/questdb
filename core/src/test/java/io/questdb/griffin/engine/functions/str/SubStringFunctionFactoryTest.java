@@ -35,9 +35,17 @@ import static org.junit.Assert.fail;
 
 public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new SubStringFunctionFactory();
+    @Test
+    public void testNonPositiveStart() throws Exception {
+        call("foo", -3, 4).andAssert("");
+        call("foo", -3, 5).andAssert("f");
+        call(null, -3, 0).andAssert(null);
+    }
+
+    @Test
+    public void testNullOrEmptyStr() throws Exception {
+        call(null, 2, 4).andAssert(null);
+        call("", 2, 4).andAssert("");
     }
 
     @Test
@@ -69,9 +77,11 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testNullOrEmptyStr() throws Exception {
+    public void testStartOrLenOutOfRange() throws Exception {
+        call("foo", 10, 1).andAssert("");
+        call("foo", 10, 10).andAssert("");
+        call("foo", 1, 10).andAssert("foo");
         call(null, 2, 4).andAssert(null);
-        call("", 2, 4).andAssert("");
     }
 
     @Test
@@ -100,19 +110,9 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         }
     }
 
-    @Test
-    public void testNonPositiveStart() throws Exception {
-        call("foo", -3, 4).andAssert("");
-        call("foo", -3, 5).andAssert("f");
-        call(null, -3, 0).andAssert(null);
-    }
-
-    @Test
-    public void testStartOrLenOutOfRange() throws Exception {
-        call("foo", 10, 1).andAssert("");
-        call("foo", 10, 10).andAssert("");
-        call("foo", 1, 10).andAssert("foo");
-        call(null, 2, 4).andAssert(null);
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new SubStringFunctionFactory();
     }
 
 }

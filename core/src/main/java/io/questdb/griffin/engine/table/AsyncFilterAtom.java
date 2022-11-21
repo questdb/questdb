@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
@@ -38,20 +39,26 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Closeable {
 
-    public static final LongAdder PRE_TOUCH_BLACKHOLE = new LongAdder();
+    public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
 
     private final Function filter;
     private final ObjList<Function> perWorkerFilters;
     private final AtomicIntegerArray perWorkerLocks;
     private final IntList preTouchColumnTypes;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
-    private final Rnd rnd = new Rnd();
+    private final Rnd rnd;
+    private boolean preTouchEnabled;
 
     public AsyncFilterAtom(
+            @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable IntList preTouchColumnTypes
     ) {
+        this.rnd = new Rnd(
+                configuration.getNanosecondClock().getTicks(),
+                configuration.getMicrosecondClock().getTicks()
+        );
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
@@ -60,26 +67,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
             perWorkerLocks = null;
         }
         this.preTouchColumnTypes = preTouchColumnTypes;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(filter);
-        Misc.freeObjList(perWorkerFilters);
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        filter.init(symbolTableSource, executionContext);
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
     }
 
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -104,6 +91,12 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
         }
     }
 
+    @Override
+    public void close() {
+        Misc.free(filter);
+        Misc.freeObjList(perWorkerFilters);
+    }
+
     public Function getFilter(int filterId) {
         if (filterId == -1) {
             return filter;
@@ -112,11 +105,19 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
         return perWorkerFilters.getQuick(filterId);
     }
 
-    public void releaseFilter(int filterId) {
-        if (filterId == -1) {
-            return;
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        filter.init(symbolTableSource, executionContext);
+        if (perWorkerFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
         }
-        perWorkerLocks.set(filterId, 0);
+        preTouchEnabled = executionContext.isColumnPreTouchEnabled();
     }
 
     /**
@@ -127,10 +128,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
      * to do it later serially.
      */
     public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
-        if (preTouchColumnTypes == null) {
+        if (!preTouchEnabled || preTouchColumnTypes == null) {
             return;
         }
-        // We use a LongAdder as a blackhole to make sure that the JVM JIT compiler keeps the load instructions in place.
+        // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
         long sum = 0;
         for (long p = 0; p < rows.size(); p++) {
             long r = rows.get(p);
@@ -183,7 +184,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                         break;
                     case ColumnType.STRING:
                         CharSequence cs = record.getStr(i);
-                        if (cs !=null && cs.length() > 0) {
+                        if (cs != null && cs.length() > 0) {
                             // Touch the first page of the string contents only.
                             sum += cs.charAt(0);
                         }
@@ -198,7 +199,14 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                 }
             }
         }
-        // Flush the accumulated sum to the blackhole.
-        PRE_TOUCH_BLACKHOLE.add(sum);
+        // Flush the accumulated sum to the black hole.
+        PRE_TOUCH_BLACK_HOLE.add(sum);
+    }
+
+    public void releaseFilter(int filterId) {
+        if (filterId == -1) {
+            return;
+        }
+        perWorkerLocks.set(filterId, 0);
     }
 }

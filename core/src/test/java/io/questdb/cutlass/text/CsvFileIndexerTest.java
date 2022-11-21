@@ -42,17 +42,38 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.CoreMatchers.*;
-
 import static io.questdb.cutlass.text.ParallelCsvFileImporterTest.*;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class CsvFileIndexerTest extends AbstractGriffinTest {
+
+    public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
+        try {
+            assertChunksFor(ff, fileName, 10, timestampIndex, 16);
+            Assert.fail();
+        } catch (Exception e) {
+            assertThat(e.getMessage(), containsString(errorMessage));
+        }
+    }
 
     @Before
     public void before() throws IOException {
         inputRoot = TestUtils.getCsvRoot();
         inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
+    }
+
+    @Test//timestamp should be reassembled properly via rolling buffer
+    public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers() throws Exception {
+        assertChunksFor("test-quotes-tslast.csv", 1, 3,
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L));
+    }
+
+    @Test//timestamp should be reassembled properly via rolling buffer
+    public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers2() throws Exception {
+        assertChunksFor("test-quotes-tslast2.csv", 1, 3,
+                chunk("2022-05-10/0_1", 1652183520000000L, 14L));
     }
 
     @Test//timestamp should be reassembled properly via rolling buffer
@@ -69,27 +90,14 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                 chunk("2022-05-11/0_1", 1652269920000000L, 90L, 1652269920001000L, 185));
     }
 
-    @Test//timestamp should be reassembled properly via rolling buffer
-    public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers() throws Exception {
-        assertChunksFor("test-quotes-tslast.csv", 1, 3,
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L));
-    }
-
-    @Test//timestamp should be reassembled properly via rolling buffer
-    public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers2() throws Exception {
-        assertChunksFor("test-quotes-tslast2.csv", 1, 3,
-                chunk("2022-05-10/0_1", 1652183520000000L, 14L));
-    }
-
-    @Test//timestamp is ignored if it doesn't fit in ts rolling buffer 
+    @Test//timestamp is ignored if it doesn't fit in ts rolling buffer
     public void testIndexChunksInCsvWithTooLongTimestampFieldSplitBetweenMinLengthReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tstoolong.csv", 1, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 14L),
                 chunk("2022-05-11/0_1", 1652269920001000L, 263L));
     }
 
-    @Test//timestamp is ignored if it doesn't fit in ts rolling buffer 
+    @Test//timestamp is ignored if it doesn't fit in ts rolling buffer
     public void testIndexChunksInCsvWithTooLongTimestampFieldSplitBetweenTinyReadBuffers() throws Exception {
         assertChunksFor("test-quotes-tstoolong.csv", 10, 1,
                 chunk("2022-05-10/0_1", 1652183520000000L, 14L),
@@ -97,10 +105,20 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexFileWithLowChunkSizeLimitProducesMoreFiles() throws Exception {
-        assertChunksFor("test-quotes-small.csv", 10, 1, 16, chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/0_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/0_2", 1652269920001000L, 185));
+    public void testIndexFileFailsWhenIndexFileAlreadyExists() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final String partition = "2022-05-10" + File.separator + "0_1";
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, partition)) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+        };
+
+        assertFailureFor(ff, "test-quotes-small.csv", 1, "index file already exists");
     }
 
     @Test
@@ -129,29 +147,10 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexFileFailsWhenIndexFileAlreadyExists() {
-        FilesFacadeImpl ff = new FilesFacadeImpl() {
-            final String partition = "2022-05-10" + File.separator + "0_1";
-
-            @Override
-            public boolean exists(LPSZ path) {
-                if (Chars.endsWith(path, partition)) {
-                    return true;
-                }
-                return super.exists(path);
-            }
-        };
-
-        assertFailureFor(ff, "test-quotes-small.csv", 1, "index file already exists");
-    }
-
-    public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
-        try {
-            assertChunksFor(ff, fileName, 10, timestampIndex, 16);
-            Assert.fail();
-        } catch (Exception e) {
-            assertThat(e.getMessage(), containsString(errorMessage));
-        }
+    public void testIndexFileWithLowChunkSizeLimitProducesMoreFiles() throws Exception {
+        assertChunksFor("test-quotes-small.csv", 10, 1, 16, chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L),
+                chunk("2022-05-11/0_2", 1652269920001000L, 185));
     }
 
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, IndexChunk... chunks) throws Exception {
@@ -169,16 +168,16 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
             CairoConfiguration conf = new CairoConfigurationWrapper(engine.getConfiguration()) {
                 @Override
+                public FilesFacade getFilesFacade() {
+                    return ff2 != null ? ff2 : ff;
+                }
+
+                @Override
                 public long getSqlCopyMaxIndexChunkSize() {
                     if (chunkSize > 0) {
                         return chunkSize;
                     }
                     return super.getSqlCopyMaxIndexChunkSize();
-                }
-
-                @Override
-                public FilesFacade getFilesFacade() {
-                    return ff2 != null ? ff2 : ff;
                 }
             };
 

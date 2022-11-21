@@ -72,18 +72,18 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        final int maxLength = configuration.getReplaceFunctionMaxBufferLength();
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
         return new Func(value, term, withWhat, maxLength);
     }
 
     private static class Func extends StrFunction {
 
+        private final int maxLength;
+        private final Function newSubStr;
+        private final Function oldSubStr;
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function value;
-        private final Function oldSubStr;
-        private final Function newSubStr;
-        private final int maxLength;
 
         public Func(Function value, Function oldSubStr, Function newSubStr, int maxLength) {
             this.value = value;
@@ -103,6 +103,14 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getStr(Record rec, CharSink sink) {
+            final CharSequence value = this.value.getStrB(rec);
+            if (value != null) {
+                replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
+            }
+        }
+
+        @Override
         public CharSequence getStrB(Record rec) {
             final CharSequence value = this.value.getStrB(rec);
             if (value != null) {
@@ -113,10 +121,16 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, CharSink sink) {
-            final CharSequence value = this.value.getStrB(rec);
-            if (value != null) {
-                replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
+        public boolean isConstant() {
+            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
+        }
+
+        private void checkLengthLimit(int length) {
+            if (length > maxLength) {
+                throw CairoException.nonCritical()
+                        .put("breached memory limit set for ").put(SIGNATURE)
+                        .put(" [maxLength=").put(maxLength)
+                        .put(", requiredLength=").put(length).put(']');
             }
         }
 
@@ -172,20 +186,6 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
 
             return sink;
-        }
-
-        private void checkLengthLimit(int length) {
-            if (length > maxLength) {
-                throw CairoException.nonCritical()
-                        .put("breached memory limit set for ").put(SIGNATURE)
-                        .put(" [maxLength=").put(maxLength)
-                        .put(", requiredLength=").put(length).put(']');
-            }
-        }
-
-        @Override
-        public boolean isConstant() {
-            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
         }
     }
 }

@@ -32,45 +32,42 @@ import static io.questdb.griffin.OperatorExpression.DOT_PRECEDENCE;
 
 class ExpressionParser {
 
-    private static final IntHashSet nonLiteralBranches = new IntHashSet();
-    private static final int BRANCH_NONE = 0;
-    private static final int BRANCH_COMMA = 1;
-    private static final int BRANCH_LEFT_PARENTHESIS = 2;
-    private static final int BRANCH_RIGHT_PARENTHESIS = 3;
-    private static final int BRANCH_CONSTANT = 4;
-    private static final int BRANCH_OPERATOR = 5;
-    private static final int BRANCH_LITERAL = 6;
-    private static final int BRANCH_LAMBDA = 7;
-    private static final int BRANCH_CASE_START = 9;
-    private static final int BRANCH_CASE_CONTROL = 10;
-    private static final int BRANCH_CAST_AS = 11;
-    private static final int BRANCH_DOT = 12;
-    private static final int BRANCH_BETWEEN_START = 13;
     private static final int BRANCH_BETWEEN_END = 14;
-    private static final int BRANCH_LEFT_BRACKET = 15;
-    private static final int BRANCH_RIGHT_BRACKET = 16;
+    private static final int BRANCH_BETWEEN_START = 13;
+    private static final int BRANCH_CASE_CONTROL = 10;
+    private static final int BRANCH_CASE_START = 9;
+    private static final int BRANCH_CAST_AS = 11;
+    private static final int BRANCH_COMMA = 1;
+    private static final int BRANCH_CONSTANT = 4;
+    private static final int BRANCH_DOT = 12;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
+    private static final int BRANCH_LAMBDA = 7;
+    private static final int BRANCH_LEFT_BRACKET = 15;
+    private static final int BRANCH_LEFT_PARENTHESIS = 2;
+    private static final int BRANCH_LITERAL = 6;
+    private static final int BRANCH_NONE = 0;
+    private static final int BRANCH_OPERATOR = 5;
+    private static final int BRANCH_RIGHT_BRACKET = 16;
+    private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_TIMESTAMP_ZONE = 19;
-
-    private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
-    private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
-    private final IntStack paramCountStack = new IntStack();
+    private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
+    private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private final IntStack argStackDepthStack = new IntStack();
-    private final IntStack castBraceCountStack = new IntStack();
-    private final IntStack caseBraceCountStack = new IntStack();
-
+    private final IntStack backupArgStackDepthStack = new IntStack();
+    private final IntStack backupCaseBraceCountStack = new IntStack();
+    private final IntStack backupCastBraceCountStack = new IntStack();
+    private final IntStack backupParamCountStack = new IntStack();
     private final IntStack braceCountStack = new IntStack();
     private final IntStack bracketCountStack = new IntStack();
-
-    private final IntStack backupParamCountStack = new IntStack();
-    private final IntStack backupArgStackDepthStack = new IntStack();
-    private final IntStack backupCastBraceCountStack = new IntStack();
-    private final IntStack backupCaseBraceCountStack = new IntStack();
-    private final ObjectPool<ExpressionNode> expressionNodePool;
-    private final SqlParser sqlParser;
+    private final IntStack caseBraceCountStack = new IntStack();
+    private final IntStack castBraceCountStack = new IntStack();
     private final CharacterStore characterStore;
+    private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
+    private final IntStack paramCountStack = new IntStack();
+    private final SqlParser sqlParser;
 
     ExpressionParser(ObjectPool<ExpressionNode> expressionNodePool, SqlParser sqlParser, CharacterStore characterStore) {
         this.expressionNodePool = expressionNodePool;
@@ -155,6 +152,44 @@ class ExpressionParser {
         }
         listener.onNode(node);
         return argStackDepth - node.paramCount + 1;
+    }
+
+    private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
+        // It is highly likely this expression parser will be re-entered when
+        // parsing sub-query. To prevent sub-query consuming operation stack we must add a
+        // control node, which would prevent such consumption
+
+        // precedence must be max value to make sure control node isn't
+        // consumed as parameter to a greedy function
+        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+
+        final int paramCountStackSize = copyToBackup(paramCountStack, backupParamCountStack);
+        final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
+        final int castBraceCountStackSize = copyToBackup(castBraceCountStack, backupCastBraceCountStack);
+        final int caseBraceCountStackSize = copyToBackup(caseBraceCountStack, backupCaseBraceCountStack);
+
+        int pos = lexer.lastTokenPosition();
+        // allow sub-query to parse "select" keyword
+        lexer.unparseLast();
+
+        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
+        // validate is Query is allowed
+        onNode(listener, node, argStackDepth);
+        // we can compile query if all is well
+        node.queryModel = sqlParser.parseAsSubQuery(lexer, null);
+        argStackDepth = onNode(listener, node, argStackDepth);
+
+        // pop our control node if sub-query hasn't done it
+        ExpressionNode control = opStack.peek();
+        if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
+            opStack.pop();
+        }
+
+        backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
+        backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
+        backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
+        backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
+        return argStackDepth;
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -1233,44 +1268,6 @@ class ExpressionParser {
             castBraceCountStack.clear();
             caseBraceCountStack.clear();
         }
-    }
-
-    private int processLambdaQuery(GenericLexer lexer, ExpressionParserListener listener, int argStackDepth) throws SqlException {
-        // It is highly likely this expression parser will be re-entered when
-        // parsing sub-query. To prevent sub-query consuming operation stack we must add a
-        // control node, which would prevent such consumption
-
-        // precedence must be max value to make sure control node isn't
-        // consumed as parameter to a greedy function
-        opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
-
-        final int paramCountStackSize = copyToBackup(paramCountStack, backupParamCountStack);
-        final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
-        final int castBraceCountStackSize = copyToBackup(castBraceCountStack, backupCastBraceCountStack);
-        final int caseBraceCountStackSize = copyToBackup(caseBraceCountStack, backupCaseBraceCountStack);
-
-        int pos = lexer.lastTokenPosition();
-        // allow sub-query to parse "select" keyword
-        lexer.unparseLast();
-
-        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
-        // validate is Query is allowed
-        onNode(listener, node, argStackDepth);
-        // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null);
-        argStackDepth = onNode(listener, node, argStackDepth);
-
-        // pop our control node if sub-query hasn't done it
-        ExpressionNode control = opStack.peek();
-        if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
-            opStack.pop();
-        }
-
-        backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
-        backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
-        backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
-        backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
-        return argStackDepth;
     }
 
     static {

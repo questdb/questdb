@@ -47,11 +47,6 @@ public class CharsTest {
     }
 
     @Test
-    public void testEmptyString() {
-        TestUtils.assertEquals("", extractor.of(""));
-    }
-
-    @Test
     public void testBase64Encode() {
         final StringSink sink = new StringSink();
         final TestBinarySequence testBinarySequence = new TestBinarySequence();
@@ -67,16 +62,21 @@ public class CharsTest {
 
         // random part
         Random rand = new Random(System.currentTimeMillis());
-        int len = rand.nextInt(100)+1;
+        int len = rand.nextInt(100) + 1;
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = (byte)rand.nextInt(0xFF);
+            bytes[i] = (byte) rand.nextInt(0xFF);
         }
         testBinarySequence.of(bytes);
         sink.clear();
-        Chars.base64Encode(testBinarySequence, (int)testBinarySequence.length(), sink);
+        Chars.base64Encode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
+    }
+
+    @Test
+    public void testEmptyString() {
+        TestUtils.assertEquals("", extractor.of(""));
     }
 
     @Test
@@ -92,12 +92,46 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsBlank() {
+        Assert.assertTrue(Chars.isBlank(null));
+        Assert.assertTrue(Chars.isBlank(""));
+        Assert.assertTrue(Chars.isBlank(" "));
+        Assert.assertTrue(Chars.isBlank("      "));
+        Assert.assertTrue(Chars.isBlank("\r\f\n\t"));
+
+        Assert.assertFalse(Chars.isBlank("a"));
+        Assert.assertFalse(Chars.isBlank("0"));
+        Assert.assertFalse(Chars.isBlank("\\"));
+        Assert.assertFalse(Chars.isBlank("\\r"));
+        Assert.assertFalse(Chars.isBlank("ac/dc"));
+    }
+
+    @Test
+    public void testIsNotQuoted() {
+        Assert.assertFalse(Chars.isQuoted("'banana\""));
+        Assert.assertFalse(Chars.isQuoted("banana\""));
+        Assert.assertFalse(Chars.isQuoted("\"banana"));
+        Assert.assertFalse(Chars.isQuoted("\"banana'"));
+        Assert.assertFalse(Chars.isQuoted("'"));
+        Assert.assertFalse(Chars.isQuoted("\""));
+        Assert.assertFalse(Chars.isQuoted("banana"));
+    }
+
+    @Test
     public void testIsOnlyDecimals() {
         Assert.assertTrue(Chars.isOnlyDecimals("9876543210123456789"));
         Assert.assertFalse(Chars.isOnlyDecimals(""));
         Assert.assertFalse(Chars.isOnlyDecimals(" "));
         Assert.assertFalse(Chars.isOnlyDecimals("99 "));
         Assert.assertFalse(Chars.isOnlyDecimals("987654321a123456789"));
+    }
+
+    @Test
+    public void testIsQuoted() {
+        Assert.assertTrue(Chars.isQuoted("'banana'"));
+        Assert.assertTrue(Chars.isQuoted("''"));
+        Assert.assertTrue(Chars.isQuoted("\"banana\""));
+        Assert.assertTrue(Chars.isQuoted("\"\""));
     }
 
     @Test
@@ -189,44 +223,10 @@ public class CharsTest {
         }
     }
 
-    @Test
-    public void testIsQuoted() {
-        Assert.assertTrue(Chars.isQuoted("'banana'"));
-        Assert.assertTrue(Chars.isQuoted("''"));
-        Assert.assertTrue(Chars.isQuoted("\"banana\""));
-        Assert.assertTrue(Chars.isQuoted("\"\""));
-    }
-
-    @Test
-    public void testIsNotQuoted() {
-        Assert.assertFalse(Chars.isQuoted("'banana\""));
-        Assert.assertFalse(Chars.isQuoted("banana\""));
-        Assert.assertFalse(Chars.isQuoted("\"banana"));
-        Assert.assertFalse(Chars.isQuoted("\"banana'"));
-        Assert.assertFalse(Chars.isQuoted("'"));
-        Assert.assertFalse(Chars.isQuoted("\""));
-        Assert.assertFalse(Chars.isQuoted("banana"));
-    }
-
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();
         }
-    }
-
-    @Test
-    public void testIsBlank() {
-        Assert.assertTrue(Chars.isBlank(null));
-        Assert.assertTrue(Chars.isBlank(""));
-        Assert.assertTrue(Chars.isBlank(" "));
-        Assert.assertTrue(Chars.isBlank("      "));
-        Assert.assertTrue(Chars.isBlank("\r\f\n\t"));
-
-        Assert.assertFalse(Chars.isBlank("a"));
-        Assert.assertFalse(Chars.isBlank("0"));
-        Assert.assertFalse(Chars.isBlank("\\"));
-        Assert.assertFalse(Chars.isBlank("\\r"));
-        Assert.assertFalse(Chars.isBlank("ac/dc"));
     }
 }

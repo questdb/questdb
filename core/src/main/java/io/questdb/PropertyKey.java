@@ -151,6 +151,7 @@ public enum PropertyKey {
     CAIRO_RND_MEMORY_PAGE_SIZE("cairo.rnd.memory.page.size"),
     CAIRO_RND_MEMORY_MAX_PAGES("cairo.rnd.memory.max.pages"),
     CAIRO_REPLACE_BUFFER_MAX_SIZE("cairo.replace.buffer.max.size"),
+    CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE("cairo.sql.string.function.buffer.max.size"),
     CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE("cairo.sql.analytic.store.page.size"),
     CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES("cairo.sql.analytic.store.max.pages"),
     CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE("cairo.sql.analytic.rowid.page.size"),
@@ -171,6 +172,7 @@ public enum PropertyKey {
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_SLEEP_THRESHOLD("http.min.worker.sleep.threshold"),
+    HTTP_MIN_WORKER_SLEEP_TIMEOUT("http.min.worker.sleep.timeout"),
     HTTP_MIN_BIND_TO("http.min.bind.to"),
     HTTP_MIN_NET_BIND_TO("http.min.net.bind.to"),
     HTTP_MIN_WORKER_HALT_ON_ERROR("http.min.worker.haltOnError"),
@@ -364,7 +366,19 @@ public enum PropertyKey {
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default");
+    CAIRO_WAL_ENABLED_DEFAULT("cairo.wal.enabled.default"),
+    CAIRO_WAL_PURGE_INTERVAL("cairo.wal.purge.interval"),
+    CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT("cairo.wal.segment.rollover.row.count"),
+    WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
+    WAL_APPLY_WORKER_AFFINITY("wal.apply.worker.affinity"),
+    WAL_APPLY_WORKER_HALT_ON_ERROR("wal.apply.worker.haltOnError"),
+    WAL_APPLY_WORKER_SLEEP_THRESHOLD("wal.apply.worker.sleep.threshold"),
+    WAL_APPLY_WORKER_SLEEP_TIMEOUT("wal.apply.worker.sleep.timeout"),
+    WAL_APPLY_WORKER_YIELD_THRESHOLD("wal.apply.worker.yield.threshold"),
+    CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY("cairo.wal.txn.notification.queue.capacity"),
+    CAIRO_WAL_SUPPORTED("cairo.wal.supported"),
+    CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS("cairo.wal.recreate.distressed.sequencer.attempts"),
+    CAIRO_INACTIVE_WAL_WRITER_TTL("cairo.wal.inactive.writer.ttl");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

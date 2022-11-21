@@ -28,166 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableModel;
 import org.junit.Test;
 
-public class SampleBySqlParserTest  extends AbstractSqlParserTest {
-
-    @Test
-    public void testCalendar() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '00:00'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZoneAndOffsetAsBindVariables() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone ? with offset ?",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone ? with offset ?",
-                model()
-        );
-    }
-
-    @Test
-    public void testSampleByMissing() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample on 3h",
-                42,
-                "'by' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testSampleByAlignOn() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align on calendar",
-                54,
-                "'to' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testSampleByToLastObservation() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to last observation",
-                57,
-                "'calendar' or 'first observation' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZoneAsOffset() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '+01:00' with offset '00:00'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZoneAsOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '-04:00' with offset '00:00'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'",
-                model()
-        );
-    }
-
-    @Test
-    public void testFillFollowedByAlign() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h fill(none) align to calendar time zone ? with offset ?",
-                "select b, sum(a), k k1, k from x y sample by 3h fill(none) align to calendar time zone ? with offset ?",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZone() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:00'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET'",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZoneWithOffsetPositive() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarTimeZoneWithOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarWithOffsetPositive() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '01:45'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'",
-                model()
-        );
-    }
-
-    @Test
-    public void testCalendarWithOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '-04:45'",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'",
-                model()
-        );
-    }
-
-    @Test
-    public void testFirstObservation() throws SqlException {
-        assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
-                model()
-        );
-    }
-
-    @Test
-    public void testObservationMissing() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to first",
-                62,
-                "'observation' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testObservationExpected() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to first move",
-                63,
-                "'observation' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testToMissing() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align",
-                53,
-                "'to' expected",
-                model()
-        );
-    }
+public class SampleBySqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAlignExpected() throws Exception {
@@ -200,31 +41,31 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testUnqualifiedAlign() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to",
-                56,
-                "'calendar' or 'first observation' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testAlignToSomethingInvalid() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to there",
-                57,
-                "'calendar' or 'first observation' expected",
-                model()
-        );
-    }
-
-    @Test
     public void testAlignToCalendarFollowedByInvalid() throws Exception {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar blah",
                 66,
                 "'time zone' or 'with offset' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarNonConstantTimeZone() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone rnd_str('foo','bar') with offset '00:15'",
+                76,
+                "timezone must be a constant expression of STRING or CHAR type",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarNonStringConstantTimeZone() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 42 with offset '00:15'",
+                76,
+                "timezone must be a constant expression of STRING or CHAR type",
                 model()
         );
     }
@@ -250,21 +91,21 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAlignToCalendarTimeZoneMissingZoneName() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone",
-                75,
-                "Expression expected",
-                model()
-        );
-    }
-
-    @Test
     public void testAlignToCalendarTimeZoneFollowedByUnexpectedToken() throws Exception {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' zone",
                 80,
                 "unexpected token: zone",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarTimeZoneMissingZoneName() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone",
+                75,
+                "Expression expected",
                 model()
         );
     }
@@ -280,41 +121,11 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAlignToCalendarTimeZoneWithSomethingUnexpected() throws Exception {
+    public void testAlignToCalendarTimeZoneWithNonConstantOffset() throws Exception {
         assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with friends",
-                85,
-                "'offset' expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testAlignToCalendarTimeZoneWithOffsetMissingExpression() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset",
-                91,
-                "Expression expected",
-                model()
-        );
-    }
-
-    @Test
-    public void testAlignToCalendarNonStringConstantTimeZone() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 42 with offset '00:15'",
-                76,
-                "timezone must be a constant expression of STRING or CHAR type",
-                model()
-        );
-    }
-
-    @Test
-    public void testAlignToCalendarNonConstantTimeZone() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone rnd_str('foo','bar') with offset '00:15'",
-                76,
-                "timezone must be a constant expression of STRING or CHAR type",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset rnd_str('foo','bar')",
+                92,
+                "offset must be a constant expression of STRING or CHAR type",
                 model()
         );
     }
@@ -330,20 +141,21 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAlignToCalendarTimeZoneWithNonConstantOffset() throws Exception {
+    public void testAlignToCalendarTimeZoneWithOffsetMissingExpression() throws Exception {
         assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset rnd_str('foo','bar')",
-                92,
-                "offset must be a constant expression of STRING or CHAR type",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset",
+                91,
+                "Expression expected",
                 model()
         );
     }
 
     @Test
-    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
-        assertQuery(
-                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
-                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
+    public void testAlignToCalendarTimeZoneWithSomethingUnexpected() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with friends",
+                85,
+                "'offset' expected",
                 model()
         );
     }
@@ -362,6 +174,194 @@ public class SampleBySqlParserTest  extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00' order by a desc",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
+                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToSomethingInvalid() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to there",
+                57,
+                "'calendar' or 'first observation' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendar() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZone() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneAndOffsetAsBindVariables() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone ? with offset ?",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone ? with offset ?",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneAsOffset() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '+01:00' with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneAsOffsetNegative() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '-04:00' with offset '00:00'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneWithOffsetNegative() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarTimeZoneWithOffsetPositive() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarWithOffsetNegative() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '-04:45'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'",
+                model()
+        );
+    }
+
+    @Test
+    public void testCalendarWithOffsetPositive() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '01:45'",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'",
+                model()
+        );
+    }
+
+    @Test
+    public void testFillFollowedByAlign() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h fill(none) align to calendar time zone ? with offset ?",
+                "select b, sum(a), k k1, k from x y sample by 3h fill(none) align to calendar time zone ? with offset ?",
+                model()
+        );
+    }
+
+    @Test
+    public void testFirstObservation() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
+                model()
+        );
+    }
+
+    @Test
+    public void testObservationExpected() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to first move",
+                63,
+                "'observation' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testObservationMissing() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to first",
+                62,
+                "'observation' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testSampleByAlignOn() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align on calendar",
+                54,
+                "'to' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testSampleByMissing() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample on 3h",
+                42,
+                "'by' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testSampleByToLastObservation() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to last observation",
+                57,
+                "'calendar' or 'first observation' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testToMissing() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align",
+                53,
+                "'to' expected",
+                model()
+        );
+    }
+
+    @Test
+    public void testUnqualifiedAlign() throws Exception {
+        assertSyntaxError(
+                "select b, sum(a), k k1, k from x y sample by 3h align to",
+                56,
+                "'calendar' or 'first observation' expected",
                 model()
         );
     }

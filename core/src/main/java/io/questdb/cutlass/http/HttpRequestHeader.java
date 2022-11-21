@@ -48,9 +48,9 @@ public interface HttpRequestHeader {
 
     CharSequence getMethodLine();
 
+    long getStatementTimeout();
+
     CharSequence getUrl();
 
     DirectByteCharSequence getUrlParam(CharSequence name);
-
-    long getStatementTimeout();
 }

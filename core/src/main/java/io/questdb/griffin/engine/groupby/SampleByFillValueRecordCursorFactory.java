@@ -45,11 +45,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
     private final AbstractNoRecordSampleByCursor cursor;
 
     public SampleByFillValueRecordCursorFactory(
+            @Transient @NotNull BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ObjList<ExpressionNode> fillValues,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -82,10 +82,12 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     fillValues,
                     false
             );
+            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new SampleByFillValueRecordCursor(
                     map,
                     mapSink,
                     groupByFunctions,
+                    updater,
                     recordFunctions,
                     placeholderFunctions,
                     timestampIndex,
@@ -99,6 +101,29 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             Misc.freeObjList(recordFunctions);
             Misc.free(map);
             throw e;
+        }
+    }
+
+    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
+        try {
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.INT:
+                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
+                case ColumnType.LONG:
+                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
+                case ColumnType.FLOAT:
+                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
+                case ColumnType.DOUBLE:
+                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
+                case ColumnType.SHORT:
+                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
+                case ColumnType.BYTE:
+                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
+                default:
+                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
+            }
+        } catch (NumericException e) {
+            throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
         }
     }
 
@@ -141,29 +166,6 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             }
         }
         return placeholderFunctions;
-    }
-
-    static Function createPlaceHolderFunction(IntList recordFunctionPositions, int index, int type, ExpressionNode fillNode) throws SqlException {
-        try {
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.INT:
-                    return IntConstant.newInstance(Numbers.parseInt(fillNode.token));
-                case ColumnType.LONG:
-                    return LongConstant.newInstance(Numbers.parseLong(fillNode.token));
-                case ColumnType.FLOAT:
-                    return FloatConstant.newInstance(Numbers.parseFloat(fillNode.token));
-                case ColumnType.DOUBLE:
-                    return DoubleConstant.newInstance(Numbers.parseDouble(fillNode.token));
-                case ColumnType.SHORT:
-                    return ShortConstant.newInstance((short) Numbers.parseInt(fillNode.token));
-                case ColumnType.BYTE:
-                    return ByteConstant.newInstance((byte) Numbers.parseInt(fillNode.token));
-                default:
-                    throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
-            }
-        } catch (NumericException e) {
-            throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
-        }
     }
 
     @Override

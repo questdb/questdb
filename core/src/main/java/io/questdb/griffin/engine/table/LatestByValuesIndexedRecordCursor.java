@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
@@ -39,10 +40,10 @@ import org.jetbrains.annotations.Nullable;
 class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
-    private final IntHashSet found = new IntHashSet();
-    private final IntHashSet symbolKeys;
     private final IntHashSet deferredSymbolKeys;
+    private final IntHashSet found = new IntHashSet();
     private final DirectLongList rows;
+    private final IntHashSet symbolKeys;
     private long index = 0;
 
     public LatestByValuesIndexedRecordCursor(
@@ -60,11 +61,40 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public boolean hasNext() {
+        if (index > -1) {
+            final long rowid = rows.get(index);
+            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
+            index--;
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public long size() {
+        return rows.size();
+    }
+
+    @Override
     public void toTop() {
         index = rows.size() - 1;
     }
 
-    protected void buildTreeMap() {
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, DataFrame frame, long rowLo, long rowHi) {
+        int index = found.keyIndex(symbolKey);
+        if (index > -1) {
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            if (cursor.hasNext()) {
+                final long row = Rows.toRowID(frame.getPartitionIndex(), cursor.next());
+                rows.add(row);
+                found.addAt(index, symbolKey);
+            }
+        }
+    }
+
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         int keyCount = symbolKeys.size();
         if (deferredSymbolKeys != null) {
             keyCount += deferredSymbolKeys.size();
@@ -76,6 +106,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
@@ -96,38 +127,10 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         index = rows.size() - 1;
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, DataFrame frame, long rowLo, long rowHi) {
-        int index = found.keyIndex(symbolKey);
-        if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
-            if (cursor.hasNext()) {
-                final long row = Rows.toRowID(frame.getPartitionIndex(), cursor.next());
-                rows.add(row);
-                found.addAt(index, symbolKey);
-            }
-        }
-    }
-
     void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
-        buildTreeMap();
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (index > -1) {
-            final long rowid = rows.get(index);
-            recordA.jumpTo(Rows.toPartitionIndex(rowid), Rows.toLocalRowID(rowid));
-            index--;
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public long size() {
-        return rows.size();
+        buildTreeMap(executionContext);
     }
 }

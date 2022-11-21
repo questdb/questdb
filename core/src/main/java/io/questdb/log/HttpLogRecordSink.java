@@ -35,11 +35,10 @@ public class HttpLogRecordSink extends LogRecordSink {
     private static final String CL_MARKER = "#########"; // with 9 digits, max content length = 999999999 bytes (953MB)
     private static final int CL_MARKER_LEN = CL_MARKER.length(); // number of digits available for contentLength
     private static final int MARK_NOT_SET = -1;
-
-    private long mark = MARK_NOT_SET;
-    private boolean hasContentLengthMarker;
-    private long contentLengthEnd;
     private long bodyStart;
+    private long contentLengthEnd;
+    private boolean hasContentLengthMarker;
+    private long mark = MARK_NOT_SET;
 
     public HttpLogRecordSink(LogAlertSocket alertSkt) {
         this(alertSkt.getOutBufferPtr(), alertSkt.getOutBufferSize());
@@ -49,19 +48,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         super(address, addressSize);
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
-    }
-
-    public HttpLogRecordSink putHeader(CharSequence localHostIp) {
-        clear();
-        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
-                .put("Host: ").put(localHostIp).put(CRLF)
-                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
-                .put("Accept: */*").put(CRLF)
-                .put("Content-Type: application/json").put(CRLF)
-                .putContentLengthMarker();
-        put(CRLF); // header/body separator
-        bodyStart = _wptr;
-        return this;
     }
 
     public int $() {
@@ -91,20 +77,6 @@ public class HttpLogRecordSink extends LogRecordSink {
         return length(); // length of the http log record
     }
 
-    public HttpLogRecordSink setMark() {
-        mark = _wptr;
-        return this;
-    }
-
-    public long getMark() {
-        return mark;
-    }
-
-    public HttpLogRecordSink rewindToMark() {
-        _wptr = mark == MARK_NOT_SET ? address : mark;
-        return this;
-    }
-
     @Override
     public void clear() {
         super.clear();
@@ -112,6 +84,16 @@ public class HttpLogRecordSink extends LogRecordSink {
         contentLengthEnd = _wptr;
         bodyStart = _wptr;
         hasContentLengthMarker = false;
+    }
+
+    @Override
+    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
+        super.encodeUtf8(cs);
+        return this;
+    }
+
+    public long getMark() {
+        return mark;
     }
 
     public HttpLogRecordSink put(LogRecordSink logRecord) {
@@ -153,12 +135,6 @@ public class HttpLogRecordSink extends LogRecordSink {
     }
 
     @Override
-    public HttpLogRecordSink encodeUtf8(CharSequence cs) {
-        super.encodeUtf8(cs);
-        return this;
-    }
-
-    @Override
     public HttpLogRecordSink put(CharSequence cs, int lo, int hi) {
         super.put(cs, lo, hi);
         return this;
@@ -173,6 +149,29 @@ public class HttpLogRecordSink extends LogRecordSink {
     @Override
     public HttpLogRecordSink put(char c) {
         super.put(c);
+        return this;
+    }
+
+    public HttpLogRecordSink putHeader(CharSequence localHostIp) {
+        clear();
+        put("POST /api/v1/alerts HTTP/1.1").put(CRLF)
+                .put("Host: ").put(localHostIp).put(CRLF)
+                .put("User-Agent: QuestDB/LogAlert").put(CRLF)
+                .put("Accept: */*").put(CRLF)
+                .put("Content-Type: application/json").put(CRLF)
+                .putContentLengthMarker();
+        put(CRLF); // header/body separator
+        bodyStart = _wptr;
+        return this;
+    }
+
+    public HttpLogRecordSink rewindToMark() {
+        _wptr = mark == MARK_NOT_SET ? address : mark;
+        return this;
+    }
+
+    public HttpLogRecordSink setMark() {
+        mark = _wptr;
         return this;
     }
 

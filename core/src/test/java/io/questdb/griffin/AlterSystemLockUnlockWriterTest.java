@@ -54,7 +54,7 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterExpectUnkockWriter() throws Exception {
+    public void testAlterExpectUnlockWriter() throws Exception {
         assertFailure("alter system unlock reader", 20, "'writer' expected");
     }
 
@@ -110,6 +110,25 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLockWriter_readOnlyContext() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
+            try {
+                compile("alter system lock writer x", readOnlyContext);
+                fail("write lock cannot be acquired in the read-only mode");
+            } catch (SqlException expected) {
+                // check the writer wasn't actually locked
+                assertNull(engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock"));
+                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), "x");
+            } finally {
+                Misc.free(readOnlyContext);
+            }
+        });
+    }
+
+    @Test
     public void testNonExistentTable() throws Exception {
         assertFailure("alter system unlock writer z", 27, "table does not exist [table=z]");
     }
@@ -138,30 +157,11 @@ public class AlterSystemLockUnlockWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLockWriter_readOnlyContext() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService,null, -1, null);
-            try {
-                compile("alter system lock writer x", readOnlyContext);
-                fail("write lock cannot be acquired in the read-only mode");
-            } catch (SqlException expected) {
-                // check the writer wasn't actually locked
-                assertNull(engine.lockWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "new lock"));
-                engine.unlockWriter(sqlExecutionContext.getCairoSecurityContext(), "x");
-            } finally {
-                Misc.free(readOnlyContext);
-            }
-        });
-    }
-
-    @Test
     public void testUnlockWriter_readOnlyContext() throws Exception {
         assertMemoryLeak(() -> {
             createX();
             SqlExecutionContext readOnlyContext = new SqlExecutionContextImpl(engine, 1)
-                    .with(new CairoSecurityContextImpl(false), bindVariableService,null, -1, null);
+                    .with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
             compile("alter system lock writer x", sqlExecutionContext);
             try {
                 compile("alter system unlock writer x", readOnlyContext);

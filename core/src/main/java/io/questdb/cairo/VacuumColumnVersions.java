@@ -45,18 +45,18 @@ public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
     private final static Log LOG = LogFactory.getLog(VacuumColumnVersions.class);
     private final CairoEngine engine;
-    private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private final FilesFacade ff;
+    private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private StringSink fileNameSink;
-    private Path path2;
-    private int tablePathLen;
-    private long partitionTimestamp;
-    private DirectLongList tableFiles;
     private int partitionBy;
+    private long partitionTimestamp;
+    private Path path2;
+    private ColumnPurgeOperator purgeExecution;
+    private DirectLongList tableFiles;
+    private int tablePathLen;
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
-    private ColumnPurgeOperator purgeExecution;
 
     public VacuumColumnVersions(CairoEngine engine) {
         this.engine = engine;
@@ -103,7 +103,7 @@ public class VacuumColumnVersions implements Closeable {
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
         int columnIndex = -1;
         int writerIndex = -1;
-        int tableId = reader.getMetadata().getId();
+        int tableId = reader.getMetadata().getTableId();
         long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
         long updateTxn = reader.getTxn();

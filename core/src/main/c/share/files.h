@@ -79,6 +79,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_findType
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    findTypeIsSoftLink
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_findTypeIsSoftLink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    getStdOutFd
  * Signature: ()J
  */
@@ -119,10 +127,18 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_read
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    readUlong
+ * Method:    readNonNegativeInt
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    readNonNegativeLong
  * Signature: (JJ)J
  */
-JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readNonNegativeLong
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -159,11 +175,27 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close0
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    copy
+ * Method:    close
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_close
         (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    copy
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
+        (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    copyData
+ * Signature: (JJJJ)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_copyData
+        (JNIEnv *e, jclass cls, jlong srcFd, jlong dstFd, jlong srcOffset, jlong length);
 
 /*
  * Class:     com_questdb_std_Files
@@ -239,6 +271,30 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink
         (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    isSoftLink
+ * Signature: (J)Z
+ */
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isSoftLink
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    softLink
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    unlink
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_std_Files
