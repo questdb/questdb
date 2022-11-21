@@ -1058,8 +1058,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.critical(0).put("Metadata read timeout");
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableName).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableName).put(']');
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
@@ -1199,14 +1199,32 @@ public class TableReader implements Closeable, SymbolTableSource {
                             closePartitionColumnFile(base, i);
                         }
 
-                        if (copyFrom == i) {
-                            // It appears that column hasn't changed its position. There are three possibilities here:
-                            // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
-                            //    on Windows before column can be deleted. In this case we must check for marker
-                            //    instance and the column from disk
-                            // 2. Column hasn't been altered, and we can skip to next column.
-                            MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col instanceof NullMemoryMR) {
+                        // We should only remove columns from existing metadata if column count has reduced.
+                        // And we should not attempt to reload columns, which have no matches in the metadata
+                        if (i < columnCount) {
+                            if (copyFrom == i) {
+                                // It appears that column hasn't changed its position. There are three possibilities here:
+                                // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
+                                //    on Windows before column can be deleted. In this case we must check for marker
+                                //    instance and the column from disk
+                                // 2. Column hasn't been altered, and we can skip to next column.
+                                MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                                if (col instanceof NullMemoryMR) {
+                                    reloadColumnAt(
+                                            partitionIndex,
+                                            path,
+                                            columns,
+                                            columnTops,
+                                            bitmapIndexes,
+                                            base,
+                                            i,
+                                            partitionRowCount
+                                    );
+                                }
+                            } else if (copyFrom > -1) {
+                                copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
+                            } else if (copyFrom != Integer.MIN_VALUE) {
+                                // new instance
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,
@@ -1218,20 +1236,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                                         partitionRowCount
                                 );
                             }
-                        } else if (copyFrom > -1) {
-                            copyColumns(base, copyFrom, columns, columnTops, bitmapIndexes, base, i);
-                        } else if (copyFrom != Integer.MIN_VALUE) {
-                            // new instance
-                            reloadColumnAt(
-                                    partitionIndex,
-                                    path,
-                                    columns,
-                                    columnTops,
-                                    bitmapIndexes,
-                                    base,
-                                    i,
-                                    partitionRowCount
-                            );
                         }
                     }
                 }

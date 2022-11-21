@@ -108,6 +108,15 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
+    public void testMetadataReshuffle() throws Exception {
+        executeWithPool(
+                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
+                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
+                )
+        );
+    }
+
+    @Test
     public void testLargeLagWithRowLimitContended() throws Exception {
         executeWithPool(0, this::testLargeLagWithRowLimit);
     }
@@ -697,10 +706,11 @@ public class O3MaxLagTest extends AbstractO3Test {
         assertXY(compiler, sqlExecutionContext);
     }
 
-    private void testFuzz0(
+    private static void testFuzz00(
             CairoEngine engine,
             SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
+            SqlExecutionContext sqlExecutionContext,
+            Rnd rnd
     ) throws SqlException, NumericException {
         long microsBetweenRows = 1000000L;
         int nTotalRows = 12000;
@@ -732,8 +742,6 @@ public class O3MaxLagTest extends AbstractO3Test {
         compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
 
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
-
-        Rnd rnd = TestUtils.generateRandom(LOG);
 
         long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
         long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
@@ -773,6 +781,14 @@ public class O3MaxLagTest extends AbstractO3Test {
 
             TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
         }
+    }
+
+    private void testFuzz0(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException, NumericException {
+        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
     }
 
     private void testLargeLagWithRowLimit(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
