@@ -211,6 +211,14 @@ public class WhereClauseSymbolEstimatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEstimateSingleColumnGaveUp4() throws SqlException {
+        Assert.assertEquals(
+                intList(Integer.MAX_VALUE),
+                estimate("sym = ex", "sym")
+        );
+    }
+
+    @Test
     public void testEstimateSingleColumnNotInFilter1() throws SqlException {
         Assert.assertEquals(
                 intList(Integer.MAX_VALUE),

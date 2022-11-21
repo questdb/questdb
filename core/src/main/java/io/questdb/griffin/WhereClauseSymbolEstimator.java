@@ -89,8 +89,8 @@ final class WhereClauseSymbolEstimator implements Mutable {
             ExpressionNode node,
             RecordMetadata metadata
     ) throws SqlException {
-        estimateEquals0(translator, node.lhs, metadata); // left == right
-        estimateEquals0(translator, node.rhs, metadata); // right == left
+        estimateEquals0(translator, node.lhs, node.rhs, metadata); // left == right
+        estimateEquals0(translator, node.rhs, node.lhs, metadata); // right == left
     }
 
     private void analyzeIn(
@@ -168,21 +168,28 @@ final class WhereClauseSymbolEstimator implements Mutable {
 
     private void estimateEquals0(
             AliasTranslator translator,
-            ExpressionNode node,
+            ExpressionNode a,
+            ExpressionNode b,
             RecordMetadata metadata
     ) throws SqlException {
-        if (node == null || node.type != ExpressionNode.LITERAL) {
+        if (a == null || a.type != ExpressionNode.LITERAL) {
             return;
         }
 
-        CharSequence column = translator.translateAlias(node.token);
+        CharSequence column = translator.translateAlias(a.token);
         int columnIndex = metadata.getColumnIndexQuiet(column);
         if (columnIndex == -1) {
-            throw SqlException.invalidColumn(node.position, node.token);
+            throw SqlException.invalidColumn(a.position, a.token);
         }
 
         int keyIndex = columnIndexesToListIndexes.keyIndex(columnIndex);
         if (keyIndex > -1) {
+            return;
+        }
+
+        if (b.type != ExpressionNode.CONSTANT && b.type != ExpressionNode.BIND_VARIABLE) {
+            // give up in cases such as s1 = s2
+            giveUp();
             return;
         }
 
