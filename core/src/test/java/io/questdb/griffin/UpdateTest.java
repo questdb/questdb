@@ -2114,6 +2114,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void applyUpdate(UpdateOperation updateOperation) {
+        updateOperation.withContext(sqlExecutionContext);
         try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
             updateOperation.apply(tableWriter, false);
         }
