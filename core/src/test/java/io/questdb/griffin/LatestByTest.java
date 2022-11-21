@@ -229,6 +229,54 @@ public class LatestByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByWithDeferredNonExistingSymbolOnNonEmptyTableDoesntThrowException() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            compile("insert into tab\n" +
+                    "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
+                    "from long_sequence(1000);");
+
+            assertQuery("id\tv\tr_1M\n",
+                    "with r as (select id, value v from tab where id = 'apc' || rnd_int() LATEST ON ts PARTITION BY id),\n" +
+                            "     rr as (select id, value v from tab where id = 'apc' || rnd_int() and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
+                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
+                            "        from r\n" +
+                            "        join rr on id\n", null, false, false);
+        });
+    }
+
+    @Test
+    public void testLatestByWithStaticNonExistingSymbolOnNonEmptyTableDoesntThrowException() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            compile("insert into tab\n" +
+                    "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
+                    "from long_sequence(1000);");
+
+            assertQuery("id\tv\tr_1M\n",
+                    "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
+                            "     rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
+                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
+                            "        from r\n" +
+                            "        join rr on id\n", null, false, false);
+        });
+    }
+
+    @Test
+    public void testLatestByWithSymbolOnEmptyTableDoesntThrowException() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+
+            assertQuery("id\tv\tr_1M\n",
+                    "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
+                            "        rr as (select id, value v from tab where id = 'apc' and ts <= dateadd('d', -7, now())  LATEST ON ts PARTITION BY id)\n" +
+                            "        select r.id, r.v, cast((r.v - rr.v) as float) r_1M\n" +
+                            "        from r\n" +
+                            "        join rr on id\n", null, false, false);
+        });
+    }
+
+    @Test
     public void testLatestWithFilterByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
