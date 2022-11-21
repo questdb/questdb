@@ -55,7 +55,7 @@ QuestDB release and sample datasets:
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON time PARTITION BY symbol;`                    | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
 Our demo is running on `c5.metal` instance and using 24 cores out of 96.
 
