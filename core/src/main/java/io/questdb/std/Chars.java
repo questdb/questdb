@@ -829,7 +829,7 @@ public final class Chars {
         }
         sink.clear();
         if (startIdx != endIdx) {
-            sink.put(str, startIdx, endIdx+1);
+            sink.put(str, startIdx, endIdx + 1);
         }
     }
 

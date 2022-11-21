@@ -30,13 +30,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.str.StringSink;
+
 import static io.questdb.std.Chars.trim;
 
 public class TrimFunction extends StrFunction implements UnaryFunction {
 
+    private final Function arg;
     private final StringSink sink1 = new StringSink();
     private final StringSink sink2 = new StringSink();
-    private final Function arg;
     private final TrimType type;
 
     public TrimFunction(Function arg, TrimType type) {
@@ -60,16 +61,6 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public int getStrLen(Record rec) {
-        final int len = arg.getStrLen(rec);
-        if (len == TableUtils.NULL_LEN) {
-            return TableUtils.NULL_LEN;
-        }
-        trim(type, getArg().getStr(rec), sink1);
-        return sink1.length();
-    }
-
-    @Override
     public CharSequence getStrB(final Record rec) {
         final CharSequence charSequence = getArg().getStr(rec);
         if (charSequence == null) {
@@ -77,5 +68,15 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
         }
         trim(type, charSequence, sink2);
         return sink2;
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        final int len = arg.getStrLen(rec);
+        if (len == TableUtils.NULL_LEN) {
+            return TableUtils.NULL_LEN;
+        }
+        trim(type, getArg().getStr(rec), sink1);
+        return sink1.length();
     }
 }
