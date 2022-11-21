@@ -183,7 +183,7 @@ public class CairoTestUtils {
                 }
 
                 if (rnd.nextInt() % 4 == 0) {
-                    row.putUuid(12, UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+                    row.putUuid(12, UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
                 } else {
                     row.putUuid(12, rnd.nextLong(), rnd.nextLong());
                 }

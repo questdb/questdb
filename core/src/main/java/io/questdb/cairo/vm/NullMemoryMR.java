@@ -152,12 +152,12 @@ public class NullMemoryMR implements MemoryMR {
         return TableUtils.NULL_LEN;
     }
 
-    public long getUuidLeastSig(long offset) {
-        return UuidConstant.NULL_MSB_AND_LSB;
+    public long getUuidHi(long offset) {
+        return UuidConstant.NULL_HI_AND_LO;
     }
 
-    public long getUuidMostSig(long offset) {
-        return UuidConstant.NULL_MSB_AND_LSB;
+    public long getUuidLo(long offset) {
+        return UuidConstant.NULL_HI_AND_LO;
     }
 
     @Override

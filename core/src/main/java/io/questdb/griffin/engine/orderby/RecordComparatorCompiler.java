@@ -319,8 +319,8 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long128Util.class;
                     break;
                 case ColumnType.UUID:
-                    getterNameA = "getUuidMostSig";
-                    getterNameB = "getUuidLeastSig";
+                    getterNameA = "getUuidHi";
+                    getterNameB = "getUuidLo";
                     fieldType = "J";
                     comparatorDesc = "(JJJJ)I";
                     // todo: is this a desirable reuse?

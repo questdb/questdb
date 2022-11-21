@@ -154,12 +154,12 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
-    public long getUuidLeastSig(Record rec) {
+    public long getUuidHi(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getUuidMostSig(Record rec) {
+    public long getUuidLo(Record rec) {
         throw new UnsupportedOperationException();
     }
 

@@ -772,11 +772,11 @@ public class CompactMapTest extends AbstractCairoTest {
             }
 
             if (rnd.nextInt() % 4 == 0) {
-                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidMostSig(keyColumnOffset + 12));
-                Assert.assertEquals(UuidConstant.NULL_MSB_AND_LSB, record.getUuidLeastSig(keyColumnOffset + 12));
+                Assert.assertEquals(UuidConstant.NULL_HI_AND_LO, record.getUuidHi(keyColumnOffset + 12));
+                Assert.assertEquals(UuidConstant.NULL_HI_AND_LO, record.getUuidLo(keyColumnOffset + 12));
             } else {
-                Assert.assertEquals(rnd.nextLong(), record.getUuidMostSig(keyColumnOffset + 12));
-                Assert.assertEquals(rnd.nextLong(), record.getUuidLeastSig(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidHi(keyColumnOffset + 12));
+                Assert.assertEquals(rnd.nextLong(), record.getUuidLo(keyColumnOffset + 12));
             }
 
         }

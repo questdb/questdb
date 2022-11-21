@@ -28,17 +28,17 @@ import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.str.CharSink;
 
 public final class MutableUuid implements Sinkable {
-    private long leastSigBits = UuidConstant.NULL_MSB_AND_LSB;
-    private long mostSigBits = UuidConstant.NULL_MSB_AND_LSB;
+    private long hi = UuidConstant.NULL_HI_AND_LO;
+    private long lo = UuidConstant.NULL_HI_AND_LO;
 
-    public MutableUuid(long mostSig, long leastSig) {
-        of(mostSig, leastSig);
+    public MutableUuid(long hi, long lo) {
+        of(hi, lo);
     }
 
     public MutableUuid() {
 
     }
-    
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -48,25 +48,25 @@ public final class MutableUuid implements Sinkable {
             return false;
         }
         MutableUuid that = (MutableUuid) o;
-        return leastSigBits == that.leastSigBits && mostSigBits == that.mostSigBits;
+        return lo == that.lo && hi == that.hi;
     }
 
-    public long getLeastSigBits() {
-        return leastSigBits;
+    public long getHi() {
+        return hi;
     }
 
-    public long getMostSigBits() {
-        return mostSigBits;
+    public long getLo() {
+        return lo;
     }
 
     @Override
     public int hashCode() {
-        return Hash.hash(mostSigBits, leastSigBits);
+        return Hash.hash(hi, lo);
     }
 
-    public void of(long mostSigBits, long leastSigBits) {
-        this.mostSigBits = mostSigBits;
-        this.leastSigBits = leastSigBits;
+    public void of(long hi, long lo) {
+        this.hi = hi;
+        this.lo = lo;
     }
 
     public void of(CharSequence uuid) {
@@ -82,27 +82,27 @@ public final class MutableUuid implements Sinkable {
             throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
         }
 
-        long msb1;
-        long msb2;
-        long msb3;
-        long lsb1;
-        long lsb2;
+        long hi1;
+        long hi2;
+        long hi3;
+        long lo1;
+        long lo2;
         try {
-            msb1 = Numbers.parseHexLong(uuid, 0, dash1);
-            msb2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
-            msb3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
-            lsb1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
-            lsb2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
+            hi1 = Numbers.parseHexLong(uuid, 0, dash1);
+            hi2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
+            hi3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
+            lo1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
+            lo2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
         } catch (NumericException e) {
             throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
         }
-        this.mostSigBits = (msb1 << 32) | (msb2 << 16) | msb3;
-        this.leastSigBits = (lsb1 << 48) | lsb2;
+        this.hi = (hi1 << 32) | (hi2 << 16) | hi3;
+        this.lo = (lo1 << 48) | lo2;
     }
 
 
     @Override
     public void toSink(CharSink sink) {
-        Numbers.appendUuid(mostSigBits, leastSigBits, sink);
+        Numbers.appendUuid(hi, lo, sink);
     }
 }

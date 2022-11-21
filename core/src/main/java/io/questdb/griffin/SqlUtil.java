@@ -484,7 +484,7 @@ public class SqlUtil {
 
     public static void implicitCastStrAsUuid(CharSequence str, MutableUuid uuid) {
         if (str == null || str.length() == 0) {
-            uuid.of(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+            uuid.of(UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
             return;
         }
         try {

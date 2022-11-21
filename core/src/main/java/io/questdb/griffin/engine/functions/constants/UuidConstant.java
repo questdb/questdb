@@ -30,27 +30,27 @@ import io.questdb.std.MutableUuid;
 import io.questdb.std.Numbers;
 
 public class UuidConstant extends UuidFunction implements ConstantFunction {
-    public static final long NULL_MSB_AND_LSB = Numbers.LONG_NaN;
-    public final static UuidConstant NULL = new UuidConstant(NULL_MSB_AND_LSB, NULL_MSB_AND_LSB);
-    private final long leastSigBits;
-    private final long mostSigBits;
+    public static final long NULL_HI_AND_LO = Numbers.LONG_NaN;
+    public final static UuidConstant NULL = new UuidConstant(NULL_HI_AND_LO, NULL_HI_AND_LO);
+    private final long hi;
+    private final long lo;
 
     public UuidConstant(MutableUuid that) {
-        this(that.getMostSigBits(), that.getLeastSigBits());
+        this(that.getHi(), that.getLo());
     }
 
-    public UuidConstant(long mostSigBits, long leastSigBits) {
-        this.mostSigBits = mostSigBits;
-        this.leastSigBits = leastSigBits;
-    }
-
-    @Override
-    public long getUuidLeastSig(Record rec) {
-        return leastSigBits;
+    public UuidConstant(long hi, long lo) {
+        this.hi = hi;
+        this.lo = lo;
     }
 
     @Override
-    public long getUuidMostSig(Record rec) {
-        return mostSigBits;
+    public long getUuidHi(Record rec) {
+        return hi;
+    }
+
+    @Override
+    public long getUuidLo(Record rec) {
+        return lo;
     }
 }

@@ -1032,10 +1032,10 @@ public final class TestUtils {
                 }
                 break;
             case ColumnType.UUID:
-                long mostSig = r.getUuidMostSig(i);
-                long leastSig = r.getUuidLeastSig(i);
-                if (!UuidUtil.isNull(mostSig, leastSig)) {
-                    MutableUuid uuid = new MutableUuid(mostSig, leastSig);
+                long hi = r.getUuidHi(i);
+                long lo = r.getUuidLo(i);
+                if (!UuidUtil.isNull(hi, lo)) {
+                    MutableUuid uuid = new MutableUuid(hi, lo);
                     uuid.toSink(sink);
                 }
                 break;

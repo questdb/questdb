@@ -525,7 +525,7 @@ public class WalWriter implements TableWriterAPI {
                 nullers.add(() -> mem1.putLong128LittleEndian(Long128Constant.NULL_HI, Long128Constant.NULL_LO));
                 break;
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB));
+                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO));
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
@@ -1480,8 +1480,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
-            getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
+        public void putUuid(int columnIndex, long hi, long lo) {
+            getPrimaryColumn(columnIndex).putLongLong(hi, lo);
             setRowValueNotNull(columnIndex);
         }
 

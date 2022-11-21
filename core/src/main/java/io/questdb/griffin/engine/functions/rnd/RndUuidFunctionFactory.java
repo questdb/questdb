@@ -51,31 +51,31 @@ public class RndUuidFunctionFactory implements FunctionFactory {
         /**
          * TODO:
          * This algorithm is incorrect. This is what RFC says about UUIDv4 generation:
-         *
-         *    The version 4 UUID is meant for generating UUIDs from truly-random or
-         *    pseudo-random numbers.
-         *
-         *    The algorithm is as follows:
-         *
-         *    o  Set the two most significant bits (bits 6 and 7) of the
-         *       clock_seq_hi_and_reserved to zero and one, respectively.
-         *
-         *    o  Set the four most significant bits (bits 12 through 15) of the
-         *       time_hi_and_version field to the 4-bit version number from
-         *       Section 4.1.3.
-         *
-         *    o  Set all the other bits to randomly (or pseudo-randomly) chosen
-         *       values.
+         * <p>
+         * The version 4 UUID is meant for generating UUIDs from truly-random or
+         * pseudo-random numbers.
+         * <p>
+         * The algorithm is as follows:
+         * <p>
+         * o  Set the two most significant bits (bits 6 and 7) of the
+         * clock_seq_hi_and_reserved to zero and one, respectively.
+         * <p>
+         * o  Set the four most significant bits (bits 12 through 15) of the
+         * time_hi_and_version field to the 4-bit version number from
+         * Section 4.1.3.
+         * <p>
+         * o  Set all the other bits to randomly (or pseudo-randomly) chosen
+         * values.
          */
         private Rnd rnd;
 
         @Override
-        public long getUuidLeastSig(Record rec) {
+        public long getUuidHi(Record rec) {
             return rnd.nextLong();
         }
 
         @Override
-        public long getUuidMostSig(Record rec) {
+        public long getUuidLo(Record rec) {
             return rnd.nextLong();
         }
 

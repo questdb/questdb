@@ -216,12 +216,12 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public long getUuidLeastSig(Record rec) {
+        public long getUuidHi(Record rec) {
             return 0;
         }
 
         @Override
-        public long getUuidMostSig(Record rec) {
+        public long getUuidLo(Record rec) {
             return 0;
         }
 

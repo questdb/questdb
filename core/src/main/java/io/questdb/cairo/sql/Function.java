@@ -142,9 +142,9 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     int getType();
 
-    long getUuidLeastSig(Record rec);
+    long getUuidHi(Record rec);
 
-    long getUuidMostSig(Record rec);
+    long getUuidLo(Record rec);
 
     default boolean isConstant() {
         return false;

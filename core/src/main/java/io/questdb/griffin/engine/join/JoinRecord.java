@@ -275,19 +275,19 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getUuidLeastSig(int col) {
+    public long getUuidHi(int col) {
         if (col < split) {
-            return master.getUuidLeastSig(col);
+            return master.getUuidHi(col);
         }
-        return slave.getUuidLeastSig(col - split);
+        return slave.getUuidHi(col - split);
     }
 
     @Override
-    public long getUuidMostSig(int col) {
+    public long getUuidLo(int col) {
         if (col < split) {
-            return master.getUuidMostSig(col);
+            return master.getUuidLo(col);
         }
-        return slave.getUuidMostSig(col - split);
+        return slave.getUuidLo(col - split);
     }
 
     void of(Record master, Record slave) {

@@ -282,13 +282,13 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public long getUuidLeastSig(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+    public long getUuidHi(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }
 
     @Override
-    public long getUuidMostSig(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    public long getUuidLo(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
     }
 
     @Override

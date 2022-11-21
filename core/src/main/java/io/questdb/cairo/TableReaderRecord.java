@@ -264,19 +264,19 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public long getUuidLeastSig(int col) {
-        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long.BYTES * 2;
-        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
-        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
-    }
-
-    @Override
-    public long getUuidMostSig(int col) {
+    public long getUuidHi(int col) {
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long.BYTES * 2;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
+    public long getUuidLo(int col) {
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long.BYTES * 2;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset + Long.BYTES);
     }
 
     public void incrementRecordIndex() {

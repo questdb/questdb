@@ -36,20 +36,20 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
 
     @Override
     public void clear() {
-        value.of(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+        value.of(UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
     }
 
     @Override
-    public long getUuidLeastSig(Record rec) {
-        return value.getLeastSigBits();
+    public long getUuidHi(Record rec) {
+        return value.getHi();
     }
 
     @Override
-    public long getUuidMostSig(Record rec) {
-        return value.getMostSigBits();
+    public long getUuidLo(Record rec) {
+        return value.getLo();
     }
 
-    void set(long mostSigBits, long leastSigBits) {
-        value.of(mostSigBits, leastSigBits);
+    void set(long hi, long lo) {
+        value.of(hi, lo);
     }
 }

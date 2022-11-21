@@ -68,15 +68,15 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     }
 
     private static BooleanConstant createConstant(Function a, Function b) {
-        long aMsb = a.getUuidMostSig(null);
-        long aLsb = a.getUuidLeastSig(null);
-        long bMsb = b.getUuidMostSig(null);
-        long bLsb = b.getUuidLeastSig(null);
+        long aMsb = a.getUuidHi(null);
+        long aLsb = a.getUuidLo(null);
+        long bMsb = b.getUuidHi(null);
+        long bLsb = b.getUuidLo(null);
         return BooleanConstant.of(aMsb == bMsb && aLsb == bLsb);
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        return new ConstCheckFunc(varFunc, constFunc.getUuidMostSig(null), constFunc.getUuidLeastSig(null));
+        return new ConstCheckFunc(varFunc, constFunc.getUuidHi(null), constFunc.getUuidLo(null));
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -97,8 +97,8 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long msb = arg.getUuidMostSig(rec);
-            long lsb = arg.getUuidLeastSig(rec);
+            long msb = arg.getUuidHi(rec);
+            long lsb = arg.getUuidLo(rec);
             return negated != (msb == msbConstant && lsb == lsbConstant);
         }
     }
@@ -114,10 +114,10 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long leftMsb = left.getUuidMostSig(rec);
-            final long leftLsb = left.getUuidLeastSig(rec);
-            final long rightMsb = right.getUuidMostSig(rec);
-            final long rightLsb = right.getUuidLeastSig(rec);
+            final long leftMsb = left.getUuidHi(rec);
+            final long leftLsb = left.getUuidLo(rec);
+            final long rightMsb = right.getUuidHi(rec);
+            final long rightLsb = right.getUuidLo(rec);
             return negated != (leftMsb == rightMsb && leftLsb == rightLsb);
         }
 

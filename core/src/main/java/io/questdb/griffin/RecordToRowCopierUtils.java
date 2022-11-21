@@ -57,8 +57,8 @@ public class RecordToRowCopierUtils {
         int rGetLong256 = asm.poolInterfaceMethod(Record.class, "getLong256A", "(I)Lio/questdb/std/Long256;");
         int rGetLong128Hi = asm.poolInterfaceMethod(Record.class, "getLong128Hi", "(I)J");
         int rGetLong128Lo = asm.poolInterfaceMethod(Record.class, "getLong128Lo", "(I)J");
-        int rGetUuidMostSig = asm.poolInterfaceMethod(Record.class, "getUuidMostSig", "(I)J");
-        int rGetUuidLeastSig = asm.poolInterfaceMethod(Record.class, "getUuidLeastSig", "(I)J");
+        int rGetUuidHi = asm.poolInterfaceMethod(Record.class, "getUuidHi", "(I)J");
+        int rGetUuidLo = asm.poolInterfaceMethod(Record.class, "getUuidLo", "(I)J");
 
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
@@ -766,10 +766,10 @@ public class RecordToRowCopierUtils {
                     break;
                 case ColumnType.UUID:
                     assert toColumnTypeTag == ColumnType.UUID;
-                    asm.invokeInterface(rGetUuidMostSig);
+                    asm.invokeInterface(rGetUuidHi);
                     asm.aload(1);
                     asm.iconst(i);
-                    asm.invokeInterface(rGetUuidLeastSig);
+                    asm.invokeInterface(rGetUuidLo);
                     asm.invokeInterface(wPutUuid, 5);
 //                    assert false;
                     break;

@@ -75,27 +75,27 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getUuidLeastSig(Record rec) {
+        public long getUuidHi(Record rec) {
             final CharSequence value = arg.getStr(rec);
             if (value == null) {
-                return UuidConstant.NULL_MSB_AND_LSB;
-            }
-            // TODO: This is a horrible hack to make the UUID tests to pass.
-            // We must reimplement this with a proper zero-gc UUID codec
-            uuid.of(value);
-            return uuid.getLeastSigBits();
-        }
-
-        @Override
-        public long getUuidMostSig(Record rec) {
-            final CharSequence value = arg.getStr(rec);
-            if (value == null) {
-                return UuidConstant.NULL_MSB_AND_LSB;
+                return UuidConstant.NULL_HI_AND_LO;
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec.
             uuid.of(value);
-            return uuid.getMostSigBits();
+            return uuid.getHi();
+        }
+
+        @Override
+        public long getUuidLo(Record rec) {
+            final CharSequence value = arg.getStr(rec);
+            if (value == null) {
+                return UuidConstant.NULL_HI_AND_LO;
+            }
+            // TODO: This is a horrible hack to make the UUID tests to pass.
+            // We must reimplement this with a proper zero-gc UUID codec
+            uuid.of(value);
+            return uuid.getLo();
         }
     }
 }

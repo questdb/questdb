@@ -634,32 +634,32 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setUuid(CharSequence name, long mostSigBits, long leastSigBits) throws SqlException {
+    public void setUuid(CharSequence name, long hi, long lo) throws SqlException {
         int index = namedVariables.keyIndex(name);
         if (index > -1) {
             final UuidBindVariable function;
             namedVariables.putAt(index, name, function = uuidVarPool.next());
-            function.set(mostSigBits, leastSigBits);
+            function.set(hi, lo);
         } else {
-            setUuid(namedVariables.valueAtQuick(index), mostSigBits, leastSigBits, -1, name);
+            setUuid(namedVariables.valueAtQuick(index), hi, lo, -1, name);
         }
     }
 
     @Override
-    public void setUuid(int index, long mostSigBits, long leastSigBits) throws SqlException {
+    public void setUuid(int index, long hi, long lo) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setUuid(function, mostSigBits, leastSigBits, index, null);
+            setUuid(function, hi, lo, index, null);
         } else {
             indexedVariables.setQuick(index, function = uuidVarPool.next());
-            ((UuidBindVariable) function).set(mostSigBits, leastSigBits);
+            ((UuidBindVariable) function).set(hi, lo);
         }
     }
 
     public void setUuid(int index) throws SqlException {
-        setUuid(index, UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB);
+        setUuid(index, UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {
@@ -1066,14 +1066,14 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setUuid(Function function, long mostSigBits, long leastSigBits, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setUuid(Function function, long hi, long lo, int index, @Nullable CharSequence name) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.UUID:
-                ((UuidBindVariable) function).set(mostSigBits, leastSigBits);
+                ((UuidBindVariable) function).set(hi, lo);
                 break;
             case ColumnType.STRING:
-                ((StrBindVariable) function).setValue(mostSigBits, leastSigBits);
+                ((StrBindVariable) function).setValue(hi, lo);
                 break;
             default:
                 reportError(function, ColumnType.UUID, index, name);

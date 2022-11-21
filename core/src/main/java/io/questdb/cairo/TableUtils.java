@@ -1012,7 +1012,7 @@ public final class TableUtils {
                 Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
                 break;
             case ColumnType.UUID:
-                Vect.setMemoryLong(addr, UuidConstant.NULL_MSB_AND_LSB, count * 2);
+                Vect.setMemoryLong(addr, UuidConstant.NULL_HI_AND_LO, count * 2);
                 break;
             default:
                 break;

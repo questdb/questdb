@@ -114,14 +114,14 @@ public class MutableUuidTest {
         for (int i = 0; i < 100; i++) {
             UUID uuid = UUID.randomUUID();
             mutableUuid.of(uuid.toString().toUpperCase());
-            assertEquals(uuid.getMostSignificantBits(), mutableUuid.getMostSigBits());
-            assertEquals(uuid.getLeastSignificantBits(), mutableUuid.getLeastSigBits());
+            assertEquals(uuid.getMostSignificantBits(), mutableUuid.getHi());
+            assertEquals(uuid.getLeastSignificantBits(), mutableUuid.getLo());
         }
     }
 
     private static void assertEqualsBitS(UUID expected, MutableUuid actual) {
-        assertEquals("Bad parsing " + expected, expected.getMostSignificantBits(), actual.getMostSigBits());
-        assertEquals("Bad parsing " + expected, expected.getLeastSignificantBits(), actual.getLeastSigBits());
+        assertEquals("Bad parsing " + expected, expected.getMostSignificantBits(), actual.getHi());
+        assertEquals("Bad parsing " + expected, expected.getLeastSignificantBits(), actual.getLo());
     }
 
     private static void assertEqualsString(long msb, long lsb) {

@@ -100,10 +100,10 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
         Numbers.appendLong256(l0, l1, l2, l3, sink);
     }
 
-    public void setValue(long mostSigBits, long leastSigBits) {
+    public void setValue(long hi, long lo) {
         sink.clear();
         isNull = false;
-        Numbers.appendUuid(mostSigBits, leastSigBits, sink);
+        Numbers.appendUuid(hi, lo, sink);
     }
 
     public void setValue(short value) {

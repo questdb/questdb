@@ -189,13 +189,13 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public long getUuidLeastSig(int col) {
-        return base.getUuidLeastSig(getColumnIndex(col));
+    public long getUuidHi(int col) {
+        return base.getUuidHi(getColumnIndex(col));
     }
 
     @Override
-    public long getUuidMostSig(int col) {
-        return base.getUuidMostSig(getColumnIndex(col));
+    public long getUuidLo(int col) {
+        return base.getUuidLo(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

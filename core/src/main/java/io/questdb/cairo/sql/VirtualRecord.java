@@ -209,13 +209,13 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public long getUuidLeastSig(int col) {
-        return getFunction(col).getUuidLeastSig(base);
+    public long getUuidHi(int col) {
+        return getFunction(col).getUuidHi(base);
     }
 
     @Override
-    public long getUuidMostSig(int col) {
-        return getFunction(col).getUuidMostSig(base);
+    public long getUuidLo(int col) {
+        return getFunction(col).getUuidLo(base);
     }
 
     public void of(Record record) {

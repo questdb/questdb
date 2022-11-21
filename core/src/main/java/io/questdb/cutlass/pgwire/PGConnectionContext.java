@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -929,24 +929,24 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     }
 
     private void appendUuidColumn(Record record, int columnIndex) {
-        final long mostSigBits = record.getUuidMostSig(columnIndex);
-        final long leastSigBits = record.getUuidLeastSig(columnIndex);
-        if (mostSigBits == UuidConstant.NULL_MSB_AND_LSB && leastSigBits == UuidConstant.NULL_MSB_AND_LSB) {
+        final long hi = record.getUuidHi(columnIndex);
+        final long lo = record.getUuidLo(columnIndex);
+        if (hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO) {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
-            Numbers.appendUuid(mostSigBits, leastSigBits, responseAsciiSink);
+            Numbers.appendUuid(hi, lo, responseAsciiSink);
             responseAsciiSink.putLenEx(a);
         }
     }
 
     private void appendUuidColumnBin(Record record, int columnIndex) {
-        final long mostSigBits = record.getUuidMostSig(columnIndex);
-        final long leastSigBits = record.getUuidLeastSig(columnIndex);
-        if (mostSigBits != UuidConstant.NULL_MSB_AND_LSB || leastSigBits != UuidConstant.NULL_MSB_AND_LSB) {
+        final long hi = record.getUuidHi(columnIndex);
+        final long lo = record.getUuidLo(columnIndex);
+        if (hi != UuidConstant.NULL_HI_AND_LO || lo != UuidConstant.NULL_HI_AND_LO) {
             responseAsciiSink.putNetworkInt(Long.BYTES * 2);
-            responseAsciiSink.putNetworkLong(mostSigBits);
-            responseAsciiSink.putNetworkLong(leastSigBits);
+            responseAsciiSink.putNetworkLong(hi);
+            responseAsciiSink.putNetworkLong(lo);
         } else {
             responseAsciiSink.setNullValue();
         }

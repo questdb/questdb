@@ -58,14 +58,14 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     public void computeFirst(MapValue mapValue, Record record) {
         LongLongHashSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, UuidConstant.NULL_MSB_AND_LSB));
+            sets.extendAndSet(setIndex, set = new LongLongHashSet(16, 0.6, UuidConstant.NULL_HI_AND_LO));
         } else {
             set = sets.getQuick(setIndex);
         }
 
         set.clear();
-        long msb = arg.getUuidMostSig(record);
-        long lsb = arg.getUuidLeastSig(record);
+        long msb = arg.getUuidHi(record);
+        long lsb = arg.getUuidLo(record);
         if (!UuidUtil.isNull(msb, lsb)) {
             set.add(msb, lsb);
             mapValue.putLong(valueIndex, 1L);
@@ -78,8 +78,8 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void computeNext(MapValue mapValue, Record record) {
         LongLongHashSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        long msb = arg.getUuidMostSig(record);
-        long lsb = arg.getUuidLeastSig(record);
+        long msb = arg.getUuidHi(record);
+        long lsb = arg.getUuidLo(record);
         if (!UuidUtil.isNull(msb, lsb)) {
             final int index = set.keyIndex(msb, lsb);
             if (index < 0) {

@@ -455,16 +455,16 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
-    public static void appendUuid(long mostSigBits, long leastSigBits, CharSink sink) {
-        appendHexPadded(sink, (mostSigBits >> 32) & 0xFFFFFFFFL, 32);
+    public static void appendUuid(long hi, long lo, CharSink sink) {
+        appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 32);
         sink.put('-');
-        appendHexPadded(sink, (mostSigBits >> 16) & 0xFFFF, 16);
+        appendHexPadded(sink, (hi >> 16) & 0xFFFF, 16);
         sink.put('-');
-        appendHexPadded(sink, mostSigBits & 0xFFFF, 16);
+        appendHexPadded(sink, hi & 0xFFFF, 16);
         sink.put('-');
-        appendHexPadded(sink, leastSigBits >> 48 & 0xFFFF, 16);
+        appendHexPadded(sink, lo >> 48 & 0xFFFF, 16);
         sink.put('-');
-        appendHexPadded(sink, leastSigBits & 0xFFFFFFFFFFFFL, 48);
+        appendHexPadded(sink, lo & 0xFFFFFFFFFFFFL, 48);
     }
 
     public static int bswap(int value) {

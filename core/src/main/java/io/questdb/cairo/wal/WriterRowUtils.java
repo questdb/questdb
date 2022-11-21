@@ -81,6 +81,6 @@ public class WriterRowUtils {
 
     public static void putUuidStr(int columnIndex, CharSequence str, MutableUuid uuid, TableWriter.Row row) {
         SqlUtil.implicitCastStrAsUuid(str, uuid);
-        row.putUuid(columnIndex, uuid.getMostSigBits(), uuid.getLeastSigBits());
+        row.putUuid(columnIndex, uuid.getHi(), uuid.getLo());
     }
 }

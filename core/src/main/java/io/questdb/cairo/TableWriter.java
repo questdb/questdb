@@ -1913,7 +1913,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             case ColumnType.UUID:
-                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_MSB_AND_LSB, UuidConstant.NULL_MSB_AND_LSB));
+                nullers.add(() -> mem1.putLongLong(UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO));
             default:
                 nullers.add(NOOP);
         }
@@ -6185,7 +6185,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             putLong(columnIndex, value);
         }
 
-        void putUuid(int columnIndex, long mostSigBits, long leastSigBits);
+        void putUuid(int columnIndex, long hi, long lo);
 
         void putUuidStr(int columnIndex, CharSequence uuid);
     }
@@ -6342,8 +6342,8 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         }
 
         @Override
-        public void putUuid(int columnIndex, long mostSigBits, long leastSigBits) {
-            getPrimaryColumn(columnIndex).putLongLong(mostSigBits, leastSigBits);
+        public void putUuid(int columnIndex, long hi, long lo) {
+            getPrimaryColumn(columnIndex).putLongLong(hi, lo);
             setRowValueNotNull(columnIndex);
         }
 

@@ -47,13 +47,13 @@ public final class UuidColumn extends UuidFunction implements ScalarFunction {
     }
 
     @Override
-    public long getUuidLeastSig(Record rec) {
-        return rec.getUuidLeastSig(columnIndex);
+    public long getUuidHi(Record rec) {
+        return rec.getUuidHi(columnIndex);
     }
 
     @Override
-    public long getUuidMostSig(Record rec) {
-        return rec.getUuidMostSig(columnIndex);
+    public long getUuidLo(Record rec) {
+        return rec.getUuidLo(columnIndex);
     }
 
     @Override

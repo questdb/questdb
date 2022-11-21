@@ -343,11 +343,11 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default long getUuidLeastSig(int col) {
+    default long getUuidHi(int col) {
         throw new UnsupportedOperationException();
     }
 
-    default long getUuidMostSig(int col) {
+    default long getUuidLo(int col) {
         throw new UnsupportedOperationException();
     }
 

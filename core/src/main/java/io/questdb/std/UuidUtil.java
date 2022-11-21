@@ -30,7 +30,7 @@ public final class UuidUtil {
     private UuidUtil() {
     }
 
-    public static boolean isNull(long mostSig, long leastSig) {
-        return mostSig == UuidConstant.NULL_MSB_AND_LSB && leastSig == UuidConstant.NULL_MSB_AND_LSB;
+    public static boolean isNull(long hi, long lo) {
+        return hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO;
     }
 }
