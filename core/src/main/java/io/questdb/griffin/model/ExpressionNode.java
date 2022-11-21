@@ -166,6 +166,10 @@ public class ExpressionNode implements Mutable, Sinkable {
                 && Objects.equals(rhs, that.rhs);
     }
 
+    public boolean hasLeafs() {
+        return lhs != null && rhs != null;
+    }
+
     @Override
     public int hashCode() {
         return Objects.hash(args, token, queryModel, precedence, position, lhs, rhs, type, paramCount, intrinsicValue, innerPredicate);
