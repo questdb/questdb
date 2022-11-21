@@ -40,7 +40,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     }
 
     @Override
-    public boolean containsNullValue() {
+    public boolean hasNullValue() {
         return nullFlag;
     }
 
