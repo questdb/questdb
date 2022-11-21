@@ -2293,7 +2293,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE", "k", false, true, true);
