@@ -244,7 +244,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
             tableWriter.rollbackUpdate();
             throw th;
         } finally {
-            op.closeWriter();
+            if (sqlExecutionContext.isWalApplication()) {
+                op.close();
+            } else {
+                op.closeWriter();
+            }
         }
     }
 

@@ -1213,10 +1213,10 @@ public class UpdateTest extends AbstractGriffinTest {
             compile("alter table up add column y long", sqlExecutionContext);
             compile("alter table up drop column y", sqlExecutionContext);
 
-            executeUpdate("UPDATE up SET x = 1");
+            executeUpdate("UPDATE up SET x = 44");
 
             assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n");
+                    "1970-01-01T00:00:00.000000Z\t44\n");
         });
     }
 
