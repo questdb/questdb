@@ -87,7 +87,11 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             if (symbolMapReader.containsNullValue()) {
                 distinctSymbols++;
             }
-            combinations *= Math.min(symbolCount, distinctSymbols);
+            try {
+                combinations = Math.multiplyExact(combinations, Math.min(symbolCount, distinctSymbols));
+            } catch (ArithmeticException ignore) {
+                return Long.MAX_VALUE;
+            }
         }
         return combinations;
     }
