@@ -59,6 +59,17 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConstantComparison() throws Exception {
+        assertQuery("column\n" +
+                        "true\n",
+                "select '11111111-1111-1111-1111-111111111111' = cast ('11111111-1111-1111-1111-111111111111' as uuid) from long_sequence(1)", null, null, true, true, true);
+
+        assertQuery("column\n" +
+                        "false\n",
+                "select '11111111-1111-1111-1111-111111111111' = cast ('22222222-2222-2222-2222-222222222222' as uuid) from long_sequence(1)", null, null, true, true, true);
+    }
+
+    @Test
     public void testCountAggregation() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
@@ -100,6 +111,17 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("count_distinct\n" +
                         "3\n",
                 "select count_distinct(u) from x", null, null, false, true, true);
+    }
+
+    @Test
+    public void testEqualityComparisonConstantOnLeft() throws Exception {
+        MutableUuid uuid = new MutableUuid();
+        uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+        assertCompile("create table x (u UUID)");
+        assertCompile("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+        assertQuery("u\n" +
+                        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                "select * from x where 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' = u", null, null, true, true, false);
     }
 
     @Test
@@ -391,6 +413,16 @@ public class UuidTest extends AbstractGriffinTest {
                         "9fa2397a-5d8c-84c4-716d-e3d25dcc2d91\n" +
                         "2f1a8266-e792-1e3b-4b0f-595f143e5d72\n",
                 "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testTwoVarComparison() throws Exception {
+        assertCompile("create table x (u1 UUID, u2 UUID)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into x values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111')");
+        assertQuery("u1\tu2\n" +
+                        "11111111-1111-1111-1111-111111111111\t11111111-1111-1111-1111-111111111111\n",
+                "select * from x where u1 = u2", null, null, true, true, false);
     }
 
     @Test

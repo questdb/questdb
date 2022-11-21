@@ -32,6 +32,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -50,8 +52,55 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function a = args.getQuick(0);
         Function b = args.getQuick(1);
-        // todo: optimize for constants
+
+        if (a.isConstant() && b.isConstant()) {
+            return createConstant(a, b);
+        }
+
+        if (a.isConstant() && !b.isConstant()) {
+            return createHalfConstantFunc(a, b);
+        }
+
+        if (!a.isConstant() && b.isConstant()) {
+            return createHalfConstantFunc(b, a);
+        }
         return new Func(a, b);
+    }
+
+    private static BooleanConstant createConstant(Function a, Function b) {
+        long aMsb = a.getUuidMostSig(null);
+        long aLsb = a.getUuidLeastSig(null);
+        long bMsb = b.getUuidMostSig(null);
+        long bLsb = b.getUuidLeastSig(null);
+        return BooleanConstant.of(aMsb == bMsb && aLsb == bLsb);
+    }
+
+    private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
+        return new ConstCheckFunc(varFunc, constFunc.getUuidMostSig(null), constFunc.getUuidLeastSig(null));
+    }
+
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final long lsbConstant;
+        private final long msbConstant;
+
+        public ConstCheckFunc(Function arg, long msbConstant, long lsbConstant) {
+            this.arg = arg;
+            this.msbConstant = msbConstant;
+            this.lsbConstant = lsbConstant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long msb = arg.getUuidMostSig(rec);
+            long lsb = arg.getUuidLeastSig(rec);
+            return negated != (msb == msbConstant && lsb == lsbConstant);
+        }
     }
 
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
