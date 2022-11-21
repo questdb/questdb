@@ -3214,7 +3214,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
                     // When table already has data we can calculate the overlap of the newly added
                     // batch of records with existing data in the table. Positive value of the overlap
-                    // means that our o3MaxLag was undersized.
+                    // means that our o3EffectiveLag was undersized.
 
                     lagError = getMaxTimestamp() - o3CommitBatchTimestampMin;
 
@@ -3224,7 +3224,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         o3EffectiveLag += lagError * configuration.getO3LagIncreaseFactor();
                         o3EffectiveLag = Math.min(o3EffectiveLag, o3MaxLag);
                     } else {
-                        // avoid using negative effective o3MaxLag
+                        // avoid using negative o3EffectiveLag
                         o3EffectiveLag += lagError * configuration.getO3LagDecreaseFactor();
                         o3EffectiveLag = Math.max(0, o3EffectiveLag);
                     }
@@ -3262,7 +3262,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 } else {
                     o3LagRowCount = o3RowCount;
                     // This is a scenario where "o3MaxLag" and "maxUncommitted" values do not work with the data
-                    // in that the "o3MaxLag" is larger than dictated "maxUncommitted". A simple plan here is to
+                    // in that the "o3EffectiveLag" is larger than dictated "maxUncommitted". A simple plan here is to
                     // commit half of the o3MaxLag.
                     if (o3LagRowCount > maxUncommittedRows) {
                         o3LagRowCount = maxUncommittedRows / 2;
@@ -3304,7 +3304,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
 
 
-            // we are going to use this soon to avoid double-copying o3MaxLag data
+            // we are going to use this soon to avoid double-copying lag data
             // final boolean yep = isAppendLastPartitionOnly(sortedTimestampsAddr, o3TimestampMax);
 
             // reshuffle all columns according to timestamp index
