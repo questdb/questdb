@@ -124,7 +124,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             Bootstrap.reportCrashFiles(configuration, logger);
 
             // wait until sequence is consumed and written to file
-            while (logger.getCriticalSequence().getBarrier().current() < 1) {
+            while (((Logger) logger).getCriticalSequence().getBarrier().current() < 1) {
                 Os.pause();
             }
         }

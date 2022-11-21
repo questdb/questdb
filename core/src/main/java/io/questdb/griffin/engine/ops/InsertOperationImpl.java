@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -64,7 +64,7 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         initContext(executionContext);
         if (insertMethod.writer == null) {
-            final TableWriter writer = writerSource.getWriter(executionContext.getCairoSecurityContext(), tableName, "insert");
+            final TableWriterAPI writer = writerSource.getTableWriterAPI(executionContext.getCairoSecurityContext(), tableName, "insert");
             if (writer.getStructureVersion() != structureVersion) {
                 writer.close();
                 throw WriterOutOfDateException.INSTANCE;
@@ -101,7 +101,7 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertMethodImpl implements InsertMethod {
-        private TableWriter writer = null;
+        private TableWriterAPI writer = null;
 
         @Override
         public void close() {
@@ -123,8 +123,8 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public TableWriter popWriter() {
-            TableWriter w = writer;
+        public TableWriterAPI popWriter() {
+            TableWriterAPI w = writer;
             this.writer = null;
             return w;
         }

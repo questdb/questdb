@@ -121,13 +121,18 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return getInt(offset);
     }
 
-    class ByteSequenceView implements BinarySequence {
+    class ByteSequenceView implements BinarySequence, Mutable {
         private long address;
         private long len = -1;
 
         @Override
         public byte byteAt(long index) {
             return Unsafe.getUnsafe().getByte(address + index);
+        }
+
+        @Override
+        public void clear() {
+            len = -1;
         }
 
         @Override
@@ -149,13 +154,18 @@ public interface MemoryCR extends MemoryC, MemoryR {
         }
     }
 
-    class CharSequenceView extends AbstractCharSequence {
+    class CharSequenceView extends AbstractCharSequence implements Mutable {
         private long address;
         private int len;
 
         @Override
         public char charAt(int index) {
             return Unsafe.getUnsafe().getChar(address + index * 2L);
+        }
+
+        @Override
+        public void clear() {
+            len = 0;
         }
 
         @Override

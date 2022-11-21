@@ -43,6 +43,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     long count;
     boolean countRows = false;
     RecordCursor cursor;
+    char delimiter = ',';
     String fileName;
     RecordMetadata metadata;
     boolean noMeta = false;

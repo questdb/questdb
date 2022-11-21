@@ -2159,7 +2159,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose c.customerId customerId, c.name name, c.age age, c1.customerId customerId1, c1.name name1, c1.age age1 from (select [customerId, name, age] from (select-choose [customerId, name, age] customerId, name, age from (select [customerId, name, age] from customers where name ~ 'X')) c cross join select [customerId, name, age] from (select-choose [customerId, name, age] customerId, name, age from (select [customerId, name, age] from customers where name ~ 'X' and age = 30)) c1) c limit 10",
                 "with" +
                         " cust as (customers where name ~ 'X')" +
-                        " cust c cross join cust c1 where c1.age = 30 " +
+                        " select * from cust c cross join cust c1 where c1.age = 30 " +
                         " limit 10",
                 modelOf("customers")
                         .col("customerId", ColumnType.INT)
@@ -4057,7 +4057,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
                         "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
                         "\n" +
-                        "(select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                        "select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
                 modelOf("telemetry_users")
                         .col("id", ColumnType.LONG256)
                         .col("created", ColumnType.TIMESTAMP)
@@ -4110,7 +4110,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinWith() throws SqlException {
         assertQuery(
                 "select-choose x.y y, x1.y y1, x2.y y2 from (select [y] from (select-choose [y] y from (select [y] from tab)) x cross join select [y] from (select-choose [y] y from (select [y] from tab)) x1 cross join select [y] from (select-choose [y] y from (select [y] from tab)) x2) x",
-                "with x as (select * from tab) x cross join x x1 cross join x x2",
+                "with x as (select * from tab) select * from x cross join x x1 cross join x x2",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }
@@ -4122,7 +4122,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " cust outer join ord on (customerId) " +
+                        " select * from cust outer join ord on (customerId) " +
                         " where ord.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4137,7 +4137,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
-                        " cust c outer join ord o on (customerId) " +
+                        " select * from cust c outer join ord o on (customerId) " +
                         " where o.customerId != null" +
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
@@ -4716,7 +4716,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " join suppliers on products.supplier = suppliers.supplier" +
                         " join products on d.productId = products.productId and orders.orderId = products.productId" +
                         " where orders.orderId = suppliers.supplier)" +
-                        " x cross join y",
+                        " select * from x cross join y",
                 modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
@@ -7482,6 +7482,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testWithFollowedByInvalidToken() throws Exception {
+        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
+    }
+
+    @Test
     public void testWithRecursive() throws SqlException {
         assertQuery(
                 "select-choose a from (select-choose [a] a from (select-choose [a] a from (select [a] from tab)) x) y",
@@ -7509,7 +7514,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a from (select-choose [a] a from (select [a] from tab)) x",
                 "with x as (" +
                         " select a from tab" +
-                        ") x",
+                        ") select * from x",
                 modelOf("tab").col("a", ColumnType.INT)
         );
     }

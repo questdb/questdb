@@ -298,7 +298,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );
@@ -312,7 +312,7 @@ public class TxnTest extends AbstractCairoTest {
                                     String trace = String.format(
                                             "[txn=%d, structureVersion=%d, partitionCount=%d, symbolCount=%d] ",
                                             txReader.txn,
-                                            txReader.structureVersion,
+                                            txReader.structureVersion.get(),
                                             txReader.getPartitionCount(),
                                             txReader.getSymbolColumnCount()
                                     );

@@ -53,10 +53,6 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         list.clear();
     }
 
-    public void clearValues() {
-        Arrays.fill(values, 0, capacity, null);
-    }
-
     public V get(CharSequence key) {
         return valueAt(keyIndex(key));
     }
@@ -94,10 +90,6 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
             super.removeAt(index);
             list.remove(key);
         }
-    }
-
-    public void setValueQuick(int keyIndex, V value) {
-        values[-keyIndex - 1] = value;
     }
 
     public void sortKeys(Comparator<CharSequence> comparator) {

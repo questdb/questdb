@@ -2285,6 +2285,21 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
+        assertQuery("k\tcount\n" +
+                        "1970-01-03T00:00:00.000000Z\t6\n",
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR LIMIT 1;", "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_geohash(30) b," +
+                        " timestamp_sequence(172800000001, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", false, true, true);
+    }
+
+    @Test
     public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
         assertQuery("k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
@@ -2532,10 +2547,10 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            groupByMeta.add(new TableColumnMetadata("col1", 1, ColumnType.STRING, false, 0, false, null));
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, null));
 
             GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(new TableColumnMetadata("col1", 2, ColumnType.LONG, false, 0, false, null));
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null));
 
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
@@ -2567,7 +2582,7 @@ public class SampleByTest extends AbstractGriffinTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            TableColumnMetadata column = new TableColumnMetadata("col1", 1, ColumnType.LONG, false, 0, false, null);
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null);
             groupByMeta.add(column);
 
             GenericRecordMetadata meta = new GenericRecordMetadata();

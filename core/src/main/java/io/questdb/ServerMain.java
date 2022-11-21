@@ -28,6 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnIndexerJob;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.cutlass.text.TextImportRequestJob;
@@ -53,7 +56,7 @@ public class ServerMain implements Closeable {
     private final PropServerConfiguration config;
     private final CairoEngine engine;
     private final FunctionFactoryCache ffCache;
-    private final ObjList<Closeable> freeOnExistList = new ObjList<>();
+    private final ObjList<Closeable> freeOnExitList = new ObjList<>();
     private final Log log;
     private final AtomicBoolean running = new AtomicBoolean();
     private final WorkerPoolManager workerPoolManager;
@@ -73,7 +76,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getWalApplyWorkerCount(config)));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -82,6 +85,7 @@ public class ServerMain implements Closeable {
         );
 
         // create the worker pool manager, and configure the shared pool
+        boolean walSupported = config.getCairoConfiguration().isWalSupported();
         workerPoolManager = new WorkerPoolManager(config, metrics.health()) {
             @Override
             protected void configureSharedPool(WorkerPool sharedPool) {
@@ -100,6 +104,18 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(new GroupByJob(messageBus));
                     sharedPool.assign(new LatestByAllIndexedJob(messageBus));
 
+                    if (walSupported) {
+                        sharedPool.assign(new CheckWalTransactionsJob(engine));
+                        final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                        walPurgeJob.delayByHalfInterval();
+                        sharedPool.assign(walPurgeJob);
+                        sharedPool.freeOnExit(walPurgeJob);
+
+                        if (!config.getWalApplyPoolConfiguration().isEnabled()) {
+                            WalUtils.setupWorkerPool(sharedPool, engine, workerPoolManager.getSharedWorkerCount());
+                        }
+                    }
+
                     // text import
                     TextImportJob.assignToPool(messageBus, sharedPool);
                     if (cairoConfig.getSqlCopyInputRoot() != null) {
@@ -116,7 +132,7 @@ public class ServerMain implements Closeable {
                     // telemetry
                     if (!cairoConfig.getTelemetryConfiguration().getDisableCompletely()) {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine, ffCache);
-                        freeOnExistList.add(telemetryJob);
+                        freeOnExitList.add(telemetryJob);
                         if (cairoConfig.getTelemetryConfiguration().getEnabled()) {
                             sharedPool.assign(telemetryJob);
                         }
@@ -126,6 +142,15 @@ public class ServerMain implements Closeable {
                 }
             }
         };
+
+        if (walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
+            WorkerPool walApplyWorkerPool = workerPoolManager.getInstance(
+                    config.getWalApplyPoolConfiguration(),
+                    metrics.health(),
+                    WorkerPoolManager.Requester.WAL_APPLY
+            );
+            WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
+        }
 
         // snapshots
         final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
@@ -182,6 +207,7 @@ public class ServerMain implements Closeable {
             new ServerMain(args).start(true);
         } catch (Throwable thr) {
             thr.printStackTrace();
+            LogFactory.closeInstance();
             System.exit(55);
         }
     }
@@ -191,10 +217,10 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             workerPoolManager.halt();
             // free instances in reverse order to which we allocated them
-            for (int i = freeOnExistList.size() - 1; i >= 0; i--) {
-                Misc.free(freeOnExistList.getQuick(i));
+            for (int i = freeOnExitList.size() - 1; i >= 0; i--) {
+                Misc.free(freeOnExitList.getQuick(i));
             }
-            freeOnExistList.clear();
+            freeOnExitList.clear();
         }
     }
 
@@ -240,11 +266,21 @@ public class ServerMain implements Closeable {
         }
     }
 
+    private static int getWalApplyWorkerCount(PropServerConfiguration config) {
+        final int walApplyThreads;
+        if (config.getWalApplyPoolConfiguration().isEnabled()) {
+            walApplyThreads = config.getWalApplyPoolConfiguration().getWorkerCount();
+        } else {
+            walApplyThreads = config.getWorkerPoolConfiguration().getWorkerCount();
+        }
+        return Math.max(1, walApplyThreads);
+    }
+
     private void addShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.sum());
+                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
                 close();
                 LogFactory.closeInstance();
             } catch (Error ignore) {
@@ -257,7 +293,7 @@ public class ServerMain implements Closeable {
 
     private <T extends Closeable> T freeOnExit(T closeable) {
         if (closeable != null) {
-            freeOnExistList.add(closeable);
+            freeOnExitList.add(closeable);
         }
         return closeable;
     }

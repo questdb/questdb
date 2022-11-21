@@ -95,13 +95,19 @@ public interface SqlExecutionContext extends Closeable {
 
     void initNow();
 
+    boolean isColumnPreTouchEnabled();
+
     boolean isTimestampRequired();
+
+    boolean isWalApplication();
 
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
 
     void setJitMode(int jitMode);
 

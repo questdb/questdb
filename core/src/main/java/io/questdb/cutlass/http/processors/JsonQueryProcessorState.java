@@ -71,7 +71,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
-    private QuietCloseable asyncOperation;
     private int columnCount;
     private int columnIndex;
     private long compilerNanos;
@@ -178,7 +177,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void freeAsyncOperation() {
-        asyncOperation = Misc.free(asyncOperation);
         operationFuture = Misc.free(operationFuture);
     }
 
@@ -250,8 +248,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.compilerNanos = compilerNanos;
     }
 
-    public void setOperationFuture(QuietCloseable op, OperationFuture fut) {
-        asyncOperation = op;
+    public void setOperationFuture(OperationFuture fut) {
         operationFuture = fut;
     }
 
@@ -762,6 +759,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
+        // Enable column pre-touch in REST API only when limit=n,m is not specified since when limit is defined we do
+        // a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
+        sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
         this.cursor = factory.getCursor(sqlExecutionContext);
         final RecordMetadata metadata = factory.getMetadata();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();

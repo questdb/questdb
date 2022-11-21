@@ -556,11 +556,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public long getColumnHash(int columnIndex) {
-            return configuration.getRandom().nextLong();
-        }
-
-        @Override
         public CharSequence getColumnName(int columnIndex) {
             if (columnIndex == getTimestampIndex()) {
                 return "timestamp";
@@ -631,8 +626,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public boolean isWallEnabled() {
-            return configuration.getWallEnabledDefault();
+        public boolean isWalEnabled() {
+            return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

@@ -30,10 +30,28 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
 
+    private final boolean walEnabled;
     private long time;
+
+    public LineTcpTypeConversionTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
 
     @Test
     public void testConversionToBinary() throws Exception {
@@ -186,6 +204,12 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         );
     }
 
+    private void mayDrainWalQueue() {
+        if (walEnabled) {
+            drainWalQueue();
+        }
+    }
+
     private long nextTime() {
         return time += 1000;
     }
@@ -198,7 +222,8 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             try (
                     SqlCompiler compiler = new SqlCompiler(engine);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+            ) {
                 compiler.compile(createTableCmd, sqlExecutionContext);
             } catch (SqlException ex) {
                 throw new RuntimeException(ex);
@@ -210,7 +235,11 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
                 Assert.assertFalse(disconnected);
             } while (recvBuffer.length() > 0);
             closeContext();
+            mayDrainWalQueue();
             assertTable(expected, table);
+            if (walEnabled) {
+                Assert.assertTrue(isWalTable(table));
+            }
         });
     }
 
@@ -218,7 +247,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         resetTime();
         String table = "convTest";
         testConversion(table,
-                "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time);",
+                "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
                 table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +
                         table + ",testCol=\"questdbb\" " + nextTime() + "\n" +
