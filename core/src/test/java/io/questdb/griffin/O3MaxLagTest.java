@@ -1344,22 +1344,18 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     // This test rely on specific random seeds and will no longer test the intended scenario if fuzz generation is changed.
-    // The scenario is to create records in partitition '1970-01-02' and then commit with a lag so that the records are
+    // The scenario is to create records in partition '1970-01-02' and then commit with a lag so that the records are
     // moved to memory and only partition '1970-01-01' is committed to the disk.
     // If the partition '1970-01-02' is kept in the _txn partition tables then any rollback can wipe out records in '1970-01-01'.
     private void testRollbackCreatesEmptyPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Rnd rnd = new Rnd(363901920247L, 1668800745119L);
-        for (int i = 0; i < 50; i++) {
-            final int nTotalRows = rnd.nextInt(79000);
-            final long microsBetweenRows = rnd.nextLong(3090985);
-            final double fraction = rnd.nextDouble();
-            testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-            compiler.compile("drop table x", sqlExecutionContext);
-            compiler.compile("drop table y", sqlExecutionContext);
-            compiler.compile("drop table z", sqlExecutionContext);
-        }
+        final Rnd rnd = new Rnd();
+        rnd.reset(5718667365331139914L, 1796199789846834231L);
+        Rnd r = sqlExecutionContext.getRandom();
+        r.reset(3417617481941903354L, 772640833522954936L);
+        final int nTotalRows = rnd.nextInt(79000);
+        final long microsBetweenRows = rnd.nextLong(3090985);
+        final double fraction = rnd.nextDouble();
+        testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
     }
 
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
