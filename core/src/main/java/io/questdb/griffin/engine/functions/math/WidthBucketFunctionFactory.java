@@ -51,7 +51,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
     }
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-        private final Function operandFunc;
+        private final Function operand_func;
         private final Function low_func;
         private final Function high_func;
         private final Function count_func;
@@ -95,9 +95,12 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             } else if (!(count > 0)) {
                 throw SqlException.$(args, "count must be greater than 0");
             } else if (low == high) {
-                throw  SqlException.$(args, "low must not be equal to high");
+                throw SqlException.$(args, "low must not be equal to high");
             }
 
+            if (low > high) {
+                return 0;
+            }
             if (operand < low) {
                 return 0;
             } else if (operand > high) {
@@ -105,6 +108,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             } else {
                 return (int) ((operand - low) / (high - low) * count) + 1;
             }
+
         }
     }
 }
