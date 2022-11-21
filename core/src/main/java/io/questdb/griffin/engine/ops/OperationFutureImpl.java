@@ -39,10 +39,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.AbstractSelfReturningObject;
-import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.TableWriterTask;
 
@@ -53,16 +50,17 @@ import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
-    private final CairoEngine engine;
-    private SCSequence eventSubSeq;
-    private int status;
-    private long affectedRowsCount;
-    private long correlationId;
-    private String tableName;
-    private QueryFutureUpdateListener queryFutureUpdateListener;
-    private int tableNamePositionInSql;
-    private boolean closing;
     private final long busyWaitTimeout;
+    private final CairoEngine engine;
+    private long affectedRowsCount;
+    private AsyncWriterCommand asyncWriterCommand;
+    private boolean closing;
+    private long correlationId;
+    private SCSequence eventSubSeq;
+    private QueryFutureUpdateListener queryFutureUpdateListener;
+    private int status;
+    private String tableName;
+    private int tableNamePositionInSql;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
@@ -86,12 +84,27 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         return await0(timeout > 0 ? timeout : busyWaitTimeout);
     }
 
-    private int await0(long timeout) throws SqlException {
-        if (status == QUERY_COMPLETE) {
-            return status;
+    @Override
+    public void close() {
+        if (eventSubSeq != null) {
+            engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
+            eventSubSeq.clear();
+            eventSubSeq = null;
+            correlationId = -1;
+            tableName = null;
         }
-        status = Math.max(status, awaitWriterEvent(timeout));
-        return status;
+        asyncWriterCommand = Misc.free(asyncWriterCommand);
+
+        if (!closing) {
+            closing = true;
+            super.close();
+            closing = false;
+        }
+    }
+
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
     }
 
     @Override
@@ -104,28 +117,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         return status;
     }
 
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
-    }
-
-    @Override
-    public void close() {
-        if (eventSubSeq != null) {
-            engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
-            eventSubSeq.clear();
-            eventSubSeq = null;
-            correlationId = -1;
-            tableName = null;
-        }
-
-        if (!closing) {
-            closing = true;
-            super.close();
-            closing = false;
-        }
-    }
-
     /***
      * Initializes instance of OperationFuture with the parameters to wait for the new command
      * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
@@ -134,7 +125,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
             SCSequence eventSubSeq,
-            int tableNamePositionInSql
+            int tableNamePositionInSql,
+            boolean closeOnDone
     ) throws SqlException, AlterTableContextException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
@@ -143,6 +135,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
         writerEventFanOut.and(eventSubSeq);
         this.eventSubSeq = eventSubSeq;
+        this.asyncWriterCommand = closeOnDone ? asyncWriterCommand : null;
 
         try {
             // Publish new command and get published command correlation id.
@@ -185,6 +178,14 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         }
     }
 
+    private int await0(long timeout) throws SqlException {
+        if (status == QUERY_COMPLETE) {
+            return status;
+        }
+        status = Math.max(status, awaitWriterEvent(timeout));
+        return status;
+    }
+
     private int awaitWriterEvent(long timeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert correlationId > -1 : "No command id to wait for";
@@ -222,8 +223,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                     Os.pause();
                 } else if (type == TSK_COMPLETE) {
                     LOG.info().$("writer command response received [instance=").$(correlationId).I$();
-                    final int errorCode = Unsafe.getUnsafe().getInt(event.getData());
-                    switch (errorCode) {
+                    final int code = Unsafe.getUnsafe().getInt(event.getData());
+                    switch (code) {
                         case OK:
                             affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                             queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);
@@ -231,9 +232,15 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                         case READER_OUT_OF_DATE:
                             throw ReaderOutOfDateException.of(tableName);
                         default:
+                            LOG.error().$("error writer command response [instance=").$(correlationId)
+                                    .$(", errorCode=").$(code).I$();
                             final int strLen = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                             final long strLo = event.getData() + 2L * Integer.BYTES;
-                            throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);
+                            if (strLen == 0) {
+                                throw SqlException.$(tableNamePositionInSql, "statement execution failed");
+                            } else {
+                                throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);
+                            }
                     }
                 } else {
                     status = QUERY_STARTED;

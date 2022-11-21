@@ -25,40 +25,81 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.ops.*;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DoneOperationFuture;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private RecordCursorFactory recordCursorFactory;
-    private InsertOperation insertOperation;
-    private UpdateOperation updateOperation;
-    private AlterOperation alterOperation;
-    private TextLoader textLoader;
-    private short type;
-    private SqlExecutionContext sqlExecutionContext;
+    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
-    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
-
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
+    private AlterOperation alterOperation;
+    private InsertOperation insertOperation;
+    private RecordCursorFactory recordCursorFactory;
+    private SqlExecutionContext sqlExecutionContext;
+    private CharSequence sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
+    private TextLoader textLoader;
+    private short type;
+    private UpdateOperation updateOperation;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
-        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
+        updateOperationDispatcher = new OperationDispatcher<UpdateOperation>(engine, "sync 'UPDATE' execution") {
+            @Override
+            protected long apply(UpdateOperation operation, TableWriterAPI writerAPI) {
+                return writerAPI.apply(operation);
+            }
+        };
+
+        alterOperationDispatcher = new OperationDispatcher<AlterOperation>(engine, "Alter table execute") {
+            @Override
+            protected long apply(AlterOperation operation, TableWriterAPI writerAPI) {
+                return writerAPI.apply(operation, true);
+            }
+        };
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        return recordCursorFactory;
+    public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
+        return execute(sqlExecutionContext, eventSubSeq, true);
+    }
+
+    @Override
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
+        switch (type) {
+            case INSERT:
+                return insertOperation.execute(sqlExecutionContext);
+            case UPDATE:
+                updateOperation.withSqlStatement(sqlStatement);
+                return updateOperationDispatcher.execute(updateOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case ALTER:
+                alterOperation.withSqlStatement(sqlStatement);
+                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq, closeOnDone);
+            default:
+                return doneFuture.of(0);
+        }
+    }
+
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
+
+    @Override
+    public AlterOperation getAlterOperation() {
+        return alterOperation;
     }
 
     @Override
@@ -67,13 +108,18 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public TextLoader getTextLoader() {
-        return textLoader;
+    public RecordCursorFactory getRecordCursorFactory() {
+        return recordCursorFactory;
     }
 
     @Override
-    public AlterOperation getAlterOperation() {
-        return alterOperation;
+    public CharSequence getStatementName() {
+        return statementName;
+    }
+
+    @Override
+    public TextLoader getTextLoader() {
+        return textLoader;
     }
 
     @Override
@@ -84,64 +130,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     @Override
     public UpdateOperation getUpdateOperation() {
         return updateOperation;
-    }
-
-    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
-        this.updateOperation = updateOperation;
-        this.type = UPDATE;
-        return this;
-    }
-
-    @Override
-    public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
-        switch (type) {
-            case INSERT:
-                return insertOperation.execute(sqlExecutionContext);
-            case UPDATE:
-                throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
-            case ALTER:
-                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq);
-            default:
-                return doneFuture.of(0);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
-        switch (type) {
-            case ALTER:
-                return (OperationDispatcher<T>) alterOperationDispatcher;
-            case UPDATE:
-                return (OperationDispatcher<T>) updateOperationDispatcher;
-            default:
-                return null;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public <T extends AbstractOperation> T getOperation() {
-        switch (type) {
-            case INSERT:
-                return (T) insertOperation;
-            case UPDATE:
-                return (T) updateOperation;
-            case ALTER:
-                return (T) alterOperation;
-            default:
-                return null;
-        }
-    }
-
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
-    }
-
-    @Override
-    public CharSequence getStatementName() {
-        return statementName;
     }
 
     public CompiledQuery of(short type) {
@@ -158,13 +146,20 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
+    public CompiledQuery ofUpdate(UpdateOperation updateOperation) {
+        this.updateOperation = updateOperation;
+        this.type = UPDATE;
+        return this;
+    }
+
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         return this;
     }
 
-    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory);
+    public CompiledQueryImpl withSqlStatement(CharSequence sqlStatement) {
+        this.sqlStatement = sqlStatement;
+        return this;
     }
 
     private CompiledQuery of(short type, RecordCursorFactory factory) {
@@ -172,6 +167,10 @@ public class CompiledQueryImpl implements CompiledQuery {
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
         return this;
+    }
+
+    CompiledQuery of(RecordCursorFactory recordCursorFactory) {
+        return of(SELECT, recordCursorFactory);
     }
 
     CompiledQuery ofAlter(AlterOperation statement) {
@@ -182,6 +181,14 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofBackupTable() {
         return of(BACKUP_TABLE);
+    }
+
+    CompiledQuery ofBegin() {
+        return of(BEGIN);
+    }
+
+    CompiledQuery ofCommit() {
+        return of(COMMIT);
     }
 
     CompiledQuery ofCopyLocal(@Nullable RecordCursorFactory factory) {
@@ -204,6 +211,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         of(CREATE_TABLE_AS_SELECT);
         this.affectedRowsCount = affectedRowsCount;
         return this;
+    }
+
+    CompiledQuery ofDeallocate(CharSequence statementName) {
+        this.statementName = Chars.toString(statementName);
+        return of(DEALLOCATE);
     }
 
     CompiledQuery ofDrop() {
@@ -229,20 +241,20 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(REPAIR);
     }
 
+    CompiledQuery ofRollback() {
+        return of(ROLLBACK);
+    }
+
     CompiledQuery ofSet() {
         return of(SET);
     }
 
-    CompiledQuery ofBegin() {
-        return of(BEGIN);
+    CompiledQuery ofSnapshotComplete() {
+        return of(SNAPSHOT_DB_COMPLETE);
     }
 
-    CompiledQuery ofCommit() {
-        return of(COMMIT);
-    }
-
-    CompiledQuery ofRollback() {
-        return of(ROLLBACK);
+    CompiledQuery ofSnapshotPrepare() {
+        return of(SNAPSHOT_DB_PREPARE);
     }
 
     CompiledQuery ofTruncate() {
@@ -251,18 +263,5 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     CompiledQuery ofVacuum() {
         return of(VACUUM);
-    }
-
-    CompiledQuery ofSnapshotPrepare() {
-        return of(SNAPSHOT_DB_PREPARE);
-    }
-
-    CompiledQuery ofSnapshotComplete() {
-        return of(SNAPSHOT_DB_COMPLETE);
-    }
-
-    CompiledQuery ofDeallocate(CharSequence statementName) {
-        this.statementName = Chars.toString(statementName);
-        return of(DEALLOCATE);
     }
 }

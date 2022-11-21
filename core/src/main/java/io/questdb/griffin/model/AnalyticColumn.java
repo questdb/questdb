@@ -30,9 +30,9 @@ import io.questdb.std.ObjectFactory;
 
 public final class AnalyticColumn extends QueryColumn {
     public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
+    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
 
     private AnalyticColumn() {
     }
@@ -50,16 +50,16 @@ public final class AnalyticColumn extends QueryColumn {
         orderByDirection.clear();
     }
 
-    public ObjList<ExpressionNode> getPartitionBy() {
-        return partitionBy;
-    }
-
     public ObjList<ExpressionNode> getOrderBy() {
         return orderBy;
     }
 
     public IntList getOrderByDirection() {
         return orderByDirection;
+    }
+
+    public ObjList<ExpressionNode> getPartitionBy() {
+        return partitionBy;
     }
 
     @Override

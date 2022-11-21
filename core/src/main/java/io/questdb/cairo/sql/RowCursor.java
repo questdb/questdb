@@ -34,11 +34,6 @@ public interface RowCursor {
     boolean hasNext();
 
     /**
-     * @return numeric index of the next row
-     */
-    long next();
-
-    /**
      * Iterates or jumps to given position. Jumping to position has to be performed before
      * attempting to iterate row cursor.
      *
@@ -47,4 +42,9 @@ public interface RowCursor {
     default void jumpTo(long position) {
         while (position-- > 0 && hasNext()) next();
     }
+
+    /**
+     * @return numeric index of the next row
+     */
+    long next();
 }

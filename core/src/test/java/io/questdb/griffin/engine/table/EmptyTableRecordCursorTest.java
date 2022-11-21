@@ -32,6 +32,13 @@ import org.junit.Test;
 public class EmptyTableRecordCursorTest {
     private static final EmptyTableRecordCursor CURSOR = new EmptyTableRecordCursor();
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testRecordAt2() {
+        // This cursor does not return row ids. Looking up records from cursor by rowid is most
+        // likely a bug. Make sure we report it.
+        CURSOR.recordAt(CURSOR.getRecord(), 123);
+    }
+
     @Test
     public void testSymbolTable() {
         SymbolTable symbolTable = CURSOR.getSymbolTable(0);
@@ -46,12 +53,5 @@ public class EmptyTableRecordCursorTest {
         Assert.assertNotNull(symbolTable);
         Assert.assertNull(symbolTable.valueOf(0));
         Assert.assertNull(symbolTable.valueBOf(0));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testRecordAt2() {
-        // This cursor does not return row ids. Looking up records from cursor by rowid is most
-        // likely a bug. Make sure we report it.
-        CURSOR.recordAt(CURSOR.getRecord(), 123);
     }
 }

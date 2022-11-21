@@ -41,34 +41,34 @@ package io.questdb.std.fastdouble;
  *     <dd><a href="https://github.com/fastfloat/fast_float">github.com</a></dd>
  *
  *     <dt>Daniel Lemire, Number Parsing at a Gigabyte per Second,
- *     Software: Practice and Experience 51 (8), 2021.
+ *     Software: Practice and Experience 51 (8), 202    1.
  *     arXiv.2101.11408v3 [cs.DS] 24 Feb 2021</dt>
  *     <dd><a href="https://arxiv.org/pdf/2101.11408.pdf">arxiv.org</a></dd>
  * </dl>
  */
 final class FastDoubleUtils {
-    final static long MINIMAL_NINETEEN_DIGIT_INTEGER = 1000_00000_00000_00000L;
     /**
-     * The decimal exponent of a double has a range of -324 to +308.
-     * The hexadecimal exponent of a double has a range of -1022 to +1023.
+     * Includes all non-negative values of a {@code byte}, so that we only have
+     * to check for byte values {@literal <} 0 before accessing this array.
      */
-    final static int MAX_EXPONENT_NUMBER = 1024;
+    static final byte[] CHAR_TO_HEX_MAP = new byte[128];
     /**
      * Special value in {@link #CHAR_TO_HEX_MAP} for
      * the decimal point character.
      */
     static final byte DECIMAL_POINT_CLASS = -4;
     /**
+     * The decimal exponent of a double has a range of -324 to +308.
+     * The hexadecimal exponent of a double has a range of -1022 to +1023.
+     */
+    final static int MAX_EXPONENT_NUMBER = 1024;
+    final static long MINIMAL_NINETEEN_DIGIT_INTEGER = 1000_00000_00000_00000L;
+    /**
      * Special value in {@link #CHAR_TO_HEX_MAP} for
      * characters that are neither a hex digit nor
      * a decimal point character.
      */
     static final byte OTHER_CLASS = -1;
-    /**
-     * Includes all non-negative values of a {@code byte}, so that we only have
-     * to check for byte values {@literal <} 0 before accessing this array.
-     */
-    static final byte[] CHAR_TO_HEX_MAP = new byte[128];
 
     static {
         for (char ch = 0; ch < FastDoubleUtils.CHAR_TO_HEX_MAP.length; ch++) {

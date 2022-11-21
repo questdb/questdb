@@ -24,9 +24,15 @@
 
 package io.questdb.log;
 
-import io.questdb.mp.Sequence;
-
 public interface Log {
+
+    LogRecord advisory();
+
+    LogRecord advisoryW();
+
+    LogRecord critical();
+
+    LogRecord criticalW();
 
     LogRecord debug();
 
@@ -36,31 +42,21 @@ public interface Log {
 
     LogRecord errorW();
 
-    LogRecord critical();
-
-    LogRecord criticalW();
-
     LogRecord info();
 
     LogRecord infoW();
 
-    LogRecord advisory();
-
-    LogRecord advisoryW();
-
-    LogRecord xerror();
-
-    LogRecord xcritical();
-
-    LogRecord xinfo();
+    LogRecord xDebugW();
 
     LogRecord xInfoW();
 
-    LogRecord xdebug();
-
-    LogRecord xDebugW();
-
     LogRecord xadvisory();
 
-    Sequence getCriticalSequence();
+    LogRecord xcritical();
+
+    LogRecord xdebug();
+
+    LogRecord xerror();
+
+    LogRecord xinfo();
 }

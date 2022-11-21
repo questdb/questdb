@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
@@ -36,16 +37,16 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
 public abstract class PurgingOperator {
-    private final Log log;
-    protected final FilesFacade ff;
+    protected final LongList cleanupColumnVersions = new LongList();
     protected final CairoConfiguration configuration;
+    protected final FilesFacade ff;
     protected final MessageBus messageBus;
-    protected final TableWriter tableWriter;
     protected final Path path;
     protected final int rootLen;
+    protected final TableWriter tableWriter;
     protected final IntList updateColumnIndexes = new IntList();
-    protected final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
+    private final Log log;
 
     protected PurgingOperator(
             Log log,
@@ -66,7 +67,7 @@ public abstract class PurgingOperator {
 
     public void purgeOldColumnVersions() {
         boolean anyReadersBeforeCommittedTxn = tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn();
-        TableWriterMetadata writerMetadata = tableWriter.getMetadata();
+        TableRecordMetadata tableMetadata = tableWriter.getMetadata();
 
         int pathTrimToLen = path.length();
         path.concat(tableWriter.getTableName());
@@ -76,8 +77,8 @@ public abstract class PurgingOperator {
         // Process updated column by column, one at the time
         for (int updatedCol = 0, nn = updateColumnIndexes.size(); updatedCol < nn; updatedCol++) {
             int processColumnIndex = updateColumnIndexes.getQuick(updatedCol);
-            CharSequence columnName = writerMetadata.getColumnName(processColumnIndex);
-            int columnType = writerMetadata.getColumnType(processColumnIndex);
+            CharSequence columnName = tableMetadata.getColumnName(processColumnIndex);
+            int columnType = tableMetadata.getColumnType(processColumnIndex);
             cleanupColumnVersionsAsync.clear();
 
             for (int i = 0, n = cleanupColumnVersions.size(); i < n; i += 4) {
@@ -106,7 +107,7 @@ public abstract class PurgingOperator {
                                 columnPurged = false;
                             }
                         }
-                        if (columnPurged && writerMetadata.isColumnIndexed(columnIndex)) {
+                        if (columnPurged && tableMetadata.isColumnIndexed(columnIndex)) {
                             path.trimTo(pathPartitionLen);
                             BitmapIndexUtils.valueFileName(path, columnName, columnVersion);
                             if (!ff.remove(path.$()) && ff.exists(path)) {
@@ -132,7 +133,7 @@ public abstract class PurgingOperator {
                 purgeColumnVersionAsync(
                         tableWriter.getTableName(),
                         columnName,
-                        writerMetadata.getId(),
+                        tableMetadata.getTableId(),
                         (int) tableWriter.getTruncateVersion(),
                         columnType,
                         tableWriter.getPartitionBy(),

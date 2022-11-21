@@ -38,6 +38,14 @@ abstract class AbstractLowerCaseCharSequenceHashMap extends AbstractLowerCaseCha
         list.clear();
     }
 
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
+    }
+
+    public ObjList<CharSequence> keys() {
+        return list;
+    }
+
     @Override
     public void removeAt(int index) {
         if (index < 0) {
@@ -45,14 +53,6 @@ abstract class AbstractLowerCaseCharSequenceHashMap extends AbstractLowerCaseCha
             super.removeAt(index);
             list.remove(key);
         }
-    }
-
-    public boolean contains(CharSequence key) {
-        return keyIndex(key) < 0;
-    }
-
-    public ObjList<CharSequence> keys() {
-        return list;
     }
 
     protected void putAt0(int index, CharSequence key) {

@@ -39,8 +39,8 @@ import java.util.concurrent.TimeUnit;
 public class SumDoubleBenchmark {
     private final static long memSize = 1024 * 16;
     private final static int doubleCount = (int) (memSize / Double.BYTES);
-    private long mem;
     private double[] darr;
+    private long mem;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -75,19 +75,19 @@ public class SumDoubleBenchmark {
     }
 
     @Benchmark
-    public double testJavaNativeSum() {
+    public double testJavaHeapSum() {
         double result = 0.0;
         for (int i = 0; i < doubleCount; i++) {
-            result += Unsafe.getUnsafe().getDouble(mem + i*8);
+            result += darr[i];
         }
         return result;
     }
 
     @Benchmark
-    public double testJavaHeapSum() {
+    public double testJavaNativeSum() {
         double result = 0.0;
         for (int i = 0; i < doubleCount; i++) {
-            result += darr[i];
+            result += Unsafe.getUnsafe().getDouble(mem + i * 8);
         }
         return result;
     }

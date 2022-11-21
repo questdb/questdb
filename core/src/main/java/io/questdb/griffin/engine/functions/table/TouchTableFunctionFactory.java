@@ -75,10 +75,10 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
-        private SqlExecutionContext sqlExecutionContext;
         private long dataPages = 0;
         private long indexKeyPages = 0;
         private long indexValuePages = 0;
+        private SqlExecutionContext sqlExecutionContext;
 
         public TouchTableFunc(Function arg) {
             this.arg = arg;
@@ -97,13 +97,6 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            getStr(rec, sinkB);
-            return sinkB;
-        }
-
-        @Override
         public void getStr(Record rec, CharSink sink) {
             touchTable();
             sink.put("{\"data_pages\": ")
@@ -112,6 +105,13 @@ public class TouchTableFunctionFactory implements FunctionFactory {
                     .put(indexKeyPages)
                     .put(", \"index_values_pages\": ")
                     .put(indexValuePages).put("}");
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            getStr(rec, sinkB);
+            return sinkB;
         }
 
         @Override
@@ -132,7 +132,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             for (long i = 0; i < pageCount; i++) {
                 final byte v = Unsafe.getUnsafe().getByte(baseAddress + i * pageSize);
                 // Use the same blackhole as in async offload's column pre-touch.
-                AsyncFilterAtom.PRE_TOUCH_BLACKHOLE.add(v);
+                AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.add(v);
             }
 
             return pageCount;

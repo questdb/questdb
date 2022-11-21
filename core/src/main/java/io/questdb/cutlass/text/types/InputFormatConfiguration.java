@@ -43,35 +43,35 @@ import java.io.InputStream;
 
 public class InputFormatConfiguration {
     private final static Log LOG = LogFactory.getLog(InputFormatConfiguration.class);
-    private static final int STATE_EXPECT_TOP = 0;
-    private static final int STATE_EXPECT_FIRST_LEVEL_NAME = 1;
     private static final int STATE_EXPECT_DATE_FORMAT_ARRAY = 2;
-    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
+    private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
     private static final int STATE_EXPECT_DATE_FORMAT_VALUE = 4;
     private static final int STATE_EXPECT_DATE_LOCALE_VALUE = 5;
     private static final int STATE_EXPECT_DATE_UTF8_VALUE = 10;
+    private static final int STATE_EXPECT_FIRST_LEVEL_NAME = 1;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
     private static final int STATE_EXPECT_TIMESTAMP_FORMAT_VALUE = 6;
     private static final int STATE_EXPECT_TIMESTAMP_LOCALE_VALUE = 7;
-    private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
-    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
     private static final int STATE_EXPECT_TIMESTAMP_UTF8_VALUE = 11;
+    private static final int STATE_EXPECT_TOP = 0;
+    private final DateFormatFactory dateFormatFactory;
     private final ObjList<DateFormat> dateFormats = new ObjList<>();
+    private final DateLocale dateLocale;
+    private final DateLocaleFactory dateLocaleFactory;
     private final ObjList<DateLocale> dateLocales = new ObjList<>();
     private final IntList dateUtf8Flags = new IntList();
+    private final TimestampFormatFactory timestampFormatFactory;
     private final ObjList<DateFormat> timestampFormats = new ObjList<>();
     private final ObjList<DateLocale> timestampLocales = new ObjList<>();
     private final IntList timestampUtf8Flags = new IntList();
-    private final DateFormatFactory dateFormatFactory;
-    private final DateLocaleFactory dateLocaleFactory;
-    private final TimestampFormatFactory timestampFormatFactory;
-    private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
     private boolean jsonDateUtf8;
+    private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonTimestampFormat;
     private DateLocale jsonTimestampLocale;
     private boolean jsonTimestampUtf8;
-    private final DateLocale dateLocale;
 
     public InputFormatConfiguration(
             DateFormatFactory dateFormatFactory,
@@ -138,15 +138,14 @@ public class InputFormatConfiguration {
     }
 
     public void parseConfiguration(JsonLexer jsonLexer, String confRoot, String configFileName) throws JsonException {
-
-        this.clear();
+        clear();
         jsonLexer.clear();
 
         final JsonParser parser = this::onJsonEvent;
 
         try (InputStream stream = openStream(confRoot, configFileName)) {
             // here is where using direct memory is very disadvantageous
-            // we will copy buffer twice to parse json, but luckily contents should be small
+            // we will copy buffer twice to parse json, but luckily contents should be small,
             // and we should be parsing this only once on startup
             byte[] heapBuffer = new byte[4096];
             long memBuffer = Unsafe.malloc(heapBuffer.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
@@ -168,24 +167,6 @@ public class InputFormatConfiguration {
                     .put(", configFileName=").put(configFileName)
                     .put(']');
         }
-    }
-
-    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
-        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
-        if (stream != null) {
-            LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
-            return stream;
-        }
-        if (confRoot != null) {
-            final File configFile = new File(confRoot, configFileName);
-            if (configFile.exists()) {
-                LOG.info().$("loading input format config [file=").$(configFile.getAbsolutePath()).$(']').$();
-                return new FileInputStream(configFile);
-            }
-        }
-        throw JsonException.$(0, "could not find input format config [confRoot=").put(confRoot)
-                .put(", configFileName=").put(configFileName)
-                .put(']');
     }
 
     private void onJsonEvent(int code, CharSequence tag, int position) throws JsonException {
@@ -331,6 +312,26 @@ public class InputFormatConfiguration {
             default:
                 break;
         }
+    }
+
+    private InputStream openStream(String confRoot, String configFileName) throws IOException, JsonException {
+        // First, check the user-provided file.
+        if (confRoot != null) {
+            final File configFile = new File(confRoot, configFileName);
+            if (configFile.exists()) {
+                LOG.info().$("loading input format config [file=").$(configFile.getAbsolutePath()).$(']').$();
+                return new FileInputStream(configFile);
+            }
+        }
+        // Second, fall back to the default config.
+        final InputStream stream = this.getClass().getResourceAsStream(configFileName);
+        if (stream != null) {
+            LOG.info().$("loading input format config [resource=").$(configFileName).$(']').$();
+            return stream;
+        }
+        throw JsonException.$(0, "could not find input format config [confRoot=").put(confRoot)
+                .put(", configFileName=").put(configFileName)
+                .put(']');
     }
 
     private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue, int stateExpectUtf8Value) throws JsonException {

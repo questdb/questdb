@@ -37,8 +37,8 @@ import io.questdb.std.Transient;
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureName;
 
 public class NegatingFunctionFactory implements FunctionFactory {
-    private final String signature;
     private final FunctionFactory delegate;
+    private final String signature;
 
     public NegatingFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
         this.signature = replaceSignatureName(name, delegate.getSignature());

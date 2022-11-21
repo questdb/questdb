@@ -36,15 +36,15 @@ import io.questdb.std.*;
 
 public class SwitchFunctionFactory implements FunctionFactory {
 
-    private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
-    private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
-    private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final IntMethod GET_CHAR = SwitchFunctionFactory::getChar;
     private static final LongMethod GET_DATE = SwitchFunctionFactory::getDate;
-    private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
+    private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
+    private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
+    private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
     private static final CharSequenceMethod GET_STRING = SwitchFunctionFactory::getString;
     private static final CharSequenceMethod GET_SYMBOL = SwitchFunctionFactory::getSymbol;
+    private static final LongMethod GET_TIMESTAMP = SwitchFunctionFactory::getTimestamp;
 
     @Override
     public String getSignature() {
@@ -128,32 +128,28 @@ public class SwitchFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static char getChar(Function function, Record record) {
-        return function.getChar(record);
-    }
-
-    private static int getInt(Function function, Record record) {
-        return function.getInt(record);
-    }
-
     private static byte getByte(Function function, Record record) {
         return function.getByte(record);
     }
 
-    private static short getShort(Function function, Record record) {
-        return function.getShort(record);
-    }
-
-    private static long getLong(Function function, Record record) {
-        return function.getLong(record);
+    private static char getChar(Function function, Record record) {
+        return function.getChar(record);
     }
 
     private static long getDate(Function function, Record record) {
         return function.getDate(record);
     }
 
-    private static long getTimestamp(Function function, Record record) {
-        return function.getTimestamp(record);
+    private static int getInt(Function function, Record record) {
+        return function.getInt(record);
+    }
+
+    private static long getLong(Function function, Record record) {
+        return function.getLong(record);
+    }
+
+    private static short getShort(Function function, Record record) {
+        return function.getShort(record);
     }
 
     private static CharSequence getString(Function function, Record record) {
@@ -162,6 +158,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static CharSequence getSymbol(Function function, Record record) {
         return function.getSymbol(record);
+    }
+
+    private static long getTimestamp(Function function, Record record) {
+        return function.getTimestamp(record);
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -361,6 +361,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     @FunctionalInterface
+    private interface CharSequenceMethod {
+        CharSequence getKey(Function function, Record record);
+    }
+
+    @FunctionalInterface
     private interface IntMethod {
         int getKey(Function function, Record record);
     }
@@ -368,10 +373,5 @@ public class SwitchFunctionFactory implements FunctionFactory {
     @FunctionalInterface
     private interface LongMethod {
         long getKey(Function function, Record record);
-    }
-
-    @FunctionalInterface
-    private interface CharSequenceMethod {
-        CharSequence getKey(Function function, Record record);
     }
 }

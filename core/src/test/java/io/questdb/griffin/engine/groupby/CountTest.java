@@ -71,6 +71,28 @@ public class CountTest extends AbstractGriffinTest {
         );
     }
 
+    @Test(expected = SqlException.class)
+    public void testConstNull() throws Exception {
+        assertQuery("cnt_1\tcnt_42\n" +
+                        "20\t20\n",
+                "select count(NULL) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " timestamp_sequence(0, 0) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
     @Test
     public void testKnownSize() throws Exception {
         assertQuery("count\n" +
@@ -113,6 +135,39 @@ public class CountTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLongConst() throws Exception {
+        assertQuery("cnt_1\tcnt_42\n" +
+                        "20\t20\n",
+                "select count(1) cnt_1, count(42) cnt_42 from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " timestamp_sequence(0, 0) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " timestamp_sequence(0, 0) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "cnt_1\tcnt_42\n" +
+                        "25\t25\n",
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testUnknownSize() throws Exception {
         assertQuery("count\n" +
                         "4919\n",
@@ -147,61 +202,6 @@ public class CountTest extends AbstractGriffinTest {
                         ") timestamp(k)",
                 "count\n" +
                         "5319\n",
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testLongConst() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
-                        "20\t20\n",
-                "select count(1) cnt_1, count(42) cnt_42 from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " timestamp_sequence(0, 0) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " timestamp_sequence(0, 0) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "cnt_1\tcnt_42\n" +
-                        "25\t25\n",
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test(expected = SqlException.class)
-    public void testConstNull() throws Exception {
-        assertQuery("cnt_1\tcnt_42\n" +
-                        "20\t20\n",
-                "select count(NULL) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " timestamp_sequence(0, 0) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
                 false,
                 true,
                 true

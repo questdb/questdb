@@ -166,7 +166,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 @Override
                 public long openRO(LPSZ path) {
-                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && attempt++ == 2) {
+                    if (Chars.endsWith(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
                     return super.openRO(path);
@@ -217,14 +217,14 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                         }
                         return super.rename(from, to);
                     }
-
                 };
                 String alterCommand = "ALTER TABLE X SET PARAM maxUncommittedRows = 11111";
                 try {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail("Alter table should fail");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "table 'X' could not be altered");
+                } catch (CairoException e) {
+                    Assert.assertEquals(12, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
                 }
 
                 try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "X")) {
@@ -273,7 +273,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 }
 
                 // Now try with success.
-                engine.releaseAllWriters();
+                engine.clear();
                 ff = new FilesFacadeImpl();
                 compile(alterCommand, sqlExecutionContext);
                 assertSql("SELECT maxUncommittedRows FROM tables() WHERE name = 'X'", "maxUncommittedRows\n11111\n");
@@ -372,6 +372,31 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLagUnitsDays() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 7d", "1\tx1\tts\tDAY\t1000\t604800000000\n");
+    }
+
+    @Test
+    public void testLagUnitsHours() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 2h", "1\tx1\tts\tDAY\t1000\t7200000000\n");
+    }
+
+    @Test
+    public void testLagUnitsMinutes() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 10m", "1\tx1\tts\tDAY\t1000\t600000000\n");
+    }
+
+    @Test
+    public void testLagUnitsMs() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 100ms", "1\tx1\tts\tDAY\t1000\t100000\n");
+    }
+
+    @Test
+    public void testLagUnitsUs() throws Exception {
+        assertLagUnits("alter table x1 set param commitLag = 10us", "1\tx1\tts\tDAY\t1000\t10\n");
+    }
+
+    @Test
     public void testSetMaxUncommitted() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -404,31 +429,6 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     );
                 }
         );
-    }
-
-    @Test
-    public void testLagUnitsMs() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 100ms", "1\tx1\tts\tDAY\t1000\t100000\n");
-    }
-
-    @Test
-    public void testLagUnitsUs() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 10us", "1\tx1\tts\tDAY\t1000\t10\n");
-    }
-
-    @Test
-    public void testLagUnitsMinutes() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 10m", "1\tx1\tts\tDAY\t1000\t600000000\n");
-    }
-
-    @Test
-    public void testLagUnitsHours() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 2h", "1\tx1\tts\tDAY\t1000\t7200000000\n");
-    }
-
-    @Test
-    public void testLagUnitsDays() throws Exception {
-        assertLagUnits("alter table x1 set param commitLag = 7d", "1\tx1\tts\tDAY\t1000\t604800000000\n");
     }
 
     private void assertLagUnits(String sql, String expected) throws Exception {

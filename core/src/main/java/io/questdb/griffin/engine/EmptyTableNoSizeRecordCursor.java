@@ -46,21 +46,21 @@ final public class EmptyTableNoSizeRecordCursor implements NoRandomAccessRecordC
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return EmptySymbolMapReader.INSTANCE;
     }
 
     @Override
+    public boolean hasNext() {
+        return false;
+    }
+
+    @Override
     public long size() {
         return -1;
+    }
+
+    @Override
+    public void toTop() {
     }
 }

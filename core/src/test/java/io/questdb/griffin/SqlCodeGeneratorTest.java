@@ -782,7 +782,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
         assertFailure(
-                "with tab as (x where b in ('BB')) tab latest by b",
+                "with tab as (x where b in ('BB')) select * from tab latest by b",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1820,6 +1820,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "), index(c)",
                 24,
                 "boolean expression expected"
+        );
+    }
+
+    @Test
+    public void testGreaterNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 > t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testGreaterOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 >= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
         );
     }
 
@@ -5131,6 +5156,31 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLessNoOpFilter() throws Exception {
+        assertQuery("c0\n",
+                "select t7.c0 from t7 where t7.c0 < t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                false,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLessOrEqualsNoOpFilter() throws Exception {
+        assertQuery("c0\n" +
+                        "42\n",
+                "select t7.c0 from t7 where t7.c0 <= t7.c0",
+                "create table t7 as (select 42 as c0 from long_sequence(1))",
+                null,
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLimitOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
@@ -7414,56 +7464,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
-        );
-    }
-
-    @Test
-    public void testGreaterOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
-                        "42\n",
-                "select t7.c0 from t7 where t7.c0 >= t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testGreaterNoOpFilter() throws Exception {
-        assertQuery("c0\n",
-                "select t7.c0 from t7 where t7.c0 > t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                false,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testLessOrEqualsNoOpFilter() throws Exception {
-        assertQuery("c0\n" +
-                        "42\n",
-                "select t7.c0 from t7 where t7.c0 <= t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                true,
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testLessNoOpFilter() throws Exception {
-        assertQuery("c0\n",
-                "select t7.c0 from t7 where t7.c0 < t7.c0",
-                "create table t7 as (select 42 as c0 from long_sequence(1))",
-                null,
-                false,
-                true,
-                false
         );
     }
 

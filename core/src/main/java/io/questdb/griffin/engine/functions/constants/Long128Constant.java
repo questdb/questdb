@@ -29,7 +29,9 @@ import io.questdb.griffin.engine.functions.Long128Function;
 
 public class Long128Constant extends Long128Function implements ConstantFunction {
 
-    public static Long128Constant NULL = new Long128Constant(Long.MIN_VALUE, Long.MIN_VALUE);
+    public static final long NULL_HI = Long.MIN_VALUE;
+    public static final long NULL_LO = Long.MIN_VALUE;
+    public static Long128Constant NULL = new Long128Constant(NULL_HI, NULL_LO);
 
     private final long hi;
     private final long lo;

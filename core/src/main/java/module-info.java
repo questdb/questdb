@@ -24,7 +24,7 @@
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.griffin.engine.functions.catalogue.PgClassFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -97,6 +97,8 @@ open module io.questdb {
     exports io.questdb.cairo.sql.async;
     exports io.questdb.client;
     exports io.questdb.griffin.engine.functions.long128;
+    exports io.questdb.cairo.wal;
+    exports io.questdb.cairo.wal.seq;
 
     provides FunctionFactory with
             // test functions
@@ -649,6 +651,12 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory,
             // substring
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
+
+            // trim
+            io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+
             //starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
             // split_part

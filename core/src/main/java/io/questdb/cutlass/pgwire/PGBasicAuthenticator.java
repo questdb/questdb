@@ -34,11 +34,10 @@ import io.questdb.std.str.DirectByteCharSequence;
 
 public class PGBasicAuthenticator implements PGAuthenticator {
     private static final Log LOG = LogFactory.getLog(PGBasicAuthenticator.class);
-
-    private final String username;
-    private final String password;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final String password;
     private final CairoSecurityContext securityContext;
+    private final String username;
 
     public PGBasicAuthenticator(String username, String password, boolean readOnlyContext) {
         this.username = username;

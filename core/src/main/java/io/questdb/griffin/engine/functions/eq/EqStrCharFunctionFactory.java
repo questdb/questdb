@@ -83,8 +83,8 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstChrFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function strFunc;
         private final char chrConst;
+        private final Function strFunc;
 
         public ConstChrFunc(Function strFunc, char chrConst) {
             this.strFunc = strFunc;
@@ -102,9 +102,22 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
+        private final boolean equals;
+
+        public ConstStrConstChrFunc(boolean equals) {
+            this.equals = equals;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != equals;
+        }
+    }
+
     private static class ConstStrFunc extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function chrFunc;
         private final char chrConst;
+        private final Function chrFunc;
 
         public ConstStrFunc(Function chrFunc, char chrConst) {
             this.chrFunc = chrFunc;
@@ -122,34 +135,18 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
-        private final boolean equals;
-
-        public ConstStrConstChrFunc(boolean equals) {
-            this.equals = equals;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != equals;
-        }
-    }
-
-    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated;
-        }
-    }
-
     private static class Func extends NegatableBooleanFunction implements BinaryFunction {
-        private final Function strFunc;
         private final Function chrFunc;
+        private final Function strFunc;
 
         public Func(Function strFunc, Function chrFunc) {
             this.strFunc = strFunc;
             this.chrFunc = chrFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
         }
 
         @Override
@@ -161,10 +158,13 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return chrFunc;
         }
+    }
+
+    private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (Chars.equalsNc(strFunc.getStr(rec), chrFunc.getChar(rec)));
+            return negated;
         }
     }
 }

@@ -32,8 +32,8 @@ import org.junit.Test;
 public class CeilingDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testPositive() throws SqlException {
-        call(13.1).andAssert(14.0, 0.0000000001);
+    public void testNaN() throws SqlException {
+        call(Double.NaN).andAssert(Double.NaN, 0);
     }
 
     @Test
@@ -42,11 +42,12 @@ public class CeilingDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testNaN() throws SqlException {
-        call(Double.NaN).andAssert(Double.NaN, 0);
+    public void testPositive() throws SqlException {
+        call(13.1).andAssert(14.0, 0.0000000001);
     }
-    
+
     @Override
-    protected FunctionFactory getFunctionFactory() { return new CeilingDoubleFunctionFactory();
+    protected FunctionFactory getFunctionFactory() {
+        return new CeilingDoubleFunctionFactory();
     }
 }

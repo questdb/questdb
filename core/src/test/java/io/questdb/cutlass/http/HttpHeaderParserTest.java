@@ -38,12 +38,7 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpHeaderParserTest {
 
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
-
+    private static final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
     private final static String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
             "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
@@ -55,8 +50,11 @@ public class HttpHeaderParserTest {
             "Accept-Language: en-US,en;q=0.8\r\n" +
             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
             "\r\n";
-
-    private static final ObjectPool<DirectByteCharSequence> pool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 64);
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Test
     public void testContentDisposition() throws Exception {

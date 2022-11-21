@@ -24,9 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.BaseRecordMetadata;
+import io.questdb.cairo.AbstractRecordMetadata;
 
-public final class EmptyRecordMetadata extends BaseRecordMetadata {
+public final class EmptyRecordMetadata extends AbstractRecordMetadata {
     public static final EmptyRecordMetadata INSTANCE = new EmptyRecordMetadata();
 
     private EmptyRecordMetadata() {

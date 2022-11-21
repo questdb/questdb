@@ -31,13 +31,13 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
-    private static final int N_NAME_COL = 0;
-    private static final int N_TYPE_COL = 1;
+    private static final int N_DESIGNATED_COL = 6;
     private static final int N_INDEXED_COL = 2;
     private static final int N_INDEX_BLOCK_CAPACITY_COL = 3;
+    private static final int N_NAME_COL = 0;
     private static final int N_SYMBOL_CACHED_COL = 4;
     private static final int N_SYMBOL_CAPACITY_COL = 5;
-    private static final int N_DESIGNATED_COL = 6;
+    private static final int N_TYPE_COL = 1;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
 
@@ -58,8 +58,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     private class ShowColumnsCursor implements RecordCursor {
         private final ShowColumnsRecord record = new ShowColumnsRecord();
-        private TableReader reader;
         private int columnIndex;
+        private TableReader reader;
 
         @Override
         public void close() {
@@ -75,6 +75,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
+        public Record getRecordB() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public boolean hasNext() {
             columnIndex++;
             if (columnIndex < reader.getMetadata().getColumnCount()) {
@@ -85,23 +90,18 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void recordAt(Record record, long atRowId) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void toTop() {
-            columnIndex = -1;
+        public long size() {
+            return -1;
         }
 
         @Override
-        public long size() {
-            return -1;
+        public void toTop() {
+            columnIndex = -1;
         }
 
         private ShowColumnsCursor of(SqlExecutionContext executionContext) {
@@ -169,13 +169,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("column", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("type", 2, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("indexed", 3, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("indexBlockCapacity", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("symbolCached", 5, ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("symbolCapacity", 6, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("designated", 7, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("column", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("type", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexed", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

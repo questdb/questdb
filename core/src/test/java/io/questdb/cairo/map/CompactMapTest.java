@@ -423,7 +423,7 @@ public class CompactMapTest extends AbstractCairoTest {
         // To make hash consistent we will assume that first character of
         // string is always a number and this number will be hash code of string.
         class MockHash implements CompactMap.HashFunction {
-            MemoryR mem;
+            final MemoryR mem;
 
             public MockHash(MemoryR mem) {
                 this.mem = mem;

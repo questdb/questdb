@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Test;

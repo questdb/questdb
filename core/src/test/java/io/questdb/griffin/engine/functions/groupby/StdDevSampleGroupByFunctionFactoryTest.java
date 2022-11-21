@@ -37,26 +37,12 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
-    public void testStddevSampSomeNull() throws Exception {
+    public void testStddevSampAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl1 as (select cast(x as double) x from long_sequence(100))", sqlExecutionContext);
-            executeInsert("insert into 'tbl1' VALUES (null)");
+            compiler.compile("create table tbl1 as (select 17.2151921 x from long_sequence(100))", sqlExecutionContext);
             assertSql(
                     "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
-            );
-        });
-    }
-
-    @Test
-    public void testStddevSampFirstNull() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tbl1(x double)", sqlExecutionContext);
-            executeInsert("insert into 'tbl1' VALUES (null)");
-            executeInsert("insert into 'tbl1' select x from long_sequence(100)");
-            assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n29.011491975882016\n"
+                    "stddev_samp\n0.0\n"
             );
         });
     }
@@ -73,9 +59,11 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
-    public void testStddevSampLong256Values() throws Exception {
+    public void testStddevSampFirstNull() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl1 as (select x cast(x as long256) from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("create table tbl1(x double)", sqlExecutionContext);
+            executeInsert("insert into 'tbl1' VALUES (null)");
+            executeInsert("insert into 'tbl1' select x from long_sequence(100)");
             assertSql(
                     "select stddev_samp(x) from tbl1",
                     "stddev_samp\n29.011491975882016\n"
@@ -106,12 +94,23 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
-    public void testStddevSampAllSameValues() throws Exception {
+    public void testStddevSampLong256Values() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table tbl1 as (select 17.2151921 x from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("create table tbl1 as (select x cast(x as long256) from long_sequence(100))", sqlExecutionContext);
             assertSql(
                     "select stddev_samp(x) from tbl1",
-                    "stddev_samp\n0.0\n"
+                    "stddev_samp\n29.011491975882016\n"
+            );
+        });
+    }
+
+    @Test
+    public void testStddevSampNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl1(x int)", sqlExecutionContext);
+            assertSql(
+                    "select stddev_samp(x) from tbl1",
+                    "stddev_samp\nNaN\n"
             );
         });
     }
@@ -130,23 +129,24 @@ public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest 
     }
 
     @Test
-    public void testStddevSampNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tbl1(x int)", sqlExecutionContext);
-            assertSql(
-                    "select stddev_samp(x) from tbl1",
-                    "stddev_samp\nNaN\n"
-            );
-        });
-    }
-
-    @Test
     public void testStddevSampOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tbl1 as (select 100000000 x from long_sequence(1000000))", sqlExecutionContext);
             assertSql(
                     "select stddev_samp(x) from tbl1",
                     "stddev_samp\n0.0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testStddevSampSomeNull() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tbl1 as (select cast(x as double) x from long_sequence(100))", sqlExecutionContext);
+            executeInsert("insert into 'tbl1' VALUES (null)");
+            assertSql(
+                    "select stddev_samp(x) from tbl1",
+                    "stddev_samp\n29.011491975882016\n"
             );
         });
     }

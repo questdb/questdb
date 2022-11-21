@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class CastBenchmark {
 
-    private Object[] objects = new Object[2];
+    private final Object[] objects = new Object[2];
 
     public CastBenchmark() {
         this.objects[0] = 10;

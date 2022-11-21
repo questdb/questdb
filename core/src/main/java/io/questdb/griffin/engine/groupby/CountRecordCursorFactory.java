@@ -28,8 +28,8 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
@@ -41,11 +41,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     public CountRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory base) {
         super(metadata);
         this.base = base;
-    }
-
-    @Override
-    protected void _close() {
-        base.close();
     }
 
     @Override
@@ -75,10 +70,15 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    @Override
+    protected void _close() {
+        base.close();
+    }
+
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
-        private boolean hasNext = true;
         private long count;
+        private boolean hasNext = true;
 
         @Override
         public void close() {
@@ -99,13 +99,13 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public void toTop() {
-            hasNext = true;
+        public long size() {
+            return 1;
         }
 
         @Override
-        public long size() {
-            return 1;
+        public void toTop() {
+            hasNext = true;
         }
 
         private void of(long count) {
@@ -122,6 +122,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     static {
-        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", 1, ColumnType.LONG));
+        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("count", ColumnType.LONG));
     }
 }

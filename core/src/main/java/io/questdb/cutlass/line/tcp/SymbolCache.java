@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
@@ -38,17 +39,19 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 class SymbolCache implements Closeable, SymbolLookup {
+    private final MicrosecondClock clock;
+    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
     private final ObjIntHashMap<CharSequence> symbolValueToKeyMap = new ObjIntHashMap<>(
             256,
             0.5,
             SymbolTable.VALUE_NOT_FOUND
     );
-    private TxReader txReader;
-    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final MicrosecondClock clock;
     private final long waitUsBeforeReload;
+    private int columnIndex;
     private long lastSymbolReaderReloadTimestamp;
     private int symbolIndexInTxFile;
+    private TxReader txReader;
+    private TableWriterAPI writerAPI;
 
     SymbolCache(LineTcpReceiverConfiguration configuration) {
         this.clock = configuration.getMicrosecondClock();
@@ -58,6 +61,7 @@ class SymbolCache implements Closeable, SymbolLookup {
     @Override
     public void close() {
         txReader = null;
+        writerAPI = null;
         symbolMapReader.close();
         symbolValueToKeyMap.reset();
     }
@@ -74,7 +78,7 @@ class SymbolCache implements Closeable, SymbolLookup {
 
         if (
                 ticks - lastSymbolReaderReloadTimestamp > waitUsBeforeReload &&
-                        (symbolValueCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
+                        (symbolValueCount = readSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
         ) {
             symbolMapReader.updateSymbolCount(symbolValueCount);
             lastSymbolReaderReloadTimestamp = ticks;
@@ -89,28 +93,12 @@ class SymbolCache implements Closeable, SymbolLookup {
         return symbolKey;
     }
 
-    int getCacheValueCount() {
-        return symbolValueToKeyMap.size();
-    }
-
-    int getCacheCapacity() {
-        return symbolValueToKeyMap.capacity();
-    }
-
-    void of(CairoConfiguration configuration,
-            Path path,
-            CharSequence columnName,
-            int symbolIndexInTxFile,
-            TxReader txReader,
-            long columnNameTxn
-    ) {
-        this.symbolIndexInTxFile = symbolIndexInTxFile;
-        final int plen = path.length();
-        this.txReader = txReader;
-        int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
-        path.trimTo(plen);
-        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
-        symbolValueToKeyMap.clear();
+    private int readSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
+        int watermark = writerAPI.getSymbolCountWatermark(columnIndex);
+        if (watermark != -1) {
+            return watermark;
+        }
+        return safeReadUncommittedSymbolCount(symbolIndexInTxFile, initialStateOk);
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
@@ -127,5 +115,34 @@ class SymbolCache implements Closeable, SymbolLookup {
             }
             offsetReloadOk = txReader.unsafeLoadBaseOffset();
         }
+    }
+
+    int getCacheCapacity() {
+        return symbolValueToKeyMap.capacity();
+    }
+
+    int getCacheValueCount() {
+        return symbolValueToKeyMap.size();
+    }
+
+    void of(
+            CairoConfiguration configuration,
+            TableWriterAPI writerAPI,
+            int columnIndex,
+            Path path,
+            CharSequence columnName,
+            int symbolIndexInTxFile,
+            TxReader txReader,
+            long columnNameTxn
+    ) {
+        this.writerAPI = writerAPI;
+        this.columnIndex = columnIndex;
+        this.symbolIndexInTxFile = symbolIndexInTxFile;
+        final int plen = path.length();
+        this.txReader = txReader;
+        int symCount = readSymbolCount(symbolIndexInTxFile, false);
+        path.trimTo(plen);
+        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
+        symbolValueToKeyMap.clear();
     }
 }

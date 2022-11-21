@@ -24,7 +24,6 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.LineUdpSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;

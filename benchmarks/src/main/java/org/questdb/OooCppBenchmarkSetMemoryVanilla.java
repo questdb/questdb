@@ -31,34 +31,21 @@ import io.questdb.std.Vect;
 
 public class OooCppBenchmarkSetMemoryVanilla {
     private static final long BUFFER_MAX_SIZE = 256 * 1024 * 1024L;
-    private static long buffer;
     private static final long MB = 1024 * 1024L;
+    private static long buffer;
 
-    public static void main(String[] args){
+    public static void main(String[] args) {
         Os.init();
         System.out.println("SetMemoryVanilla");
         testSetMemoryVanillaToCsv();
     }
 
-    private static void testSetMemoryVanillaToCsv() {
-        OooCppBenchmarkSetMemoryVanilla r = new OooCppBenchmarkSetMemoryVanilla();
-        r.mallocBuffer();
+    public void freeBuffer() {
+        Unsafe.free(buffer, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+    }
 
-        // warmup
-        Vect.setMemoryDouble(
-                buffer,
-                -1L,
-                1_000L * Double.BYTES
-        );
-
-        int iterations = 500;
-        for (int i = 1; i < 50; i += 1) {
-            double timeout1 = runDoubleKs(iterations, i);
-            double timeout2 = runLongsKs(iterations, i, Long.MIN_VALUE);
-            double timeout3 = runLongsKs(iterations, i, -1L);
-            System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
-        }
-        r.freeBuffer();
+    public void mallocBuffer() {
+        buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
     }
 
     private static double runDoubleKs(int iterations, int i) {
@@ -87,11 +74,24 @@ public class OooCppBenchmarkSetMemoryVanilla {
         return Math.round(timeout * 1E-1 / iterations) / 100.0;
     }
 
-    public void mallocBuffer() {
-        buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
-    }
+    private static void testSetMemoryVanillaToCsv() {
+        OooCppBenchmarkSetMemoryVanilla r = new OooCppBenchmarkSetMemoryVanilla();
+        r.mallocBuffer();
 
-    public void freeBuffer() {
-        Unsafe.free(buffer, BUFFER_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
+        // warmup
+        Vect.setMemoryDouble(
+                buffer,
+                -1L,
+                1_000L * Double.BYTES
+        );
+
+        int iterations = 500;
+        for (int i = 1; i < 50; i += 1) {
+            double timeout1 = runDoubleKs(iterations, i);
+            double timeout2 = runLongsKs(iterations, i, Long.MIN_VALUE);
+            double timeout3 = runLongsKs(iterations, i, -1L);
+            System.out.println("" + i + ", " + timeout1 + ", " + timeout2 + ", " + timeout3);
+        }
+        r.freeBuffer();
     }
 }

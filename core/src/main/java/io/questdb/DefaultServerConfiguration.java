@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.wal.DefaultWalApplyWorkerPoolConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
@@ -42,10 +43,11 @@ import io.questdb.mp.WorkerPoolConfiguration;
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
-    private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
-    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
+    private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
+    private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
+    private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
     public DefaultServerConfiguration(CharSequence root) {
         this.cairoConfiguration = new DefaultCairoConfiguration(root);
@@ -57,18 +59,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
-        return httpServerConfiguration;
-    }
-
-    @Override
     public HttpMinServerConfiguration getHttpMinServerConfiguration() {
         return null;
     }
 
     @Override
-    public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-        return lineUdpReceiverConfiguration;
+    public HttpServerConfiguration getHttpServerConfiguration() {
+        return httpServerConfiguration;
     }
 
     @Override
@@ -77,8 +74,13 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return httpServerConfiguration;
+    public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+        return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public MetricsConfiguration getMetricsConfiguration() {
+        return metricsConfiguration;
     }
 
     @Override
@@ -87,7 +89,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public MetricsConfiguration getMetricsConfiguration() {
-        return metricsConfiguration;
+    public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+        return walApplyPoolConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return httpServerConfiguration;
     }
 }

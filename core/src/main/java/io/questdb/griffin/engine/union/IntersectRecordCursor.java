@@ -37,9 +37,9 @@ import io.questdb.std.Misc;
 class IntersectRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
+    private boolean isOpen;
     private Record recordA;
     private Record recordB;
-    private boolean isOpen;
 
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
@@ -56,31 +56,19 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         }
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
-        if (!isOpen) {
-            map.reopen();
-            isOpen = true;
-        }
-        this.recordB = cursorB.getRecord();
-        hashCursorB();
-        recordA = cursorA.getRecord();
-        toTop();
-    }
-
     @Override
     public Record getRecord() {
         return recordA;
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return cursorA.getSymbolTable(columnIndex);
+    public Record getRecordB() {
+        return cursorA.getRecordB();
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return cursorA.newSymbolTable(columnIndex);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return cursorA.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -97,8 +85,8 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return cursorA.getRecordB();
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return cursorA.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -107,13 +95,13 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        cursorA.toTop();
+    public long size() {
+        return -1;
     }
 
     @Override
-    public long size() {
-        return -1;
+    public void toTop() {
+        cursorA.toTop();
     }
 
     private void hashCursorB() {
@@ -127,5 +115,17 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
         this.cursorB = Misc.free(this.cursorB);
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        if (!isOpen) {
+            map.reopen();
+            isOpen = true;
+        }
+        this.recordB = cursorB.getRecord();
+        hashCursorB();
+        recordA = cursorA.getRecord();
+        toTop();
     }
 }

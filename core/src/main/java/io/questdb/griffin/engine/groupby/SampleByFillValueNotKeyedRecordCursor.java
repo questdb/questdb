@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
-    private final SimpleMapValue simpleMapValue;
     private final SimpleMapValuePeeker peeker;
+    private final SimpleMapValue simpleMapValue;
     private boolean gapFill = false;
 
     public SampleByFillValueNotKeyedRecordCursor(
@@ -93,6 +93,14 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         return notKeyedLoop(simpleMapValue);
     }
 
+    @Override
+    public void toTop() {
+        super.toTop();
+        if (base.hasNext()) {
+            baseRecord = base.getRecord();
+        }
+    }
+
     private boolean setActiveA(long expectedLocalEpoch) {
         if (gapFill) {
             gapFill = false;
@@ -109,14 +117,6 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
             record.setTarget(peeker.peek());
             gapFill = true;
-        }
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        if (base.hasNext()) {
-            baseRecord = base.getRecord();
         }
     }
 }

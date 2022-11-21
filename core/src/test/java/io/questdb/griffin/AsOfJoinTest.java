@@ -30,46 +30,46 @@ import org.junit.Test;
 public class AsOfJoinTest extends AbstractGriffinTest {
 
     @Test
-    public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementAsOuter() throws Exception {
-        final String expected = "hi\tlo\n" +
-                "2\t1\n" +
-                "3\t2\n" +
-                "4\t3\n" +
-                "5\t4\n" +
-                "6\t5\n" +
-                "7\t6\n" +
-                "8\t7\n" +
-                "9\t8\n" +
-                "10\t9\n" +
-                "11\t10\n" +
-                "12\t11\n" +
-                "13\t12\n" +
-                "14\t13\n" +
-                "15\t14\n" +
-                "16\t15\n" +
-                "17\t16\n" +
-                "18\t17\n" +
-                "19\t18\n" +
-                "20\t19\n" +
-                "21\t20\n" +
-                "22\t21\n" +
-                "23\t22\n" +
-                "24\t23\n" +
-                "25\t24\n" +
-                "26\t25\n" +
-                "27\t26\n" +
-                "28\t27\n" +
-                "29\t28\n" +
-                "30\t29\n";
-        assertQuery(
-                "hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != NaN",
-                "create table test(seq long, ts timestamp) timestamp(ts)",
-                null,
-                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
-                expected,
-                false
-        );
+    public void testAsOfJoinAliasDuplication() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "CREATE TABLE fx_rate (" +
+                            "    ts TIMESTAMP, " +
+                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
+                            "    rate INT" +
+                            ") timestamp(ts)",
+                    sqlExecutionContext
+            );
+            executeInsert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
+
+            compiler.compile(
+                    "CREATE TABLE trades (" +
+                            "    ts TIMESTAMP, " +
+                            "    price INT, " +
+                            "    qty INT, " +
+                            "    flag INT, " +
+                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
+                            ") timestamp(ts);",
+                    sqlExecutionContext
+            );
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
+            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
+
+            String query =
+                    "SELECT\n" +
+                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
+                            "FROM  " +
+                            "  trades t " +
+                            "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
+
+            String expected = "SUM\tSUM1\tSUM2\n" +
+                    "900.0\t700.0\t200.0\n";
+
+            printSqlResult(expected, query, null, false, true);
+        });
     }
 
     @Test
@@ -173,6 +173,49 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementAsOuter() throws Exception {
+        final String expected = "hi\tlo\n" +
+                "2\t1\n" +
+                "3\t2\n" +
+                "4\t3\n" +
+                "5\t4\n" +
+                "6\t5\n" +
+                "7\t6\n" +
+                "8\t7\n" +
+                "9\t8\n" +
+                "10\t9\n" +
+                "11\t10\n" +
+                "12\t11\n" +
+                "13\t12\n" +
+                "14\t13\n" +
+                "15\t14\n" +
+                "16\t15\n" +
+                "17\t16\n" +
+                "18\t17\n" +
+                "19\t18\n" +
+                "20\t19\n" +
+                "21\t20\n" +
+                "22\t21\n" +
+                "23\t22\n" +
+                "24\t23\n" +
+                "25\t24\n" +
+                "26\t25\n" +
+                "27\t26\n" +
+                "28\t27\n" +
+                "29\t28\n" +
+                "30\t29\n";
+        assertQuery(
+                "hi\tlo\n",
+                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != NaN",
+                "create table test(seq long, ts timestamp) timestamp(ts)",
+                null,
+                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
+                expected,
+                false
+        );
+    }
+
+    @Test
     public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
         final String expected = "tag\thi\tlo\n";
         assertQuery(
@@ -191,49 +234,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                 expected,
                 false
         );
-    }
-
-    @Test
-    public void testAsOfJoinAliasDuplication() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "CREATE TABLE fx_rate (" +
-                            "    ts TIMESTAMP, " +
-                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
-                            "    rate INT" +
-                            ") timestamp(ts)",
-                    sqlExecutionContext
-            );
-            executeInsert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
-
-            compiler.compile(
-                    "CREATE TABLE trades (" +
-                            "    ts TIMESTAMP, " +
-                            "    price INT, " +
-                            "    qty INT, " +
-                            "    flag INT, " +
-                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
-                            ") timestamp(ts);",
-                    sqlExecutionContext
-            );
-            executeInsert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
-            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
-            executeInsert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
-
-            String query =
-                    "SELECT\n" +
-                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
-                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
-                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
-                            "FROM  " +
-                            "  trades t " +
-                            "ASOF JOIN fx_rate f on f.code = t.fx_rate_code";
-
-            String expected = "SUM\tSUM1\tSUM2\n" +
-                    "900.0\t700.0\t200.0\n";
-
-            printSqlResult(expected, query, null, false, true);
-        });
     }
 
     @Test
@@ -361,6 +361,33 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLtJoinForEqTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)", sqlExecutionContext);
+            executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
+            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
+
+            String expected = "ts\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
+                    "2021-07-26T02:36:03.094000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.097000Z\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t1\n" +
+                    "2021-07-26T02:36:03.098000Z\t1\n";
+            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
+            printSqlResult(expected, query, "ts", false, true);
+        });
+    }
+
+    @Test
     public void testLtJoinForSelectWithoutTimestampAndWithWhereStatement() throws Exception {
         final String expected = "hi\tlo\n" +
                 "18116\t18114\n" +
@@ -481,6 +508,47 @@ public class AsOfJoinTest extends AbstractGriffinTest {
             } finally {
                 compiler.setFullFatJoins(false);
             }
+        });
+    }
+
+    @Test
+    public void testLtJoinNoAliasDuplication() throws Exception {
+        assertMemoryLeak(() -> {
+            // ASKS
+            compiler.compile(
+                    "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
+                    sqlExecutionContext
+            );
+            executeInsert("insert into asks values(100, 0)");
+            executeInsert("insert into asks values(101, 3);");
+            executeInsert("insert into asks values(102, 4);");
+
+            // BIDS
+            compiler.compile(
+                    "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
+                    sqlExecutionContext
+            );
+            executeInsert("insert into bids values(101, 0);");
+            executeInsert("insert into bids values(102, 3);");
+            executeInsert("insert into bids values(103, 5);");
+
+            String query =
+                    "SELECT \n" +
+                            "    b.timebid timebid,\n" +
+                            "    a.timeask timeask, \n" +
+                            "    b.b b, \n" +
+                            "    a.a a\n" +
+                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
+                            "    LT JOIN\n" +
+                            "(select a.ask a, a.ts timeask from asks a) a\n" +
+                            "    ON (b.timebid != a.timeask);";
+
+            String expected = "timebid\ttimeask\tb\ta\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +
+                    "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000000Z\t102\t100\n" +
+                    "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
+
+            printSqlResult(expected, query, "timebid", false, false);
         });
     }
 
@@ -664,47 +732,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLtJoinNoAliasDuplication() throws Exception {
-        assertMemoryLeak(() -> {
-            // ASKS
-            compiler.compile(
-                    "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
-                    sqlExecutionContext
-            );
-            executeInsert("insert into asks values(100, 0)");
-            executeInsert("insert into asks values(101, 3);");
-            executeInsert("insert into asks values(102, 4);");
-
-            // BIDS
-            compiler.compile(
-                    "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
-                    sqlExecutionContext
-            );
-            executeInsert("insert into bids values(101, 0);");
-            executeInsert("insert into bids values(102, 3);");
-            executeInsert("insert into bids values(103, 5);");
-
-            String query =
-                    "SELECT \n" +
-                            "    b.timebid timebid,\n" +
-                            "    a.timeask timeask, \n" +
-                            "    b.b b, \n" +
-                            "    a.a a\n" +
-                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
-                            "    LT JOIN\n" +
-                            "(select a.ask a, a.ts timeask from asks a) a\n" +
-                            "    ON (b.timebid != a.timeask);";
-
-            String expected = "timebid\ttimeask\tb\ta\n" +
-                    "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +
-                    "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000000Z\t102\t100\n" +
-                    "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
-
-            printSqlResult(expected, query, "timebid", false, false);
-        });
-    }
-
-    @Test
     public void testLtJoinSequenceGapOnKey() throws Exception {
         assertMemoryLeak(() -> {
             //create table
@@ -756,33 +783,6 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "AA\t20\t17\n";
             query = "select a.tag, a.x hi, b.x lo from tab a lt join tab b on (tag)  where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
-        });
-    }
-
-    @Test
-    public void testLtJoinForEqTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)", sqlExecutionContext);
-            executeInsert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
-            executeInsert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
-
-            String expected = "ts\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\tNaN\n" +
-                    "2021-07-26T02:36:03.094000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.097000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n" +
-                    "2021-07-26T02:36:03.098000Z\t1\n";
-            String query = "select w1.ts ts, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
-            printSqlResult(expected, query, "ts", false, true);
         });
     }
 }

@@ -644,6 +644,11 @@ io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadFunctionFactory
 io.questdb.griffin.engine.functions.str.RPadStrFunctionFactory
 
+# Trim
+io.questdb.griffin.engine.functions.str.TrimFunctionFactory
+io.questdb.griffin.engine.functions.str.LTrimFunctionFactory
+io.questdb.griffin.engine.functions.str.RTrimFunctionFactory
+
 # analytic functions
 io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory
 # this factory seems to corrupt memory, symptoms of which are visible on M1 CPU

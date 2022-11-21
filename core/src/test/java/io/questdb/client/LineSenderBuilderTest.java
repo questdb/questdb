@@ -178,23 +178,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testConnectPlainAuthWithTokenSuccess() throws Exception {
-        authKeyId = AUTH_KEY_ID1;
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .address(LOCALHOST)
-                    .port(bindPort)
-                    .enableAuth(AUTH_KEY_ID1)
-                    .authToken(AUTH_TOKEN_KEY1)
-                    .build()) {
-                sender.table("mytable").symbol("symbol", "symbol").atNow();
-                sender.flush();
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
     public void testConnectPlainAuthWithTokenFailure() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         nf = new NetworkFacadeImpl() {
@@ -216,6 +199,23 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 fail("should have failed");
             } catch (LineSenderException e) {
                 // ignored
+            }
+        });
+    }
+
+    @Test
+    public void testConnectPlainAuthWithTokenSuccess() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(bindPort)
+                    .enableAuth(AUTH_KEY_ID1)
+                    .authToken(AUTH_TOKEN_KEY1)
+                    .build()) {
+                sender.table("mytable").symbol("symbol", "symbol").atNow();
+                sender.flush();
+                assertTableExistsEventually(engine, "mytable");
             }
         });
     }

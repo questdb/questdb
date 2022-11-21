@@ -29,10 +29,10 @@ import io.questdb.std.str.CharSink;
 import java.util.concurrent.atomic.LongAdder;
 
 public class CounterWithOneLabelImpl implements CounterWithOneLabel {
-    private final CharSequence name;
+    private final LongAdder[] counters;
     private final CharSequence labelName0;
     private final CharSequence[] labelValues0;
-    private final LongAdder[] counters;
+    private final CharSequence name;
 
     CounterWithOneLabelImpl(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0) {
         this.name = name;

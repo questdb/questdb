@@ -40,16 +40,16 @@ public class TestWorkerPool extends WorkerPool {
         this("testing", workerCount, metrics);
     }
 
-    private TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
+    public TestWorkerPool(String poolName, int workerCount, Metrics metrics) {
         super(new WorkerPoolConfiguration() {
-            @Override
-            public int getWorkerCount() {
-                return workerCount;
-            }
-
             @Override
             public String getPoolName() {
                 return poolName;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
             }
         }, metrics.health());
     }

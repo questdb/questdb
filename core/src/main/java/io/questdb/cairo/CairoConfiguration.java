@@ -38,11 +38,10 @@ import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
-    long O_NONE = 0;
     long O_ASYNC = 0x40;
-    long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
+    long O_NONE = 0;
+    long O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -147,6 +146,8 @@ public interface CairoConfiguration {
 
     long getInactiveReaderTTL();
 
+    long getInactiveWalWriterTTL();
+
     long getInactiveWriterTTL();
 
     int getIndexValueBlockSize();
@@ -164,6 +165,8 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    int getMetadataPoolCapacity();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -224,8 +227,6 @@ public interface CairoConfiguration {
     int getReaderPoolMaxSegments();
 
     int getRenameTableModelPoolCapacity();
-
-    int getStrFunctionMaxBufferLength();
 
     int getRndFunctionMemoryMaxPages();
 
@@ -362,6 +363,8 @@ public interface CairoConfiguration {
 
     int getSqlSortValuePageSize();
 
+    int getStrFunctionMaxBufferLength();
+
     CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
@@ -372,7 +375,15 @@ public interface CairoConfiguration {
 
     int getVectorAggregateQueueCapacity();
 
-    boolean getWallEnabledDefault();
+    boolean getWalEnabledDefault();
+
+    long getWalPurgeInterval();
+
+    int getWalRecreateDistressedSequencerAttempts();
+
+    long getWalSegmentRolloverRowCount();
+
+    int getWalTxnNotificationQueueCapacity();
 
     int getWithClauseModelPoolCapacity();
 
@@ -408,4 +419,6 @@ public interface CairoConfiguration {
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();
+
+    boolean isWalSupported();
 }

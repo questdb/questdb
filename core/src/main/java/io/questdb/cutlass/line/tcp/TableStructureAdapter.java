@@ -36,12 +36,12 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 
 class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
-    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
-    private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final CairoConfiguration cairoConfiguration;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
+    private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
+    private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
+    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private CharSequence tableName;
     private int timestampIndex = -1;
 
@@ -79,8 +79,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return cairoConfiguration.getRandom().nextLong();
+    public long getCommitLag() {
+        return cairoConfiguration.getCommitLag();
     }
 
     @Override
@@ -89,13 +89,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
+    public int getMaxUncommittedRows() {
+        return cairoConfiguration.getMaxUncommittedRows();
     }
 
     @Override
@@ -124,24 +119,25 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return cairoConfiguration.getMaxUncommittedRows();
+    public boolean isIndexed(int columnIndex) {
+        return false;
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
+    public boolean isSequential(int columnIndex) {
+        return false;
     }
 
     @Override
-    public boolean isWallEnabled() {
-        return cairoConfiguration.getWallEnabledDefault();
+    public boolean isWalEnabled() {
+        return cairoConfiguration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
         entityNamesUtf16.clear();
         entities.clear();
+        timestampIndex = -1;
         final boolean hasNonAsciiChars = parser.hasNonAsciiChars();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);

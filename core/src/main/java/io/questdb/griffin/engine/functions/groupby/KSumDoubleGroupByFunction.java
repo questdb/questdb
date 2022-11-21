@@ -73,6 +73,21 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return rec.getLong(valueIndex + 2) > 0 ? rec.getDouble(valueIndex) : Double.NaN;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE); // sum
@@ -90,21 +105,6 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 2, 0);
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getLong(valueIndex + 2) > 0 ? rec.getDouble(valueIndex) : Double.NaN;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
     }
 
     @Override

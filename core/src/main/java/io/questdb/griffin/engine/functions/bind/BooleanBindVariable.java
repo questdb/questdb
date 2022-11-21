@@ -43,12 +43,12 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 }

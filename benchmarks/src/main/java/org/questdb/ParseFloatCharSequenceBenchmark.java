@@ -42,8 +42,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class ParseFloatCharSequenceBenchmark {
-    private final static List<String> floats = new ArrayList<>();
     private static final int N = 100;
+    private final static List<String> floats = new ArrayList<>();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

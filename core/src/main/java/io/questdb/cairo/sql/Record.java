@@ -30,11 +30,10 @@ import io.questdb.std.str.CharSink;
 
 /**
  * Access the value of columns of a table record by column index.
- *
+ * <p>
  * Type checking is not performed beforehand, meaning the type of the
  * element being retrieved by the following methods should be known by
  * performing a prior lookup using {@link io.questdb.cairo.sql.RecordMetadata}
- *
  */
 public interface Record {
 
@@ -123,6 +122,46 @@ public interface Record {
     }
 
     /**
+     * Gets the value of a byte GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default byte getGeoByte(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an int GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default int getGeoInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default long getGeoLong(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a short GeoHash column by index
+     *
+     * @param col numeric index of the column
+     * @return geohash
+     */
+    default short getGeoShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the value of an integer column by index
      *
      * @param col numeric index of the column
@@ -139,37 +178,6 @@ public interface Record {
      * @return 64-bit signed integer
      */
     default long getLong(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a long256 column by index
-     *
-     * @param col numeric index of the column
-     * @param sink a character sink
-     */
-    default void getLong256(int col, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a long256 column by index
-     * getLong256A used for A/B comparison with getLong256B to compare references
-     *
-     * @param col numeric index of the column
-     * @return unsigned 256-bit integer
-     */
-    default Long256 getLong256A(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a long256 column by index
-     * getLong256B used for A/B comparison with getLong256A to compare references
-     * @param col numeric index of the column
-     * @return unsigned 256-bit integer
-     */
-    default Long256 getLong256B(int col) {
         throw new UnsupportedOperationException();
     }
 
@@ -194,6 +202,38 @@ public interface Record {
     }
 
     /**
+     * Gets the value of a long256 column by index
+     *
+     * @param col  numeric index of the column
+     * @param sink a character sink
+     */
+    default void getLong256(int col, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long256 column by index
+     * getLong256A used for A/B comparison with getLong256B to compare references
+     *
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long256 getLong256A(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a long256 column by index
+     * getLong256B used for A/B comparison with getLong256A to compare references
+     *
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long256 getLong256B(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Get record by column index
      *
      * @param col numeric index of the column
@@ -211,16 +251,6 @@ public interface Record {
     default long getRowId() {
         throw new UnsupportedOperationException();
     }
-
-    /**
-     * Gets the numeric ID of this row. This must be real table row id
-     *
-     * @return numeric ID of the current row
-     */
-    default long getUpdateRowId() {
-        throw new UnsupportedOperationException();
-    }
-
 
     /**
      * Gets the value of a short column by index
@@ -245,7 +275,7 @@ public interface Record {
     /**
      * Gets the value of a string column by index
      *
-     * @param col numeric index of the column
+     * @param col  numeric index of the column
      * @param sink a character sink
      */
     default void getStr(int col, CharSink sink) {
@@ -305,42 +335,11 @@ public interface Record {
     }
 
     /**
-     * Gets the value of a byte GeoHash column by index
+     * Gets the numeric ID of this row. This must be real table row id
      *
-     * @param col numeric index of the column
-     * @return geohash
+     * @return numeric ID of the current row
      */
-    default byte getGeoByte(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a short GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default short getGeoShort(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of an int GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default int getGeoInt(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the value of a long GeoHash column by index
-     *
-     * @param col numeric index of the column
-     * @return geohash
-     */
-    default long getGeoLong(int col) {
+    default long getUpdateRowId() {
         throw new UnsupportedOperationException();
     }
 
@@ -348,7 +347,7 @@ public interface Record {
     interface CharSequenceFunction {
         /**
          * @param record to retrieve CharSequence from
-         * @param col numeric index of the column
+         * @param col    numeric index of the column
          * @return record as a char sequence
          */
         CharSequence get(Record record, int col);

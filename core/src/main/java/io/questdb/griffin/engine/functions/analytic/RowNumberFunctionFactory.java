@@ -83,6 +83,62 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
+    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
+        private int columnIndex;
+        private long next = 1;
+
+        public OrderRowNumberFunction() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            // not called
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
+            next++;
+        }
+
+        @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
+        public void preparePass2(RecordCursor cursor) {
+        }
+
+        @Override
+        public void reopen() {
+            reset();
+        }
+
+        @Override
+        public void reset() {
+            next = 1;
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+    }
+
     private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
@@ -108,12 +164,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
 
         @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -133,11 +189,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void preparePass2(RecordCursor cursor) {
+        public void pass2(Record record) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
@@ -156,84 +212,18 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class OrderRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private long next = 1;
-        private int columnIndex;
-
-        public OrderRowNumberFunction() {
-        }
-
-        @Override
-        public void close() {
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            // not called
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, AnalyticSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), next);
-            next++;
-        }
-
-        @Override
-        public void preparePass2(RecordCursor cursor) {
-        }
-
-        @Override
-        public void pass2(Record record) {
-        }
-
-        @Override
-        public void reopen() {
-            reset();
-        }
-
-        @Override
-        public void reset() {
-            next = 1;
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-    }
-
     private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Reopenable {
-        private long next = 1;
         private int columnIndex;
+        private long next = 1;
 
         @Override
         public long getLong(Record rec) {
             // not called
             throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void toTop() {
-            next = 1;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            toTop();
-        }
-
-        @Override
-        public void reopen() {
             toTop();
         }
 
@@ -247,11 +237,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void pass2(Record record) {
+        }
+
+        @Override
         public void preparePass2(RecordCursor cursor) {
         }
 
         @Override
-        public void pass2(Record record) {
+        public void reopen() {
+            toTop();
         }
 
         @Override
@@ -262,6 +257,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void toTop() {
+            next = 1;
         }
     }
 }

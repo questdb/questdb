@@ -40,16 +40,16 @@ import java.io.Closeable;
 
 class LineTcpWriterJob implements Job, Closeable {
     private final static Log LOG = LogFactory.getLog(LineTcpWriterJob.class);
-    private final int workerId;
-    private final RingQueue<LineTcpMeasurementEvent> queue;
-    private final Sequence sequence;
-    private final Path path = new Path();
-    private final ObjList<TableUpdateDetails> assignedTables = new ObjList<>();
-    private final MillisecondClock millisecondClock;
+    private final ObjList<TableUpdateDetails> assignedTables;
     private final long commitIntervalDefault;
-    private final LineTcpMeasurementScheduler scheduler;
-    private long nextCommitTime;
     private final Metrics metrics;
+    private final MillisecondClock millisecondClock;
+    private final Path path = new Path();
+    private final RingQueue<LineTcpMeasurementEvent> queue;
+    private final LineTcpMeasurementScheduler scheduler;
+    private final Sequence sequence;
+    private final int workerId;
+    private long nextCommitTime;
 
     LineTcpWriterJob(
             int workerId,
@@ -58,7 +58,8 @@ class LineTcpWriterJob implements Job, Closeable {
             MillisecondClock millisecondClock,
             long commitIntervalDefault,
             LineTcpMeasurementScheduler scheduler,
-            Metrics metrics
+            Metrics metrics,
+            ObjList<TableUpdateDetails> assignedTables
     ) {
         this.workerId = workerId;
         this.queue = queue;
@@ -68,6 +69,7 @@ class LineTcpWriterJob implements Job, Closeable {
         this.nextCommitTime = millisecondClock.getTicks();
         this.scheduler = scheduler;
         this.metrics = metrics;
+        this.assignedTables = assignedTables;
     }
 
     @Override
@@ -81,8 +83,6 @@ class LineTcpWriterJob implements Job, Closeable {
         }
 
         Misc.free(path);
-        Misc.freeObjList(assignedTables);
-        assignedTables.clear();
     }
 
     @Override

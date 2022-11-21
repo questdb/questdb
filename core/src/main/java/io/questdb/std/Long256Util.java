@@ -26,36 +26,6 @@ package io.questdb.std;
 
 public class Long256Util {
 
-    // this method is used by byte-code generator
-    public static int compare(Long256 a, Long256 b) {
-
-        if (a.getLong3() < b.getLong3()) {
-            return -1;
-        }
-
-        if (a.getLong3() > b.getLong3()) {
-            return 1;
-        }
-
-        if (a.getLong2() < b.getLong2()) {
-            return -1;
-        }
-
-        if (a.getLong2() > b.getLong2()) {
-            return 1;
-        }
-
-        if (a.getLong1() < b.getLong1()) {
-            return -1;
-        }
-
-        if (a.getLong1() > b.getLong1()) {
-            return 1;
-        }
-
-        return Long.compare(a.getLong0(), b.getLong0());
-    }
-
     public static void add(Long256 dst, long v0, long v1, long v2, long v3) {
         boolean isNull = v0 == Numbers.LONG_NaN &&
                 v1 == Numbers.LONG_NaN &&
@@ -90,5 +60,35 @@ public class Long256Util {
 
     public static void add(Long256 acc, Long256 incr) {
         add(acc, incr.getLong0(), incr.getLong1(), incr.getLong2(), incr.getLong3());
+    }
+
+    // this method is used by byte-code generator
+    public static int compare(Long256 a, Long256 b) {
+
+        if (a.getLong3() < b.getLong3()) {
+            return -1;
+        }
+
+        if (a.getLong3() > b.getLong3()) {
+            return 1;
+        }
+
+        if (a.getLong2() < b.getLong2()) {
+            return -1;
+        }
+
+        if (a.getLong2() > b.getLong2()) {
+            return 1;
+        }
+
+        if (a.getLong1() < b.getLong1()) {
+            return -1;
+        }
+
+        if (a.getLong1() > b.getLong1()) {
+            return 1;
+        }
+
+        return Long.compare(a.getLong0(), b.getLong0());
     }
 }

@@ -38,25 +38,34 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
     static final String targetColumnName = "geohash";
 
     @Test
-    public abstract void testGeoHashes() throws Exception;
-
-    @Test
-    public abstract void testGeoHashesTruncating() throws Exception;
-
-    @Test
-    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
-
-    @Test
     public abstract void testExcessivelyLongGeoHashesAreTruncated() throws Exception;
+
+    @Test
+    public abstract void testGeoHashes() throws Exception;
 
     @Test
     public abstract void testGeoHashesNotEnoughPrecision() throws Exception;
 
     @Test
-    public abstract void testWrongCharGeoHashes() throws Exception;
+    public abstract void testGeoHashesTruncating() throws Exception;
 
     @Test
     public abstract void testNullGeoHash() throws Exception;
+
+    @Test
+    public abstract void testTableHasGeoHashMessageDoesNot() throws Exception;
+
+    @Test
+    public abstract void testWrongCharGeoHashes() throws Exception;
+
+    private static Supplier<String> randomGeoHashGenerator(int chars) {
+        final Rnd rnd = new Rnd();
+        return () -> {
+            StringSink sink = Misc.getThreadLocalBuilder();
+            GeoHashes.appendChars(rnd.nextGeoHash(chars * 5), chars, sink);
+            return sink.toString();
+        };
+    }
 
     protected static void assertGeoHash(int columnBits, int lineGeoSizeChars, int numLines, String expected) throws Exception {
         assertType(tableName,
@@ -69,14 +78,5 @@ abstract class LineUdpInsertGeoHashTest extends LineUdpInsertTest {
                         sender.metric(tableName).field(targetColumnName, rnd.get()).$((long) ((i + 1) * 1e9));
                     }
                 });
-    }
-
-    private static Supplier<String> randomGeoHashGenerator(int chars) {
-        final Rnd rnd = new Rnd();
-        return () -> {
-            StringSink sink = Misc.getThreadLocalBuilder();
-            GeoHashes.appendChars(rnd.nextGeoHash(chars * 5), chars, sink);
-            return sink.toString();
-        };
     }
 }

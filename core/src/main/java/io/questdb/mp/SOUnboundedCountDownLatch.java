@@ -33,8 +33,8 @@ import java.util.concurrent.locks.LockSupport;
  */
 public class SOUnboundedCountDownLatch implements CountDownLatchSPI {
     private static final long COUNT_OFFSET;
-    private volatile int count;
     private volatile int awaitedCount;
+    private volatile int count;
     private volatile Thread waiter;
 
     public SOUnboundedCountDownLatch() {
