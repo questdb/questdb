@@ -25,13 +25,13 @@
 package io.questdb.cairo.wal;
 
 public interface SymbolMapDiff {
-    boolean hasNullValue();
-
     int getCleanSymbolCount();
 
     int getColumnIndex();
 
     int getSize();
+
+    boolean hasNullValue();
 
     SymbolMapDiffEntry nextEntry();
 }

@@ -40,11 +40,6 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     }
 
     @Override
-    public boolean hasNullValue() {
-        return nullFlag;
-    }
-
-    @Override
     public int getCleanSymbolCount() {
         return cleanSymbolCount;
     }
@@ -57,6 +52,11 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     @Override
     public int getSize() {
         return size;
+    }
+
+    @Override
+    public boolean hasNullValue() {
+        return nullFlag;
     }
 
     @Override
