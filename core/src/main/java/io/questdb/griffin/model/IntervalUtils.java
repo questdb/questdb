@@ -605,11 +605,10 @@ public final class IntervalUtils {
             long millis = parseFloorPartialTimestamp(seq, lo, lim);
             addHiLoInterval(millis, millis, operation, out);
         } catch (NumericException e) {
-            try{
+            try {
                 long millis = Numbers.parseLong(seq);
                 addHiLoInterval(millis, millis, operation, out);
-            }
-            catch (NumericException e2) {
+            } catch (NumericException e2) {
                 for (int i = lo; i < lim; i++) {
                     if (seq.charAt(i) == ';') {
                         throw SqlException.$(position, "Not a date, use IN keyword with intervals");
