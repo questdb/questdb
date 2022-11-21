@@ -2502,7 +2502,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     // That's when the data from the last partition is moved to in-memory lag.
                     // One way to detect this is to check if index of the "last" partition is not
                     // last partition in the attached partition list.
-                    txWriter.reconcileOptimisticPartitions();
+                    if (txWriter.reconcileOptimisticPartitions()) {
+                        this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+                        this.partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
+                    }
                 }
             }
 

@@ -1319,7 +1319,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 60_000_000, // 1 minute, precision is micro
                 2,
                 false,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2")
         );
     }
 
@@ -3308,7 +3308,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                         Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
                     }
             );
-            Assert.assertEquals(4, rmdirCallCount.get());
+            Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
             Assert.assertTrue((durable && msyncCallCount.get() > 0) || (!durable && msyncCallCount.get() == 0));
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "test")) {
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());

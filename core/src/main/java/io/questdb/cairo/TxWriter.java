@@ -553,7 +553,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // That's when the data from the last partition is moved to in-memory lag.
     // One way to detect this is to check if index of the "last" partition is not
     // last partition in the attached partition list.
-    void reconcileOptimisticPartitions() {
+    boolean reconcileOptimisticPartitions() {
         int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
         if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
             int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
@@ -571,8 +571,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 this.fixedRowCount -= rowCount;
                 this.maxTimestamp = getMaxTimestamp();
                 this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
+                return true;
             }
         }
+        return false;
     }
 
     void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
