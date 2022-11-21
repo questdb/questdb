@@ -37,6 +37,20 @@ import static org.junit.Assert.fail;
 public class UuidTest extends AbstractGriffinTest {
 
     @Test
+    public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
+        // testing O3 insert when uuid columnTop > 0
+        assertCompile("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
+        assertCompile("insert into x values ('2018-01-01', 1)");
+        assertCompile("insert into x values ('2018-01-03', 1)");
+        assertCompile("alter table x add column u uuid");
+        assertCompile("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
+        assertQuery("ts\ti\tu\n" +
+                "2018-01-01T00:00:00.000000Z\t1\t\n" +
+                "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
+                "2018-01-03T00:00:00.000000Z\t1\t\n", "select * from x", "ts", true, true, true);
+    }
+
+    @Test
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         assertCompile("create table x (u UUID)");
         try {

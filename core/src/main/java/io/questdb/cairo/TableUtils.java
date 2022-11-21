@@ -35,6 +35,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1009,6 +1010,9 @@ public final class TableUtils {
                 //noinspection ConstantConditions
                 assert Long128Constant.NULL_HI == Long128Constant.NULL_LO;
                 Vect.setMemoryLong(addr, Long128Constant.NULL_HI, count * 2);
+                break;
+            case ColumnType.UUID:
+                Vect.setMemoryLong(addr, UuidConstant.NULL_MSB_AND_LSB, count * 2);
                 break;
             default:
                 break;
