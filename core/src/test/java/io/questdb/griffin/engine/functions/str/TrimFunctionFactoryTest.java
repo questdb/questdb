@@ -31,11 +31,11 @@ import org.junit.Test;
 
 public class TrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testTrimSpace() throws SqlException {
-        call("    abc     ").andAssert("abc");
-        call("abc     ").andAssert("abc");
-        call("     abc").andAssert("abc");
-        call(" a b c ").andAssert("a b c");
+    public void testEmptyOrNullTrimSpace() throws SqlException {
+        call("").andAssert("");
+        call(" ").andAssert("");
+        call("    ").andAssert("");
+        call((Object) null).andAssert(null);
     }
 
     @Test
@@ -46,11 +46,11 @@ public class TrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testEmptyOrNullTrimSpace() throws SqlException {
-        call("").andAssert("");
-        call(" ").andAssert("");
-        call("    ").andAssert("");
-        call((Object) null).andAssert(null);
+    public void testTrimSpace() throws SqlException {
+        call("    abc     ").andAssert("abc");
+        call("abc     ").andAssert("abc");
+        call("     abc").andAssert("abc");
+        call(" a b c ").andAssert("a b c");
     }
 
     @Override

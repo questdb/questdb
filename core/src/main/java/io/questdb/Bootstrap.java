@@ -37,12 +37,14 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import sun.misc.Signal;
 
 import java.io.*;
 import java.net.*;
 import java.nio.file.Paths;
 import java.util.Enumeration;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -69,10 +71,14 @@ public class Bootstrap {
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
-        this(BANNER, args);
+        this(BANNER, System.getenv(), args);
     }
 
     public Bootstrap(String banner, String... args) {
+        this(banner, System.getenv(), args);
+    }
+    
+    public Bootstrap(String banner, @Nullable Map<String, String> env, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -151,7 +157,7 @@ public class Bootstrap {
 
             // /server.conf properties
             final Properties properties = loadProperties(rootPath);
-            config = new PropServerConfiguration(rootDirectory, properties, System.getenv(), log, buildInformation);
+            config = new PropServerConfiguration(rootDirectory, properties, env, log, buildInformation);
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (Throwable e) {

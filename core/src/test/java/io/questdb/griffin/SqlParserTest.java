@@ -56,11 +56,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWithFollowedByInvalidToken() throws Exception {
-        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
-    }
-
-    @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
                 "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
@@ -7484,6 +7479,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testWithFollowedByInvalidToken() throws Exception {
+        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
     }
 
     @Test

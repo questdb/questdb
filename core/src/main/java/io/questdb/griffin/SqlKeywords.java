@@ -1627,7 +1627,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 's';
-        // @formatter:off
+        // @formatter:on
     }
 
     public static boolean isTextArray(CharSequence tok) {

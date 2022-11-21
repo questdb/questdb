@@ -633,6 +633,46 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testExpCustomDelimiter() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "54\r\n" +
+                        "\"sym\"\t\"num\"\r\n" +
+                        "\"c\"\t9\r\n" +
+                        "\"b\"\t5\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t5\r\n" +
+                        "\"a\"\t7\r\n" +
+                        "\"a\"\t4\r\n" +
+                        "\"a\"\t8\r\n" +
+                        "\"a\"\t2\r\n" +
+                        "\"c\"\t10\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testExpNull() throws Exception {
         testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -6493,46 +6533,6 @@ public class IODispatcherTest {
                         "\r\n" +
                         "00\r\n" +
                         "\r\n");
-    }
-
-    @Test
-    public void testExpCustomDelimiter() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "54\r\n" +
-                        "\"sym\"\t\"num\"\r\n" +
-                        "\"c\"\t9\r\n" +
-                        "\"b\"\t5\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t5\r\n" +
-                        "\"a\"\t7\r\n" +
-                        "\"a\"\t4\r\n" +
-                        "\"a\"\t8\r\n" +
-                        "\"a\"\t2\r\n" +
-                        "\"c\"\t10\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
     }
 
     @Test
