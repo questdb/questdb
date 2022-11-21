@@ -663,10 +663,10 @@ public class SnapshotTest extends AbstractGriffinTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            compile("alter table " + tableName + " add column iii int");
+            executeOperation("alter table " + tableName + " add column iii int", CompiledQuery.ALTER);
             executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
 
-            compile("alter table " + tableName + " add column jjj int");
+            executeOperation("alter table " + tableName + " add column jjj int", CompiledQuery.ALTER);
 
             executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asd', 41, 42)");
 
@@ -686,14 +686,14 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
 
 
-            compile("alter table " + tableName + " add column kkk int");
+            executeOperation("alter table " + tableName + " add column kkk int", CompiledQuery.ALTER);
             executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
             // updates above should apply to WAL, not table
             compiler.compile("snapshot prepare", sqlExecutionContext);
 
             // these updates are lost during the snapshotting
-            compile("alter table " + tableName + " add column lll int");
+            executeOperation("alter table " + tableName + " add column lll int", CompiledQuery.ALTER);
             executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
             executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
 
@@ -719,7 +719,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                     "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
 
             // check for updates to the restored table
-            compile("alter table " + tableName + " add column lll int");
+            executeOperation("alter table " + tableName + " add column lll int", CompiledQuery.ALTER);
             executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
             executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
             executeOperation("UPDATE " + tableName + " SET jjj = 0 where iii = 0", CompiledQuery.UPDATE);
