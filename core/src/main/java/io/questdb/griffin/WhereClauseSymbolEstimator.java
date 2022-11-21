@@ -238,7 +238,8 @@ final class WhereClauseSymbolEstimator implements Mutable {
             return null;
         }
 
-        columnIndexesToListIndexes.clear();
+        clear();
+
         for (int i = 0, n = columnIndexes.size(); i < n; i++) {
             columnIndexesToListIndexes.put(columnIndexes.getQuick(i), i);
         }
