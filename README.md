@@ -46,7 +46,7 @@ We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
 - 10 years of NYC taxi trips with 1.6 billion rows
-- live trading data from a cryptocurrency exchange
+- live crytocurrency market data with 30M+ rows per month
 - geolocations of 250k unique ships over time
 
 | Query                                                                         | Execution time                                                                                                                                                                   |
