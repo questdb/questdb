@@ -31,6 +31,14 @@ import org.junit.Test;
 
 public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
+    public void testEmptyLTrimSpace() throws SqlException {
+        call("").andAssert("");
+        call(" ").andAssert("");
+        call("    ").andAssert("");
+        call((Object) null).andAssert(null);
+    }
+
+    @Test
     public void testLTrimSpace() throws SqlException {
         call("    abc     ").andAssert("abc     ");
         call("     abc").andAssert("abc");
@@ -43,14 +51,6 @@ public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("a b c").andAssert("a b c");
         call("kkk").andAssert("kkk");
         call("()  /  {}").andAssert("()  /  {}");
-    }
-
-    @Test
-    public void testEmptyLTrimSpace() throws SqlException {
-        call("").andAssert("");
-        call(" ").andAssert("");
-        call("    ").andAssert("");
-        call((Object) null).andAssert(null);
     }
 
     @Override
