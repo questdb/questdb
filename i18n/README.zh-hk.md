@@ -56,17 +56,17 @@ C++從頭開始構建的，沒有任何外部依賴，並且 100% 不受垃圾�
 
 我們提供了一個[在線演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本和幾個樣本數據集：
 
-- 一個 16 億行的數據集，包括近 10 年的紐約市出租車行程軌跡。
-- 一個即時的加密貨幣（比特幣、乙太幣）交易數據集。
-- 一個包括 25 萬艘船的時序地理數據集。
+- Trips: 一個 16 億行的數據集，包括近 10 年的紐約市出租車行程軌跡。
+- Trades: 一個即時的加密貨幣（比特幣、乙太幣）交易數據集。
+- Pos: 一個包括 25 萬艘船的時序地理數據集。
 
-| 查詢                                                                          | 運行時間                                                                                                                                                                         |
-| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                      |
-| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                     |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019'`                    | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                          |
-| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
-| `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol;`               | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                 |
+| 查詢                                                                          | 執行时间                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol;`                    | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
 我們的在線演示運行在 `c5.metal` 上並且僅使用了 96 個線程中的 24 個線程。
 
