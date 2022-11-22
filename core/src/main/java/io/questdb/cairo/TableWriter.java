@@ -48,7 +48,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1103,7 +1102,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     public boolean getPartitionIsRO(int partitionIndex) {
-        return partitionIndex >= 0 && txWriter.getPartitionIsRO(partitionIndex);
+        return partitionIndex > -1 && txWriter.getPartitionIsRO(partitionIndex);
     }
 
     public long getPartitionNameTxn(int partitionIndex) {
@@ -3867,7 +3866,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
-
                     if (ff.isSoftLink(other)) {
                         // in windows ^ ^ will return false, but that is ok as the behaviour
                         // is to delete the link, not the contents of the target. in *nix
@@ -3880,7 +3878,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
                         }
                     }
-
                     if (!txWriter.getPartitionIsROByPartitionTimestamp(timestamp)) {
                         long errno = ff.rmdir(other);
                         if (errno == 0 || errno == -1) {

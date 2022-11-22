@@ -293,9 +293,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     ) {
         LOG.info().$("processing [table=").$(tableName).I$();
         Path path = Path.getThreadLocal(root);
-        path.of(root).concat(tableName).slash$();
-        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+        path.concat(tableName).slash$();
         partitionList.clear();
+        DateFormat partitionByFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
         long p = ff.findFirst(path);
         if (p > 0) {
@@ -325,9 +325,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         int lo = 0;
         int n = (int) partitionList.size();
 
+        path.of(root).concat(tableName);
+        int tableRootLen = path.length();
         try {
-            path.of(root).concat(tableName);
-            int tableRootLen = path.length();
             txnScoreboard.ofRO(path);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
