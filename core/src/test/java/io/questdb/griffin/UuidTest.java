@@ -37,20 +37,6 @@ import static org.junit.Assert.fail;
 public class UuidTest extends AbstractGriffinTest {
 
     @Test
-    public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
-        // testing O3 insert when uuid columnTop > 0
-        assertCompile("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
-        assertCompile("insert into x values ('2018-01-01', 1)");
-        assertCompile("insert into x values ('2018-01-03', 1)");
-        assertCompile("alter table x add column u uuid");
-        assertCompile("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
-        assertQuery("ts\ti\tu\n" +
-                "2018-01-01T00:00:00.000000Z\t1\t\n" +
-                "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
-                "2018-01-03T00:00:00.000000Z\t1\t\n", "select * from x", "ts", true, true, true);
-    }
-
-    @Test
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         assertCompile("create table x (u UUID)");
         try {
@@ -193,6 +179,20 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
+        // testing O3 insert when uuid columnTop > 0
+        assertCompile("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
+        assertCompile("insert into x values ('2018-01-01', 1)");
+        assertCompile("insert into x values ('2018-01-03', 1)");
+        assertCompile("alter table x add column u uuid");
+        assertCompile("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
+        assertQuery("ts\ti\tu\n" +
+                "2018-01-01T00:00:00.000000Z\t1\t\n" +
+                "2018-01-02T00:00:00.000000Z\t1\t00000000-0000-0000-0000-000000000000\n" +
+                "2018-01-03T00:00:00.000000Z\t1\t\n", "select * from x", "ts", true, true, true);
+    }
+
+    @Test
     public void testInsertExplicitNull() throws Exception {
         assertCompile("create table x (u UUID)");
         assertCompile("insert into x values (null)");
@@ -226,6 +226,19 @@ public class UuidTest extends AbstractGriffinTest {
         assertQuery("u\n" +
                         "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
                 "select * from x", null, null, true, true, true);
+    }
+
+    @Test
+    public void testLatestOn() throws Exception {
+        assertCompile("create table x (ts timestamp, u uuid, i int) timestamp(ts) partition by DAY");
+        assertCompile("insert into x values ('2020-01-01T00:00:00.000000Z', '00000000-0000-0000-0000-000000000001', 0)");
+        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000001', 2)");
+        assertCompile("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000002', 0)");
+
+        assertQuery("ts\tu\ti\n" +
+                        "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000001\t2\n" +
+                        "2020-01-02T00:01:00.000000Z\t00000000-0000-0000-0000-000000000002\t0\n",
+                "select ts, u, i from x latest on ts partition by u", null, "ts", true, true, true);
     }
 
     @Test
