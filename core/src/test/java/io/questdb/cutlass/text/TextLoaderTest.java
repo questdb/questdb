@@ -2204,6 +2204,56 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSimpleWithCharColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "ts\ta\n" +
+                    "2022-11-01T22:01:02.273814Z\ta\n" +
+                    "2022-11-01T23:01:02.273814Z\t\n";
+
+            String csv = "ts,a\n" +
+                    "2022-11-01T22:01:02.273814,\"a\"\n" +
+                    "2022-11-01T23:01:02.273814,\n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"a\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
+    public void testSimpleWithSingleLetterColumnNames() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "t\ta\ts\n" +
+                    "2022-11-01T22:01:02.273814Z\ta\tat\n" +
+                    "2022-11-01T23:01:02.273814Z\t\tbcd\n";
+
+            String csv = "t,a,s\n" +
+                    "2022-11-01T22:01:02.273814,\"a\",at\n" +
+                    "2022-11-01T23:01:02.273814,,bcd\n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"a\",\"type\":\"CHAR\"},{\"index\":2,\"name\":\"s\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
     public void testSingleColumn() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "f0\n" +
@@ -2983,8 +3033,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
         sink.clear();
         textLoader.getMetadata().toJson(sink);
         TestUtils.assertEquals(expectedMetadata, sink);
-        Assert.assertEquals(expectedParsedLineCount, textLoader.getParsedLineCount());
-        Assert.assertEquals(expectedWrittenLineCount, textLoader.getWrittenLineCount());
+        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
+        Assert.assertEquals("written line count", expectedWrittenLineCount, textLoader.getWrittenLineCount());
         assertTable(expected);
         textLoader.clear();
 
