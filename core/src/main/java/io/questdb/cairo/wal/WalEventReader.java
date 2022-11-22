@@ -41,10 +41,10 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
+    private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
     private final MemoryMR eventMem;
     private final FilesFacade ff;
-    private final Log LOG = LogFactory.getLog(WalEventReader.class);
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;

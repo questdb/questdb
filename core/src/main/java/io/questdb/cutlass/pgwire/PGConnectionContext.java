@@ -163,6 +163,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private boolean sendParameterDescription;
     private boolean sendRNQ = true;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -171,7 +172,6 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
-    private final PGResumeProcessor resumeCommandCompleteRef = this::resumeCommandComplete;
     private TypesAndInsert typesAndInsert = null;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
@@ -1173,8 +1173,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             BadProtocolException,
             PeerDisconnectedException,
             PeerIsSlowToReadException,
-            AuthenticationException,
-            SqlException {
+            AuthenticationException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1664,9 +1663,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        if (completed) {
-            characterStore.clear();
-        }
+        characterStore.clear();
     }
 
     private void prepareLoginOk() {

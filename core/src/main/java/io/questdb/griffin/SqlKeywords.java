@@ -30,8 +30,8 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 public class SqlKeywords {
     public static final int CASE_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
+    public static final int GEOHASH_KEYWORD_LENGTH = 7;
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
-    public static int GEOHASH_KEYWORD_LENGTH = 7;
 
     public static boolean isAddKeyword(CharSequence tok) {
         if (tok.length() != 3) {
@@ -318,23 +318,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 's';
-    }
-
-    public static boolean isCommitLagKeyword(CharSequence tok) {
-        if (tok.length() != 9) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i) | 32) == 'g';
     }
 
     public static boolean isConcatKeyword(CharSequence tok) {
@@ -1252,6 +1235,22 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'l';
     }
 
+    public static boolean isO3MaxLagKeyword(CharSequence tok) {
+        if (tok.length() != 8) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == '3'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 'g';
+    }
+
     public static boolean isObservationKeyword(CharSequence tok) {
         if (tok.length() != 11) {
             return false;
@@ -1627,21 +1626,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i) | 32) == 's';
-        // @formatter:off
-    }
-
-    public static boolean isTextArray(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'x'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++)) == '['
-                && (tok.charAt(i)) == ']';
+        // @formatter:on
     }
 
     public static boolean isTimeKeyword(CharSequence tok) {

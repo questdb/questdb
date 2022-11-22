@@ -34,9 +34,9 @@ import static io.questdb.std.Chars.trim;
 
 public class TrimConstFunction extends StrFunction implements UnaryFunction {
 
+    private final Function arg;
     private final StringSink sink1 = new StringSink();
     private final StringSink sink2 = new StringSink();
-    private final Function arg;
 
     public TrimConstFunction(Function arg, TrimType type) {
         this.arg = arg;

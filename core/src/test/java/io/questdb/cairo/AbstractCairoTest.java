@@ -85,8 +85,8 @@ public abstract class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
-    protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
+    protected static long configOverrideO3MaxLag = -1;
     protected static CairoConfiguration configuration;
     protected static Boolean copyPartitionOnAttach = null;
     protected static long currentMicros = -1;
@@ -173,6 +173,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     public static void printMemoryUsage() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
@@ -182,6 +183,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("unused")
     @TestOnly
     public static void printMemoryUsageDiff() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
@@ -268,11 +270,6 @@ public abstract class AbstractCairoTest {
             }
 
             @Override
-            public long getCommitLag() {
-                return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
-            }
-
-            @Override
             public int getCopyPoolCapacity() {
                 return capacity == -1 ? super.getCopyPoolCapacity() : capacity;
             }
@@ -322,6 +319,11 @@ public abstract class AbstractCairoTest {
             @Override
             public MillisecondClock getMillisecondClock() {
                 return () -> testMicrosClock.getTicks() / 1000L;
+            }
+
+            @Override
+            public long getO3MaxLag() {
+                return configOverrideO3MaxLag >= 0 ? configOverrideO3MaxLag : super.getO3MaxLag();
             }
 
             @Override
@@ -464,7 +466,7 @@ public abstract class AbstractCairoTest {
 
             @Override
             public boolean isO3QuickSortEnabled() {
-                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled >= 0 && super.isO3QuickSortEnabled());
+                return isO3QuickSortEnabled > 0 || (isO3QuickSortEnabled == 0 && super.isO3QuickSortEnabled());
             }
 
             @Override
@@ -537,7 +539,7 @@ public abstract class AbstractCairoTest {
             TestUtils.removeTestPath(root);
         }
         configOverrideMaxUncommittedRows = -1;
-        configOverrideCommitLagMicros = -1;
+        configOverrideO3MaxLag = -1;
         currentMicros = -1;
         testMicrosClock = defaultMicrosecondClock;
         sampleByIndexSearchPageSize = -1;

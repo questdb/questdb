@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
@@ -183,7 +182,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         } while (frameIndex < frameLimit);
     }
 
-    void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
+    void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
         this.frameSequence = frameSequence;
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;

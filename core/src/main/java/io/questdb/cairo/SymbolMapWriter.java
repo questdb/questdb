@@ -207,7 +207,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
         if (symbol == null) {
             if (!nullValue) {
-                nullValue = true;
                 updateNullFlag(true);
             }
             return SymbolTable.VALUE_IS_NULL;
@@ -242,7 +241,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.truncate();
         offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
-        nullValue = false;
         updateNullFlag(false);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);
         charMem.truncate();
@@ -260,6 +258,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
+        nullValue = flag;
     }
 
     private void jumpCharMemToSymbolCount(int symbolCount) {

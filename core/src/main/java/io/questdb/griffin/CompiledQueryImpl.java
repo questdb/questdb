@@ -157,9 +157,8 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withSqlStatement(CharSequence sqlStatement) {
+    public void withSqlStatement(CharSequence sqlStatement) {
         this.sqlStatement = sqlStatement;
-        return this;
     }
 
     private CompiledQuery of(short type, RecordCursorFactory factory) {
