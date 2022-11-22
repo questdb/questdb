@@ -91,9 +91,10 @@ public class MutableUuidTest {
 
     @Test
     public void testInvalid() {
-        assertExceptonWhileParsing("a0eebc99-9c0b-4ef8-bb6d");
-        assertExceptonWhileParsing("a0eebc99-9c0b-4ef8-bb6d-");
-        assertExceptonWhileParsing("a0eebc99-9c0b-4ef8-");
+        assertExceptionWhileParsing("a0eebc99-9c0b-4ef8-bb6d");
+        assertExceptionWhileParsing("a0eebc99-9c0b-4ef8-bb6d-");
+        assertExceptionWhileParsing("a0eebc99-9c0b-4ef8-");
+        assertExceptionWhileParsing("11111111-1111-1111-коль-111111111111");
     }
 
     @Test
@@ -139,7 +140,7 @@ public class MutableUuidTest {
         assertEquals("Bad string representation for UUID '" + expected + "'", expected.toString(), sink.toString());
     }
 
-    private static void assertExceptonWhileParsing(String uuid) {
+    private static void assertExceptionWhileParsing(String uuid) {
         MutableUuid muuid = new MutableUuid();
         try {
             muuid.of(uuid);

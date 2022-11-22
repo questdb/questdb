@@ -589,6 +589,9 @@ public final class Numbers {
     }
 
     public static int hexToDecimal(int c) throws NumericException {
+        if (c > 127) {
+            throw NumericException.INSTANCE;
+        }
         int r = hexNumbers[c];
         if (r == -1) {
             throw NumericException.INSTANCE;
