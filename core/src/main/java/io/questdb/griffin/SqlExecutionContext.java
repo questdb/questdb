@@ -114,6 +114,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void setJitMode(int jitMode);
 
+    void setNowAndFixClock(long now);
+
     void setRandom(Rnd rnd);
 
     void storeTelemetry(short event, short origin);

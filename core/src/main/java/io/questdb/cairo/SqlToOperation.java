@@ -68,12 +68,12 @@ public class SqlToOperation implements Closeable {
         return bindVariableService;
     }
 
-    public Rnd getRandom() {
+    public Rnd getRnd() {
         return rnd;
     }
 
-    public Rnd getRnd() {
-        return rnd;
+    public void setNowAndFixClock(long now) {
+        sqlExecutionContext.setNowAndFixClock(now);
     }
 
     public AlterOperation toAlterOperation(CharSequence alterStatement) {

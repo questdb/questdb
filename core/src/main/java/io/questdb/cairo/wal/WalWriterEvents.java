@@ -221,6 +221,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putStr(sql);
         eventMem.putLong(rndSeed0);
         eventMem.putLong(rndSeed1);
+        eventMem.putLong(sqlExecutionContext.getNow());
         final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
         writeIndexedVariables(bindVariableService);
         writeNamedVariables(bindVariableService);

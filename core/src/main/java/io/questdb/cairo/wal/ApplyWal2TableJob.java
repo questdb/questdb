@@ -227,6 +227,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void processWalSql(TableWriter tableWriter, WalEventCursor.SqlInfo sqlInfo, SqlToOperation sqlToOperation, long seqTxn) {
         final int cmdType = sqlInfo.getCmdType();
         final CharSequence sql = sqlInfo.getSql();
+        sqlToOperation.setNowAndFixClock(sqlInfo.getNow());
         sqlInfo.resetRnd(sqlToOperation.getRnd());
         sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
         AbstractOperation operation = null;

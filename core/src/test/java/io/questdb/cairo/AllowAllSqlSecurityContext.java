@@ -159,6 +159,10 @@ public final class AllowAllSqlSecurityContext {
             }
 
             @Override
+            public void setNowAndFixClock(long now) {
+            }
+
+            @Override
             public void setRandom(Rnd rnd) {
             }
 

@@ -50,10 +50,6 @@ public class QuestDBNode {
         this.nodeId = nodeId;
     }
 
-    public int getId() {
-        return nodeId;
-    }
-
     public void closeCairo() {
         cairo.close();
     }
@@ -72,6 +68,10 @@ public class QuestDBNode {
 
     public CairoEngine getEngine() {
         return cairo.engine;
+    }
+
+    public int getId() {
+        return nodeId;
     }
 
     public MessageBus getMessageBus() {

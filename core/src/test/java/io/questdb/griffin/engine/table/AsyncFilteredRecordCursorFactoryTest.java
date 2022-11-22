@@ -928,6 +928,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         }
 
         @Override
+        public void setNowAndFixClock(long now) {
+            sqlExecutionContext.setNowAndFixClock(now);
+        }
+
+        @Override
         public void setRandom(Rnd rnd) {
             sqlExecutionContext.setRandom(rnd);
         }

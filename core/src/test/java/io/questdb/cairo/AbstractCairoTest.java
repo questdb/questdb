@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.PlanSink;
@@ -202,26 +203,12 @@ public abstract class AbstractCairoTest {
         LOG.info().$("begin").$();
 
         node1 = newNode(1, "dbRoot");
-        newNode(2);
-        newNode(3);
-
         root = node1.getRoot();
         configuration = node1.getConfiguration();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         snapshotAgent = node1.getSnapshotAgent();
         messageBus = node1.getMessageBus();
-    }
-
-    private static void newNode(int nodeId) {
-        newNode(nodeId, "dbRoot" + nodeId);
-    }
-
-    private static QuestDBNode newNode(int nodeId, String dbRoot) {
-        final QuestDBNode node = new QuestDBNode(nodeId);
-        node.initCairo(dbRoot);
-        nodes.add(node);
-        return node;
     }
 
     public static void snapshotMemoryUsage() {
@@ -300,6 +287,17 @@ public abstract class AbstractCairoTest {
         walSegmentRolloverRowCount = -1;
     }
 
+    protected static QuestDBNode newNode(int nodeId) {
+        return newNode(nodeId, "dbRoot" + nodeId);
+    }
+
+    protected static QuestDBNode newNode(int nodeId, String dbRoot) {
+        final QuestDBNode node = new QuestDBNode(nodeId);
+        node.initCairo(dbRoot);
+        nodes.add(node);
+        return node;
+    }
+
     protected static void assertFactoryMemoryUsage() {
         if (memoryUsage > -1) {
             long memAfterCursorClose = getMemUsedByFactories();
@@ -331,14 +329,6 @@ public abstract class AbstractCairoTest {
         });
     }
 
-    protected static void releaseInactive(CairoEngine engine) {
-        engine.releaseInactive();
-        engine.releaseInactiveCompilers();
-        engine.releaseInactiveTableSequencers();
-        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
-        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
-    }
-
     protected static void configureForBackups() throws IOException {
         backupDir = temp.newFolder().getAbsolutePath();
         backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
@@ -354,17 +344,21 @@ public abstract class AbstractCairoTest {
 
     protected static void drainWalQueue(QuestDBNode node) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
-            drainWalQueue(walApplyJob);
+            drainWalQueue(walApplyJob, node.getEngine());
         }
     }
 
     protected static void drainWalQueue() {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-            drainWalQueue(walApplyJob);
+            drainWalQueue(walApplyJob, engine);
         }
     }
 
     protected static void drainWalQueue(ApplyWal2TableJob walApplyJob) {
+        drainWalQueue(walApplyJob, engine);
+    }
+
+    protected static void drainWalQueue(ApplyWal2TableJob walApplyJob, CairoEngine engine) {
         //noinspection StatementWithEmptyBody
         while (walApplyJob.run(0)) {
             // run until empty
@@ -392,6 +386,41 @@ public abstract class AbstractCairoTest {
     protected static void forEachNode(Task task) {
         for (int i = 0; i < nodes.size(); i++) {
             task.run(nodes.get(i));
+        }
+    }
+
+    protected static void releaseInactive(CairoEngine engine) {
+        engine.releaseInactive();
+        engine.releaseInactiveCompilers();
+        engine.releaseInactiveTableSequencers();
+        Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
+        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+    }
+
+    protected static void replicate(String tableName, String wal, QuestDBNode srcNode, QuestDBNode dstNode) {
+        dstNode.getEngine().getTableSequencerAPI().closeSequencer(tableName);
+        dstNode.getEngine().getTableSequencerAPI().releaseInactive();
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int mkdirMode = configuration.getMkDirMode();
+
+        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(wal).$();
+        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(wal).$();
+        ff.mkdir(dstWal, mkdirMode);
+        ff.copyRecursive(srcWal, dstWal, mkdirMode);
+
+        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
+        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(tableName).concat(WalUtils.SEQ_DIR).$();
+        ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode);
+
+        dstNode.getEngine().getTableSequencerAPI().openSequencer(tableName);
+    }
+
+    protected static void replicateAndApplyToAllNodes(String tableName, String walName) {
+        for (int i = 1, n = nodes.size(); i < n; i++) {
+            final QuestDBNode node = nodes.get(i);
+            replicate(tableName, walName, node1, node);
+            drainWalQueue(node);
         }
     }
 

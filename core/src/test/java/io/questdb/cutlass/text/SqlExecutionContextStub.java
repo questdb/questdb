@@ -160,6 +160,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setNowAndFixClock(long now) {
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
     }
 

@@ -27,8 +27,8 @@ package io.questdb.test.tools;
 import io.questdb.Metrics;
 import io.questdb.QuestDBNode;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -411,6 +411,22 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String expectedSql,
+            String actualSql
+    ) throws SqlException {
+        try (
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        ) {
+            assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -614,7 +630,7 @@ public final class TestUtils {
 
     public static void assertSqlCursors(QuestDBNode node, ObjList<QuestDBNode> nodes, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = node.getSqlCompiler().compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
-            for (int i = 0; i < nodes.size(); i++) {
+            for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBNode dbNode = nodes.get(i);
                 try (RecordCursorFactory factory2 = dbNode.getSqlCompiler().compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
@@ -900,20 +916,13 @@ public final class TestUtils {
         return new Rnd(s0, s1);
     }
 
-    public static void assertEquals(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expectedSql,
-            String actualSql
-    ) throws SqlException {
-        try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
-            assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
-        }
+    @NotNull
+    public static Rnd generateRandom(Log log) {
+        long s0 = System.nanoTime();
+        long s1 = System.currentTimeMillis();
+        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
+        return new Rnd(s0, s1);
     }
 
     public static String getCsvRoot() {
@@ -1334,15 +1343,6 @@ public final class TestUtils {
             columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
             Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
-    }
-
-    @NotNull
-    public static Rnd generateRandom(Log log) {
-        long s0 = System.nanoTime();
-        long s1 = System.currentTimeMillis();
-        log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
-        System.out.printf("random seeds: %dL, %dL%n", s0, s1);
-        return new Rnd(s0, s1);
     }
 
     private static RecordMetadata copySymAstStr(RecordMetadata src) {

@@ -73,6 +73,17 @@ public class TableSequencerAPI implements QuietCloseable {
         releaseAll();
     }
 
+    @TestOnly
+    public void closeSequencer(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.close();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void forAllWalTables(RegisteredTable callback) {
         final CharSequence root = configuration.getRoot();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -241,6 +252,17 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    @TestOnly
+    public void openSequencer(String tableName) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.WRITE)) {
+            try {
+                sequencer.open();
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public void registerTable(int tableId, final TableStructure tableStructure) {
         String tableNameStr = Chars.toString(tableStructure.getTableName());
         try (
@@ -277,10 +299,6 @@ public class TableSequencerAPI implements QuietCloseable {
                 tableSequencer.unlockRead();
             }
         }
-    }
-
-    public void reopen() {
-        closed = false;
     }
 
     @TestOnly

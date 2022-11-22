@@ -266,7 +266,7 @@ public abstract class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() {
         AbstractCairoTest.setUpStatic();
-        forEachNode(node -> node.initGriffin(circuitBreaker));
+        node1.initGriffin(circuitBreaker);
         compiler = node1.getSqlCompiler();
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
