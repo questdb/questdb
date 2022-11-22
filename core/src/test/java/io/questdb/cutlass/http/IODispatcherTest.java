@@ -954,6 +954,98 @@ public class IODispatcherTest {
         }
     }
 
+    @Test
+    public void testImplicitUuidCastOnInsert() throws Exception {
+        testJsonQuery0(1, engine -> {
+            // create table
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=create+table+xx+(value+uuid,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            JSON_DDL_RESPONSE,
+                    1,
+                    0,
+                    false
+            );
+            // insert one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=insert+into+xx+values('11111111-1111-1111-1111-111111111111',+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            JSON_DDL_RESPONSE,
+                    1,
+                    0,
+                    false
+            );
+            // check if we have one record
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /query?query=select+*+from+xx+latest+on+ts+partition+by+value&count=true HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "e5\r\n" +
+                            "{\"query\":\"select * from xx latest on ts partition by value\","
+                            + "\"columns\":[{\"name\":\"value\",\"type\":\"UUID\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],"
+                            + "\"dataset\":[[\"11111111-1111-1111-1111-111111111111\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                            "00\r\n" +
+                            "\r\n",
+                    1,
+                    0,
+                    false
+            );
+        }, false);
+    }
+
     public void testImport(
             String response,
             String request,
