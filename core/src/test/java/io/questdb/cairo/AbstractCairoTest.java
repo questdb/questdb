@@ -383,7 +383,7 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    protected static void forEachNode(Task task) {
+    protected static void forEachNode(QuestDBNodeTask task) {
         for (int i = 0; i < nodes.size(); i++) {
             task.run(nodes.get(i));
         }
@@ -458,7 +458,7 @@ public abstract class AbstractCairoTest {
     }
 
     @FunctionalInterface
-    protected interface Task {
+    protected interface QuestDBNodeTask {
         void run(QuestDBNode node);
     }
 
