@@ -428,8 +428,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * Table of columns grouping segment information. One row per walId.
      */
     private static class WalInfoDataFrame {
-        public IntList segmentIds = new IntList();
-        public IntList walIds = new IntList();
+        public final IntList segmentIds = new IntList();
+        public final IntList walIds = new IntList();
 
         public void add(int walId, int segmentId) {
             walIds.add(walId);

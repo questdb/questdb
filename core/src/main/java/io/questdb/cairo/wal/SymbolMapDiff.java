@@ -34,4 +34,6 @@ public interface SymbolMapDiff {
     boolean hasNullValue();
 
     SymbolMapDiffEntry nextEntry();
+
+    void drain();
 }

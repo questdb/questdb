@@ -1487,8 +1487,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    // tests scenario where truncate is supported (linux) but fails on close
-    // close is expected not to fail
+    // tests scenario where truncate is supported (linux) but fails on close()
     public void testCannotTruncateColumnOnClose() throws Exception {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
@@ -1624,19 +1623,13 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.NONE, 4);
             try (TableWriter writer = newTableWriter(configuration, PRODUCT, metrics)) {
                 writer.updateCommitInterval(0.0, 1000);
-                writer.setMetaCommitLag(5_000_000);
                 Assert.assertEquals(1000, writer.getCommitInterval());
 
                 writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(5_000_000);
-                Assert.assertEquals(2500, writer.getCommitInterval());
+                Assert.assertEquals(500, writer.getCommitInterval());
 
-                writer.updateCommitInterval(0.5, 1000);
-                writer.setMetaCommitLag(15_000_000);
-                Assert.assertEquals(7500, writer.getCommitInterval());
-
-                writer.updateCommitInterval(0.5, 3000);
-                writer.setMetaCommitLag(0);
+                writer.updateCommitInterval(-0.5, 3000);
+                writer.setMetaO3MaxLag(0);
                 Assert.assertEquals(3000, writer.getCommitInterval());
             }
         });

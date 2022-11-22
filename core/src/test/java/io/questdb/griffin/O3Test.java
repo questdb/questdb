@@ -511,8 +511,8 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testLargeCommitLagContended() throws Exception {
-        executeWithPool(0, O3Test::testLargeCommitLag0);
+    public void testLargeO3MaxLagContended() throws Exception {
+        executeWithPool(0, O3Test::testLargeO3MaxLag0);
     }
 
     @Test
@@ -868,33 +868,33 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void testVanillaCommitLag() throws Exception {
-        executeVanilla(O3Test::testVanillaCommitLag0);
+    public void testVanillaO3MaxLag() throws Exception {
+        executeVanilla(O3Test::testVanillaO3MaxLag0);
     }
 
     @Test
-    public void testVanillaCommitLagContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaCommitLag0);
+    public void testVanillaO3MaxLagContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaO3MaxLag0);
     }
 
     @Test
-    public void testVanillaCommitLagParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaCommitLag0);
+    public void testVanillaO3MaxLagParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaO3MaxLag0);
     }
 
     @Test
-    public void testVanillaCommitLagSinglePartition() throws Exception {
-        executeVanilla(O3Test::testVanillaCommitLagSinglePartition0);
+    public void testVanillaO3MaxLagSinglePartition() throws Exception {
+        executeVanilla(O3Test::testVanillaO3MaxLagSinglePartition0);
     }
 
     @Test
-    public void testVanillaCommitLagSinglePartitionContended() throws Exception {
-        executeWithPool(0, O3Test::testVanillaCommitLagSinglePartition0);
+    public void testVanillaO3MaxLagSinglePartitionContended() throws Exception {
+        executeWithPool(0, O3Test::testVanillaO3MaxLagSinglePartition0);
     }
 
     @Test
-    public void testVanillaCommitLagSinglePartitionParallel() throws Exception {
-        executeWithPool(4, O3Test::testVanillaCommitLagSinglePartition0);
+    public void testVanillaO3MaxLagSinglePartitionParallel() throws Exception {
+        executeWithPool(4, O3Test::testVanillaO3MaxLagSinglePartition0);
     }
 
     @Test
@@ -1681,7 +1681,7 @@ public class O3Test extends AbstractO3Test {
                 r.putSym(1, symbols[index]);
                 r.append();
             }
-            w.commitWithLag();
+            w.ic();
 
             // now do out of order
             for (int i = 0; i < 100_000; i++) {
@@ -4193,9 +4193,9 @@ public class O3Test extends AbstractO3Test {
                 engine,
                 compiler,
                 sqlExecutionContext,
-                "with maxUncommittedRows=10000, commitLag=5d",
+                "with maxUncommittedRows=10000, o3MaxLag=5d",
                 " from long_sequence(100000)",
-                "insert batch 20000 commitLag 3d into x select * from top"
+                "insert batch 20000 o3MaxLag 3d into x select * from top"
         );
     }
 
@@ -4210,11 +4210,11 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "with maxUncommittedRows=400",
                 " from long_sequence(1000000)",
-                "insert batch 100000 commitLag 180s into x select * from top"
+                "insert batch 100000 o3MaxLag 180s into x select * from top"
         );
     }
 
-    private static void testLargeCommitLag0(
+    private static void testLargeO3MaxLag0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -4281,7 +4281,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "create table y as (x union all top)",
                 "y order by ts",
-                "insert batch 2000000 commitLag 180s into x select * from top",
+                "insert batch 2000000 o3MaxLag 180s into x select * from top",
                 "x",
                 "y",
                 "x"
@@ -6421,7 +6421,7 @@ public class O3Test extends AbstractO3Test {
                     }
                 }
                 // Setting the lag is important since we want some rows to remain pending after each commit.
-                w.commitWithLag(1_000L);
+                w.ic(1_000L);
             }
             // Commit pending O3 rows.
             w.commit();
@@ -7360,7 +7360,7 @@ public class O3Test extends AbstractO3Test {
         }
     }
 
-    private static void testVanillaCommitLag0(
+    private static void testVanillaO3MaxLag0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -7371,11 +7371,11 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext,
                 "",
                 " from long_sequence(1000000)",
-                "insert batch 100000 commitLag 180s into x select * from top"
+                "insert batch 100000 o3MaxLag 180s into x select * from top"
         );
     }
 
-    private static void testVanillaCommitLagSinglePartition0(
+    private static void testVanillaO3MaxLagSinglePartition0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
@@ -7442,7 +7442,7 @@ public class O3Test extends AbstractO3Test {
                 // combination of row count in "top" table, batch size and lag value land
                 // rows into single partition, which causes internal state to corrupt
                 // please do not change these values unless you know what you're doing
-                "insert batch 100 commitLag 300s into x select * from top"
+                "insert batch 100 o3MaxLag 300s into x select * from top"
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);

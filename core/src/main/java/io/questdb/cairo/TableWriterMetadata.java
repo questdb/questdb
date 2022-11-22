@@ -31,9 +31,8 @@ import io.questdb.std.Chars;
 
 class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata {
     private final String systemTableName;
-    private long commitLag;
     private int maxUncommittedRows;
-    private int metaFileSize;
+    private long o3MaxLag;
     private long structureVersion;
     private int symbolMapCount;
     private int tableId;
@@ -51,17 +50,13 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getFileDataSize() {
-        return metaFileSize;
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     @Override
@@ -98,7 +93,7 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
         this.version = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
@@ -131,15 +126,14 @@ class TableWriterMetadata extends AbstractRecordMetadata implements TableRecordM
             }
             offset += Vm.getStorageLength(name);
         }
-        metaFileSize = (int) offset;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
     }
 
     public void setMaxUncommittedRows(int rows) {
         this.maxUncommittedRows = rows;
+    }
+
+    public void setO3MaxLag(long o3MaxLagUs) {
+        this.o3MaxLag = o3MaxLagUs;
     }
 
     public void setStructureVersion(long value) {

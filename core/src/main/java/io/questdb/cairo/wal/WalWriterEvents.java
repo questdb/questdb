@@ -37,16 +37,15 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
-import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
     private AtomicIntList initialSymbolCounts;
-    private BoolList symbolNullValues;
     private long startOffset = 0;
+    private BoolList symbolMapNullFlags;
     private long txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
 
@@ -60,6 +59,7 @@ class WalWriterEvents implements Closeable {
     }
 
     private void init() {
+        eventMem.putLong(WALE_HEADER_SIZE + Integer.BYTES);
         eventMem.putInt(WAL_FORMAT_VERSION);
         eventMem.putInt(-1);
         txn = 0;
@@ -156,11 +156,11 @@ class WalWriterEvents implements Closeable {
                 final int initialCount = initialSymbolCounts.get(i);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
                     eventMem.putInt(i);
+                    eventMem.putBool(symbolMapNullFlags.get(i));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
                     eventMem.putInt(size);
-                    eventMem.putInt(symbolNullValues.get(i) ? 1 : 0);
 
                     for (int j = 0; j < size; j++) {
                         final CharSequence symbol = symbolMap.keys().getQuick(j);
@@ -188,13 +188,14 @@ class WalWriterEvents implements Closeable {
         writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
         return txn++;
     }
 
-    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, BoolList symbolNullValues, AtomicIntList initialSymbolCounts) {
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, AtomicIntList initialSymbolCounts, BoolList symbolMapNullFlags) {
         this.txnSymbolMaps = txnSymbolMaps;
         this.initialSymbolCounts = initialSymbolCounts;
-        this.symbolNullValues = symbolNullValues;
+        this.symbolMapNullFlags = symbolMapNullFlags;
     }
 
     void openEventFile(Path path, int pathLen) {
@@ -208,6 +209,7 @@ class WalWriterEvents implements Closeable {
     void rollback() {
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
     }
 
     long sql(int cmdType, CharSequence sql, SqlExecutionContext sqlExecutionContext) {
@@ -221,6 +223,7 @@ class WalWriterEvents implements Closeable {
         writeNamedVariables(bindVariableService);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        eventMem.putLong(WALE_SIZE_OFFSET, eventMem.getAppendOffset());
         return txn++;
     }
 

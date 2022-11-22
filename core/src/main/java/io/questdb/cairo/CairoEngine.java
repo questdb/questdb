@@ -168,6 +168,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    @TestOnly
+    public void closeNameRegistry() {
+        tableNameRegistry.close();
+    }
+
     public void createTable(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
@@ -263,9 +268,38 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    @TestOnly
-    public void closeNameRegistry() {
-        tableNameRegistry.close();
+    public void drop(
+            CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName
+    ) {
+        securityContext.checkWritePermission();
+        validNameOrThrow(tableName);
+        String systemTableName = getSystemTableName(tableName);
+
+        if (isWalTableName(tableName)) {
+            if (tableNameRegistry.removeWalTableName(tableName, systemTableName)) {
+                tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
+            }
+        } else {
+            CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
+            if (null == lockedReason) {
+                try {
+                    path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
+                    int errno;
+                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
+                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableName).put(", systemTableName=").put(systemTableName).put(']');
+                    }
+                } finally {
+                    unlock(securityContext, tableName, null, false);
+                }
+
+                tableNameRegistry.deleteNonWalName(tableName, systemTableName);
+                return;
+            }
+            throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
+        }
     }
 
     public TableWriter getBackupWriter(
@@ -468,26 +502,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.getTableSystemNames();
     }
 
-    public Sequence getTelemetryPubSequence() {
-        return telemetryPubSeq;
-    }
-
-    public RingQueue<TelemetryTask> getTelemetryQueue() {
-        return telemetryQueue;
-    }
-
-    public SCSequence getTelemetrySubSequence() {
-        return telemetrySubSeq;
-    }
-
-    public TextImportExecutionContext getTextImportExecutionContext() {
-        return textImportExecutionContext;
-    }
-
-    public long getUnpublishedWalTxnCount() {
-        return unpublishedWalTxnCount.get();
-    }
-
     @Override
     public TableWriterAPI getTableWriterAPI(
             CairoSecurityContext securityContext,
@@ -506,6 +520,26 @@ public class CairoEngine implements Closeable, WriterSource {
 
         }
         return walWriterPool.get(tableNameRecord.systemTableName);
+    }
+
+    public Sequence getTelemetryPubSequence() {
+        return telemetryPubSeq;
+    }
+
+    public RingQueue<TelemetryTask> getTelemetryQueue() {
+        return telemetryQueue;
+    }
+
+    public SCSequence getTelemetrySubSequence() {
+        return telemetrySubSeq;
+    }
+
+    public TextImportExecutionContext getTextImportExecutionContext() {
+        return textImportExecutionContext;
+    }
+
+    public long getUnpublishedWalTxnCount() {
+        return unpublishedWalTxnCount.get();
     }
 
     // For testing only
@@ -532,6 +566,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.get(getSystemTableName(tableName));
     }
 
+    public TableWriter getWriter(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            String lockReason
+    ) {
+        securityContext.checkWritePermission();
+        validNameOrThrow(tableName);
+        String systemTableName = getSystemTableName(tableName);
+        return writerPool.get(systemTableName, lockReason);
+    }
+
     public TableWriter getWriterBySystemName(
             CairoSecurityContext securityContext,
             String systemTableName,
@@ -552,66 +597,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getWriterOrPublishCommand(systemTableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
-    public TableWriter getWriter(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            String lockReason
-    ) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        String systemTableName = getSystemTableName(tableName);
-        return writerPool.get(systemTableName, lockReason);
-    }
-
-    public void drop(
-            CairoSecurityContext securityContext,
-            Path path,
-            CharSequence tableName
-    ) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        String systemTableName = getSystemTableName(tableName);
-
-        if (isWalTableName(tableName)) {
-            if (tableNameRegistry.removeWalTableName(tableName, systemTableName)) {
-                tableSequencerAPI.dropTable(Chars.toString(tableName), Chars.toString(systemTableName), false);
-            }
-        } else {
-            CharSequence lockedReason = lock(securityContext, systemTableName, "removeTable");
-            if (null == lockedReason) {
-                try {
-                    path.of(configuration.getRoot()).concat(getSystemTableName(tableName)).$();
-                    int errno;
-                    if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
-                        throw CairoException.critical(errno).put("could not remove table [name=").put(tableName).put(", systemTableName=").put(systemTableName).put(']');
-                    }
-                } finally {
-                    unlock(securityContext, tableName, null, false);
-                }
-
-                tableNameRegistry.deleteNonWalName(tableName, systemTableName);
-                return;
-            }
-            throw CairoException.nonCritical().put("Could not lock '").put(tableName).put("' [reason='").put(lockedReason).put("']");
-        }
-    }
-
-    public boolean lockReaders(CharSequence tableName) {
-        validNameOrThrow(tableName);
-        return readerPool.lock(getSystemTableName(tableName));
-    }
-
-    public boolean lockReadersBySystemName(CharSequence systemTableName) {
-        return readerPool.lock(systemTableName);
-    }
-
-    public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
-        securityContext.checkWritePermission();
-        validNameOrThrow(tableName);
-        return writerPool.lock(getSystemTableName(tableName), lockReason);
-    }
-
     public boolean isWalSystemTableName(CharSequence systemTableName) {
         return tableNameRegistry.isWalSystemTableName(systemTableName);
     }
@@ -620,33 +605,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isWalTableDropped(systemTableName);
     }
 
-    public void notifyWalTxnRepublisher() {
-        unpublishedWalTxnCount.incrementAndGet();
-    }
-
-    @TestOnly
-    public boolean releaseAllReaders() {
-        boolean b1 = metadataPool.releaseAll();
-        return readerPool.releaseAll() & b1;
-    }
-
-    @TestOnly
-    public void releaseAllWriters() {
-        writerPool.releaseAll();
-    }
-
-    public boolean releaseInactive() {
-        boolean useful = writerPool.releaseInactive();
-        useful |= readerPool.releaseInactive();
-        useful |= tableSequencerAPI.releaseInactive();
-        useful |= metadataPool.releaseInactive();
-        useful |= walWriterPool.releaseInactive();
-        return useful;
-    }
-
-    @TestOnly
-    public void releaseInactiveCompilers() {
-        sqlCompilerPool.releaseInactive();
+    public boolean isWalTableName(CharSequence tableName) {
+        return tableNameRegistry.isWalTableName(tableName);
     }
 
     public String lock(
@@ -674,12 +634,19 @@ public class CairoEngine implements Closeable, WriterSource {
 
     }
 
-    public void releaseReadersBySystemName(CharSequence systemTableName) {
-        readerPool.unlock(systemTableName);
+    public boolean lockReaders(CharSequence tableName) {
+        validNameOrThrow(tableName);
+        return readerPool.lock(getSystemTableName(tableName));
     }
 
-    public boolean isWalTableName(CharSequence tableName) {
-        return tableNameRegistry.isWalTableName(tableName);
+    public boolean lockReadersBySystemName(CharSequence systemTableName) {
+        return readerPool.lock(systemTableName);
+    }
+
+    public CharSequence lockWriter(CairoSecurityContext securityContext, CharSequence tableName, String lockReason) {
+        securityContext.checkWritePermission();
+        validNameOrThrow(tableName);
+        return writerPool.lock(getSystemTableName(tableName), lockReason);
     }
 
     public void notifyWalTxnCommitted(int tableId, String systemTableName, long txn) {
@@ -702,10 +669,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public int removeDirectory(@Transient Path path, CharSequence dir) {
-        path.of(configuration.getRoot()).concat(dir);
-        final FilesFacade ff = configuration.getFilesFacade();
-        return ff.rmdir(path.slash$());
+    public void notifyWalTxnRepublisher() {
+        unpublishedWalTxnCount.incrementAndGet();
     }
 
     public String registerTableName(CharSequence tableName, boolean isWal) {
@@ -732,8 +697,49 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
+    public boolean releaseAllReaders() {
+        boolean b1 = metadataPool.releaseAll();
+        return readerPool.releaseAll() & b1;
+    }
+
+    @TestOnly
+    public void releaseAllWriters() {
+        writerPool.releaseAll();
+    }
+
+    public boolean releaseInactive() {
+        boolean useful = writerPool.releaseInactive();
+        useful |= readerPool.releaseInactive();
+        useful |= tableSequencerAPI.releaseInactive();
+        useful |= metadataPool.releaseInactive();
+        useful |= walWriterPool.releaseInactive();
+        return useful;
+    }
+
+    @TestOnly
+    public void releaseInactiveCompilers() {
+        sqlCompilerPool.releaseInactive();
+    }
+
+    @TestOnly
+    public void releaseInactiveTableSequencers() {
+        walWriterPool.releaseInactive();
+        tableSequencerAPI.releaseInactive();
+    }
+
+    public void releaseReadersBySystemName(CharSequence systemTableName) {
+        readerPool.unlock(systemTableName);
+    }
+
+    @TestOnly
     public void reloadTableNames() {
         tableNameRegistry.reloadTableNameCache();
+    }
+
+    public int removeDirectory(@Transient Path path, CharSequence dir) {
+        path.of(configuration.getRoot()).concat(dir);
+        final FilesFacade ff = configuration.getFilesFacade();
+        return ff.rmdir(path.slash$());
     }
 
     public void removeTableSystemName(String tableName) {
@@ -781,12 +787,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetNameRegistryMemory() {
         tableNameRegistry.resetMemory();
-    }
-
-    @TestOnly
-    public void releaseInactiveTableSequencers() {
-        walWriterPool.releaseInactive();
-        tableSequencerAPI.releaseInactive();
     }
 
     @TestOnly

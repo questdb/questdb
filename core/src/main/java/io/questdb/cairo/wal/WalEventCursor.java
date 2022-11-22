@@ -34,6 +34,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
+import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
@@ -49,6 +50,27 @@ public class WalEventCursor {
 
     public WalEventCursor(MemoryMR eventMem) {
         this.eventMem = eventMem;
+    }
+
+    public void drain() {
+        long o = offset;
+        while (true) {
+            if (memSize >= o + Integer.BYTES) {
+                final int value = eventMem.getInt(o);
+                o += Integer.BYTES;
+                if (value == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
+                    offset = o;
+                    break;
+                }
+
+                final int strLength = eventMem.getStrLen(o);
+                final long storageLength = Vm.getStorageLength(strLength);
+                o += storageLength;
+            } else {
+                throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+                        .put(", required=").put(o + Integer.BYTES);
+            }
+        }
     }
 
     public DataInfo getDataInfo() {
@@ -92,7 +114,7 @@ public class WalEventCursor {
 
     public void reset() {
         memSize = eventMem.size();
-        nextOffset = Integer.BYTES; // skip wal meta version
+        nextOffset = WALE_HEADER_SIZE; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
     }
@@ -202,11 +224,11 @@ public class WalEventCursor {
         if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
             return null;
         }
+        final boolean nullFlag = readBool();
         final int cleanTableSymbolCount = readInt();
         final int size = readInt();
-        final boolean hasNullValue = readInt() != 0;
 
-        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, hasNullValue, size);
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size, nullFlag);
         return symbolMapDiff;
     }
 

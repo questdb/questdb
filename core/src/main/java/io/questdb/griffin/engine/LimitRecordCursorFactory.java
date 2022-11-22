@@ -199,11 +199,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         long baseRowCount = base.size();
                         if (baseRowCount > -1L) {//don't want to cause a pass-through whole data set
                             limit = Math.max(0, Math.min(baseRowCount, hi) - lo);
-                            size = limit;
                         } else {
                             limit = Math.max(0, hi - lo);//doesn't handle hi exceeding number of rows
-                            size = limit;
                         }
+                        size = limit;
                     }
 
                     if (lo > 0 && limit > 0) {

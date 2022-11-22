@@ -238,11 +238,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
-    public SqlExecutionContextImpl with(
-            long requestFd
-    ) {
+    public void with(long requestFd) {
         this.requestFd = requestFd;
-        return this;
     }
 
     public SqlExecutionContextImpl with(

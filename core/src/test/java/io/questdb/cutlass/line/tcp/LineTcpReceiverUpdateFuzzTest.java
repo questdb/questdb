@@ -170,7 +170,9 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
-        final Rnd rnd = TestUtils.generateRandom();
+        // use different random
+        System.out.println("thread random");
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         new Thread(() -> {
             String sql = "";
             try {
@@ -226,9 +228,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         // wait for update threads to finish
         updatesDone.await();
 
-        // Repeat all updates after all lines are guaranteed to be landed in the tables
+        // wait for ingestion to finish
         super.waitDone();
 
+        // repeat all updates after all lines are guaranteed to be landed in the tables
         final SqlCompiler compiler = compilers[0];
         final SqlExecutionContext executionContext = executionContexts[0];
         for (String sql : updatesQueue) {

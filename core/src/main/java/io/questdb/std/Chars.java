@@ -26,11 +26,7 @@ package io.questdb.std;
 
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.CharSinkBase;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -829,7 +825,7 @@ public final class Chars {
         }
         sink.clear();
         if (startIdx != endIdx) {
-            sink.put(str, startIdx, endIdx+1);
+            sink.put(str, startIdx, endIdx + 1);
         }
     }
 

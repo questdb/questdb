@@ -31,73 +31,73 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
-
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
-            RecordMetadata tableMetadata,
+            RecordMetadata metadata,
             Rnd rnd,
             long minTimestamp,
             long maxTimestamp,
             int rowCount,
-            boolean o3,
-            double cancelRows,
-            double notSet,
-            double nullSet,
-            double rollback,
-            double collAdd,
-            double collRemove,
-            double colRename,
-            double dataAdd,
             int transactionCount,
-            int strLen,
-            String[] symbols) {
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfDataInsert,
+            int maxStrLenForStrColumns,
+            String[] symbols
+    ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int metaVersion = 0;
+        RecordMetadata meta = GenericRecordMetadata.deepCopyOf(metadata);
 
         long lastTimestamp = minTimestamp;
-        double totalProbs = collAdd + collRemove + collRemove + dataAdd;
-        collAdd = collAdd / totalProbs;
-        collRemove = collRemove / totalProbs;
-        colRename = colRename / totalProbs;
+        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert;
+        probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
+        probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
+        probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
 
         // Reduce some random parameters if there is too much data so test can finish in reasonable time
         transactionCount = Math.min(transactionCount, 10 * 1_000_000 / rowCount);
 
         for (int i = 0; i < transactionCount; i++) {
-            double transactionType = getZeroToOneDouble(rnd);
-            if (transactionType < collRemove) {
+            double transactionType = rnd.nextDouble();
+            if (transactionType < probabilityOfRemovingColumn) {
                 // generate column remove
-                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, tableMetadata);
+                RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
-                    tableMetadata = newTableMetadata;
+                    meta = newTableMetadata;
                 }
-            } else if (transactionType < collRemove + colRename) {
+            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn) {
                 // generate column rename
-                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, tableMetadata);
+                RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
                     metaVersion++;
-                    tableMetadata = newTableMetadata;
+                    meta = newTableMetadata;
                 }
-            } else if (transactionType < collAdd + collRemove + colRename && getNonDeletedColumnCount(tableMetadata) < MAX_COLUMNS) {
+            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 // generate column add
-                tableMetadata = generateAddColumn(transactionList, metaVersion++, rnd, tableMetadata);
+                meta = generateAddColumn(transactionList, metaVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
                 if (i < transactionCount - 1) {
-                    blockRows = (int) ((getZeroToOneDouble(rnd) * 0.5 + 0.5) * blockRows);
+                    blockRows = (int) ((rnd.nextDouble() * 0.5 + 0.5) * blockRows);
                 }
 
                 final long startTs, stopTs;
                 if (o3) {
                     long offset = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * i);
-                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * getZeroToOneDouble(rnd));
+                    long jitter = (long) ((maxTimestamp - minTimestamp + 1.0) / transactionCount * rnd.nextDouble());
                     if (rnd.nextBoolean()) {
                         startTs = (minTimestamp + offset + jitter);
                     } else {
@@ -108,11 +108,27 @@ public class FuzzTransactionGenerator {
                 }
                 long size = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
-                    size *= getZeroToOneDouble(rnd);
+                    size *= rnd.nextDouble();
                 }
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
-                generateDataBlock(transactionList, rnd, tableMetadata, metaVersion, startTs, stopTs, blockRows, o3, cancelRows, notSet, nullSet, rollback, strLen, symbols, rnd.nextLong(), transactionCount);
+                generateDataBlock(
+                        transactionList,
+                        rnd,
+                        metaVersion,
+                        startTs,
+                        stopTs,
+                        blockRows,
+                        o3,
+                        probabilityOfCancelRow,
+                        probabilityOfUnassignedColumnValue,
+                        probabilityOfAssigningNull,
+                        probabilityOfTransactionRollback,
+                        maxStrLenForStrColumns,
+                        symbols,
+                        rnd.nextLong(),
+                        transactionCount
+                );
                 rowCount -= blockRows;
                 lastTimestamp = stopTs;
             }
@@ -140,7 +156,7 @@ public class FuzzTransactionGenerator {
     }
 
     private static int generateNewColumnType(Rnd rnd) {
-        return FuzzInsertOperation.SUPPORTED_COLUM_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUM_TYPES.length)];
+        return FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
     }
 
     private static RecordMetadata generateRenameColumn(ObjList<FuzzTransaction> transactionList, int metadataVersion, Rnd rnd, RecordMetadata tableMetadata) {
@@ -161,7 +177,7 @@ public class FuzzTransactionGenerator {
                     }
                 }
 
-                transaction.operationList.add(new FuzzRenameColumnOperation(tableMetadata, columnName, newColName));
+                transaction.operationList.add(new FuzzRenameColumnOperation(columnName, newColName));
                 transaction.structureVersion = metadataVersion;
                 transactionList.add(transaction);
 
@@ -228,10 +244,9 @@ public class FuzzTransactionGenerator {
     static void generateDataBlock(
             ObjList<FuzzTransaction> transactionList,
             Rnd rnd,
-            RecordMetadata tableModel,
             int metadataVersion,
-            long minTimestamp,
-            long maxTimestamp,
+            long startTs,
+            long stopTs,
             int rowCount,
             boolean o3,
             double cancelRows,
@@ -241,24 +256,25 @@ public class FuzzTransactionGenerator {
             int strLen,
             String[] symbols,
             long seed,
-            long tsRound
+            long transactionCount
     ) {
         FuzzTransaction transaction = new FuzzTransaction();
-        long timestamp = minTimestamp;
+        long timestamp = startTs;
+        final long delta = stopTs - startTs;
         for (int i = 0; i < rowCount; i++) {
             if (o3) {
-                timestamp = ((minTimestamp + rnd.nextLong(maxTimestamp - minTimestamp)) / tsRound) * tsRound + i;
+                timestamp = ((startTs + rnd.nextLong(delta)) / transactionCount) * transactionCount + i;
             } else {
-                timestamp = timestamp + (maxTimestamp - minTimestamp) / rowCount;
+                timestamp = timestamp + delta / rowCount;
             }
             // Use stable random seeds which depends on the transaction index and timestamp
             // This will generate same row for same timestamp so that tests will not fail on reordering within same timestamp
             long seed1 = seed + timestamp;
             long seed2 = timestamp;
-            transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, tableModel, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
-        transaction.rollback = getZeroToOneDouble(rnd) < rollback;
+        transaction.rollback = rnd.nextDouble() < rollback;
         transaction.structureVersion = metadataVersion;
         transactionList.add(transaction);
     }
@@ -277,7 +293,7 @@ public class FuzzTransactionGenerator {
             int type = tableMetadata.getColumnType(columnIndex);
             if (type > 0 && columnIndex != tableMetadata.getTimestampIndex()) {
                 String columnName = tableMetadata.getColumnName(columnIndex);
-                transaction.operationList.add(new FuzzDropColumnOperation(tableMetadata, columnName));
+                transaction.operationList.add(new FuzzDropColumnOperation(columnName));
                 transaction.structureVersion = metadataVersion;
                 transactionList.add(transaction);
                 FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();

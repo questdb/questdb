@@ -56,11 +56,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWithFollowedByInvalidToken() throws Exception {
-        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
-    }
-
-    @Test
     public void testAliasSecondJoinTable() throws SqlException {
         assertQuery(
                 "select-choose tx.a a, tx.b b from (select [a, b, xid] from x tx outer join select [yid, a, b] from y ty on yid = xid post-join-where ty.a = 1 or ty.b = 2) tx",
@@ -1984,14 +1979,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableWitInvalidCommitLag() throws Exception {
-        assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH commitLag=asif,",
-                90,
-                "invalid interval qualifier asif");
-    }
-
-    @Test
     public void testCreateTableWitInvalidMaxUncommittedRows() throws Exception {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=asif,",
@@ -2000,17 +1987,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableWitInvalidO3MaxLag() throws Exception {
+        assertSyntaxError(
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH o3MaxLag=asif,",
+                89,
+                "invalid interval qualifier asif");
+    }
+
+    @Test
     public void testCreateTableWithGeoHash1() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (gh GEOHASH(8c), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
                 "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
@@ -2059,7 +2054,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableWithInvalidParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x commitLag=250ms",
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000 x o3MaxLag=250ms",
                 96,
                 "unexpected token: x");
     }
@@ -2068,22 +2063,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableWithO3() throws Exception {
         assertCreateTable(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY",
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=250ms;");
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=250ms;");
     }
 
     @Test
     public void testCreateTableWithPartialParameter1() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag=",
-                106,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag=",
+                105,
                 "too few arguments for '=' [found=1,expected=2]");
     }
 
     @Test
     public void testCreateTableWithPartialParameter2() throws Exception {
         assertSyntaxError(
-                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, commitLag",
-                106,
+                "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3MaxLag",
+                105,
                 "expected parameter after WITH");
     }
 
@@ -3050,7 +3045,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInsertAsSelectBatchSizeAndLag() throws SqlException {
         assertModel(
                 "insert batch 10000 lag 100000 into x select-choose c, d from (select [c, d] from y)",
-                "insert batch 10000 commitLag 100ms into x select * from y",
+                "insert batch 10000 o3MaxLag 100ms into x select * from y",
                 ExecutionModel.INSERT,
                 modelOf("x")
                         .col("a", ColumnType.INT)
@@ -3117,8 +3112,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInsertAsSelectNegativeLag() throws Exception {
         assertSyntaxError(
-                "insert batch 2 commitLag -4s into x select * from y",
-                26, "invalid interval qualifier -",
+                "insert batch 2 o3MaxLag -4s into x select * from y",
+                25, "invalid interval qualifier -",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -7488,6 +7483,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testWithFollowedByInvalidToken() throws Exception {
+        assertFailure("with x as (select * from long_sequence(1)) create", null, 43, "'select' | 'update' | 'insert' expected");
     }
 
     @Test

@@ -1461,10 +1461,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     static class PartitionInfo {
-        long bytes;
+        final long bytes;
+        final long key;
+        final CharSequence name;
         long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them)
-        long key;
-        CharSequence name;
         int taskId;//assigned worker/task id
 
         PartitionInfo(long key, CharSequence name, long bytes) {
@@ -1529,11 +1529,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getCommitLag() {
-            return configuration.getCommitLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
         }
@@ -1541,6 +1536,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return configuration.getO3MaxLag();
         }
 
         @Override

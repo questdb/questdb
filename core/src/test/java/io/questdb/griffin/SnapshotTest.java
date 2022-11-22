@@ -268,7 +268,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null,
                 tableName
         );
@@ -516,7 +516,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
                             Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
-                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
+                            Assert.assertEquals(metadata0.getO3MaxLag(), metadata.getO3MaxLag());
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {

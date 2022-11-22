@@ -30,9 +30,9 @@ import io.questdb.mp.WorkerPool;
 public class WalUtils {
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WALID = -2;
-    public static final int RENAME_TABLE_WALID = -3;
     public static final String EVENT_FILE_NAME = "_event";
     public static final int METADATA_WALID = -1;
+    public static final int RENAME_TABLE_WALID = -3;
     public static final String SEQ_DIR = "txn_seq";
     public static final long SEQ_META_OFFSET_WAL_LENGTH = 0;
     public static final long SEQ_META_OFFSET_WAL_VERSION = SEQ_META_OFFSET_WAL_LENGTH + Integer.BYTES;
@@ -45,6 +45,9 @@ public class WalUtils {
     public static final String TXNLOG_FILE_NAME = "_txnlog";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
+    public static final int WALE_HEADER_SIZE = Long.BYTES + Integer.BYTES;
+    public static final long WALE_SIZE_OFFSET = 0L;
+    public static final int WAL_FORMAT_OFFSET = Long.BYTES;
     public static final int WAL_FORMAT_VERSION = 0;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";

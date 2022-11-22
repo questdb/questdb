@@ -810,7 +810,6 @@ public class SecurityTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testMemoryRestrictionsWithUnion() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();

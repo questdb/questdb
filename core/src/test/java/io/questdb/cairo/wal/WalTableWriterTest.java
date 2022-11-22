@@ -221,7 +221,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     int rowCount = rnd.nextInt(1000) + 2;
                     tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
 
-                    LOG.infoW().$("generating wall [")
+                    LOG.infoW().$("generating wal [")
                             .$("iteration:").$(i)
                             .$(", walIndex: ").$(walIndex)
                             .$(", inOrder: ").$(inOrder)
@@ -231,7 +231,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                     addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
 
-                    LOG.info().$("verifying wall [").$("iteration:").$(i).I$();
+                    LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                     start += rowCount * tsIncrement + 1;
@@ -276,7 +276,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     tsOffset *= sign == 0 ? -1 : 1;
                     start += tsOffset;
 
-                    LOG.infoW().$("generating wall [")
+                    LOG.infoW().$("generating wal [")
                             .$("iteration:").$(i)
                             .$(", walIndex: ").$(walIndex)
                             .$(", inOrder: ").$(inOrder)
@@ -293,7 +293,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
                     addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
 
-                    LOG.info().$("verifying wall [").$("iteration:").$(i).I$();
+                    LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                     start += rowCount * tsIncrement + 1;

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
@@ -48,7 +47,7 @@ public class CastStrToRegProcedureFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         return REG_PROC_CONST;
     }
 }

@@ -121,13 +121,13 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
      * Initializes instance of OperationFuture with the parameters to wait for the new command
      * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
      */
-    public OperationFutureImpl of(
+    public void of(
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
             SCSequence eventSubSeq,
             int tableNamePositionInSql,
             boolean closeOnDone
-    ) throws SqlException, AlterTableContextException {
+    ) throws AlterTableContextException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
         this.tableNamePositionInSql = tableNamePositionInSql;
@@ -171,7 +171,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             }
 
             queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), correlationId);
-            return this;
         } catch (Throwable ex) {
             close();
             throw ex;

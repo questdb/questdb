@@ -50,10 +50,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
@@ -67,26 +68,6 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void tearDown() {
         super.tearDown();
         currentMicros = -1L;
-    }
-
-    @Test
-    public void tesWalWritersUnknownTable() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts") // not a WAL table
-            ) {
-                createTable(model);
-            }
-            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.fail();
-            } catch (CairoException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("could not open read-write"));
-                MatcherAssert.assertThat(e.getMessage(), containsString(tableName));
-            }
-        });
     }
 
     @Test
@@ -2834,6 +2815,109 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
         });
     }
+
+    @Test
+    public void testWalEvenReaderConcurrentReadWrite() throws Exception {
+        AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            long eventFileFd;
+
+            @Override
+            public long length(long fd) {
+                long len = super.length(fd);
+                if (fd == eventFileFd && evenFileLengthCallBack.get() != null) {
+                    try {
+                        evenFileLengthCallBack.get().run();
+                        evenFileLengthCallBack.set(null);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return len;
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (fd == eventFileFd) {
+                    if (evenFileLengthCallBack.get() != null) {
+                        try {
+                            evenFileLengthCallBack.get().run();
+                            evenFileLengthCallBack.set(null);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+
+                    // Windows does not allow to map beyond file length
+                    // simulate it with asserts for all other platforms
+                    MatcherAssert.assertThat(offset + len, lessThanOrEqualTo(super.length(fd)));
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ path) {
+                long fd = super.openRO(path);
+                if (Chars.endsWith(path, EVENT_FILE_NAME)) {
+                    eventFileFd = fd;
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = testName.getMethodName();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal()
+            ) {
+                createTable(model);
+            }
+
+            WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+            TableWriter.Row row = walWriter.newRow(0);
+            row.putInt(0, 1);
+            row.append();
+
+            walWriter.commit();
+
+            evenFileLengthCallBack.set(() -> {
+                // Close wal segments after the moment when _even file length is taken
+                // but before it's mapped to memory
+                walWriter.close();
+                engine.releaseInactive();
+            });
+
+            drainWalQueue();
+
+            assertSql(tableName, "a\tb\tts\n" +
+                    "1\t\t1970-01-01T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testWalWritersUnknownTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts") // not a WAL table
+            ) {
+                createTable(model);
+            }
+            try (WalWriter ignored = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                Assert.fail();
+            } catch (CairoException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("could not open read-write"));
+                MatcherAssert.assertThat(e.getMessage(), containsString(tableName));
+            }
+        });
+    }
+
     private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()

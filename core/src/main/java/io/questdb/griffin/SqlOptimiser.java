@@ -2040,7 +2040,8 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        if (model.isUpdate()) {
+        if (model.isUpdate() && !executionContext.isWalApplication()) {
+            assert lo == 0;
             try (TableRecordMetadata metadata = executionContext.getMetadata(tableName)) {
                 enumerateColumns(model, metadata);
             } catch (CairoException e) {

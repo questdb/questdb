@@ -24,9 +24,12 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -35,9 +38,10 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
+    private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
     private final MemoryMR eventMem;
     private final FilesFacade ff;
@@ -55,12 +59,24 @@ public class WalEventReader implements Closeable {
     }
 
     public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
+        int trimTo = path.length();
         try {
-            openSmallFile(ff, path, path.length(), eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
+            long fd = openRO(ff, path.concat(EVENT_FILE_NAME).$(), LOG);
 
-            // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
-            checkMemSize(eventMem, Integer.BYTES + Long.BYTES);
-            validateMetaVersion(eventMem, 0, expectedVersion);
+            // read event file size to map to correct length.
+            long size;
+            try {
+                size = ff.readNonNegativeLong(fd, WALE_SIZE_OFFSET);
+            } finally {
+                ff.close(fd);
+            }
+
+            if (size < WALE_HEADER_SIZE + Integer.BYTES) {
+                // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
+                throw CairoException.critical(0).put("File is too small, size=").put(size).put(", required=").put(WALE_HEADER_SIZE);
+            }
+            eventMem.of(ff, path, ff.getPageSize(), size, MemoryTag.MMAP_TABLE_WAL_READER, CairoConfiguration.O_NONE, -1);
+            validateMetaVersion(eventMem, WAL_FORMAT_OFFSET, expectedVersion);
 
             if (eventCursor.setPosition(segmentTxn)) {
                 return eventCursor;
@@ -70,6 +86,8 @@ public class WalEventReader implements Closeable {
         } catch (Throwable e) {
             close();
             throw e;
+        } finally {
+            path.trimTo(trimTo);
         }
     }
 }

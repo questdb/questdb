@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1025,12 +1024,12 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableNamePosition, tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLagKeyword(paramName)) {
-            long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
-            if (commitLag < 0) {
-                throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
+        } else if (isO3MaxLagKeyword(paramName)) {
+            long o3MaxLag = SqlUtil.expectMicros(value, paramNameNamePosition);
+            if (o3MaxLag < 0) {
+                throw SqlException.$(paramNameNamePosition, "o3MaxLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableNamePosition, tableName, tableId, commitLag).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetO3MaxLag(tableNamePosition, tableName, tableId, o3MaxLag).build());
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -1264,14 +1263,14 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag, circuitBreaker);
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, commitLag, circuitBreaker);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker);
         }
         writer.commit();
 
@@ -1285,7 +1284,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
@@ -1297,7 +1296,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.commitWithLag(commitLag);
+                writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1312,7 +1311,7 @@ public class SqlCompiler implements Closeable {
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long commitLag,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long deadline = batchSize;
@@ -1326,7 +1325,7 @@ public class SqlCompiler implements Closeable {
             copier.copy(record, row);
             row.append();
             if (++rowCount > deadline) {
-                writer.commitWithLag(commitLag);
+                writer.ic(o3MaxLag);
                 deadline = rowCount + batchSize;
             }
         }
@@ -1355,6 +1354,26 @@ public class SqlCompiler implements Closeable {
         }
 
         return rowCount;
+    }
+
+    /*
+     * Returns number of copied rows.
+     */
+    private long copyTableData(
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            TableWriterAPI writer,
+            RecordMetadata
+                    writerMetadata,
+            RecordToRowCopier recordToRowCopier,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        int timestampIndex = writerMetadata.getTimestampIndex();
+        if (timestampIndex == -1) {
+            return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
+        } else {
+            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
+        }
     }
 
     /**
@@ -1422,32 +1441,12 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /*
-     * Returns number of copied rows.
-     */
-    private long copyTableData(
-            RecordCursor cursor,
-            RecordMetadata metadata,
-            TableWriterAPI writer,
-            RecordMetadata
-                    writerMetadata,
-            RecordToRowCopier recordToRowCopier,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) throws SqlException {
-        int timestampIndex = writerMetadata.getTimestampIndex();
-        if (timestampIndex == -1) {
-            return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
-        } else {
-            return copyOrdered(writer, metadata, cursor, recordToRowCopier, timestampIndex, circuitBreaker);
-        }
-    }
-
     private void copyTableReaderMetadataToCreateTableModel(SqlExecutionContext executionContext, CreateTableModel model) throws SqlException {
         ExpressionNode likeTableName = model.getLikeTableName();
         CharSequence likeTableNameToken = likeTableName.token;
         tableExistsOrFail(likeTableName.position, likeTableNameToken, executionContext);
         try (TableReader rdr = executionContext.getReader(likeTableNameToken)) {
-            model.setCommitLag(rdr.getCommitLag());
+            model.setO3MaxLag(rdr.getO3MaxLag());
             model.setMaxUncommittedRows(rdr.getMaxUncommittedRows());
             TableReaderMetadata rdrMetadata = rdr.getMetadata();
             for (int i = 0; i < rdrMetadata.getColumnCount(); i++) {
@@ -1973,7 +1972,7 @@ public class SqlCompiler implements Closeable {
                                     copier,
                                     writerTimestampIndex,
                                     model.getBatchSize(),
-                                    model.getCommitLag(),
+                                    model.getO3MaxLag(),
                                     circuitBreaker
                             );
                         } else {
@@ -2610,11 +2609,6 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public long getCommitLag() {
-            return model.getCommitLag();
-        }
-
-        @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return model.getIndexBlockCapacity(columnIndex);
         }
@@ -2622,6 +2616,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public int getMaxUncommittedRows() {
             return model.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return model.getO3MaxLag();
         }
 
         @Override
@@ -2730,11 +2729,6 @@ public class SqlCompiler implements Closeable {
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .$(']').$();
-                } catch (SqlException e) {
-                    LOG.error()
-                            .$("could not backup [path=").$(fileNameSink)
-                            .$(", e=").$(e.getFlyweightMessage())
-                            .$(']').$();
                 }
             }
         };
@@ -2767,7 +2761,7 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
@@ -2812,11 +2806,11 @@ public class SqlCompiler implements Closeable {
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
-            } catch (CairoException | SqlException e) {
+            } catch (CairoException e) {
                 LOG.info()
                         .$("could not backup [table=").$(tableName)
                         .$(", ex=").$(e.getFlyweightMessage())
-                        .$(", errno=").$((e instanceof CairoException) ? ((CairoException) e).getErrno() : 0)
+                        .$(", errno=").$(e.getErrno())
                         .$(']').$();
 
                 srcPath.of(cachedTmpBackupRoot).concat(systemTableName).slash$();

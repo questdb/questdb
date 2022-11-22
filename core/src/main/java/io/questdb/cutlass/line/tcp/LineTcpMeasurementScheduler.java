@@ -50,6 +50,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final ObjList<TableUpdateDetails>[] assignedTables;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final LineTcpReceiverConfiguration configuration;
@@ -108,6 +109,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        //noinspection unchecked
+        assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);
             pubSeq[i] = ps;
@@ -135,6 +138,8 @@ class LineTcpMeasurementScheduler implements Closeable {
             SCSequence subSeq = new SCSequence();
             ps.then(subSeq).then(ps);
 
+            assignedTables[i] = new ObjList<>();
+
             final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
                     i,
                     q,
@@ -142,7 +147,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                     milliClock,
                     commitIntervalDefault,
                     this,
-                    engine.getMetrics()
+                    engine.getMetrics(),
+                    assignedTables[i]
             );
             writerWorkerPool.assign(i, lineTcpWriterJob);
             writerWorkerPool.freeOnExit(lineTcpWriterJob);
@@ -155,15 +161,17 @@ class LineTcpMeasurementScheduler implements Closeable {
     public void close() {
         tableUpdateDetailsLock.writeLock().lock();
         try {
-            closeLocals(
-                    tableUpdateDetailsUtf16);
-            closeLocals(
-                    idleTableUpdateDetailsUtf16);
+            closeLocals(tableUpdateDetailsUtf16);
+            closeLocals(idleTableUpdateDetailsUtf16);
         } finally {
             tableUpdateDetailsLock.writeLock().unlock();
         }
         Misc.free(path);
         Misc.free(ddlMem);
+        for (int i = 0, n = assignedTables.length; i < n; i++) {
+            Misc.freeObjList(assignedTables[i]);
+            assignedTables[i].clear();
+        }
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);

@@ -25,9 +25,8 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.griffin.SqlException;
 
 @FunctionalInterface
 public interface PGAuthenticator {
-    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, SqlException, AuthenticationException;
+    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, AuthenticationException;
 }

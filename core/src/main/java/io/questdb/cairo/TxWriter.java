@@ -244,7 +244,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+    public void reset(
+            long fixedRowCount,
+            long transientRowCount,
+            long maxTimestamp,
+            int commitMode,
+            ObjList<? extends SymbolCountProvider> symbolCountProviders
+    ) {
         recordStructureVersion++;
         this.fixedRowCount = fixedRowCount;
         this.maxTimestamp = maxTimestamp;
@@ -542,8 +548,33 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionTableVersion++;
     }
 
-    void resetToLastPartition(long committedTransientRowCount) {
-        resetToLastPartition(committedTransientRowCount, getLong(TX_OFFSET_MAX_TIMESTAMP_64));
+    // It is possible that O3 commit will create partition just before
+    // the last one, leaving last partition row count 0 when doing ic().
+    // That's when the data from the last partition is moved to in-memory lag.
+    // One way to detect this is to check if index of the "last" partition is not
+    // last partition in the attached partition list.
+    boolean reconcileOptimisticPartitions() {
+        int lastPartitionTsIndex = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_TS_OFFSET;
+        if (lastPartitionTsIndex > 0 && maxTimestamp < attachedPartitions.getQuick(lastPartitionTsIndex)) {
+            int maxTimestampPartitionIndex = getPartitionIndex(getLastPartitionTimestamp());
+            if (maxTimestampPartitionIndex < getPartitionCount() - 1) {
+                // accumulate value, which we have to subtract
+                // from fixedRowCount (total count of rows of non-active partitions)
+                long rowCount = 0;
+                for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
+                    rowCount += getPartitionSize(i);
+                }
+                attachedPartitions.setPos(maxTimestampPartitionIndex + LONGS_PER_TX_ATTACHED_PARTITION);
+                recordStructureVersion++;
+
+                // remove partitions
+                this.fixedRowCount -= rowCount;
+                this.maxTimestamp = getMaxTimestamp();
+                this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
+                return true;
+            }
+        }
+        return false;
     }
 
     void resetToLastPartition(long committedTransientRowCount, long newMaxTimestamp) {
@@ -552,6 +583,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         prevMaxTimestamp = newMaxTimestamp;
         maxTimestamp = prevMaxTimestamp;
         transientRowCount = committedTransientRowCount;
+    }
+
+    void resetToLastPartition(long committedTransientRowCount) {
+        resetToLastPartition(committedTransientRowCount, getLong(TX_OFFSET_MAX_TIMESTAMP_64));
     }
 
     long unsafeCommittedFixedRowCount() {

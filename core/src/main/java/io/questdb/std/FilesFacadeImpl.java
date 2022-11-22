@@ -400,20 +400,13 @@ public class FilesFacadeImpl implements FilesFacade {
                     if (Files.notDots(name)) {
                         int type = findType(p);
                         src.trimTo(len);
+                        src.concat(name);
+                        dst.concat(name);
                         if (type == Files.DT_FILE) {
-                            src.concat(name);
-                            dst.concat(name);
-
                             if ((res = operation.invoke(src.$(), dst.$())) < 0) {
                                 return res;
                             }
-
-                            src.trimTo(srcLen);
-                            dst.trimTo(dstLen);
-
                         } else {
-                            src.concat(name);
-                            dst.concat(name);
 
                             // Ignore if subfolder already exists
                             mkdir(dst.$(), dirMode);
@@ -423,9 +416,9 @@ public class FilesFacadeImpl implements FilesFacade {
                                 return res;
                             }
 
-                            src.trimTo(srcLen);
-                            dst.trimTo(dstLen);
                         }
+                        src.trimTo(srcLen);
+                        dst.trimTo(dstLen);
                     }
                 } while (findNext(p) > 0);
             } finally {
