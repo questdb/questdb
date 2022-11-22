@@ -76,7 +76,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     static final int NEG = 4;   // -a
     static final int NOT = 5;   // !a
     static final int OR = 7;   // a || b
-    static final int REM = 18;  // a % b
     // Opcodes:
     // Return code. Breaks the loop
     static final int RET = 0; // ret
@@ -805,10 +804,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             putOperator(DIV);
             return;
         }
-//        if (Chars.equals(token, "%")) {
-//            putOperator(REM);
-//            return;
-//        }
         throw SqlException.position(position).put("invalid operator: ").put(token);
     }
 

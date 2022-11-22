@@ -41,7 +41,6 @@ import java.io.Closeable;
 
 public class LineTcpReceiver implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiver.class);
-    private final MutableIOContextFactory<LineTcpConnectionContext> contextFactory;
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private final Metrics metrics;
     private LineTcpMeasurementScheduler scheduler;
@@ -64,7 +63,7 @@ public class LineTcpReceiver implements Closeable {
             factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
         }
 
-        this.contextFactory = new MutableIOContextFactory<>(
+        MutableIOContextFactory<LineTcpConnectionContext> contextFactory = new MutableIOContextFactory<>(
                 factory,
                 configuration.getConnectionPoolInitialCapacity()
         );

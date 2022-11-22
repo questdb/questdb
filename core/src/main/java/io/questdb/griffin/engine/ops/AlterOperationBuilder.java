@@ -175,15 +175,6 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofPartition(long timestamp) {
-        longList.add(timestamp);
-    }
-
-    public void ofPartition(long partitionTimestamp, int partitionNamePosition) {
-        longList.add(partitionTimestamp);
-        longList.add(partitionNamePosition);
-    }
-
     public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
@@ -207,11 +198,11 @@ public class AlterOperationBuilder {
         objCharList.add(newName);
     }
 
-    public AlterOperationBuilder ofSetParamCommitLag(int tableNamePosition, String tableName, int tableId, long commitLag) {
+    public AlterOperationBuilder ofSetO3MaxLag(int tableNamePosition, String tableName, int tableId, long o3MaxLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
-        this.longList.add(commitLag);
+        this.longList.add(o3MaxLag);
         this.tableId = tableId;
         return this;
     }

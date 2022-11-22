@@ -118,7 +118,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     applyParamUncommittedRows(tableWriter);
                     break;
                 case SET_PARAM_COMMIT_LAG:
-                    applyParamCommitLag(tableWriter);
+                    applyParamO3MaxLag(tableWriter);
                     break;
                 default:
                     LOG.error()
@@ -355,12 +355,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyParamCommitLag(MetadataChangeSPI tableWriter) {
-        long commitLag = longList.get(0);
+    private void applyParamO3MaxLag(MetadataChangeSPI tableWriter) {
+        long o3MaxLag = longList.get(0);
         try {
-            tableWriter.setMetaCommitLag(commitLag);
+            tableWriter.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change commit lag [table=").$(tableName)
+            LOG.error().$("could not change o3MaxLag [table=").$(tableName)
                     .$(", errno=").$(e.getErrno())
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
@@ -430,8 +430,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             return strB;
         }
 
-        public long of(MemoryCR buffer, long lo, long hi) {
-            long initialAddress = lo;
+        public void of(MemoryCR buffer, long lo, long hi) {
             if (lo + Integer.BYTES > hi) {
                 throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
             }
@@ -450,7 +449,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 offsets.add(address, address + stringSize);
                 lo += stringSize;
             }
-            return lo - initialAddress;
         }
 
         @Override

@@ -30,7 +30,6 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 import java.util.Iterator;
@@ -50,7 +49,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
         readerPoolCursor.of(cairoEngine.getReaderPoolEntries());
         return readerPoolCursor;
