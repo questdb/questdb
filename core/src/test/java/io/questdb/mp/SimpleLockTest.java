@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -91,12 +92,12 @@ public class SimpleLockTest {
 
         // thread should acquire lock, park, unpark, and then release lock
         while (!holdsLock.get()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
         unparkFlag.set(true);
         LockSupport.unpark(thread);
         while (holdsLock.get()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
         thread.join();
     }
@@ -123,7 +124,7 @@ public class SimpleLockTest {
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
 
         // thread cannot acquire lock
@@ -164,7 +165,7 @@ public class SimpleLockTest {
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
 
         AtomicBoolean holdsLock = new AtomicBoolean();
@@ -187,12 +188,12 @@ public class SimpleLockTest {
 
         // thread2 should acquire lock
         while (!holdsLock.get()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
         // unpark thread and it should release lock
         LockSupport.unpark(thread2);
         while (holdsLock.get()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
 
         thread1.join();
@@ -221,7 +222,7 @@ public class SimpleLockTest {
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.onSpinWait();
+            Os.pause();
         }
 
         // thread cannot acquire lock
@@ -256,7 +257,7 @@ public class SimpleLockTest {
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.onSpinWait();
+            Os.pause();
         } // spin
 
         Assert.assertTrue(lock.isLocked());
