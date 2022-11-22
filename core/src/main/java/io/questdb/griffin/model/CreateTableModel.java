@@ -39,11 +39,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private long commitLag;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
     private ExpressionNode name;
+    private long o3MaxLag;
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
     private ExpressionNode timestamp;
@@ -121,11 +121,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    @Override
     public int getIndexBlockCapacity(int index) {
         return getHighAt(index * 2 + 1);
     }
@@ -146,6 +141,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public ExpressionNode getName() {
         return name;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     @Override
@@ -203,10 +203,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return walEnabled;
     }
 
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
-    }
-
     public void setIgnoreIfExists(boolean flag) {
         this.ignoreIfExists = flag;
     }
@@ -229,6 +225,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setName(ExpressionNode name) {
         this.name = name;
+    }
+
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
     public void setPartitionBy(ExpressionNode partitionBy) {

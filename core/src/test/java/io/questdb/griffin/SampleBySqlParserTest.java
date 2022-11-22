@@ -45,7 +45,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar blah",
                 66,
-                "'time zone' or 'with offset' expected",
+                "unexpected token: blah",
                 model()
         );
     }
@@ -183,6 +183,15 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar time zone 'UTC' with offset '00:00'",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
+                model()
+        );
+    }
+
+    @Test
+    public void testAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(a) sum from (select [a] from x timestamp (timestamp)) sample by 1h align to calendar with offset '00:00' limit 1",
+                "select a, sum(a) from x sample by 1h align to calendar limit 1;",
                 model()
         );
     }

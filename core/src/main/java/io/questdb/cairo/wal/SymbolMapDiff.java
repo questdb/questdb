@@ -31,5 +31,9 @@ public interface SymbolMapDiff {
 
     int getSize();
 
+    boolean hasNullValue();
+
     SymbolMapDiffEntry nextEntry();
+
+    void drain();
 }

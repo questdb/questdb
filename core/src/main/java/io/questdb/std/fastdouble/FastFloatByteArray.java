@@ -433,11 +433,6 @@ final class FastFloatByteArray {
         return Float.NaN;
     }
 
-    /*
-    private static long tryToParseEightHexDigits(byte[] str, int offset) {
-        return FastDoubleVector.tryToParseEightHexDigitsUtf8(str, offset);
-    }*/
-
     static float negativeInfinity() {
         return Float.NEGATIVE_INFINITY;
     }

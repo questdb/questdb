@@ -81,7 +81,7 @@ public class AlterTableWalEnabledTest extends AbstractGriffinTest {
     @Ignore
     public void testWalEnabledAndAlterLag() throws Exception {
         assertMemoryLeak(() -> {
-            String alterSuffix = "set param commitLag=100s";
+            String alterSuffix = "set param o3MaxLag=100s";
             checkWalEnabledBeforeAfterAlter(alterSuffix);
         });
     }
