@@ -69,7 +69,7 @@ public final class MutableUuid implements Sinkable {
         this.lo = lo;
     }
 
-    public void of(CharSequence uuid) {
+    public void of(CharSequence uuid) throws NumericException {
         int len = uuid.length();
         int dash1 = Chars.indexOf(uuid, '-');
         int dash2 = Chars.indexOf(uuid, dash1 + 1, len, '-');
@@ -79,7 +79,7 @@ public final class MutableUuid implements Sinkable {
         // valid UUIDs have exactly 4 dashes
         if (dash4 < 0 || dash4 == len - 1 || Chars.indexOf(uuid, dash4 + 1, len, '-') > 0) {
             // todo: is allocating a new exception here a good idea?
-            throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
+            throw NumericException.INSTANCE;
         }
 
         long hi1;
@@ -87,15 +87,11 @@ public final class MutableUuid implements Sinkable {
         long hi3;
         long lo1;
         long lo2;
-        try {
-            hi1 = Numbers.parseHexLong(uuid, 0, dash1);
-            hi2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
-            hi3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
-            lo1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
-            lo2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
-        } catch (NumericException e) {
-            throw new IllegalArgumentException("invalid UUID [string=" + uuid + "]");
-        }
+        hi1 = Numbers.parseHexLong(uuid, 0, dash1);
+        hi2 = Numbers.parseHexLong(uuid, dash1 + 1, dash2);
+        hi3 = Numbers.parseHexLong(uuid, dash2 + 1, dash3);
+        lo1 = Numbers.parseHexLong(uuid, dash3 + 1, dash4);
+        lo2 = Numbers.parseHexLong(uuid, dash4 + 1, len);
         this.hi = (hi1 << 32) | (hi2 << 16) | hi3;
         this.lo = (lo1 << 48) | lo2;
     }

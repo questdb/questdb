@@ -489,7 +489,7 @@ public class SqlUtil {
         }
         try {
             uuid.of(str);
-        } catch (IllegalArgumentException e) {
+        } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, ColumnType.UUID);
         }
     }

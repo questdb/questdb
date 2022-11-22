@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.util.UUID;
@@ -45,7 +44,7 @@ public class MutableUuidTest {
     }
 
     @Test
-    public void testEqualsAndHashcode() {
+    public void testEqualsAndHashcode() throws Exception {
         MutableUuid m1 = new MutableUuid();
         MutableUuid m2 = new MutableUuid();
         for (int i = 0; i < 100; i++) {
@@ -72,7 +71,7 @@ public class MutableUuidTest {
     }
 
     @Test
-    public void testHappyParsing() {
+    public void testHappyParsing() throws Exception {
         UUID javaUuid = UUID.randomUUID();
 
         MutableUuid uuid = new MutableUuid();
@@ -107,7 +106,7 @@ public class MutableUuidTest {
     }
 
     @Test
-    public void testUpperCaseUuuid() {
+    public void testUpperCaseUuuid() throws Exception {
         // rfc4122 section 3 says:
         // The hexadecimal values "a" through "f" are output as lower case characters and are case insensitive on input.
 
@@ -145,9 +144,8 @@ public class MutableUuidTest {
         try {
             muuid.of(uuid);
             fail();
-        } catch (IllegalArgumentException e) {
-            TestUtils.assertContains(e.getMessage(), "invalid UUID");
+        } catch (NumericException expected) {
+
         }
     }
-
 }

@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MutableUuid;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public final class CastStrToUuidFunctionFactory implements FunctionFactory {
@@ -53,7 +54,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             final MutableUuid uuid = new MutableUuid();
             try {
                 uuid.of(value);
-            } catch (IllegalArgumentException e) {
+            } catch (NumericException e) {
                 throw SqlException.$(argPositions.getQuick(0), "invalid UUID constant");
             }
             return new UuidConstant(uuid);
@@ -82,7 +83,11 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec.
-            uuid.of(value);
+            try {
+                uuid.of(value);
+            } catch (NumericException e) {
+                return UuidConstant.NULL_HI_AND_LO;
+            }
             return uuid.getHi();
         }
 
@@ -94,7 +99,11 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
             }
             // TODO: This is a horrible hack to make the UUID tests to pass.
             // We must reimplement this with a proper zero-gc UUID codec
-            uuid.of(value);
+            try {
+                uuid.of(value);
+            } catch (NumericException e) {
+                return UuidConstant.NULL_HI_AND_LO;
+            }
             return uuid.getLo();
         }
     }
