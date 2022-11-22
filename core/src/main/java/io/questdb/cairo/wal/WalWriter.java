@@ -242,16 +242,6 @@ public class WalWriter implements TableWriterAPI {
         return NO_TXN;
     }
 
-    @Override
-    public long commitWithLag() {
-        return commit();
-    }
-
-    @Override
-    public long commitWithLag(long commitLag) {
-        return commit();
-    }
-
     public void doClose(boolean truncate) {
         open = false;
         metadata.close(Vm.TRUNCATE_TO_POINTER);
@@ -332,6 +322,16 @@ public class WalWriter implements TableWriterAPI {
             distressed = true;
             return false;
         }
+    }
+
+    @Override
+    public void ic() {
+        commit();
+    }
+
+    @Override
+    public void ic(long o3MaxLag) {
+        commit();
     }
 
     public boolean inTransaction() {

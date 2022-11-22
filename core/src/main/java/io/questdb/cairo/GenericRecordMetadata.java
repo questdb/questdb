@@ -100,6 +100,28 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         return null;
     }
 
+    public static GenericRecordMetadata deepCopyOf(RecordMetadata that) {
+        if (that != null) {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
+                metadata.add(
+                        new TableColumnMetadata(
+                                that.getColumnName(i),
+                                that.getColumnType(i),
+                                that.isColumnIndexed(i),
+                                that.getIndexValueBlockCapacity(i),
+                                that.isSymbolTableStatic(i),
+                                that.getMetadata(i),
+                                that.getWriterIndex(i)
+                        )
+                );
+            }
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
+    }
+
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         copyColumns(that, metadata);
