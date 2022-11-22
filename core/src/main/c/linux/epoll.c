@@ -24,6 +24,7 @@
 
 #include <jni.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <stddef.h>
 
 
@@ -41,7 +42,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollWait
         (JNIEnv *e, jclass cl, jlong epfd, jlong eventPtr, jint eventCount, jint timeout) {
     return epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout);
 }
-
 
 JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getDataOffset
         (JNIEnv *e, jclass cl) {
@@ -91,4 +91,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlMod
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_getCtlDel
         (JNIEnv *e, jclass cl) {
     return EPOLL_CTL_DEL;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_network_EventFDAccessor_eventFd
+        (JNIEnv *e, jclass cl) {
+    return eventfd(0, EFD_NONBLOCK);
 }

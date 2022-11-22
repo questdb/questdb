@@ -50,6 +50,11 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
+    public long eventFd() {
+        return EpollAccessor.eventFd();
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
     }

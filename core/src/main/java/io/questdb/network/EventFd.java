@@ -24,16 +24,39 @@
 
 package io.questdb.network;
 
-public interface EpollFacade {
-    long epollCreate();
+import io.questdb.std.Files;
+import io.questdb.std.Unsafe;
 
-    int epollCtl(long epfd, int op, long fd, long eventPtr);
+import java.io.IOException;
 
-    int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
+public class EventFd implements GenericEvent {
 
-    int errno();
+    private static final long REF_COUNT_OFFSET;
 
-    long eventFd();
+    private final long fd;
+    @SuppressWarnings("unused")
+    private volatile int refCount;
 
-    NetworkFacade getNetworkFacade();
+    public EventFd(long fd) {
+        this.fd = fd;
+        this.refCount = 2;
+        Files.bumpFileCount(fd);
+    }
+
+    @Override
+    public void close() throws IOException {
+        final int prevRefCount = Unsafe.getUnsafe().getAndAddInt(this, REF_COUNT_OFFSET, -1);
+        if (prevRefCount == 1) {
+            Files.close(fd);
+        }
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    static {
+        REF_COUNT_OFFSET = Unsafe.getFieldOffset(EventFd.class, "refCount");
+    }
 }

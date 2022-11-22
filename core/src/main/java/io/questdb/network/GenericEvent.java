@@ -24,16 +24,17 @@
 
 package io.questdb.network;
 
-public interface EpollFacade {
-    long epollCreate();
+import java.io.Closeable;
 
-    int epollCtl(long epfd, int op, long fd, long eventPtr);
-
-    int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
-
-    int errno();
-
-    long eventFd();
-
-    NetworkFacade getNetworkFacade();
+/**
+ * Used for generic events that can be used with {@link IODispatcher}.
+ * Such events aren't necessarily network I/O related, but instead
+ * provide an efficient way of suspending a task done in the
+ * IODispatcher's event loop and resume it later when another thread
+ * sends us a notification through the event.
+ * <p>
+ * To be more specific, we use eventfd(2) in Linux and pipes in OS X.
+ */
+public interface GenericEvent extends Closeable {
+    long getFd();
 }

@@ -246,7 +246,6 @@ public class IODispatcherTest {
                                 Unsafe.free(buffer, 2048, MemoryTag.NATIVE_DEFAULT);
                             }
 
-
                             Assert.assertEquals(0, Net.close(fd));
                             LOG.info().$("closed [fd=").$(fd).$(']').$();
                             fd = -1;
@@ -315,7 +314,6 @@ public class IODispatcherTest {
                     return super.configureNonBlocking(fd);
                 }
             };
-
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration() {
