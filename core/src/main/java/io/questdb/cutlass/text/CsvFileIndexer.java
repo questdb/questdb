@@ -651,7 +651,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         int chunkNumber;
         long dataSize;//partition data size in bytes
         long indexChunkSize;
-        long partitionKey;
+        final long partitionKey;
 
         IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
             this.partitionKey = partitionKey;

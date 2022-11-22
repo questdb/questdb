@@ -28,7 +28,6 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -1184,7 +1183,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void doAuthentication(
             long msgLo,
             long msgLimit
-    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException, SqlException {
+    ) throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, AuthenticationException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1677,9 +1676,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        if (completed) {
-            characterStore.clear();
-        }
+        characterStore.clear();
     }
 
     private void prepareLoginOk() {

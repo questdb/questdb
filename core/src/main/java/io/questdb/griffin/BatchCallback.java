@@ -38,5 +38,5 @@ public interface BatchCallback {
             CharSequence queryText
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, SqlException;
 
-    void preCompile(SqlCompiler compiler) throws SqlException;
+    void preCompile(SqlCompiler compiler);
 }
