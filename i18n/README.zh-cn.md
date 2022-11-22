@@ -29,6 +29,7 @@
 </p>
 
 [English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本](./README.ja-ja.md)
+
 # QuestDB
 
 QuestDB 是一个开源的時序数据库，支持高吞吐数据获取和快速 SQL 查询，操作简单。
@@ -56,9 +57,19 @@ C++从头开始构建的，没有任何外部依赖，并且 100% 不受垃圾�
 我们提供了一个[在线演示](https://demo.questdb.io/)，其中包括最新的 QuestDB 版本
 和几个样本数据集：
 
-- 一个 16 亿行的数据集，包括近 10 年的纽约市出租车行程轨迹。
-- 一个即時的加密货币（比特币、以太坊）交易数据集。
-- 一个包括 25 万艘船的时序地理数据集。
+- Trips： 近 10 年的纽约市出租车行程轨迹数据集，含 1.6 亿行的数据。
+- Trades： 即时加密货币（比特币、以太币）交易数据集。
+- Pos： 含有 25 万艘船的时序地理数据集。
+
+| 查询                                                                          | 运行时间                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
+| `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
+| `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
+| `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
+| `SELECT * FROM trades LATEST ON time PARTITION BY symbol`                     | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+
+我们的[在线演示](https://demo.questdb.io/)运行在 `c5.metal` 上且仅使用 96 个线程中的 24 个线程。
 
 ## 如何開始
 
@@ -124,15 +135,6 @@ questdb stop  // To stop questdb
     />
   </a>
 </div>
-
-下表显示了在 `c5.metal` 实例上使用 96 个线程中的 16 个线程运行 10 亿条记录的查询
-执行时间。
-
-| 查询                                                      | 运行时间   |
-| --------------------------------------------------------- | ---------- |
-| `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
-| `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
-| `SELECT tag, sum(double) FROM 1bn WHERE timestamp='2019'` | 0.05 secs  |
 
 ## 相关资源
 
