@@ -108,7 +108,6 @@ public class LineUdpParserSupport {
      *                       and tag size (high short negative), otherwise -1
      * @param columnIndex    index of column to write value to
      * @param value          value characters
-     * @throws BadCastException when value cannot be cast to the give type
      */
     public static void putValue(
             TableWriter.Row row,
@@ -116,7 +115,7 @@ public class LineUdpParserSupport {
             int columnTypeMeta,
             int columnIndex,
             CharSequence value
-    ) throws BadCastException {
+    ) {
         if (value.length() > 0) {
             try {
                 switch (ColumnType.tagOf(columnType)) {

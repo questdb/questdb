@@ -109,6 +109,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         pubSeq = new MPSequence[nWriterThreads];
         //noinspection unchecked
         queue = new RingQueue[nWriterThreads];
+        //noinspection unchecked
         assignedTables = new ObjList[nWriterThreads];
         for (int i = 0; i < nWriterThreads; i++) {
             MPSequence ps = new MPSequence(queueSize);

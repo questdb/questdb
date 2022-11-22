@@ -40,6 +40,11 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     }
 
     @Override
+    public void drain() {
+        cursor.drain();
+    }
+
+    @Override
     public int getCleanSymbolCount() {
         return cleanSymbolCount;
     }

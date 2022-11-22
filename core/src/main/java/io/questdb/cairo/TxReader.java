@@ -349,10 +349,6 @@ public class TxReader implements Closeable, Mutable {
         return getInt(getSymbolWriterTransientIndexOffset(symbolIndex));
     }
 
-    public long unsafeReadTxn() {
-        return unsafeReadVersion();
-    }
-
     public long unsafeReadVersion() {
         return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);
     }
@@ -465,10 +461,6 @@ public class TxReader implements Closeable, Mutable {
     protected void switchRecord(int readBaseOffset, long readRecordSize) {
         baseOffset = readBaseOffset;
         size = readRecordSize;
-    }
-
-    protected long unsafeGetRawMemory() {
-        return roTxMemBase.getPageAddress(0);
     }
 
     protected long unsafeGetRawMemorySize() {

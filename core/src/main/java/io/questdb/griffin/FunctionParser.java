@@ -177,7 +177,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return cast;
     }
 
-    public boolean findNoArgFunction(ExpressionNode node) throws SqlException {
+    public boolean findNoArgFunction(ExpressionNode node) {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (overload != null) {
             for (int i = 0, n = overload.size(); i < n; i++) {

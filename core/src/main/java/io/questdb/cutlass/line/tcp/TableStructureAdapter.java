@@ -41,7 +41,7 @@ class TableStructureAdapter implements TableStructure {
     private final int defaultPartitionBy;
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
-    private final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tempSink = new ThreadLocal<>(StringSink::new);
     private CharSequence tableName;
     private int timestampIndex = -1;
 
@@ -79,11 +79,6 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getCommitLag() {
-        return cairoConfiguration.getCommitLag();
-    }
-
-    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
     }
@@ -91,6 +86,11 @@ class TableStructureAdapter implements TableStructure {
     @Override
     public int getMaxUncommittedRows() {
         return cairoConfiguration.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        return cairoConfiguration.getO3MaxLag();
     }
 
     @Override
