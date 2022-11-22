@@ -346,8 +346,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             Assert.assertFalse(Files.exists(path));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
-                        } catch (IOException ex) {
-                            Assert.fail(ex.getMessage());
                         }
                     }
             );
@@ -641,8 +639,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             LongList purgedRowIds = purgeOperator.getCompletedRowIds();
                             Assert.assertEquals(0, purgedRowIds.binarySearch(314159L, BinarySearch.SCAN_UP));
                             Assert.assertEquals(1, purgedRowIds.binarySearch(628218L, BinarySearch.SCAN_UP));
-                        } catch (IOException e) {
-                            throw new RuntimeException(e);
                         }
 
                         // check that the column files still exist within the partition folder (attached from soft link)
