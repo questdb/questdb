@@ -196,6 +196,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable {
                             sum += bs.byteAt(0);
                         }
                         break;
+                    case ColumnType.UUID:
+                        sum += record.getUuidHi(i);
+                        sum += record.getUuidLo(i);
+                        break;
                 }
             }
         }
