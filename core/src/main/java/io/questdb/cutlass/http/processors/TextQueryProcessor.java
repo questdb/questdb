@@ -348,6 +348,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
+    private static void putUuidOrNull(HttpChunkedResponseSocket socket, long lo, long hi) {
+        if (UuidUtil.isNull(hi, lo)) {
+            return;
+        }
+        Numbers.appendUuid(hi, lo, socket);
+    }
+
     private static void readyForNextRequest(HttpConnectionContext context) {
         LOG.info().$("all sent [fd=").$(context.getFd()).$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent()).$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
@@ -523,6 +530,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             case ColumnType.GEOLONG:
                 putGeoHashStringValue(socket, rec.getGeoLong(col), type);
+                break;
+            case ColumnType.UUID:
+                putUuidOrNull(socket, rec.getUuidHi(col), rec.getUuidLo(col));
                 break;
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();

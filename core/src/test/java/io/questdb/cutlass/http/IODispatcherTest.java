@@ -633,6 +633,46 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testExpCustomDelimiter() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "54\r\n" +
+                        "\"sym\"\t\"num\"\r\n" +
+                        "\"c\"\t9\r\n" +
+                        "\"b\"\t5\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t0\r\n" +
+                        "\"a\"\t5\r\n" +
+                        "\"a\"\t7\r\n" +
+                        "\"a\"\t4\r\n" +
+                        "\"a\"\t8\r\n" +
+                        "\"a\"\t2\r\n" +
+                        "\"c\"\t10\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testExpNull() throws Exception {
         testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
@@ -6510,46 +6550,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testExpCustomDelimiter() throws Exception {
-        testJsonQuery(
-                20,
-                "GET /exp?count=true&src=con&query=select+rnd_symbol(%27a%27%2C%27b%27%2C%27c%27)+sym+%2C+rnd_int(0%2C10%2C0)+num+from+long_sequence(10%2C+33%2C+55)&delimiter=%09 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "54\r\n" +
-                        "\"sym\"\t\"num\"\r\n" +
-                        "\"c\"\t9\r\n" +
-                        "\"b\"\t5\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t0\r\n" +
-                        "\"a\"\t5\r\n" +
-                        "\"a\"\t7\r\n" +
-                        "\"a\"\t4\r\n" +
-                        "\"a\"\t8\r\n" +
-                        "\"a\"\t2\r\n" +
-                        "\"c\"\t10\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-    }
-
-    @Test
     public void testTextQueryShowColumnsOnDroppedTable() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -6676,6 +6676,45 @@ public class IODispatcherTest {
                             true
                     );
                 });
+    }
+
+    @Test
+    public void testTextQueryUuid() throws Exception {
+        testJsonQuery(10,
+                "GET /exp?query=SELECT+*+FROM+x HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0625\r\n" +
+                        "\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\",\"m\"\r\n" +
+                        "80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",,,\"EHNRX\",\"ZSX\",false,,c2593f82-b430-328d-84a0-9f29df637e38\r\n" +
+                        "27,-15458,,,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,,\"EDRQQ\",\"LOF\",false,,59d574d2-ff5f-b1e3-687a-84abb7bfac3e\r\n" +
+                        "-15,-12303,-443320374,,\"18125533-09-05T04:06:38.086Z\",,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,,7dc85977-0af2-0493-8151-081b8acafadd\r\n" +
+                        "-26,-1072,844704299,-5439556746612026472,,\"-223119-09-14T09:01:18.820936Z\",0.24008358,,\"SSUQS\",\"LTK\",false,,867f8923-b442-2deb-b63b-32ce71b869c6\r\n" +
+                        "-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,,,false,,3eef3f15-8e08-4362-4d0f-a2564c351767\r\n" +
+                        "40,-17824,,,\"75525295-09-06T22:11:27.250Z\",,0.38422543,,\"ZHZSQ\",\"DGL\",false,,\r\n" +
+                        "12,26413,,,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,,43452482-4ca8-4f52-3ed3-91560ac32754\r\n" +
+                        "-48,10793,-1594425659,-7414829143044491558,,\"-277346-12-26T06:26:35.016287Z\",0.48352557,,,,false,,628bdaed-6813-f20b-34a0-58990880698b\r\n" +
+                        "-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",,0.43461353,0.2559680920632348,\"FDTNP\",,false,,72f1d686-75d8-67cf-58b0-00a0492ff296\r\n" +
+                        "43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,,ce57f611-173c-e55d-d2bc-1ceb1d7c9713\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
     }
 
     @Test
