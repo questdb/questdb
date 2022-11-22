@@ -145,11 +145,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     final long currentRow = Rows.toLocalRowID(rowId);
 
                     if (rowPartitionIndex >= 0 && tableWriter.getPartitionIsRO(rowPartitionIndex)) {
-                        LOG.info()
-                                .$("skipping RO partition [partitionIndex=").$(rowPartitionIndex)
-                                .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                                .I$();
-                        continue;
+                        throw CairoException.nonCritical()
+                                .put("cannot update rows in a RO partition [partitionIndex=")
+                                .put(rowPartitionIndex)
+                                .put(", rowPartitionTs=").put(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                .put(']');
                     }
 
                     if (rowPartitionIndex != partitionIndex) {

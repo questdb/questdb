@@ -77,7 +77,7 @@ public class Bootstrap {
     public Bootstrap(String banner, String... args) {
         this(banner, System.getenv(), args);
     }
-    
+
     public Bootstrap(String banner, @Nullable Map<String, String> env, String... args) {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
@@ -362,7 +362,7 @@ public class Bootstrap {
         path.of(rootDir).$();
         // path will contain file system name
         long fsStatus = Files.getFileSystemStatus(path);
-        path.seekNull();
+        path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();

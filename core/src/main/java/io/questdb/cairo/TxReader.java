@@ -208,7 +208,7 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean getPartitionIsROByPartitionTimestamp(long ts) {
         int baseOffset = findAttachedPartitionIndex(ts);
-        if (baseOffset != -1) {
+        if (baseOffset > -1) {
             long partitionMask = attachedPartitions.getQuick(baseOffset + PARTITION_MASK_OFFSET);
             return ((partitionMask >>> PARTITION_MASK_RO_BIT_OFFSET) & 1L) == 1;
         }

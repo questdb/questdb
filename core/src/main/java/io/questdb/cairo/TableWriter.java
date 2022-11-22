@@ -41,12 +41,14 @@ import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -138,7 +140,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final Path path;
     private final int rootLen;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
-    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
@@ -147,6 +148,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final String tableName;
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
+    private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final TxnScoreboard txnScoreboard;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -222,11 +224,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         this.directIOFlag = (Os.type != Os.WINDOWS || configuration.getWriterFileOpenOpts() != CairoConfiguration.O_NONE);
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
-        if (ownMessageBus != null) {
-            this.messageBus = ownMessageBus;
-        } else {
-            this.messageBus = messageBus;
-        }
+        this.messageBus = ownMessageBus != null ? ownMessageBus : messageBus;
         this.defaultCommitMode = configuration.getCommitMode();
         this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = configuration.isParallelIndexingEnabled();
@@ -1209,6 +1207,15 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     @Override
     public Row newRow(long timestamp) {
 
+        // check partition RO flag
+        if (txWriter.getPartitionIsROByPartitionTimestamp(timestamp)) {
+            throw CairoException.nonCritical()
+                    .put("cannot insert rows in a RO partition [partitionIndex=")
+                    .put(txWriter.getPartitionIndex(timestamp))
+                    .put(", partitionTs=").put(partitionFloorMethod.floor(timestamp))
+                    .put(']');
+        }
+
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
 
@@ -1768,9 +1775,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     @Override
     public String toString() {
-        return "TableWriter{" +
-                "name=" + tableName +
-                '}';
+        return "TableWriter{name=" + tableName + '}';
     }
 
     public void transferLock(long lockFd) {
@@ -3789,6 +3794,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     );
                     TableUtils.txnPartitionConditionally(other, txn);
                     other.$();
+
                     if (ff.isSoftLink(other)) {
                         // in windows ^ ^ will return false, but that is ok as the behaviour
                         // is to delete the link, not the contents of the target. in *nix
@@ -3801,16 +3807,19 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
                         }
                     }
-                    long errno = ff.rmdir(other);
-                    if (errno == 0 || errno == -1) {
-                        // Successfully deleted or async purge has already swept it up
-                        LOG.info().$("purged [path=").$(other).I$();
-                    } else {
-                        LOG.info()
-                                .$("could not purge partition version, async purge will be scheduled [path=")
-                                .$(other)
-                                .$(", errno=").$(errno).I$();
-                        scheduleAsyncPurge = true;
+
+                    if (!txWriter.getPartitionIsROByPartitionTimestamp(timestamp)) {
+                        long errno = ff.rmdir(other);
+                        if (errno == 0 || errno == -1) {
+                            // Successfully deleted or async purge has already swept it up
+                            LOG.info().$("purged [path=").$(other).I$();
+                        } else {
+                            LOG.info()
+                                    .$("could not purge partition version, async purge will be scheduled [path=")
+                                    .$(other)
+                                    .$(", errno=").$(errno).I$();
+                            scheduleAsyncPurge = true;
+                        }
                     }
                 } finally {
                     other.trimTo(rootLen);
@@ -5106,13 +5115,46 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removePartitionDirectories0(long pUtf8NameZ, int type) {
-        if (Files.isDir(pUtf8NameZ, type)) {
-            path.trimTo(rootLen);
-            path.concat(pUtf8NameZ).$();
+        path.trimTo(rootLen);
+        path.concat(pUtf8NameZ).$();
+        boolean isSoftLink = false;
+        if (Files.isDir(pUtf8NameZ, type) || (isSoftLink = ff.isSoftLink(path))) {
+
+            if (isSoftLink) {
+                // in windows ^ ^ will return false, but that is ok as the behaviour
+                // is to delete the link, not the contents of the target. in *nix
+                // systems we can simply unlink, which deletes the link and leaves
+                // the contents of the target intact
+                if (ff.unlink(path) == 0) {
+                    LOG.info().$("purged by unlink [path=").$(path).I$();
+                    return;
+                } else {
+                    LOG.error().$("failed to unlink, will delete [path=").$(path).I$();
+                }
+            }
+
             if (!Chars.endsWith(path, DETACHED_DIR_MARKER) &&
                     !Chars.endsWith(path, SEQ_DIR) && !Chars.equals(path, rootLen + 1, rootLen + 1 + WAL_NAME_BASE.length(), WAL_NAME_BASE, 0, WAL_NAME_BASE.length())) {
-                if (ff.rmdir(path) != 0) {
-                    LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
+                fileNameSink.clear();
+                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
+                int p = fileNameSink.length() - 1;
+                while (p > 0 && fileNameSink.charAt(p) != '.') {
+                    p--;
+                }
+                if (p > 0) {
+                    fileNameSink.clear(p);
+                }
+                try {
+                    long timestamp = IntervalUtils.parseFloorPartialTimestamp(fileNameSink);
+                    if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionFloorMethod.floor(timestamp))) {
+                        if (ff.rmdir(path) != 0) {
+                            LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
+                        }
+                    }
+                } catch (NumericException unexpected) {
+                    if (ff.rmdir(path) != 0) {
+                        LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
+                    }
                 }
             }
         }

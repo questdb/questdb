@@ -187,7 +187,7 @@ public class PathTest {
             String inject = "hello\0";
             Chars.asciiStrCpy(inject, 0, inject.length(), path.address());
 
-            Assert.assertSame(path, path.seekNull());
+            Assert.assertSame(path, path.seekZ());
             TestUtils.assertEquals("hello", path);
 
             path.concat("next");

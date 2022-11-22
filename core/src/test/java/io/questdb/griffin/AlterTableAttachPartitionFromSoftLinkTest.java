@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.tasks.ColumnPurgeTask;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.io.File;
@@ -80,8 +82,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             // add column ss of type symbol
                             executeOperation("ALTER TABLE " + tableName + " ADD COLUMN ss SYMBOL", CompiledQuery.ALTER);
 
-                            // insert a row at the end of the partition
-                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z', '¶')");
+                            // insert a row at the end of the partition, which will fail because it is RO
+                            assertInsertFailsBecausePartitionIsRO(
+                                    "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z', '¶')",
+                                    partitionName);
 
                             // add index on symbol column ss
                             executeOperation("ALTER TABLE " + tableName + " ALTER COLUMN ss ADD INDEX CAPACITY 32", CompiledQuery.ALTER);
@@ -89,14 +93,14 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             // check content
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\tss\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\t\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\t\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\t\n" +
                                             "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\t\n" +
-                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\t\n" +
-                                            "666\t666\tqueso\t2022-10-17T23:59:59.999999Z\t¶\n"
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\t\n"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -161,6 +165,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             Assert.assertFalse(ff.exists(path));
 
                             // insert a row at the end of the partition, the only row, which will create the partition
+                            // at this point there is no longer information as to whether it was RO in the past, and
+                            // no soft link creation is involved
                             executeInsert("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + partitionName + "T23:59:59.500001Z')");
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
@@ -372,26 +378,26 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                             "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
                             );
 
-                            // insert a row at the end of the partition
-                            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + partitionName + "T23:59:59.500001Z')");
-                            txn++;
-
-                            // update a row toward the end of the partition
-                            // takes no effect, no commit
-                            executeOperation(
-                                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
-                                    CompiledQuery.UPDATE
+                            // insert a row at the end of the partition, which will fail as the partition is RO
+                            assertInsertFailsBecausePartitionIsRO(
+                                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + partitionName + "T23:59:59.500001Z')",
+                                    partitionName
                             );
 
-                            // insert a row at the beginning of the partition, this will result in the original folder being
-                            // copied across to table data space (hot), with a new txn, the original folder's content are NOT
-                            // removed, the link is.
-                            executeInsert("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + partitionName + "T00:00:00.100005Z')");
-                            txn++;
+                            // update a row toward the end of the partition, which will fail as the partition is RO
+                            assertUpdateFailsBecausePartitionIsRO(
+                                    "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
+                                    partitionName
+                            );
 
-                            // verify that the link does not exist
-                            // in windows the handle is held and cannot be deleted
-                            Assert.assertFalse(Files.exists(path));
+                            // insert a row at the beginning of the partition, this will fail
+                            assertInsertFailsBecausePartitionIsRO(
+                                    "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + partitionName + "T00:00:00.100005Z')",
+                                    partitionName
+                            );
+
+                            // verify that the link does still exist
+                            Assert.assertTrue(Files.exists(path));
 
                             // verify that a new partition folder has been created in the table data space (hot)
                             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
@@ -404,32 +410,32 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
 
-                            // update a row toward the beginning of the partition
-                            executeOperation(
+                            // update a row toward the beginning of the partition, will fail
+                            assertUpdateFailsBecausePartitionIsRO(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
-                                    CompiledQuery.UPDATE
+                                    partitionName
                             );
 
                             // verify content
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" + // <-- update was skipped, l would have been 13
-                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n" +
-                                            "0\t0\tø\t2022-10-17T23:59:59.500001Z\n" // <-- the new row at the end
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"  // <-- no new row at the end
                             );
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT 5",
                                     "l\ti\ts\tts\n" +
-                                            "-1\t-1\tµ\t2022-10-17T00:00:00.100005Z\n" +
                                             "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
                                             "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" + // <-- update was skipped, l would have been 13
                                             "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
-                                            "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n"
+                                            "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
+                                            "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n"
                             );
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:00.100005Z\t2022-10-18T23:59:59.000000Z\t10002\n");
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -582,20 +588,23 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                     CompiledQuery.ALTER
                             );
 
-                            // insert a row at the end of the partition
-                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, '" + partitionName + "T23:59:59.999999Z')");
+                            // insert a row at the end of the partition, which will fail as the partition is RO
+                            assertInsertFailsBecausePartitionIsRO(
+                                    "INSERT INTO " + tableName + " VALUES(666, 666, '" + partitionName + "T23:59:59.999999Z')",
+                                    partitionName
+                            );
 
                             // verify content
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\tts\n" +
+                                            "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n" +
-                                            "666\t666\t2022-10-17T23:59:59.999999Z\n"
+                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n"
                             );
                         } catch (SqlException e) {
                             throw new RuntimeException(e);
@@ -681,21 +690,73 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                     CompiledQuery.ALTER
                             );
 
-                            // insert a row at the end of the partition
-                            executeInsert("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z')");
+                            // insert a row at the end of the partition, which will fail as the partition is RO
+                            assertInsertFailsBecausePartitionIsRO(
+                                    "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z')",
+                                    partitionName
+                            );
 
                             // verify content
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10001\n");
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n");
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\tss\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n" +
-                                            "666\t666\tqueso\t2022-10-17T23:59:59.999999Z\n"
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
                             );
+                        } catch (SqlException ex) {
+                            Assert.fail(ex.getMessage());
+                        }
+                    }
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateTable() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            final String partitionName = "2022-10-17";
+            attachPartitionFromSoftLink(
+                    tableName,
+                    partitionName,
+                    2,
+                    "2022-10-17T00:00:17.279900Z",
+                    "2022-10-18T23:59:59.000000Z",
+                    "FRIO_DEL_15",
+                    txn -> {
+                        try {
+                            assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
+                                    "l\ti\ts\tts\n" +
+                                            "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
+                                            "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
+                                            "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
+                                            "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n"
+                            );
+
+                            // drop the partition which was attached from soft link
+                            compile("TRUNCATE TABLE " + tableName, sqlExecutionContext);
+                            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                                    "min\tmax\tcount\n" +
+                                            "\t\t0\n");
+
+                            // verify cold storage folder exists
+                            Assert.assertTrue(Files.exists(other));
+                            AtomicInteger fileCount = new AtomicInteger();
+                            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
+                            Assert.assertTrue(fileCount.get() > 0);
+                            path.of(configuration.getRoot())
+                                    .concat(tableName)
+                                    .concat(partitionName)
+                                    .put(".2")
+                                    .$();
+                            Assert.assertFalse(ff.exists(path));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -749,13 +810,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                 lastModified.put(path.toString(), ff.getLastModified(path));
                             });
 
-                            // execute an update directly on the cold storage partition
-                            // it will not fail, but it will not take effect either, and
-                            // a line will be logged:
-                            // skipping RO partition [partitionIndex=0, rowPartitionTs=2022-10-17T00:00:00.000000Z]
-                            executeOperation(
+                            // execute an update directly on the cold storage partition, it will fail
+                            assertUpdateFailsBecausePartitionIsRO(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
-                                    CompiledQuery.UPDATE
+                                    partitionName
                             );
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                                     "min\tmax\tcount\n" +
@@ -793,6 +851,48 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                     }
             );
         });
+    }
+
+    private void assertInsertFailsBecausePartitionIsRO(String insertStmt, String partitionName) {
+        // insert a row at the end of the partition
+        // insert a row at the end of the partition, which will fail as the partition is RO
+        try {
+            executeInsert(insertStmt);
+            Assert.fail();
+        } catch (CairoException e) {
+            long timestamp = -1L;
+            try {
+                timestamp = TimestampFormatUtils.parseTimestamp(partitionName + "T00:00:00.000000Z");
+            } catch (NumericException ne) {
+                Assert.fail("expected a partition name, got: " + partitionName);
+            }
+            TestUtils.assertContains(
+                    "cannot insert rows in a RO partition [partitionIndex=0, partitionTs=" + timestamp + ']',
+                    e.getFlyweightMessage());
+        } catch (SqlException e) {
+            Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
+        }
+    }
+
+    private void assertUpdateFailsBecausePartitionIsRO(String updateStmt, String partitionName) {
+        // insert a row at the end of the partition
+        // insert a row at the end of the partition, which will fail as the partition is RO
+        try {
+            executeOperation(updateStmt, CompiledQuery.UPDATE);
+            Assert.fail();
+        } catch (CairoException e) {
+            long timestamp = -1L;
+            try {
+                timestamp = TimestampFormatUtils.parseTimestamp(partitionName + "T00:00:00.000000Z");
+            } catch (NumericException ne) {
+                Assert.fail("expected a partition name, got: " + partitionName);
+            }
+            TestUtils.assertContains(
+                    "cannot update rows in a RO partition [partitionIndex=0, rowPartitionTs=" + timestamp + ']',
+                    e.getFlyweightMessage());
+        } catch (SqlException e) {
+            Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
+        }
     }
 
     private void attachPartitionFromSoftLink(

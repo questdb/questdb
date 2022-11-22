@@ -288,7 +288,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
-    public Path seekNull() {
+    public Path seekZ() {
         int count = 0;
         while (count < capacity) {
             if (Unsafe.getUnsafe().getByte(headPtr + count) == NULL) {
