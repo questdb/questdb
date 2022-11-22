@@ -101,18 +101,22 @@ public class BytecodeAssembler {
         putShort(offset);
     }
 
+    @SuppressWarnings("unused")
     public void athrow() {
         putByte(0xbf);
     }
 
+    @SuppressWarnings("unused")
     public void d2f() {
         putShort(0x90);
     }
 
+    @SuppressWarnings("unused")
     public void d2i() {
         putShort(0x8E);
     }
 
+    @SuppressWarnings("unused")
     public void d2l() {
         putShort(0x8F);
     }
@@ -179,6 +183,7 @@ public class BytecodeAssembler {
         putByte(0x59);
     }
 
+    @SuppressWarnings("unused")
     public void dup2() {
         putByte(0x5c);
     }
@@ -204,10 +209,12 @@ public class BytecodeAssembler {
         putShort(0x8D);
     }
 
+    @SuppressWarnings("unused")
     public void f2i() {
         putShort(0x8B);
     }
 
+    @SuppressWarnings("unused")
     public void f2l() {
         putShort(0x8C);
     }
@@ -292,6 +299,7 @@ public class BytecodeAssembler {
         return genericGoto(0xa0);
     }
 
+    @SuppressWarnings("unused")
     public int ifle() {
         return genericGoto(0x9e);
     }
@@ -490,12 +498,10 @@ public class BytecodeAssembler {
         return poolRef(0x09, classIndex, nameAndTypeIndex);
     }
 
-    public int poolIntConst(int value) {
+    public void poolIntConst(int value) {
         putByte(0x03);
         putInt(value);
-        int index = poolCount;
         poolCount += 1;
-        return index;
     }
 
     public int poolInterfaceMethod(Class<?> clazz, String name, String sig) {

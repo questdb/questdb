@@ -1367,7 +1367,7 @@ public class SqlCompiler implements Closeable {
             CairoSecurityContext securityContext, CharSequence tableName, boolean isWalEnabled, RecordCursor cursor,
             RecordMetadata cursorMetadata,
             SqlExecutionCircuitBreaker circuitBreaker
-    ) throws SqlException {
+    ) {
         TableWriter writer = null;
         final TableWriterAPI writerAPI;
         if (!isWalEnabled) {
@@ -1421,7 +1421,7 @@ public class SqlCompiler implements Closeable {
                     writerMetadata,
             RecordToRowCopier recordToRowCopier,
             SqlExecutionCircuitBreaker circuitBreaker
-    ) throws SqlException {
+    ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         if (timestampIndex == -1) {
             return copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker);
@@ -2731,11 +2731,6 @@ public class SqlCompiler implements Closeable {
                             .$(", e=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
                             .$(']').$();
-                } catch (SqlException e) {
-                    LOG.error()
-                            .$("could not backup [path=").$(fileNameSink)
-                            .$(", e=").$(e.getFlyweightMessage())
-                            .$(']').$();
                 }
             }
         };
@@ -2768,7 +2763,7 @@ public class SqlCompiler implements Closeable {
             }
         }
 
-        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        private void backupTable(@NotNull CharSequence tableName, @NotNull SqlExecutionContext executionContext) {
             LOG.info().$("Starting backup of ").$(tableName).$();
             if (null == cachedTmpBackupRoot) {
                 if (null == configuration.getBackupRoot()) {
@@ -2813,11 +2808,11 @@ public class SqlCompiler implements Closeable {
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
                 }
-            } catch (CairoException | SqlException e) {
+            } catch (CairoException e) {
                 LOG.info()
                         .$("could not backup [table=").$(tableName)
                         .$(", ex=").$(e.getFlyweightMessage())
-                        .$(", errno=").$((e instanceof CairoException) ? ((CairoException) e).getErrno() : 0)
+                        .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 srcPath.of(cachedTmpBackupRoot).concat(tableName).slash$();
                 int errno;

@@ -45,6 +45,7 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
     private final ObjectPool<AnalyticColumn> analyticColumnPool;
     private final CharacterStore characterStore;
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
@@ -314,10 +315,6 @@ public final class SqlParser {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
         return expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.unquote(name), 0, position);
-    }
-
-    private ExpressionNode nextConstant(CharSequence value) {
-        return expressionNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -874,7 +871,7 @@ public final class SqlParser {
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode func = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
                 func.paramCount = 1;
-                func.rhs = nextConstant("1");
+                func.rhs = ONE;
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);

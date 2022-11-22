@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.cutlass.line.udp.LineUdpParserSupport.BadCastException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -193,20 +192,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return;
         }
 
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                LineUdpParserSupport.putValue(
-                        row,
-                        (int) columnNameType.getQuick(i * 2 + 1),
-                        geoHashBitsSizeByColIdx.getQuick(i),
-                        i,
-                        cache.get(columnValues.getQuick(i))
-                );
-            }
-            row.append();
-        } catch (BadCastException ignore) {
-            row.cancel();
+        for (int i = 0; i < columnCount; i++) {
+            LineUdpParserSupport.putValue(
+                    row,
+                    (int) columnNameType.getQuick(i * 2 + 1),
+                    geoHashBitsSizeByColIdx.getQuick(i),
+                    i,
+                    cache.get(columnValues.getQuick(i))
+            );
         }
+        row.append();
     }
 
     private void appendRow(CharSequenceCache cache) {
@@ -216,21 +211,17 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return;
         }
 
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                final long value = columnIndexAndType.getQuick(i);
-                LineUdpParserSupport.putValue(
-                        row,
-                        Numbers.decodeHighInt(value),
-                        geoHashBitsSizeByColIdx.getQuick(i),
-                        Numbers.decodeLowInt(value),
-                        cache.get(columnValues.getQuick(i))
-                );
-            }
-            row.append();
-        } catch (BadCastException ignore) {
-            row.cancel();
+        for (int i = 0; i < columnCount; i++) {
+            final long value = columnIndexAndType.getQuick(i);
+            LineUdpParserSupport.putValue(
+                    row,
+                    Numbers.decodeHighInt(value),
+                    geoHashBitsSizeByColIdx.getQuick(i),
+                    Numbers.decodeLowInt(value),
+                    cache.get(columnValues.getQuick(i))
+            );
         }
+        row.append();
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {

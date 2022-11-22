@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
     private final ObjectFactory<T> fact;
@@ -35,7 +34,7 @@ public class ThreadLocal<T> extends java.lang.ThreadLocal<T> implements Closeabl
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.freeIfCloseable(super.get());
         remove();
     }

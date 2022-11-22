@@ -584,7 +584,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public long apply(AbstractOperation operation, long seqTxn) {
+    public void apply(AbstractOperation operation, long seqTxn) {
         try {
             setSeqTxn(seqTxn);
             long txnBefore = getTxn();
@@ -593,7 +593,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 // Commit to update seqTxn
                 txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
             }
-            return 0;
         } catch (CairoException ex) {
             // This is non-critical error, we can mark seqTxn as processed
             if (ex.isWALTolerable()) {

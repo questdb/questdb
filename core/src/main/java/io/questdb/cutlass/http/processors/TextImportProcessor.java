@@ -512,11 +512,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.errorMessage = message;
         if (state.json) {
             socket.status(200, CONTENT_TYPE_JSON);
-            socket.sendHeader();
         } else {
             socket.status(200, CONTENT_TYPE_TEXT);
-            socket.sendHeader();
         }
+        socket.sendHeader();
         socket.sendChunk(false);
         resumeError(state, socket);
     }

@@ -430,8 +430,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             return strB;
         }
 
-        public long of(MemoryCR buffer, long lo, long hi) {
-            long initialAddress = lo;
+        public void of(MemoryCR buffer, long lo, long hi) {
             if (lo + Integer.BYTES > hi) {
                 throw CairoException.critical(0).put("invalid alter statement serialized to writer queue [11]");
             }
@@ -450,7 +449,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 offsets.add(address, address + stringSize);
                 lo += stringSize;
             }
-            return lo - initialAddress;
         }
 
         @Override

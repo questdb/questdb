@@ -93,14 +93,13 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
         return this.txFile.getStructureVersion();
     }
 
-    public boolean reload() {
+    public void reload() {
         if (acquireTxn()) {
-            return false;
+            return;
         }
         reloadSlow();
         // partition reload will apply truncate if necessary
         // applyTruncate for non-partitioned tables only
-        return true;
     }
 
     public long size() {

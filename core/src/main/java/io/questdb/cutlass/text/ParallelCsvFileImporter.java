@@ -1468,10 +1468,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     static class PartitionInfo {
-        long bytes;
+        final long bytes;
+        final long key;
+        final CharSequence name;
         long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them)
-        long key;
-        CharSequence name;
         int taskId;//assigned worker/task id
 
         PartitionInfo(long key, CharSequence name, long bytes) {

@@ -450,11 +450,6 @@ final class FastDoubleMem {
         return index;
     }
 
-    /*
-    private static long tryToParseEightHexDigits(byte[] str, int offset) {
-        return FastDoubleVector.tryToParseEightHexDigitsUtf8(str, offset);
-    }*/
-
     private static int tryToParseEightDigits(long str, int offset) {
         return FastDoubleSwar.tryToParseEightDigitsUtf8(Unsafe.getUnsafe().getLong(str + offset));
     }
