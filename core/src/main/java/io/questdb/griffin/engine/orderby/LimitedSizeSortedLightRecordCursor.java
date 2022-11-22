@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
@@ -102,7 +101,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) {
         if (!isOpen) {
             chain.reopen();
             isOpen = true;

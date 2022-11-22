@@ -30,7 +30,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.IntList;
@@ -53,7 +52,7 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    ) {
         final int targetType = args.getQuick(1).getType();
         switch (ColumnType.tagOf(targetType)) {
             case ColumnType.GEOBYTE:

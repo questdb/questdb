@@ -82,13 +82,13 @@ public interface SequencerMetadataChangeSPI extends MetadataChangeSPI {
     }
 
     @Override
-    default void setMetaCommitLag(long commitLag) {
-        throw CairoException.critical(0).put("change commit lag does not update sequencer metadata");
+    default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
+        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
     }
 
     @Override
-    default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
-        throw CairoException.critical(0).put("change max uncommitted does not update sequencer metadata");
+    default void setMetaO3MaxLag(long o3MaxLagUs) {
+        throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
     }
 
     @Override

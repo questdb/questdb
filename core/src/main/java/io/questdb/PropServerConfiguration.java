@@ -49,6 +49,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.*;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
@@ -97,7 +98,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnPurgeRetryDelayLimit;
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
-    private final long commitLag;
     private final int commitMode;
     private final String confRoot;
     private final int createAsSelectRetryCount;
@@ -160,6 +160,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int o3CallbackQueueCapacity;
     private final int o3ColumnMemorySize;
     private final int o3CopyQueueCapacity;
+    private final long o3MaxLag;
+    private final long o3MinLagUs;
     private final int o3OpenColumnQueueCapacity;
     private final int o3PartitionPurgeListCapacity;
     private final int o3PartitionQueueCapacity;
@@ -857,6 +859,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
+            this.o3MinLagUs = getLong(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
@@ -871,7 +874,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PurgeDiscoveryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128));
             this.o3ColumnMemorySize = (int) Files.ceilPageSize(getIntSize(properties, env, PropertyKey.CAIRO_O3_COLUMN_MEMORY_SIZE, 8 * Numbers.SIZE_1MB));
             this.maxUncommittedRows = getInt(properties, env, PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
-            this.commitLag = getLong(properties, env, PropertyKey.CAIRO_COMMIT_LAG, 300_000) * 1_000;
+
+            long o3MaxLag = getLong(properties, env, PropertyKey.CAIRO_COMMIT_LAG, 10 * Dates.MINUTE_MILLIS);
+            this.o3MaxLag = getLong(properties, env, PropertyKey.CAIRO_O3_MAX_LAG, o3MaxLag) * 1_000;
+
             this.o3QuickSortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, false);
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
@@ -1557,11 +1563,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getCommitLag() {
-            return commitLag;
-        }
-
-        @Override
         public int getCommitMode() {
             return commitMode;
         }
@@ -1754,6 +1755,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getO3CopyQueueCapacity() {
             return o3CopyQueueCapacity;
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return o3MaxLag;
+        }
+
+        @Override
+        public long getO3MinLag() {
+            return o3MinLagUs;
         }
 
         @Override

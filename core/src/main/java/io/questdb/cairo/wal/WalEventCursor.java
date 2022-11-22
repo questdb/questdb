@@ -53,6 +53,27 @@ public class WalEventCursor {
         this.eventMem = eventMem;
     }
 
+    public void drain() {
+        long o = offset;
+        while (true) {
+            if (memSize >= o + Integer.BYTES) {
+                final int value = eventMem.getInt(o);
+                o += Integer.BYTES;
+                if (value == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
+                    offset = o;
+                    break;
+                }
+
+                final int strLength = eventMem.getStrLen(o);
+                final long storageLength = Vm.getStorageLength(strLength);
+                o += storageLength;
+            } else {
+                throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
+                        .put(", required=").put(o + Integer.BYTES);
+            }
+        }
+    }
+
     public DataInfo getDataInfo() {
         if (type != DATA) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
@@ -204,10 +225,11 @@ public class WalEventCursor {
         if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
             return null;
         }
+        final boolean nullFlag = readBool();
         final int cleanTableSymbolCount = readInt();
         final int size = readInt();
 
-        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size);
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size, nullFlag);
         return symbolMapDiff;
     }
 

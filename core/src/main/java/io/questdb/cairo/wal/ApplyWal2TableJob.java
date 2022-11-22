@@ -30,6 +30,7 @@ import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -228,17 +229,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final CharSequence sql = sqlInfo.getSql();
         sqlInfo.resetRnd(sqlToOperation.getRnd());
         sqlInfo.populateBindVariableService(sqlToOperation.getBindVariableService());
+        AbstractOperation operation = null;
         try {
             switch (cmdType) {
                 case CMD_ALTER_TABLE:
-                    tableWriter.apply(sqlToOperation.toAlterOperation(sql), seqTxn);
+                    operation = sqlToOperation.toAlterOperation(sql);
                     break;
                 case CMD_UPDATE_TABLE:
-                    tableWriter.apply(sqlToOperation.toUpdateOperation(sql), seqTxn);
+                    operation = sqlToOperation.toUpdateOperation(sql);
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
+            tableWriter.apply(operation, seqTxn);
         } catch (CairoException e) {
             if (e.isWALTolerable()) {
                 // This is fine, some syntax error, we should block WAL processing if SQL is not valid
@@ -246,6 +249,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(tableWriter.getTableName()).$(", sql=").$(sql).$(", error=").$(e.getFlyweightMessage()).I$();
             } else {
                 throw e;
+            }
+        } finally {
+            if (operation != null) {
+                operation.close();
             }
         }
     }

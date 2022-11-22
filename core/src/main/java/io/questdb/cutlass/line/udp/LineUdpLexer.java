@@ -283,7 +283,7 @@ public class LineUdpLexer implements Mutable, Closeable {
         }
     }
 
-    protected long parsePartial(final long bytesPtr, final long hi) {
+    protected void parsePartial(final long bytesPtr, final long hi) {
         long p = bytesPtr;
 
         byte lastByte = (byte) 0;
@@ -353,7 +353,6 @@ public class LineUdpLexer implements Mutable, Closeable {
             }
         }
 
-        return p;
     }
 
     protected boolean partialComplete() {

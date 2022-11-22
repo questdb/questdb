@@ -153,11 +153,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getCommitLag() {
-        return 0;
-    }
-
-    @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
     }
@@ -350,6 +345,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3CopyQueueCapacity() {
         return 1024;
+    }
+
+    @Override
+    public long getO3MaxLag() {
+        // 5 min
+        return 300_000_000L;
+    }
+
+    @Override
+    public long getO3MinLag() {
+        return 1_000_000;
     }
 
     @Override
