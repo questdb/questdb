@@ -25,10 +25,8 @@
 package io.questdb.griffin.wal.fuzz;
 
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.TestRecord;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
@@ -48,11 +46,11 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence tempBinarySequence) {
-        AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, tableName, tableId);
+    public boolean apply(Rnd tempRnd, TableWriterAPI wApi, int virtualTimestampIndex) {
+        AlterOperationBuilder builder = new AlterOperationBuilder().ofAddColumn(0, wApi.getTableName(), wApi.getMetadata().getTableId());
         builder.ofAddColumn(newColName, 14, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity);
         AlterOperation alter = builder.build();
-        tableWriter.apply(alter, true);
+        wApi.apply(alter, true);
         return true;
     }
 }

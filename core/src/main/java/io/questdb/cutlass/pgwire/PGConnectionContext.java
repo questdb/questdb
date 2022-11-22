@@ -1173,8 +1173,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
             BadProtocolException,
             PeerDisconnectedException,
             PeerIsSlowToReadException,
-            AuthenticationException,
-            SqlException {
+            AuthenticationException {
         final CairoSecurityContext cairoSecurityContext = authenticator.authenticate(username, msgLo, msgLimit);
         if (cairoSecurityContext != null) {
             sqlExecutionContext.with(cairoSecurityContext, bindVariableService, rnd, this.fd, circuitBreaker.of(this.fd));
@@ -1664,9 +1663,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        if (completed) {
-            characterStore.clear();
-        }
+        characterStore.clear();
     }
 
     private void prepareLoginOk() {

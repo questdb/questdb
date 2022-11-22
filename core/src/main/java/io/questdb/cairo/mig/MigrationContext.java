@@ -110,10 +110,9 @@ class MigrationContext {
         return tempVirtualMem;
     }
 
-    public MigrationContext of(Path path, Path pathCopy, long metadataFd) {
+    public void of(Path path, Path pathCopy, long metadataFd) {
         this.tablePath = path;
         this.tablePath2 = pathCopy;
         this.metadataFd = metadataFd;
-        return this;
     }
 }

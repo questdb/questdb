@@ -55,11 +55,10 @@ public interface CharSink extends CharSinkBase {
         return this;
     }
 
-    default CharSink fill(char c, int n) {
+    default void fill(char c, int n) {
         for (int i = 0; i < n; i++) {
             put(c);
         }
-        return this;
     }
 
     default void flush() {

@@ -51,7 +51,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
     protected long aIndex;
     protected long aLimit;
-    protected long indexShift = 0;
+    protected final long indexShift = 0;
 
     public LatestByAllIndexedRecordCursor(
             int columnIndex,

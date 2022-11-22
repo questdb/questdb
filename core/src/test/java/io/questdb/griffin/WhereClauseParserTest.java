@@ -817,7 +817,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test // indexed columns have different number of symbols
     public void testEqualsChoiceOfColumns3() throws Exception {
-        IntrinsicModel m = nonEmptyModelOf("sym = 'X' and ex = 'Y' and mode = 'Z'");
+        IntrinsicModel m = nonEmptyModelOf();
         assertFilter(m, "'Z'mode='Y'ex=and");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", keyValueFuncsToString(m.keyValueFuncs));
@@ -1204,7 +1204,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testIntervalDontIntersect() throws Exception {
         // because of intervals being processed from right to left
-        // code will try to intersect 'not equal' will already  existing positive interval
+        // code will try to intersect 'not equal' will already be existing positive interval
         // result must be zero-overlap and FALSE model
         IntrinsicModel m = modelOf("timestamp != '2015-05-11' and timestamp = '2015-05-11'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -2370,11 +2370,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         );
     }
 
-    private IntrinsicModel nonEmptyModelOf(CharSequence seq) throws SqlException {
+    private IntrinsicModel nonEmptyModelOf() throws SqlException {
         queryModel.clear();
         return e.extract(
                 column -> column,
-                compiler.testParseExpression(seq, queryModel),
+                compiler.testParseExpression("sym = 'X' and ex = 'Y' and mode = 'Z'", queryModel),
                 nonEmptyMetadata,
                 null,
                 nonEmptyMetadata.getTimestampIndex(),

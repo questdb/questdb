@@ -36,7 +36,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PartitionPurgeTask;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -71,7 +70,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (halted.compareAndSet(false, true)) {
             Misc.freeObjList(partitionList);
             Misc.freeObjList(txnReaders);
