@@ -517,7 +517,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractGriff
     }
 
     // TODO Fix, see branch fix-haversine-test-attempt and run
-    // mvn test -Dtest=O3FailureTest,O3CommitLagTest,HaversineDistDegreeGroupByFunctionFactoryTest
+    // mvn test -Dtest=O3FailureTest,O3MaxLagTest,HaversineDistDegreeGroupByFunctionFactoryTest
     // for stable reproduce
     //select s, haversine_dist_deg(lat, lon, k), k from tab sample by 3h fill(linear)
     @Test

@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -49,7 +48,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         Metrics metrics = executionContext.getCairoEngine().getMetrics();
         if (metrics.isEnabled()) {
             TableWriterMetrics tableWriterMetrics = metrics.tableWriter();

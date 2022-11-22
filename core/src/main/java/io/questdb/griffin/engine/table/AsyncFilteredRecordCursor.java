@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
@@ -234,7 +233,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
-    void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
+    void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
         this.frameIndex = -1;
