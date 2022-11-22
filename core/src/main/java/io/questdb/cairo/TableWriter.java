@@ -2361,6 +2361,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                         case ColumnType.GEOSHORT:
                         case ColumnType.GEOINT:
                         case ColumnType.GEOLONG:
+                        case ColumnType.UUID:
                             attachPartitionCheckFilesMatchFixedColumn(columnType, partitionSize, columnTop, columnName, columnNameTxn, partitionPath, partitionTimestamp, columnIndex);
                             break;
                         case ColumnType.STRING:

@@ -944,6 +944,9 @@ public final class TestUtils {
                 case ColumnType.SHORT:
                     insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
                     break;
+                case ColumnType.UUID:
+                    insertFromSelect.append("rnd_uuid() ").append(colName);
+                    break;
                 default:
                     throw new UnsupportedOperationException();
             }

@@ -927,6 +927,33 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachPartitionWrongFixedUuidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            AddColumn src = s -> s.col("l", ColumnType.LONG)
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts")
+                    .col("u", ColumnType.UUID);
+
+            assertSchemaMismatch(
+                    "src34",
+                    src,
+                    "dst34",
+                    dst -> {
+                    },
+                    s -> {
+                        // .d file
+                        engine.clear();
+                        path.of(configuration.getRoot()).concat(s.getName()).concat("2022-08-01").concat("u.d").$();
+                        long fd = Files.openRW(path);
+                        Files.truncate(fd, Files.length(fd) / 10);
+                        Files.close(fd);
+                    },
+                    "Column file is too small"
+            );
+        });
+    }
+
+    @Test
     public void testAttachPartitionsDeletedColumnFromSrc() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, testName.getMethodName() + "_src", PartitionBy.DAY);
