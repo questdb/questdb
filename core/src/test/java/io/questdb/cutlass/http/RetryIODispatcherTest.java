@@ -237,13 +237,12 @@ public class RetryIODispatcherTest {
                                     "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
-
                 });
     }
 
     @Test
     public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 1000; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");
@@ -572,9 +571,9 @@ public class RetryIODispatcherTest {
                     countDownLatch.await();
                     assertNRowsInserted(validRequestRecordCount);
 
-                    for (int n = 0; n < fds.length; n++) {
-                        Assert.assertNotEquals(fds[n], -1);
-                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
+                    for (long fd : fds) {
+                        Assert.assertNotEquals(fd, -1);
+                        NetworkFacadeImpl.INSTANCE.close(fd);
                     }
 
                     // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
@@ -659,7 +658,6 @@ public class RetryIODispatcherTest {
                                     "\r\n"
                     );
                 });
-
     }
 
     private void assertInsertWaitsWhenWriterLocked() throws Exception {
