@@ -35,7 +35,7 @@ import static junit.framework.Assert.assertFalse;
 
 public class SimpleLockTest {
     @Test
-    public void testLock() {
+    public void testLock1() {
         SimpleWaitingLock lock = new SimpleWaitingLock();
         Assert.assertFalse(lock.isLocked());
         lock.lock();
@@ -64,17 +64,22 @@ public class SimpleLockTest {
     public void testLock2() throws Exception {
         SimpleWaitingLock lock = new SimpleWaitingLock();
         AtomicBoolean holdsLock = new AtomicBoolean();
-
+        AtomicBoolean unparkFlag = new AtomicBoolean();
         Thread thread;
         lock.lock();
         try {
             thread = new Thread(() -> {
                 lock.lock();  // should block
                 holdsLock.set(true);
-                LockSupport.park();
+                while (!unparkFlag.get()) {
+                    LockSupport.park();
+                }
+                if (Thread.interrupted()) {
+                    throw new RuntimeException("Interrupted");
+                }
                 lock.unlock();
                 holdsLock.set(false);
-            });
+            }, "thread");
             thread.start();
 
             // give time for thread to block
@@ -86,11 +91,12 @@ public class SimpleLockTest {
 
         // thread should acquire lock, park, unpark, and then release lock
         while (!holdsLock.get()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
+        unparkFlag.set(true);
         LockSupport.unpark(thread);
         while (holdsLock.get()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
         thread.join();
     }
@@ -98,19 +104,26 @@ public class SimpleLockTest {
     @Test
     public void testLock3() throws Exception {
         SimpleWaitingLock lock = new SimpleWaitingLock();
+        AtomicBoolean unparkFlag = new AtomicBoolean();
+
         Thread thread = new Thread(() -> {
             lock.lock();
             try {
-                LockSupport.park();
+                while (!unparkFlag.get()) {
+                    LockSupport.park();
+                }
+                if (Thread.interrupted()) {
+                    throw new RuntimeException("Interrupted");
+                }
             } finally {
                 lock.unlock();
             }
-        });
+        }, "thread");
         thread.start();
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
 
         // thread cannot acquire lock
@@ -118,6 +131,7 @@ public class SimpleLockTest {
             Assert.assertFalse(lock.tryLock());
         } finally {
             // thread should unlock
+            unparkFlag.set(true);
             LockSupport.unpark(thread);
 
             // thread should be able to acquire lock
@@ -131,20 +145,26 @@ public class SimpleLockTest {
     @Test
     public void testLock4() throws Exception {
         SimpleWaitingLock lock = new SimpleWaitingLock();
+        AtomicBoolean unparkFlag = new AtomicBoolean();
 
         Thread thread1 = new Thread(() -> {
             lock.lock();
             try {
-                LockSupport.park();
+                while (!unparkFlag.get()) {
+                    LockSupport.park();
+                }
+                if (Thread.interrupted()) {
+                    throw new RuntimeException("Interrupted");
+                }
             } finally {
                 lock.unlock();
             }
-        });
+        }, "thread1");
         thread1.start();
 
-        // wait for virtual thread to acquire lock
+        // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.sleep(10);
+            Thread.onSpinWait();
         }
 
         AtomicBoolean holdsLock = new AtomicBoolean();
@@ -154,24 +174,25 @@ public class SimpleLockTest {
             LockSupport.park();
             lock.unlock();
             holdsLock.set(false);
-        });
+        }, "thread2");
         thread2.start();
 
         // thread2 should block
-        Thread.sleep(1000);
+        Thread.sleep(500);
         assertFalse(holdsLock.get());
 
         // unpark thread1
+        unparkFlag.set(true);
         LockSupport.unpark(thread1);
 
         // thread2 should acquire lock
         while (!holdsLock.get()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
         // unpark thread and it should release lock
         LockSupport.unpark(thread2);
         while (holdsLock.get()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
 
         thread1.join();
@@ -181,19 +202,26 @@ public class SimpleLockTest {
     @Test
     public void testLock5() throws Exception {
         SimpleWaitingLock lock = new SimpleWaitingLock();
+        AtomicBoolean unparkFlag = new AtomicBoolean();
+
         Thread thread = new Thread(() -> {
             lock.lock();
             try {
-                LockSupport.park();
+                while (!unparkFlag.get()) {
+                    LockSupport.park();
+                }
+                if (Thread.interrupted()) {
+                    throw new RuntimeException("Interrupted");
+                }
             } finally {
                 lock.unlock();
             }
-        });
+        }, "thread");
         thread.start();
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
-            Thread.sleep(20);
+            Thread.onSpinWait();
         }
 
         // thread cannot acquire lock
@@ -201,6 +229,7 @@ public class SimpleLockTest {
             Assert.assertFalse(lock.tryLock(100, TimeUnit.MILLISECONDS));
         } finally {
             // thread should unlock
+            unparkFlag.set(true);
             LockSupport.unpark(thread);
 
             // thread should be able to acquire lock
@@ -222,11 +251,12 @@ public class SimpleLockTest {
             } finally {
                 lock.unlock();
             }
-        });
+        }, "thread");
         thread.start();
 
         // wait for thread to acquire lock
         while (!lock.isLocked()) {
+            Thread.onSpinWait();
         } // spin
 
         Assert.assertTrue(lock.isLocked());
