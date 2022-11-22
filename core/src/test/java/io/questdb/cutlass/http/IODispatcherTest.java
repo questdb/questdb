@@ -269,8 +269,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 true,
                 PartitionBy.DAY,
@@ -281,8 +281,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCanUpdateCommitLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 false,
                 PartitionBy.DAY,
@@ -365,14 +365,14 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testCannotUpdateCommitLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testCannotUpdateO3MaxLagAndMaxUncommittedRowsIfTableExistsAndOverwriteIsFalse() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 false,
                 true,
                 PartitionBy.DAY,
                 3_600_000_000L, // 1 hour, micro precision
                 1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -742,9 +742,9 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testFailsOnBadCommitLag() throws Exception {
+    public void testFailsOnBadMaxUncommittedRows() throws Exception {
         String command = "POST /upload?fmt=json&" +
-                "commitLag=2seconds+please&" +
+                "maxUncommittedRows=two&" +
                 "name=test HTTP/1.1\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -753,8 +753,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2e\r\n" +
-                        "{\"status\":\"invalid commitLag, must be a long\"}\r\n" +
+                        "37\r\n" +
+                        "{\"status\":\"invalid maxUncommittedRows, must be an int\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 command +
@@ -783,9 +783,9 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testFailsOnBadMaxUncommittedRows() throws Exception {
+    public void testFailsOnBadO3MaxLag() throws Exception {
         String command = "POST /upload?fmt=json&" +
-                "maxUncommittedRows=two&" +
+                "o3MaxLag=2seconds+please&" +
                 "name=test HTTP/1.1\r\n";
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -794,8 +794,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "37\r\n" +
-                        "{\"status\":\"invalid maxUncommittedRows, must be an int\"}\r\n" +
+                        "33\r\n" +
+                        "{\"status\":\"invalid o3MaxLag value, must be a long\"}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 command +
@@ -2065,8 +2065,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows1() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows1() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, micro precision
                 3,
                 240_000_000, // 4 minutes, micro precision
@@ -2089,8 +2089,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportSettingCommitLagAndMaxUncommittedRows2() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableNotExists(
+    public void testImportSettingO3MaxLagAndMaxUncommittedRows2() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 120_000_000, // 2 minutes, micro precision
                 1,
                 120_000_000,
@@ -2535,7 +2535,7 @@ public class IODispatcherTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        HttpQueryTestBuilder builder = testJsonQuery(
+        testJsonQuery(
                 10,
                 "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
@@ -4996,7 +4996,7 @@ public class IODispatcherTest {
                 final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < 10; i++) {
-                        testMaxConnections0(dispatcher, sockAddr, activeConnectionLimit, openFds, buf);
+                        testMaxConnections0(dispatcher, sockAddr, openFds, buf);
                     }
                 } finally {
                     Net.freeSockAddr(sockAddr);
@@ -6859,26 +6859,26 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfPartitionByIsNONE() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 false,
                 PartitionBy.NONE,
                 180_000_000,
                 1,
-                0,
+                300000000,
                 1000);
     }
 
     @Test
-    public void testUpdateCommitLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
-        importWithCommitLagAndMaxUncommittedRowsTableExists(
+    public void testUpdateO3MaxLagAndMaxUncommittedRowsIsIgnoredIfValuesAreSmallerThanZero() throws Exception {
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
                 true,
                 true,
                 PartitionBy.DAY,
                 -1,
                 -1,
-                0,
+                300000000,
                 1000);
     }
 
@@ -6924,7 +6924,7 @@ public class IODispatcherTest {
             CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
-            boolean print
+            @SuppressWarnings("SameParameterValue") boolean print
     ) throws InterruptedException {
         sendAndReceive(
                 nf,
@@ -6977,15 +6977,17 @@ public class IODispatcherTest {
         }
     }
 
-    private void assertMetadataAndData(String tableName,
-                                       long expectedCommitLag,
-                                       int expectedMaxUncommittedRows,
-                                       int expectedImportedRows,
-                                       String expectedData) {
+    private void assertMetadataAndData(
+            String tableName,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows,
+            int expectedImportedRows,
+            String expectedData
+    ) {
         final String baseDir = temp.getRoot().getAbsolutePath();
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            Assert.assertEquals(expectedCommitLag, reader.getCommitLag());
+            Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             Assert.assertEquals(0, expectedImportedRows - reader.size());
@@ -6997,7 +6999,7 @@ public class IODispatcherTest {
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
             String baseDir,
-            boolean dumpTraffic
+            @SuppressWarnings("SameParameterValue") boolean dumpTraffic
     ) {
         return createHttpServerConfiguration(
                 NetworkFacadeImpl.INSTANCE,
@@ -7050,13 +7052,15 @@ public class IODispatcherTest {
         return httpConfiguration;
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableExists(boolean overwrite,
-                                                                     boolean durable,
-                                                                     int partitionBy,
-                                                                     long commitLag,
-                                                                     int maxUncommittedRows,
-                                                                     long expectedCommitLag,
-                                                                     int expectedMaxUncommittedRows) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+            boolean overwrite,
+            boolean durable,
+            int partitionBy,
+            long o3MaxLag,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows
+    ) throws Exception {
         final AtomicInteger msyncCallCount = new AtomicInteger();
         final String baseDir = temp.getRoot().getAbsolutePath();
         CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
@@ -7085,7 +7089,7 @@ public class IODispatcherTest {
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 String.format("partitionBy=%s&", PartitionBy.toString(partitionBy)) +
-                "commitLag=" + commitLag + "&" +
+                "o3MaxLag=" + o3MaxLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=" + tableName + " HTTP/1.1\r\n";
 
@@ -7145,26 +7149,27 @@ public class IODispatcherTest {
 
         assertMetadataAndData(
                 tableName,
-                expectedCommitLag,
+                expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 1,
-                "2021-01-01T00:01:00.000000Z\t1\n");
+                "2021-01-01T00:01:00.000000Z\t1\n"
+        );
     }
 
-    private void importWithCommitLagAndMaxUncommittedRowsTableNotExists(long commitLag,
-                                                                        int maxUncommittedRows,
-                                                                        long expectedCommitLag,
-                                                                        int expectedMaxUncommittedRows,
-                                                                        int expectedImportedRows,
-                                                                        String data,
-                                                                        String expectedData) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(long o3MaxLag,
+                                                                       int maxUncommittedRows,
+                                                                       long expectedO3MaxLag,
+                                                                       int expectedMaxUncommittedRows,
+                                                                       int expectedImportedRows,
+                                                                       String data,
+                                                                       String expectedData) throws Exception {
         String tableName = "test_table";
         String command = "POST /upload?fmt=json&" +
                 "overwrite=false&" +
                 "forceHeader=true&" +
                 "timestamp=ts&" +
                 "partitionBy=DAY&" +
-                "commitLag=" + commitLag + "&" +
+                "o3MaxLag=" + o3MaxLag + "&" +
                 "maxUncommittedRows=" + maxUncommittedRows + "&" +
                 "name=" + tableName + " HTTP/1.1\r\n";
 
@@ -7220,7 +7225,7 @@ public class IODispatcherTest {
 
         assertMetadataAndData(
                 tableName,
-                expectedCommitLag,
+                expectedO3MaxLag,
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
                 expectedData);
@@ -7272,8 +7277,8 @@ public class IODispatcherTest {
         }, telemetry);
     }
 
-    private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
-        return testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
+    private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {
+        testJsonQuery(recordCount, request, expectedResponse, requestCount, false);
     }
 
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse) throws Exception {
@@ -7302,7 +7307,6 @@ public class IODispatcherTest {
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            int activeConnectionLimit,
             LongList openFds,
             long buf
     ) {
@@ -7310,7 +7314,7 @@ public class IODispatcherTest {
         // the same amount to put onto the backlog. Backlog and active connection count are the same.
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
-        for (int i = 0; i < activeConnectionLimit; i++) {
+        for (int i = 0; i < 400; i++) {
             long fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
@@ -7340,7 +7344,7 @@ public class IODispatcherTest {
         long mem = TestUtils.toMemory(request);
 
         try {
-            for (int i = 0; i < activeConnectionLimit; i++) {
+            for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
                 long fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
@@ -7365,7 +7369,7 @@ public class IODispatcherTest {
                 Os.pause();
             }
 
-            for (int j = 1; j < activeConnectionLimit; j++) {
+            for (int j = 1; j < 400; j++) {
                 Net.close(openFds.getQuick(j));
             }
 

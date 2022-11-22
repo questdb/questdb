@@ -33,7 +33,6 @@ import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
@@ -81,7 +80,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (longBytes != 0L) {
             Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_COLUMN_PURGE);
             longBytes = 0;

@@ -30,15 +30,11 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.Long128Constant;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
-
-import static io.questdb.test.tools.TestUtils.getZeroToOneDouble;
+import io.questdb.std.ThreadLocal;
+import io.questdb.std.*;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
-    public final static int[] SUPPORTED_COLUM_TYPES = new int[]{
+    public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
             ColumnType.INT,
             ColumnType.LONG,
             ColumnType.TIMESTAMP,
@@ -58,8 +54,9 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN
     };
+    private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private final double cancelRows;
-    private final RecordMetadata metadata;
     private final double notSet;
     private final double nullSet;
     private final long s0;
@@ -68,28 +65,44 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final String[] symbols;
     private final long timestamp;
 
-    public FuzzInsertOperation(long seed1, long seed2, RecordMetadata metadata, long timestamp, double notSet, double nullSet, double cancelRows, int strLen, String[] symbols) {
+    public FuzzInsertOperation(
+            long seed1,
+            long seed2,
+            long timestamp,
+            double notSet,
+            double nullSet,
+            double cancelRows,
+            int strLen,
+            String[] symbols
+    ) {
         this.cancelRows = cancelRows;
         this.strLen = strLen;
         this.symbols = symbols;
         this.s0 = seed1;
         this.s1 = seed2;
-        this.metadata = metadata;
         this.timestamp = timestamp;
         this.notSet = notSet;
         this.nullSet = nullSet;
     }
 
     @Override
-    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, String tableName, int tableId, IntList tempList, TestRecord.ArrayBinarySequence binarySequence) {
+    public boolean apply(Rnd rnd, TableWriterAPI tableWriter, int virtualTimestampIndex) {
         rnd.reset(this.s1, this.s0);
         rnd.nextLong();
         rnd.nextLong();
+        RecordMetadata metadata = tableWriter.getMetadata();
+
+        final IntList tempList = tlIntList.get();
+        final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
 
         TableWriter.Row row = tableWriter.newRow(timestamp);
+        // this is hack for populating a table without designated timestamp
+        if (virtualTimestampIndex != -1) {
+            row.putTimestamp(virtualTimestampIndex, timestamp);
+        }
 
         int columnCount = metadata.getColumnCount();
-        if (getZeroToOneDouble(rnd) < cancelRows) {
+        if (rnd.nextDouble() < cancelRows) {
             columnCount = rnd.nextInt(metadata.getColumnCount());
         }
 
@@ -105,13 +118,17 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             index = index % tableColumnCount;
             tempList.setQuick(index, 1);
 
-            if (index != metadata.getTimestampIndex()) {
+            if (index != metadata.getTimestampIndex() && index != virtualTimestampIndex) {
                 int type = metadata.getColumnType(index);
                 if (type > 0) {
-                    if (getZeroToOneDouble(rnd) > notSet) {
-                        boolean isNull = getZeroToOneDouble(rnd) < nullSet;
+                    if (rnd.nextDouble() > notSet) {
+                        boolean isNull = rnd.nextDouble() < nullSet;
 
                         switch (type) {
+                            case ColumnType.CHAR:
+                                row.putChar(index, rnd.nextChar());
+                                break;
+
                             case ColumnType.INT:
                                 row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
                                 break;

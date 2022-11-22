@@ -41,13 +41,13 @@ import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
     static final int REBUILD_ALL_COLUMNS = -1;
+    protected final String unsupportedTableMessage = "Table does not have any indexes";
     private final StringSink tempStringSink = new StringSink();
     protected CairoConfiguration configuration;
     protected FilesFacade ff;
     protected Path path = new Path();
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
-    protected String unsupportedTableMessage = "Table does not have any indexes";
     private MillisecondClock clock;
     private long lockFd;
 

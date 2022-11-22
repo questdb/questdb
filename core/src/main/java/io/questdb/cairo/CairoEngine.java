@@ -535,10 +535,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 path.of(configuration.getRoot()).concat(tableName).$();
                 int errno;
                 if ((errno = configuration.getFilesFacade().rmdir(path)) != 0) {
-                    LOG.error().$("could not remove table [tableName='").utf8(tableName).$("', error=").$(errno).I$();
-                    throw CairoException.critical(errno).put("could not remove table [tableName=").put(tableName).put(']');
-                }
-                return;
+                        LOG.error().$("could not remove table [tableName='").utf8(tableName).$("', error=").$(errno).I$();
+                        throw CairoException.critical(errno).put("could not remove table [tableName=").put(tableName).put(']');
+                    }
+                    return;
             } finally {
                 unlock(securityContext, tableName, null, false);
             }

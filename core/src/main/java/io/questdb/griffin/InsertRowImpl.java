@@ -60,7 +60,7 @@ public class InsertRowImpl {
         }
     }
 
-    public void append(TableWriterAPI writer) throws SqlException {
+    public void append(TableWriterAPI writer) {
         final TableWriter.Row row = rowFactory.getRow(writer);
         copier.copy(virtualRecord, row);
         row.append();
@@ -94,6 +94,6 @@ public class InsertRowImpl {
 
     @FunctionalInterface
     private interface RowFactory {
-        TableWriter.Row getRow(TableWriterAPI tableWriter) throws SqlException;
+        TableWriter.Row getRow(TableWriterAPI tableWriter);
     }
 }

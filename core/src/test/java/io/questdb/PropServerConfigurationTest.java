@@ -559,6 +559,8 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.writer.data.append.page.size", "3G");
         env.put("QDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE", "9G");
 
+        properties.setProperty("cairo.o3.max.lag", "60");
+
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, env, LOG, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -569,6 +571,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
+        Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
     }
 
     @Test
@@ -916,7 +919,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
             Assert.assertFalse(configuration.getCairoConfiguration().isIOURingEnabled());
 
-            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
+            Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getO3MaxLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
 
             Assert.assertEquals(256, configuration.getCairoConfiguration().getSqlDistinctTimestampKeyCapacity());

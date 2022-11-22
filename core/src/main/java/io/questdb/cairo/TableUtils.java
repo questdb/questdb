@@ -67,9 +67,9 @@ public final class TableUtils {
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
-    public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
+    public static final long META_OFFSET_O3_MAX_LAG = 24; // LONG
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final long META_OFFSET_TABLE_ID = 16;
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
@@ -278,7 +278,7 @@ public final class TableUtils {
             mem.putInt(tableVersion);
             mem.putInt(tableId);
             mem.putInt(structure.getMaxUncommittedRows());
-            mem.putLong(structure.getCommitLag());
+            mem.putLong(structure.getO3MaxLag());
             mem.putLong(0); // Structure version.
             mem.putInt(structure.isWalEnabled() ? 1 : 0);
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
