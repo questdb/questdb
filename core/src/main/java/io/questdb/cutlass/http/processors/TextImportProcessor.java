@@ -149,15 +149,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                     null
             );
 
-            CharSequence commitLagChars = rh.getUrlParam("commitLag");
-            if (commitLagChars != null) {
+            CharSequence o3MaxLagChars = rh.getUrlParam("o3MaxLag");
+            if (o3MaxLagChars != null) {
                 try {
-                    long commitLag = Numbers.parseLong(commitLagChars);
-                    if (commitLag >= 0) {
-                        transientState.textLoader.setCommitLag(commitLag);
+                    long o3MaxLag = Numbers.parseLong(o3MaxLagChars);
+                    if (o3MaxLag >= 0) {
+                        transientState.textLoader.setO3MaxLag(o3MaxLag);
                     }
                 } catch (NumericException e) {
-                    sendErrorAndThrowDisconnect("invalid commitLag, must be a long");
+                    sendErrorAndThrowDisconnect("invalid o3MaxLag value, must be a long");
                 }
             }
 
@@ -512,11 +512,10 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.errorMessage = message;
         if (state.json) {
             socket.status(200, CONTENT_TYPE_JSON);
-            socket.sendHeader();
         } else {
             socket.status(200, CONTENT_TYPE_TEXT);
-            socket.sendHeader();
         }
+        socket.sendHeader();
         socket.sendChunk(false);
         resumeError(state, socket);
     }

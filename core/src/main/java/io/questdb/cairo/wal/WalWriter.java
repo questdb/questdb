@@ -74,6 +74,7 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
+    private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final String tableName;
@@ -126,7 +127,7 @@ public class WalWriter implements TableWriterAPI {
             initialSymbolCounts = new AtomicIntList(columnCount);
 
             events = new WalWriterEvents(ff);
-            events.of(symbolMaps, initialSymbolCounts);
+            events.of(symbolMaps, initialSymbolCounts, symbolMapNullFlags);
 
             configureColumns();
             openNewSegment();
@@ -244,16 +245,6 @@ public class WalWriter implements TableWriterAPI {
         return NO_TXN;
     }
 
-    @Override
-    public long commitWithLag() {
-        return commit();
-    }
-
-    @Override
-    public long commitWithLag(long commitLag) {
-        return commit();
-    }
-
     public void doClose(boolean truncate) {
         open = false;
         metadata.close(Vm.TRUNCATE_TO_POINTER);
@@ -334,6 +325,16 @@ public class WalWriter implements TableWriterAPI {
             distressed = true;
             return false;
         }
+    }
+
+    @Override
+    public void ic() {
+        commit();
+    }
+
+    @Override
+    public void ic(long o3MaxLag) {
+        commit();
     }
 
     public boolean inTransaction() {
@@ -642,6 +643,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureEmptySymbol(int columnWriterIndex) {
         symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
         initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
+        symbolMapNullFlags.extendAndSet(columnWriterIndex, false);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
     }
 
@@ -732,6 +734,7 @@ public class WalWriter implements TableWriterAPI {
         symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
         symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
         initialSymbolCounts.extendAndSet(columnWriterIndex, symbolCount);
+        symbolMapNullFlags.extendAndSet(columnWriterIndex, symbolMapReader.containsNullValue());
     }
 
     private void configureSymbolTable() {
@@ -742,8 +745,9 @@ public class WalWriter implements TableWriterAPI {
             for (int i = 0; i < columnCount; i++) {
                 int columnType = metadata.getColumnType(i);
                 if (!ColumnType.isSymbol(columnType)) {
-                    // Maintain sparse list of symbol writers.
-                    // Note: we don't need to set initialSymbolCounts value here, since we already filled it with -1s initially.
+                    // Maintain sparse list of symbol writers
+                    // Note: we don't need to set initialSymbolCounts and symbolMapNullFlags values
+                    // here since we already filled it with -1 and false initially
                     symbolMapReaders.extendAndSet(i, null);
                     symbolMaps.extendAndSet(i, null);
                 } else {
@@ -962,6 +966,7 @@ public class WalWriter implements TableWriterAPI {
                     if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
                         final SymbolMapReader reader = symbolMapReaders.getQuick(i);
                         initialSymbolCounts.set(i, reader.getSymbolCount());
+                        symbolMapNullFlags.set(i, reader.containsNullValue());
                         CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(i);
                         symbolMap.clear();
                     }
@@ -998,6 +1003,7 @@ public class WalWriter implements TableWriterAPI {
         Misc.freeIfCloseable(symbolMapReaders.getAndSetQuick(index, null));
         symbolMaps.setQuick(index, null);
         initialSymbolCounts.set(index, -1);
+        symbolMapNullFlags.set(index, false);
         cleanupSymbolMapFiles(path, rootLen, metadata.getColumnName(index));
     }
 
@@ -1041,6 +1047,7 @@ public class WalWriter implements TableWriterAPI {
             final SymbolMapReader reader = symbolMapReaders.getQuick(i);
             if (reader != null) {
                 initialSymbolCounts.set(i, reader.getSymbolCount());
+                symbolMapNullFlags.set(i, reader.containsNullValue());
             }
         }
     }
@@ -1247,7 +1254,7 @@ public class WalWriter implements TableWriterAPI {
             if (metadata.getColumnIndexQuiet(columnName) > -1) {
                 throw CairoException.nonCritical().put("duplicate column name: ").put(columnName);
             }
-            if (columnType <= 0 || columnType >= ColumnType.MAX) {
+            if (columnType <= 0) {
                 throw CairoException.nonCritical().put("invalid column type: ").put(columnType);
             }
             structureVersion++;
@@ -1455,7 +1462,7 @@ public class WalWriter implements TableWriterAPI {
                 if (key == SymbolTable.VALUE_NOT_FOUND) {
                     if (value != null) {
                         // Add it to in-memory symbol map
-                        int initialSymCount = initialSymbolCounts.get(columnIndex);
+                        final int initialSymCount = initialSymbolCounts.get(columnIndex);
                         CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
                         key = symbolMap.get(value);
                         if (key == SymbolTable.VALUE_NOT_FOUND) {
@@ -1464,6 +1471,7 @@ public class WalWriter implements TableWriterAPI {
                         }
                     } else {
                         key = SymbolTable.VALUE_IS_NULL;
+                        symbolMapNullFlags.set(columnIndex, true);
                     }
                 }
                 getPrimaryColumn(columnIndex).putInt(key);

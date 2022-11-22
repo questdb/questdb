@@ -202,7 +202,7 @@ public class ServerMain implements Closeable {
         log.advisoryW().$("bootstrap complete").$();
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
         } catch (Throwable thr) {

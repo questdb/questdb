@@ -30,7 +30,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
@@ -50,7 +49,7 @@ public class LPadStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function strFunc = args.getQuick(0);
         final Function lenFunc = args.getQuick(1);
         final Function fillTextFunc = args.getQuick(2);

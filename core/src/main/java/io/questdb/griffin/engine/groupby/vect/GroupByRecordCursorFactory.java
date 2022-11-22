@@ -56,7 +56,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static int ROSTI_MINIMIZED_SIZE = 16;//16 is the minimum size usable on arm 
     private final ObjList<VectorAggregateEntry> activeEntries;
     private final RecordCursorFactory base;
-    private final CairoConfiguration configuration;
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
@@ -79,7 +78,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
-        this.configuration = configuration;
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -405,7 +403,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private class RostiRecordCursor implements RecordCursor {
         private final IntList columnSkewIndex;
-        private final int defaultMapSize;
         private final RostiRecord record;
         private final IntList symbolTableSkewIndex;
         private long count;
@@ -423,7 +420,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
-            this.defaultMapSize = defaultMapSize;
         }
 
         @Override

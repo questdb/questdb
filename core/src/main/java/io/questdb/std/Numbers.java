@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+// @formatter:off
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -2286,6 +2287,7 @@ public final class Numbers {
     }
     //#endif
 
+    // @formatter:on
     static {
         pow10 = new long[20];
         pow10max = 18;

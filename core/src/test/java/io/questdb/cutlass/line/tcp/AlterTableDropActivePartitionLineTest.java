@@ -117,7 +117,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                                         "addressId STRING, " +
                                         "timestamp TIMESTAMP" +
                                         ") TIMESTAMP(timestamp) PARTITION BY DAY " +
-                                        "WITH maxUncommittedRows=1000, commitLag=200000us" // 200 millis
+                                        "WITH maxUncommittedRows=1000, o3MaxLag=200000us" // 200 millis
                         )
                 ) {
                     LOG.info().$("creating table: ").utf8(tableName).$();
@@ -141,13 +141,13 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                     try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), ILP_PORT, ILP_BUFFER_SIZE)) {
                         while (ilpAgentKeepSending.get()) {
                             for (int i = 0; i < 100; i++) {
-                                addLine(sender, tableName, uniqueId, timestampNano, rnd);
+                                addLine(sender, uniqueId, timestampNano, rnd);
                             }
                             sender.flush();
                         }
                         // send a few more
                         for (int i = 0, n = 50 + rnd.nextInt(100); i < n; i++) {
-                            addLine(sender, tableName, uniqueId, timestampNano, rnd).flush();
+                            addLine(sender, uniqueId, timestampNano, rnd).flush();
                         }
                     } finally {
                         ilpAgentHalted.countDown();
@@ -242,8 +242,8 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
         return array[rnd.nextPositiveInt() % array.length];
     }
 
-    private LineTcpSender addLine(LineTcpSender sender, String tableName, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
-        sender.metric(tableName)
+    private LineTcpSender addLine(LineTcpSender sender, AtomicLong uniqueId, AtomicLong timestampNano, Rnd rnd) {
+        sender.metric("PurposelessTable")
                 .tag("favourite_colour", rndOf(rnd, colour))
                 .tag("country", rndOf(rnd, country))
                 .field("uniqueId", uniqueId.getAndIncrement())

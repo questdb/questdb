@@ -39,6 +39,7 @@ public class MutableIOContextFactory<C extends MutableIOContext<C>>
     private volatile boolean closed = false;
 
     public MutableIOContextFactory(ObjectFactory<C> factory, int poolSize) {
+        // todo: this is very slow, refactor
         this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, poolSize));
     }
 
