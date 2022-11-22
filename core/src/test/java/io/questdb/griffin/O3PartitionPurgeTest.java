@@ -372,7 +372,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         rdr2.openPartition(0);
                     }
                     runPartitionPurgeJobs();
-                    Assert.assertFalse(Chars.toString(path), Files.exists(path));
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-10T03").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     // This should not fail
                     rdr.openPartition(0);
