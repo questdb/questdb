@@ -196,7 +196,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
                     unprobed = false;
                     columnTypes.setQuick(i, typeManager.getProbe(k));
-                    if (allStrings) {
+                    if (allStrings && typeManager.getProbe(k).getType() != ColumnType.CHAR) {
                         allStrings = false;
                     }
                     break;
