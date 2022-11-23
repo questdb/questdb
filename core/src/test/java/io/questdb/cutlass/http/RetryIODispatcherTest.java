@@ -214,9 +214,9 @@ public class RetryIODispatcherTest {
                                     }
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(finalI).$();
                                 countDownLatch.countDown();
                             }
-                            LOG.info().$("Stopped thread ").$(finalI).$();
                         }).start();
                     }
 
@@ -296,9 +296,9 @@ public class RetryIODispatcherTest {
                                     }
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(finalI).$();
                                 countDownLatch.countDown();
                             }
-                            LOG.info().$("Stopped thread ").$(finalI).$();
                         }).start();
                     }
 
@@ -516,6 +516,7 @@ public class RetryIODispatcherTest {
                                 LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                             }
                         } finally {
+                            LOG.info().$("Stopped rename table thread");
                             countDownLatch.countDown();
                         }
                     }).start();
@@ -563,9 +564,9 @@ public class RetryIODispatcherTest {
                                     }
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(threadI).$();
                                 countDownLatch.countDown();
                             }
-                            LOG.info().$("Stopped thread ").$(threadI).$();
                         }).start();
                     }
                     countDownLatch.await();
@@ -618,6 +619,7 @@ public class RetryIODispatcherTest {
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     AtomicInteger fails = new AtomicInteger();
                     for (int i = 0; i < parallelCount; i++) {
+                        final int threadI = i;
                         new Thread(() -> {
                             try {
                                 for (int r = 0; r < insertCount; r++) {
@@ -636,6 +638,7 @@ public class RetryIODispatcherTest {
                                     }
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(threadI).$();
                                 countDownLatch.countDown();
                             }
                         }).start();
@@ -679,6 +682,7 @@ public class RetryIODispatcherTest {
                     final int insertCount = 10;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
                     for (int i = 0; i < parallelCount; i++) {
+                        final int threadI = i;
                         new Thread(() -> {
                             try {
                                 for (int r = 0; r < insertCount; r++) {
@@ -695,6 +699,7 @@ public class RetryIODispatcherTest {
                                     }
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(threadI).$();
                                 countDownLatch.countDown();
                             }
                         }).start();
@@ -762,6 +767,7 @@ public class RetryIODispatcherTest {
                                     LOG.error().$("Failed execute insert http request. Server error ").$(e);
                                 }
                             } finally {
+                                LOG.info().$("Stopped thread ").$(threadI).$();
                                 countDownLatch.countDown();
                             }
                         });
