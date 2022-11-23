@@ -359,7 +359,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
 
             drainWalQueue();
 
-            IntHashSet walIdSet = new IntHashSet();
+            IntHashSet badWalIds = new IntHashSet();
 
             try (
                     WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
@@ -370,10 +370,6 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(walWriter1.getWalId(), is(1));
                 MatcherAssert.assertThat(walWriter2.getWalId(), is(2));
                 MatcherAssert.assertThat(walWriter3.getWalId(), is(3));
-
-                walIdSet.add(walWriter1.getWalId());
-                walIdSet.add(walWriter2.getWalId());
-                walIdSet.add(walWriter3.getWalId());
             }
 
             AlterOperationBuilder alterBuilder = new AlterOperationBuilder().ofDropColumn(1, tableName, 0);
@@ -385,7 +381,7 @@ public class WalTableFailureTest extends AbstractGriffinTest {
                     TableWriterAPI insertWriter = engine.getTableWriterAPI(sqlExecutionContext.getCairoSecurityContext(), tableName, "test")
             ) {
 
-                walIdSet.remove(badWriterId = ((WalWriter) insertWriter).getWalId());
+                badWalIds.add(badWriterId = ((WalWriter) insertWriter).getWalId());
 
                 // Serialize into WAL sequencer a drop column operation of non-existing column
                 // So that it will fail during application to other WAL writers
@@ -424,16 +420,16 @@ public class WalTableFailureTest extends AbstractGriffinTest {
             }
 
             try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                Assert.assertTrue(walIdSet.contains(walWriter1.getWalId()));
+                Assert.assertTrue(badWalIds.excludes(walWriter1.getWalId()));
 
                 // Assert wal writer 2 is not in the pool after failure to apply structure change
                 // wal writer 3 will fail to go active because of dodgy Alter in the WAL sequencer
 
                 try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    Assert.assertTrue(walIdSet.contains(walWriter2.getWalId()));
+                    Assert.assertTrue(badWalIds.excludes(walWriter2.getWalId()));
 
                     try (WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                        Assert.assertTrue(walIdSet.excludes(walWriter3.getWalId()));
+                        Assert.assertTrue(badWalIds.excludes(walWriter3.getWalId()));
                         Assert.assertNotEquals(badWriterId, walWriter3.getWalId());
                     }
                 }

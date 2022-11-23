@@ -279,6 +279,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         if (owner != UNALLOCATED) {
             LOG.debug().$('\'').utf8(tableName).$("' is expelled [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, tableName, PoolListener.EV_OUT_OF_POOL_CLOSE, e.index, index);
+            e.assignTenant(index, null);
             Unsafe.cas(e.allocations, index, owner, UNALLOCATED);
         }
     }
