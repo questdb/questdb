@@ -242,7 +242,7 @@ public class RetryIODispatcherTest {
 
     @Test
     public void testImportRerunsExceedsRerunProcessingQueueSizeLoop() throws Exception {
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 10; i++) {
             System.out.println("*************************************************************************************");
             System.out.println("**************************         Run " + i + "            ********************************");
             System.out.println("*************************************************************************************");

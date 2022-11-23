@@ -97,7 +97,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.csPool.clear();
         this.localValueMap.clear();
         if (this.pendingRetry) {
-            LOG.error().$("Reused context with retry pending.").$();
+            LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
         this.multipartParserState.multipartRetry = false;
