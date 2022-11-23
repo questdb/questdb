@@ -2527,6 +2527,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     if (txWriter.reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
                         this.partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
+                        openLastPartition();
                     }
                 }
             }
