@@ -76,7 +76,7 @@ public class ServerMain implements Closeable {
 
         // create cairo engine
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        engine = freeOnExit(new CairoEngine(cairoConfig, metrics, getWalApplyWorkerCount(config)));
+        engine = freeOnExit(new CairoEngine(cairoConfig, metrics));
 
         // create function factory cache
         ffCache = new FunctionFactoryCache(
@@ -271,16 +271,6 @@ public class ServerMain implements Closeable {
             System.gc(); // final GC
             log.advisoryW().$("enjoy").$();
         }
-    }
-
-    private static int getWalApplyWorkerCount(PropServerConfiguration config) {
-        final int walApplyThreads;
-        if (config.getWalApplyPoolConfiguration().isEnabled()) {
-            walApplyThreads = config.getWalApplyPoolConfiguration().getWorkerCount();
-        } else {
-            walApplyThreads = config.getWorkerPoolConfiguration().getWorkerCount();
-        }
-        return Math.max(1, walApplyThreads);
     }
 
     private void addShutdownHook() {

@@ -845,7 +845,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -917,7 +917,7 @@ public class IODispatcherTest {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics, 2);
+                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
                 HttpServer ignored = createHttpServer(
                         new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
                             @Override
@@ -1847,7 +1847,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2396,7 +2396,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -3003,7 +3003,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4288,7 +4288,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4516,7 +4516,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4591,7 +4591,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics, 2);
+                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -4689,7 +4689,7 @@ public class IODispatcherTest {
                     // this is necessary to sufficiently fragment paged filter execution
                     return 10_000;
                 }
-            }, metrics, 2);
+            }, metrics);
                  HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {

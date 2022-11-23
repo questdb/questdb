@@ -60,7 +60,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         );
         // free engine from the superclass
         Misc.free(engine);
-        engine = new CairoEngine(configuration, metrics, 2);
+        engine = new CairoEngine(configuration, metrics);
         compiler = new SqlCompiler(engine, null, null);
         compiler.setFullFatJoins(true);
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);

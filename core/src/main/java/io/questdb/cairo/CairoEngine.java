@@ -37,7 +37,6 @@ import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -65,7 +64,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataPool metadataPool;
     private final Metrics metrics;
     private final ReaderPool readerPool;
-    private final ThreadSafeObjectPool<SqlCompiler> sqlCompilerPool;
     private final IDGenerator tableIdGenerator;
     private final TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
@@ -81,12 +79,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
-    // Defaults WAL Apply threads set to 2, this is the upper limit of number of parallel compilations when applying WAL segments.
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, Metrics.disabled(), 2);
+        this(configuration, Metrics.disabled());
     }
 
-    public CairoEngine(CairoConfiguration configuration, Metrics metrics, int totalWALApplyThreads) {
+    public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
         this.textImportExecutionContext = new TextImportExecutionContext(configuration);
         this.metrics = metrics;
@@ -137,8 +134,6 @@ public class CairoEngine implements Closeable, WriterSource {
             close();
             throw e;
         }
-
-        this.sqlCompilerPool = new ThreadSafeObjectPool<>(() -> new SqlCompiler(this), totalWALApplyThreads);
     }
 
     @TestOnly
@@ -163,9 +158,6 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableSequencerAPI);
         Misc.free(telemetryQueue);
         Misc.free(tableNameRegistry);
-        if (sqlCompilerPool != null) {
-            sqlCompilerPool.releaseAll();
-        }
     }
 
     @TestOnly
@@ -717,11 +709,6 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public void releaseInactiveCompilers() {
-        sqlCompilerPool.releaseInactive();
-    }
-
-    @TestOnly
     public void releaseInactiveTableSequencers() {
         walWriterPool.releaseInactive();
         tableSequencerAPI.releaseInactive();
@@ -882,10 +869,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
-    }
-
-    ClosableInstance<SqlCompiler> getAdhocSqlCompiler() {
-        return sqlCompilerPool.get();
     }
 
     private class EngineMaintenanceJob extends SynchronizedJob {

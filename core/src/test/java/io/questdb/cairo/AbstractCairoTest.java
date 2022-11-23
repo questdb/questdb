@@ -508,7 +508,7 @@ public abstract class AbstractCairoTest {
             }
         };
         metrics = Metrics.enabled();
-        engine = new CairoEngine(configuration, metrics, 2);
+        engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }
@@ -640,7 +640,6 @@ public abstract class AbstractCairoTest {
             try {
                 code.run();
                 engine.releaseInactive();
-                engine.releaseInactiveCompilers();
                 engine.releaseInactiveTableSequencers();
                 engine.resetNameRegistryMemory();
                 Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
