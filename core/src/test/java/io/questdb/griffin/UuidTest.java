@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.std.MutableUuid;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -201,6 +202,18 @@ public class UuidTest extends AbstractGriffinTest {
                         "11111111-1111-1111-1111-111111111111\t1\n" +
                         "22222222-2222-2222-2222-222222222222\t5\n",
                 "select u, sum(i) from x group by u", null, null, true, true, true);
+    }
+
+    @Test
+    @Ignore //todo: this shows what's (also) needed to fix
+    public void testImplicitCastingOverload() throws Exception {
+        assertCompile("create table x (u uuid)");
+
+        assertCompile("insert into x values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("length\n" +
+                        "36\n",
+                "select length(u) from x", null, null, true, true, true);
     }
 
     @Test
