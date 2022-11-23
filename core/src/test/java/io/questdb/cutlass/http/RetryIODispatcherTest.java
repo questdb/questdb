@@ -516,7 +516,7 @@ public class RetryIODispatcherTest {
                                 LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
                             }
                         } finally {
-                            LOG.info().$("Stopped rename table thread");
+                            LOG.info().$("Stopped rename table thread").$();
                             countDownLatch.countDown();
                         }
                     }).start();
