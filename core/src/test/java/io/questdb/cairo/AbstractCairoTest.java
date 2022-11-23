@@ -535,6 +535,7 @@ public abstract class AbstractCairoTest {
         engine.resetNameRegistryMemory();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
+        TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
     }
 

@@ -30,15 +30,26 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.util.HashMap;
+import java.util.Map;
 
 import static io.questdb.std.Files.DT_DIR;
 
 public class TestFilesFacadeImpl extends FilesFacadeImpl {
     public static final TestFilesFacadeImpl INSTANCE = new TestFilesFacadeImpl();
     private final static Log LOG = LogFactory.getLog(TestFilesFacadeImpl.class);
-    private final static HashMap<Long, String> openFiles = new HashMap<>();
-    private final static CharSequenceIntHashMap roFds = new CharSequenceIntHashMap();
-    private final static CharSequenceIntHashMap rwFds = new CharSequenceIntHashMap();
+    private final static HashMap<Long, String> openFilesFds = new HashMap<>();
+    private final static CharSequenceIntHashMap openPaths = new CharSequenceIntHashMap();
+
+    public static synchronized void resetTracking() {
+
+    }
+
+    @Override
+    public long openAppend(LPSZ name) {
+        long fd = super.openAppend(name);
+        track(name, fd);
+        return fd;
+    }
 
     @Override
     public boolean close(long fd) {
@@ -60,30 +71,23 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public long openAppend(LPSZ name) {
-        long fd = super.openAppend(name);
-        track(name, rwFds, fd);
-        return fd;
-    }
-
-    @Override
     public long openCleanRW(LPSZ name, long size) {
         long fd = super.openCleanRW(name, size);
-        track(name, rwFds, fd);
+        track(name, fd);
         return fd;
     }
 
     @Override
     public long openRO(LPSZ name) {
         long fd = super.openRO(name);
-        track(name, roFds, Integer.MAX_VALUE + fd);
+        track(name, fd);
         return fd;
     }
 
     @Override
     public long openRW(LPSZ name, long opts) {
         long fd = super.openRW(name, opts);
-        track(name, rwFds, fd);
+        track(name, fd);
         return fd;
     }
 
@@ -92,7 +96,19 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         if (checkRemove(name)) {
             return false;
         }
-        return super.remove(name);
+        boolean ok = super.remove(name);
+        if (!ok) {
+            LOG.info().$("cannot remove open file: ").utf8(name).$(", errno:").$(errno()).$();
+        }
+        return ok;
+    }
+
+    private static synchronized boolean checkRemove(LPSZ name) {
+        if (openPaths.keyIndex(name) < 0) {
+            LOG.info().$("cannot remove, file is open: ").utf8(name).$(", fd=").$(getFdByPath(name)).$();
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -134,60 +150,42 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         return errno;
     }
 
-    private static synchronized boolean checkRemove(LPSZ name) {
-        if (roFds.keyIndex(name) < 0) {
-            LOG.info().$("cannot remove open file, open as read only: ").utf8(name).$();
-            return true;
-        } else if (rwFds.keyIndex(name) < 0) {
-            LOG.info().$("cannot remove open file, open as read-write: ").utf8(name).$();
-            return true;
+    private static Long getFdByPath(CharSequence value) {
+        for (Map.Entry<Long, String> entry : openFilesFds.entrySet()) {
+            if (Chars.equals(value, entry.getValue())) {
+                return entry.getKey();
+            }
         }
-        return false;
+        return null;
     }
 
-    private static synchronized void track(LPSZ name, CharSequenceIntHashMap map, long fd) {
+    private static synchronized void track(LPSZ name, long fd) {
         if (fd > -1 && fd != Integer.MAX_VALUE - 1) {
             String nameStr = Chars.toString(name);
-            int keyIndex = map.keyIndex(nameStr);
+            int keyIndex = openPaths.keyIndex(nameStr);
             if (keyIndex < 0) {
-                int count = map.valueAt(keyIndex);
-                map.putAt(keyIndex, nameStr, count + 1);
+                int count = openPaths.valueAt(keyIndex);
+                openPaths.putAt(keyIndex, nameStr, count + 1);
             } else {
-                map.putAt(keyIndex, nameStr, 1);
+                openPaths.putAt(keyIndex, nameStr, 1);
             }
-            openFiles.put(fd, nameStr);
+            openFilesFds.put(fd, nameStr);
         }
     }
 
     private static synchronized int untrack(long fd) {
         int count = 1;
-        String fileNameRW = openFiles.get(fd);
-        if (fileNameRW != null) {
-            int keyIndex = rwFds.keyIndex(fileNameRW);
+        String fileName = openFilesFds.get(fd);
+        if (fileName != null) {
+            int keyIndex = TestFilesFacadeImpl.openPaths.keyIndex(fileName);
             if (keyIndex < 0) {
-                count = rwFds.valueAt(keyIndex);
+                count = TestFilesFacadeImpl.openPaths.valueAt(keyIndex);
                 if (count == 1) {
-                    rwFds.removeAt(keyIndex);
+                    TestFilesFacadeImpl.openPaths.removeAt(keyIndex);
                 } else {
-                    rwFds.putAt(keyIndex, fileNameRW, count - 1);
+                    TestFilesFacadeImpl.openPaths.putAt(keyIndex, fileName, count - 1);
                 }
-                openFiles.remove(fd);
-            }
-        } else {
-            String fileNameRO = openFiles.get(Integer.MAX_VALUE + fd);
-            if (fileNameRO != null) {
-                int keyIndex = roFds.keyIndex(fileNameRO);
-                if (keyIndex < 0) {
-                    count = roFds.valueAt(keyIndex);
-                    if (count == 1) {
-                        roFds.removeAt(keyIndex);
-                    } else {
-                        roFds.putAt(keyIndex, fileNameRO, count - 1);
-                    }
-                }
-                openFiles.remove(Integer.MAX_VALUE + fd);
-            } else {
-                LOG.error().$("file descriptor not found [fd=").$(fd).$(']').$();
+                openFilesFds.remove(fd);
             }
         }
         return count - 1;

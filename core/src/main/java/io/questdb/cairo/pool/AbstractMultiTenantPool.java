@@ -265,6 +265,24 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant> extends Abst
         LOG.info().$("closed").$();
     }
 
+    protected void expelFromPool(T tenant) {
+        final Entry<T> e = tenant.getEntry();
+        if (e == null) {
+            return;
+        }
+
+        final String tableName = tenant.getSystemTableName();
+        final long thread = Thread.currentThread().getId();
+        final int index = tenant.getIndex();
+        final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
+
+        if (owner != UNALLOCATED) {
+            LOG.debug().$('\'').utf8(tableName).$("' is expelled [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            notifyListener(thread, tableName, PoolListener.EV_OUT_OF_POOL_CLOSE, e.index, index);
+            Unsafe.cas(e.allocations, index, owner, UNALLOCATED);
+        }
+    }
+
     protected abstract byte getListenerSrc();
 
     protected abstract T newTenant(String tableName, Entry<T> entry, int index);

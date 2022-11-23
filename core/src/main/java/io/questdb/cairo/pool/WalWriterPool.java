@@ -70,8 +70,14 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         public void close() {
             if (isOpen()) {
                 final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
-                if (pool != null && entry != null && !isDistressed()) {
-                    if (pool.returnToPool(this)) {
+                if (pool != null && entry != null) {
+                    if (!isDistressed()) {
+                        if (pool.returnToPool(this)) {
+                            return;
+                        }
+                    } else {
+                        super.close();
+                        pool.expelFromPool(this);
                         return;
                     }
                 }
