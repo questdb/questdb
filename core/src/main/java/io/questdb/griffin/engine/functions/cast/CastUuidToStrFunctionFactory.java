@@ -49,17 +49,21 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            uuidToSink(func.getUuidHi(null), func.getUuidLo(null), sink);
-            return new StrConstant(Chars.toString(sink));
+            if (uuidToSink(func.getUuidHi(null), func.getUuidLo(null), sink)) {
+                return new StrConstant(Chars.toString(sink));
+            } else {
+                return StrConstant.NULL;
+            }
         }
         return new Func(func);
     }
 
-    private static void uuidToSink(long hi, long lo, CharSink sink) {
+    private static boolean uuidToSink(long hi, long lo, CharSink sink) {
         if (hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO) {
-            return;
+            return false;
         }
         Numbers.appendUuid(hi, lo, sink);
+        return true;
     }
 
     private static class Func extends StrFunction implements UnaryFunction {
@@ -79,8 +83,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkA);
-            return sinkA;
+            return uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkA) ? sinkA : null;
         }
 
         @Override
@@ -91,8 +94,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkB);
-            return sinkB;
+            return uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkB) ? sinkB : null;
         }
     }
 }

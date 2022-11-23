@@ -59,6 +59,31 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCastingConstNullUUIDtoString() throws Exception {
+        assertQuery("column\n" +
+                        "true\n",
+                "select cast (cast (null as uuid) as string) is null from long_sequence(1)", null, null, true, true, true);
+    }
+
+    @Test
+    public void testCastingConstUUIDtoString() throws Exception {
+        assertQuery("column\n" +
+                        "true\n",
+                "select cast (cast ('11111111-1111-1111-1111-111111111111' as uuid) as string) = '11111111-1111-1111-1111-111111111111' from long_sequence(1)", null, null, true, true, true);
+    }
+
+    @Test
+    public void testCastingNullUUIDtoString() throws Exception {
+        assertCompile("create table x (u uuid)");
+        assertCompile("insert into x values (null)");
+        assertCompile("create table y (s string)");
+        assertCompile("insert into y select cast (u as string) from x");
+        assertQuery("column\n" +
+                        "true\n",
+                "select s is null from y", null, null, true, true, true);
+    }
+
+    @Test
     public void testConstantComparison() throws Exception {
         assertQuery("column\n" +
                         "true\n",
