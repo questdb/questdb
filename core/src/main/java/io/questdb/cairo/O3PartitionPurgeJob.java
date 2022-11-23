@@ -80,36 +80,28 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private static void deletePartitionDirectory(
             FilesFacade ff,
-            Path path,
-            int tableRootLen,
-            long partitionTimestamp,
-            int partitionBy,
-            long previousNameVersion
+            Path path
     ) {
-        path.trimTo(tableRootLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-        TableUtils.txnPartitionConditionally(path, previousNameVersion);
-        path.$();
         if (ff.isSoftLink(path)) {
             // in windows ^ ^ will return false, but that is ok as the behaviour
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
             if (ff.unlink(path) == 0) {
-                LOG.info().$("purged by unlink [path=").$(path).I$();
+                LOG.info().$("purged by unlink [path=").utf8(path).I$();
                 return;
             } else {
-                LOG.error().$("failed to unlink, will delete [path=").$(path).I$();
+                LOG.error().$("failed to unlink, will delete [path=").utf8(path).I$();
             }
         }
         long errno;
         if ((errno = ff.rmdir(path)) == 0) {
             LOG.info()
-                    .$("purged [path=").$(path)
+                    .$("purged [path=").utf8(path)
                     .I$();
         } else {
             LOG.info()
-                    .$("partition purge failed [path=").$(path)
+                    .$("partition purge failed [path=").utf8(path)
                     .$(", errno=").$(errno)
                     .I$();
         }
@@ -171,25 +163,24 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // If last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
             // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g. when nameTxn < lastTxn
             boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+
+            path.trimTo(tableRootLen);
+            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+            TableUtils.txnPartitionConditionally(path, nameTxn - 1);
+            path.$();
+
             if (rangeUnlocked) {
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
-                LOG.info()
-                        .$("purging removed partition directory [ts=")
-                        .$ts(partitionTimestamp)
-                        .$(", nameTxn=").$(nameTxn - 1)
-                        .I$();
+                LOG.info().$("purging dropped partition directory [path=").utf8(path).I$();
                 deletePartitionDirectory(
                         ff,
-                        path,
-                        tableRootLen,
-                        partitionTimestamp,
-                        partitionBy,
-                        nameTxn - 1
+                        path
                 );
                 lastTxn = nameTxn;
             } else {
+                LOG.info().$("cannot purge partition directory, locked for reading [path=").utf8(path).I$();
                 break;
             }
         }
@@ -262,24 +253,22 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 boolean rangeUnlocked = previousNameVersion < nextNameVersion
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
+                path.trimTo(tableRootLen);
+                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
+                TableUtils.txnPartitionConditionally(path, previousNameVersion - 1);
+                path.$();
+
                 if (rangeUnlocked) {
                     // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
-                    LOG.info()
-                            .$("purging [ts=")
-                            .$ts(partitionTimestamp)
-                            .$(", nameTxn=").$(previousNameVersion - 1)
-                            .$(", nameTxnNext=").$(nextNameVersion - 1)
-                            .$(", lastCommittedPartitionName=").$(lastCommittedPartitionName)
-                            .I$();
+                    LOG.info().$("purging overwritten partition directory [path=").utf8(path).I$();
                     deletePartitionDirectory(
                             ff,
-                            path,
-                            tableRootLen,
-                            partitionTimestamp,
-                            partitionBy,
-                            previousNameVersion - 1);
+                            path
+                    );
+                } else {
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").utf8(path).I$();
                 }
             }
         }
@@ -362,7 +351,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 }
             }
             // Tail
-            if (n > lo + 2) {
+            if (n > lo + 2 || txReader.getPartitionSizeByPartitionTimestamp(partitionTimestamp) < 0) {
                 processPartition(
                         ff,
                         path,
@@ -389,6 +378,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txReader.clear();
             txnScoreboard.clear();
         }
+        LOG.info().$("processed [table=").$(tableName).I$();
     }
 
     @Override

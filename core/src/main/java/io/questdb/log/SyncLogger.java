@@ -114,8 +114,8 @@ public final class SyncLogger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $(long x) {
-        sink().put(x);
+    public LogRecord $(long l) {
+        sink().put(l);
         return this;
     }
 

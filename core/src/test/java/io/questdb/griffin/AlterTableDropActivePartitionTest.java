@@ -598,12 +598,16 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testDropAllPartitionsButThereAreNoPartitions() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+        assertMemoryLeak(() -> {
                     final String tableName = testName.getMethodName();
-                    createTableX(tableName, TableHeader); // empty table
-                    Assert.assertEquals(ALTER,
-                            compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext).getType());
-                    assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
+                    createTableX(tableName, TableHeader);
+                    try {
+                        compile("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "no partitions matched WHERE clause");
+                    }
+                    Misc.free(workerPool);
                 }
         );
     }
@@ -747,6 +751,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
             CairoTestUtils.create(model);
         }
         txn = 0;
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = insertStmt.length; i < n; i++) {
             insert(insertStmt[i]);
         }
@@ -759,6 +764,7 @@ public class AlterTableDropActivePartitionTest extends AbstractGriffinTest {
         workerPool.start(); // closed by assertTableX
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
         Assert.assertEquals(ALTER,
                 compile("alter table " + tableName + " detach partition list '" + partitionName + "'", sqlExecutionContext).getType());
