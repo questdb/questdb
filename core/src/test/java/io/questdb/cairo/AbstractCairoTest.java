@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -83,6 +84,7 @@ public abstract class AbstractCairoTest {
     protected static DateFormat backupDirTimestampFormat;
     protected static int binaryEncodingMaxLength = -1;
     protected static int capacity = -1;
+    protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     protected static long columnPurgeRetryDelay = -1;
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
@@ -253,6 +255,11 @@ public abstract class AbstractCairoTest {
             @Override
             public int getBinaryEncodingMaxLength() {
                 return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            }
+
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                return circuitBreakerConfiguration != null ? circuitBreakerConfiguration : super.getCircuitBreakerConfiguration();
             }
 
             @Override
@@ -692,6 +699,7 @@ public abstract class AbstractCairoTest {
 
     protected static void runWalPurgeJob(FilesFacade ff) {
         WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
+        snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
         //noinspection StatementWithEmptyBody
         while (job.run(0)) {
             // run until empty
@@ -733,6 +741,15 @@ public abstract class AbstractCairoTest {
         @Override
         public long getTicks() {
             return currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+        }
+    }
+
+    public static class MicrosecondClockMock implements MicrosecondClock {
+        public long timestamp = 0;
+
+        @Override
+        public long getTicks() {
+            return timestamp;
         }
     }
 

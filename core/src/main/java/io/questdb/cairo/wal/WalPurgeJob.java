@@ -29,6 +29,7 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -51,6 +52,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final FilesFacade ff;
     private final MillisecondClock millisecondClock;
     private final Path path = new Path();
+    private final SimpleWaitingLock runLock = new SimpleWaitingLock();
     private final NativeLPSZ segmentName = new NativeLPSZ();
     private final long spinLockTimeout;
     private final TxReader txReader;
@@ -97,6 +99,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      */
     public void delayByHalfInterval() {
         this.last = clock.getTicks() - (checkInterval / 2);
+    }
+
+    public SimpleWaitingLock getRunLock() {
+        return runLock;
     }
 
     /**
@@ -419,7 +425,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
-            broadSweep();
+            if (runLock.tryLock()) {
+                try {
+                    broadSweep();
+                } finally {
+                    runLock.unlock();
+                }
+            } else {
+                LOG.info().$("skipping, locked out").$();
+            }
         }
         return false;
     }

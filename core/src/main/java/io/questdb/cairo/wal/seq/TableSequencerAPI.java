@@ -66,6 +66,7 @@ public class TableSequencerAPI implements QuietCloseable {
         closed = true;
         releaseAll();
     }
+
     public void dropTable(CharSequence tableName, String systemTableName, boolean failedCreate) {
         LOG.info().$("dropping wal table [name=").utf8(tableName).$(", systemTableName=").utf8(systemTableName).I$();
         try (TableSequencerImpl seq = openSequencerLocked(systemTableName, SequencerLockType.WRITE)) {
@@ -179,10 +180,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
+    public long getTableMetadata(final String systemTableName, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(systemTableName, SequencerLockType.READ)) {
             try {
-                tableSequencer.getTableMetadata(sink);
+                return tableSequencer.getTableMetadata(sink);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -287,7 +288,6 @@ public class TableSequencerAPI implements QuietCloseable {
         LOG.advisory().$("renamed wal table [table=")
                 .utf8(tableName).$(", newName=").utf8(newTableNameStr).$(", systemTableName=").utf8(systemTableName).I$();
     }
-
 
 
     @TestOnly

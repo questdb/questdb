@@ -45,13 +45,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public long openAppend(LPSZ name) {
-        long fd = super.openAppend(name);
-        track(name, fd);
-        return fd;
-    }
-
-    @Override
     public boolean close(long fd) {
         untrack(fd);
         return super.close(fd);
@@ -68,6 +61,13 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         }
         // Remove without checking that is open using call to super.
         return super.remove(path);
+    }
+
+    @Override
+    public long openAppend(LPSZ name) {
+        long fd = super.openAppend(name);
+        track(name, fd);
+        return fd;
     }
 
     @Override
@@ -101,14 +101,6 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
             LOG.info().$("cannot remove open file: ").utf8(name).$(", errno:").$(errno()).$();
         }
         return ok;
-    }
-
-    private static synchronized boolean checkRemove(LPSZ name) {
-        if (openPaths.keyIndex(name) < 0) {
-            LOG.info().$("cannot remove, file is open: ").utf8(name).$(", fd=").$(getFdByPath(name)).$();
-            return true;
-        }
-        return false;
     }
 
     @Override
@@ -148,6 +140,14 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         }
 
         return errno;
+    }
+
+    private static synchronized boolean checkRemove(LPSZ name) {
+        if (openPaths.keyIndex(name) < 0) {
+            LOG.info().$("cannot remove, file is open: ").utf8(name).$(", fd=").$(getFdByPath(name)).$();
+            return true;
+        }
+        return false;
     }
 
     private static Long getFdByPath(CharSequence value) {

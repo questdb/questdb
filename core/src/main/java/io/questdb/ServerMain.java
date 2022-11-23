@@ -84,6 +84,9 @@ public class ServerMain implements Closeable {
                 ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
         );
 
+        // snapshots
+        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
+
         // create the worker pool manager, and configure the shared pool
         final boolean walSupported = config.getCairoConfiguration().isWalSupported();
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
@@ -110,6 +113,7 @@ public class ServerMain implements Closeable {
                         if (walSupported) {
                             sharedPool.assign(new CheckWalTransactionsJob(engine));
                             final WalPurgeJob walPurgeJob = new WalPurgeJob(engine);
+                            snapshotAgent.setWalPurgeJobRunLock(walPurgeJob.getRunLock());
                             walPurgeJob.delayByHalfInterval();
                             sharedPool.assign(walPurgeJob);
                             sharedPool.freeOnExit(walPurgeJob);
@@ -155,9 +159,6 @@ public class ServerMain implements Closeable {
             );
             WalUtils.setupWorkerPool(walApplyWorkerPool, engine, workerPoolManager.getSharedWorkerCount());
         }
-
-        // snapshots
-        final DatabaseSnapshotAgent snapshotAgent = freeOnExit(new DatabaseSnapshotAgent(engine));
 
         // http
         freeOnExit(Services.createHttpServer(

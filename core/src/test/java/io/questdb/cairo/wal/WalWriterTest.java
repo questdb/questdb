@@ -2820,7 +2820,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testWalEvenReaderConcurrentReadWrite() throws Exception {
         AtomicReference<TestUtils.LeakProneCode> evenFileLengthCallBack = new AtomicReference<>();
 
-        FilesFacade ff = new FilesFacadeImpl() {
+        FilesFacade ff = new TestFilesFacadeImpl() {
             long eventFileFd;
 
             @Override
