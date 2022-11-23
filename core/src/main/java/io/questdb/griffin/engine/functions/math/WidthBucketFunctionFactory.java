@@ -51,13 +51,13 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
     }
 
     private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-        private final Function operand_func;
+        private final Function operandFunc;
         private final Function low_func;
         private final Function high_func;
         private final Function count_func;
 
-        public WidthBucketFunction(Function operand_func, Function low_func, Function high_func, Function count_func) {
-            this.operand_func = operand_func;
+        public WidthBucketFunction(Function operandFunc, Function low_func, Function high_func, Function count_func) {
+            this.operandFunc = operandFunc;
             this.low_func = low_func;
             this.high_func = high_func;
             this.count_func = count_func;
@@ -65,7 +65,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getLeftEnd() {
-            return operand_func;
+            return operandFunc;
         }
 
         @Override
@@ -85,7 +85,7 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            double operand = operand_func.getDouble(rec);
+            double operand = operandFunc.getDouble(rec);
             double low = low_func.getDouble(rec);
             double high = high_func.getDouble(rec);
             int count = count_func.getInt(rec);
