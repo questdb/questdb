@@ -30,7 +30,6 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -208,7 +207,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere22() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 22, 2, "x\tsym\tts\tsym2\n" +
@@ -228,7 +226,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere23() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 23, 2, "x\tsym\tts\tsym2\n" +
@@ -248,7 +245,6 @@ public class WalAlterTableSqlTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore // TODO: will be fixed with #2752
     public void createWalAndDropPartitionsWithWhere24() throws Exception {
         final String tableName = testName.getMethodName();
         createWalAndDropPartitionsWithWhere(tableName, 24, 2, "x\tsym\tts\tsym2\n" +

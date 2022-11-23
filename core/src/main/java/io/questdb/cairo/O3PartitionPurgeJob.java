@@ -378,7 +378,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txReader.clear();
             txnScoreboard.clear();
         }
-        LOG.info().$("processed [table=").$(tableName).I$();
+        LOG.info().$("processed [table=").$(systemTableName).I$();
     }
 
     @Override
