@@ -132,15 +132,15 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _meta file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("could not copy _meta file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredMetaFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _meta file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("recovered _meta file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
@@ -150,15 +150,15 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _txn file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("could not copy _txn file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredTxnFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _txn file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("recovered _txn file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
@@ -168,15 +168,15 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.error()
-                                    .$("could not copy _cv file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("could not copy _cv file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
                             recoveredCVFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered _cv file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("recovered _cv file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
@@ -193,8 +193,8 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (ff.exists(srcPath) && ff.exists(dstPath)) {
                         if (ff.copy(srcPath, dstPath) < 0) {
                             LOG.critical()
-                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
+                                    .utf8(", dst=").utf8(dstPath)
                                     .$(", errno=").$(ff.errno())
                                     .$(']').$();
                         } else {
@@ -222,23 +222,24 @@ public class DatabaseSnapshotAgent implements Closeable {
                                         memFile.putLong(MAX_STRUCTURE_VERSION_OFFSET, maxStructureVersion);
                                         memFile.putLong(TXN_META_SIZE_OFFSET, txnMetaMemSize);
                                         LOG.info()
-                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
+                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").utf8(dstPath)
                                                 .$(", oldMaxTxn=").$(oldMaxTxn)
                                                 .$(", newMaxTxn=").$(newMaxTxn)
                                                 .$(']').$();
                                     }
                                 }
                             } catch (CairoException ex) {
-                                LOG.error()
-                                        .$("could not update file [src=").$(dstPath)
+                                LOG.critical()
+                                        .$("could not update file [src=").utf8(dstPath)
+                                        .$("`, ex=").$(ex.getFlyweightMessage())
                                         .$(", errno=").$(ff.errno())
                                         .$(']').$();
                             }
 
                             recoveredWalFiles.incrementAndGet();
                             LOG.info()
-                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
+                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").utf8(srcPath)
+                                    .$(", dst=").utf8(dstPath)
                                     .$(']').$();
                         }
                     }
@@ -356,11 +357,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                     if (walPurgeJobRunLock != null) {
                         final long timeout = configuration.getCircuitBreakerConfiguration().getTimeout();
                         while (!walPurgeJobRunLock.tryLock(timeout, TimeUnit.MICROSECONDS)) {
-                            try {
-                                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                            } catch (CairoException ex) {
-                                throw SqlException.position(0).put(ex.getFlyweightMessage());
-                            }
+                            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                         }
                     }
 
