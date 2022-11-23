@@ -241,11 +241,11 @@ public class SnapshotTest extends AbstractGriffinTest {
                 ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
                 Assert.fail();
-            } catch (SqlException ex) {
+            } catch (CairoException ex) {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] timeout, query aborted [fd=-1]"));
+                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
             } finally {
                 compiler.compile("snapshot complete", sqlExecutionContext);
                 Assert.assertFalse(lock.isLocked());
