@@ -449,6 +449,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory,
 //                  cast symbol to ...
             io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastSymbolToDoubleFunctionFactory,
