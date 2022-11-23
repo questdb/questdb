@@ -575,7 +575,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $(long x) {
+        public LogRecord $(long l) {
             throw new UnsupportedOperationException();
         }
 
