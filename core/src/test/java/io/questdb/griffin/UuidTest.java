@@ -561,6 +561,20 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionAllUuidWithArbitraryString() throws Exception {
+        assertCompile("create table x (u uuid)");
+        assertCompile("create table y (u string)");
+
+        assertCompile("insert into x values ('22222222-2222-2222-2222-222222222222')");
+        assertCompile("insert into y values ('totally not a uuid')");
+
+        assertQuery("u\n" +
+                        "22222222-2222-2222-2222-222222222222\n" +
+                        "totally not a uuid\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
     public void testUnionAllUuidWithString() throws Exception {
         assertCompile("create table x (u UUID)");
         assertCompile("create table y (u string)");
