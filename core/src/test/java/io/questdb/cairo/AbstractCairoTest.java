@@ -649,11 +649,9 @@ public abstract class AbstractCairoTest {
     }
 
     protected static void runWalPurgeJob(FilesFacade ff) {
-        WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock());
-        snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
-        //noinspection StatementWithEmptyBody
-        while (job.run(0)) {
-            // run until empty
+        try (WalPurgeJob job = new WalPurgeJob(engine, ff, engine.getConfiguration().getMicrosecondClock())) {
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+            job.drain(0);
         }
     }
 
