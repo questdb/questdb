@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.EmptySymbolMapReader;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.ObjList;
 
 final public class EmptyTableRandomRecordCursor implements RecordCursor {

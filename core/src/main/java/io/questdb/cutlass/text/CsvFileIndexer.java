@@ -648,10 +648,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     class IndexOutputFile implements Closeable {
         final MemoryPMARImpl memory = new MemoryPMARImpl();
+        final long partitionKey;
         int chunkNumber;
         long dataSize;//partition data size in bytes
         long indexChunkSize;
-        final long partitionKey;
 
         IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
             this.partitionKey = partitionKey;
