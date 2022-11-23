@@ -62,7 +62,7 @@ public class DatabaseSnapshotAgent implements Closeable {
     private final Path path = new Path();
     // List of readers kept around to lock partitions while a database snapshot is being made.
     private final ObjList<TableReader> snapshotReaders = new ObjList<>();
-    private AtomicBoolean activePrepareFlag = new AtomicBoolean();
+    private final AtomicBoolean activePrepareFlag = new AtomicBoolean();
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     public DatabaseSnapshotAgent(CairoEngine engine) {
