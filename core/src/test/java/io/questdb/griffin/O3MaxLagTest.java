@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
@@ -108,10 +109,10 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetadataReshuffle() throws Exception {
+    public void testIntermediateCommitCreatesEmptyPartition() throws Exception {
         executeWithPool(
-                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
-                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
+                2, ((engine, compiler, sqlExecutionContext) -> testFuzz00(
+                        engine, compiler, sqlExecutionContext, new Rnd(473693170209L, 1669125220064L))
                 )
         );
     }
@@ -129,6 +130,15 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testLargeLagWithinPartitionParallel() throws Exception {
         executeWithPool(2, this::testLargeLagWithinPartition);
+    }
+
+    @Test
+    public void testMetadataReshuffle() throws Exception {
+        executeWithPool(
+                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
+                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
+                )
+        );
     }
 
     @Test
@@ -559,6 +569,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         long start = IntervalUtils.parseFloorPartialTimestamp("2021-04-27T08:00:00");
         long[] testCounts = new long[]{2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000};
+        //noinspection ForLoopReplaceableByForEach
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];
 
@@ -1364,13 +1375,10 @@ public class O3MaxLagTest extends AbstractO3Test {
     // moved to memory and only partition '1970-01-01' is committed to the disk.
     // If the partition '1970-01-02' is kept in the _txn partition tables then any rollback can wipe out records in '1970-01-01'.
     private void testRollbackCreatesEmptyPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Rnd rnd = new Rnd();
-        rnd.reset(5718667365331139914L, 1796199789846834231L);
-        Rnd r = sqlExecutionContext.getRandom();
-        r.reset(3417617481941903354L, 772640833522954936L);
-        final int nTotalRows = rnd.nextInt(79000);
-        final long microsBetweenRows = rnd.nextLong(3090985);
-        final double fraction = rnd.nextDouble();
+        final int nTotalRows = 74571;
+        final long microsBetweenRows = 1161956;
+        final double fraction = 0.8908162001320725;
+        SharedRandom.RANDOM.get().reset(3417617481941903354L, 772640833522954936L);
         testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
     }
 
