@@ -572,9 +572,9 @@ public class RetryIODispatcherTest {
                     countDownLatch.await();
                     assertNRowsInserted(validRequestRecordCount);
 
-                    for (long fd : fds) {
-                        Assert.assertNotEquals(fd, -1);
-                        NetworkFacadeImpl.INSTANCE.close(fd);
+                    for (int n = 0; n < fds.length; n++) {
+                        Assert.assertNotEquals(fds[n], -1);
+                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 
                     // Cairo engine should not allow second writer to be opened on the same table, all requests should wait for the writer to be available
@@ -799,10 +799,9 @@ public class RetryIODispatcherTest {
                     Assert.assertTrue("expected at least " + parallelCount + "insert attempts, but got: " + startedInserts,
                             startedInserts >= parallelCount);
 
-                    // close the client sockets
-                    for (long fd : fds) {
-                        Assert.assertNotEquals(fd, -1);
-                        NetworkFacadeImpl.INSTANCE.close(fd);
+                    for (int n = 0; n < fds.length; n++) {
+                        Assert.assertNotEquals(fds[n], -1);
+                        NetworkFacadeImpl.INSTANCE.close(fds[n]);
                     }
 
                     writer.close();

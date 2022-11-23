@@ -462,8 +462,8 @@ public class DispatcherWriterQueueTest {
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpAlterQueries.length);
 
-                for (String alterQuery : httpAlterQueries) {
-                    String httpAlterQuery = alterQuery.replace("<x>", tableName);
+                for (int i = 0; i < httpAlterQueries.length; i++) {
+                    String httpAlterQuery = httpAlterQueries[i].replace("<x>", tableName);
                     Thread thread = new Thread(() -> {
                         try {
                             barrier.await();
@@ -551,7 +551,8 @@ public class DispatcherWriterQueueTest {
                 AtomicInteger errors = new AtomicInteger();
                 CyclicBarrier barrier = new CyclicBarrier(httpUpdateQueries.length);
 
-                for (String httpUpdateQuery : httpUpdateQueries) {
+                for (int i = 0; i < httpUpdateQueries.length; i++) {
+                    String httpUpdateQuery = httpUpdateQueries[i];
                     Thread thread = new Thread(() -> {
                         try {
                             barrier.await();
