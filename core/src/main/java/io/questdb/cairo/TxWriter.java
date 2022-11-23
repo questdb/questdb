@@ -564,7 +564,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 for (int i = maxTimestampPartitionIndex, n = getPartitionCount() - 1; i < n; i++) {
                     rowCount += getPartitionSize(i);
                 }
-                attachedPartitions.setPos(maxTimestampPartitionIndex + LONGS_PER_TX_ATTACHED_PARTITION);
+                attachedPartitions.setPos((maxTimestampPartitionIndex + 1) * LONGS_PER_TX_ATTACHED_PARTITION);
                 recordStructureVersion++;
 
                 // remove partitions
