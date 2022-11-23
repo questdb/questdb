@@ -489,6 +489,93 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionAllDups() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('11111111-1111-1111-1111-111111111111')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "11111111-1111-1111-1111-111111111111\n",
+                "select * from x union all select * from y", null, null, false, true, true);
+    }
+
+    @Test
+    public void testUnionAllNull() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values (null)");
+        assertCompile("insert into y values (null)");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "\n" +
+                        "\n",
+                "select * from x union all select * from y", null, null, false, true, true);
+    }
+
+    @Test
+    public void testUnionAllSimple() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n",
+                "select * from x union all select * from y", null, null, false, true, true);
+    }
+
+    @Test
+    public void testUnionDups() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('11111111-1111-1111-1111-111111111111')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
+    public void testUnionNull() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values (null)");
+        assertCompile("insert into y values (null)");
+
+        // only one null is returned - dups null are eliminated
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
+    public void testUnionSimple() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u UUID)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
     public void testUpdateByUuid() throws Exception {
         assertCompile("create table x (i INT, u UUID)");
         assertCompile("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
