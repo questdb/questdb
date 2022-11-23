@@ -422,7 +422,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     runLock.unlock();
                 }
             } else {
-                LOG.info().$("WalPurgeJob is idle").$();
+                LOG.info().$("skipping, locked out").$();
             }
         }
         return false;
