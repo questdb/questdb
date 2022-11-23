@@ -66,7 +66,7 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         return true;
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class Func extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();

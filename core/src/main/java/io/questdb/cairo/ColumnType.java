@@ -349,7 +349,11 @@ public final class ColumnType {
                 || (fromType == SYMBOL && toType == STRING)
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
+                || (fromType == UUID && toType == STRING)
                 || (fromType == STRING && toType == UUID);
+        // todo: casting from string to uuid is not always possible: it fails when string is not a valid UUID
+        // so perhaps this is wrong? but if we don't allow it then we can't implicitly cast String to UUID?
+        // and that's exactly what users expect. I would expect it anyway.
     }
 
     private static int mkGeoHashType(int bits, short baseType) {

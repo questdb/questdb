@@ -489,6 +489,20 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionAllArbitraryStringWithUuid() throws Exception {
+        assertCompile("create table x (u string)");
+        assertCompile("create table y (u uuid)");
+
+        assertCompile("insert into x values ('totally not a uuid')");
+        assertCompile("insert into y values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\n" +
+                        "totally not a uuid\n" +
+                        "22222222-2222-2222-2222-222222222222\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
     public void testUnionAllDups() throws Exception {
         assertCompile("create table x (u UUID)");
         assertCompile("create table y (u UUID)");
@@ -530,6 +544,34 @@ public class UuidTest extends AbstractGriffinTest {
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n",
                 "select * from x union all select * from y", null, null, false, true, true);
+    }
+
+    @Test
+    public void testUnionAllStringWithUuid() throws Exception {
+        assertCompile("create table x (u string)");
+        assertCompile("create table y (u uuid)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n",
+                "select * from x union select * from y", null, null, false, true, false);
+    }
+
+    @Test
+    public void testUnionAllUuidWithString() throws Exception {
+        assertCompile("create table x (u UUID)");
+        assertCompile("create table y (u string)");
+
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("insert into y values ('22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("u\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "22222222-2222-2222-2222-222222222222\n",
+                "select * from x union select * from y", null, null, false, true, false);
     }
 
     @Test

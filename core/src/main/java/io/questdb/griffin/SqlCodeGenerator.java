@@ -904,6 +904,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
                         break;
+                    case ColumnType.UUID:
+                        if (fromTag == ColumnType.UUID) {
+                            castFunctions.add(new UuidColumn(i));
+                        } else if (fromTag == ColumnType.STRING) {
+                            castFunctions.add(new CastStrToUuidFunctionFactory.Func(new StrColumn(i)));
+                        } else {
+                            throw SqlException.unsupportedCast(
+                                    modelPosition,
+                                    castFromMetadata.getColumnName(i),
+                                    fromType,
+                                    toType
+                            );
+                        }
+                        break;
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
                             case ColumnType.DATE:
@@ -1017,6 +1031,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
+                                break;
+                            case ColumnType.UUID:
+                                castFunctions.add(new CastUuidToStrFunctionFactory.Func(new UuidColumn(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
