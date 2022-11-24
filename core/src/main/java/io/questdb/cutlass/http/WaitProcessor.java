@@ -48,9 +48,9 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     private final Sequence outSubSequence;
 
     public WaitProcessor(WaitProcessorConfiguration configuration) {
-        this.clock = configuration.getClock();
-        this.maxWaitCapMs = configuration.getMaxWaitCapMs();
-        this.exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
+        clock = configuration.getClock();
+        maxWaitCapMs = configuration.getMaxWaitCapMs();
+        exponentialWaitMultiplier = configuration.getExponentialWaitMultiplier();
         nextRerun = new PriorityQueue<>(configuration.getInitialWaitQueueSize(), WaitProcessor::compareRetriesInQueue);
 
         int retryQueueLength = configuration.getMaxProcessingQueueSize();
@@ -177,7 +177,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
                 continue;
             }
 
-            // -1 = queue is empty. It means there are already too many retries waiting
+            // -1 = queue is full. It means there are already too many retries waiting
             // Send error to client.
             if (cursor < 0) {
                 throw RetryFailedOperationException.INSTANCE;
