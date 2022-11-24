@@ -96,7 +96,7 @@ public class UuidTest extends AbstractGriffinTest {
                         "11111111-1111-1111-1111-111111111111\n" +
                         "\n" +
                         "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-222222222222\n",
-                "select concat(u1, u2, u3) from x", null, null, true, true, false);
+                "select concat(u1, u2, u3) from x", null, null, true, true, true);
     }
 
     @Test
@@ -252,11 +252,30 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertUuidColumnIntoIntColumnImplicitCast() throws Exception {
+        assertCompile("create table x (u uuid)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("create table y (i int)");
+        assertFailure("insert into y select u from x", null, 21, "inconvertible types");
+    }
+
+    @Test
     public void testInsertUuidColumnIntoStringColumnExplicitCast() throws Exception {
         assertCompile("create table x (u uuid)");
         assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
         assertCompile("create table y (s string)");
         assertCompile("insert into y select cast (u as string) from x");
+        assertQuery("s\n" +
+                        "11111111-1111-1111-1111-111111111111\n",
+                "select * from y", null, null, true, true, true);
+    }
+
+    @Test
+    public void testInsertUuidColumnIntoStringColumnImplicitCast() throws Exception {
+        assertCompile("create table x (u uuid)");
+        assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111')");
+        assertCompile("create table y (s string)");
+        assertCompile("insert into y select u from x");
         assertQuery("s\n" +
                         "11111111-1111-1111-1111-111111111111\n",
                 "select * from y", null, null, true, true, true);

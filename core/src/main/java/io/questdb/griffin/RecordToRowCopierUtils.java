@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Misc;
 
 public class RecordToRowCopierUtils {
     private RecordToRowCopierUtils() {
@@ -127,6 +128,9 @@ public class RecordToRowCopierUtils {
         int wPutChar = asm.poolInterfaceMethod(TableWriter.Row.class, "putChar", "(IC)V");
         int wPutBin = asm.poolInterfaceMethod(TableWriter.Row.class, "putBin", "(ILio/questdb/std/BinarySequence;)V");
         int implicitCastGeoHashAsGeoHash = asm.poolMethod(SqlUtil.class, "implicitCastGeoHashAsGeoHash", "(JII)J");
+        int implicitCastUuidAsStr = asm.poolMethod(SqlUtil.class, "implicitCastUuidAsStr", "(JJLio/questdb/std/str/CharSink;)Z");
+
+        int getThreadLocalBuilder = asm.poolMethod(Misc.class, "getThreadLocalBuilder", "()Lio/questdb/std/str/StringSink;");
 
         // in case of Geo Hashes column type can overflow short and asm.iconst() will not provide
         // the correct value.
@@ -154,7 +158,7 @@ public class RecordToRowCopierUtils {
         asm.methodCount(2);
         asm.defineDefaultConstructor();
 
-        asm.startMethod(copyNameIndex, copySigIndex, 15, 3);
+        asm.startMethod(copyNameIndex, copySigIndex, 15, 4);
 
         for (int i = 0; i < n; i++) {
 
@@ -765,13 +769,32 @@ public class RecordToRowCopierUtils {
                     }
                     break;
                 case ColumnType.UUID:
-                    assert toColumnTypeTag == ColumnType.UUID;
-                    asm.invokeInterface(rGetUuidHi);
-                    asm.aload(1);
-                    asm.iconst(i);
-                    asm.invokeInterface(rGetUuidLo);
-                    asm.invokeInterface(wPutUuid, 5);
-//                    assert false;
+                    switch (ColumnType.tagOf(toColumnType)) {
+                        case ColumnType.UUID:
+                            asm.invokeInterface(rGetUuidHi);
+                            asm.aload(1);
+                            asm.iconst(i);
+                            asm.invokeInterface(rGetUuidLo);
+                            asm.invokeInterface(wPutUuid, 5);
+                            break;
+                        case ColumnType.STRING:
+                            asm.invokeInterface(rGetUuidHi);
+                            asm.aload(1);
+                            asm.iconst(i);
+                            asm.invokeInterface(rGetUuidLo);
+                            asm.invokeStatic(getThreadLocalBuilder);
+                            asm.astore(3);
+                            asm.aload(3);
+                            asm.invokeStatic(implicitCastUuidAsStr);
+                            // todo: store null when casting returns false
+                            asm.pop();
+                            asm.aload(3);
+                            asm.invokeInterface(wPutStr, 2);
+                            break;
+                        default:
+                            assert false;
+                            break;
+                    }
                     break;
                 default:
                     // todo: shouldn't we also assert false here?

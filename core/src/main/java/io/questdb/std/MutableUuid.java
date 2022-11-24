@@ -78,7 +78,6 @@ public final class MutableUuid implements Sinkable {
 
         // valid UUIDs have exactly 4 dashes
         if (dash4 < 0 || dash4 == len - 1 || Chars.indexOf(uuid, dash4 + 1, len, '-') > 0) {
-            // todo: is allocating a new exception here a good idea?
             throw NumericException.INSTANCE;
         }
 
