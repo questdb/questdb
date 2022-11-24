@@ -118,7 +118,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test426() throws IOException, SqlException {
-        doMigration("/migration/data_426.zip", false, false, false, false);
+        doMigration("/migration/data_426.zip", true, true, true, true);
     }
 
     @Test
