@@ -41,11 +41,16 @@ import static org.junit.Assert.assertEquals;
 public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final int ADD = 0;
     private static final Log LOG = LogFactory.getLog(TableReaderReloadFuzzTest.class);
+    private static final int MAX_NUM_OF_INSERTS = 10;
+    private static final int MAX_NUM_OF_STRUCTURE_CHANGES = 10;
+    private static final int MIN_NUM_OF_INSERTS = 1;
+    private static final int MIN_NUM_OF_STRUCTURE_CHANGES = 5;
+    private static final long ONE_YEAR = 365 * 24 * 60 * 60 * 1000L * 1000L;
     private static final int REMOVE = 1;
     private static final int RENAME = 2;
-
     private final AtomicInteger columNameGen = new AtomicInteger(0);
     private final ObjList<Column> columns = new ObjList<>();
+    private final IntList removableColumns = new IntList();
     private Rnd random;
 
     @Before
@@ -56,25 +61,69 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testAddRemove() {
-        testFuzzReload(75, 1, 1, 0);
+        testFuzzReload(20, 1, 1, 0);
     }
 
     @Test
     public void testBalanced() {
-        testFuzzReload(75, 1, 1, 1);
+        testFuzzReload(20, 1, 1, 1);
     }
 
     @Test
     public void testMostlyAdd() {
-        testFuzzReload(50, 5, 1, 1);
+        testFuzzReload(15, 2, 1, 1);
     }
 
     @Test
     public void testRename() {
-        testFuzzReload(100, 0, 0, 1);
+        testFuzzReload(15, 0, 0, 1);
     }
 
-    private void copyLiveColumns(TableRecordMetadata metadata, ObjList<Column> columns) {
+    private void assertReaderWriterMetadata(TableWriter writer, TableReader reader) {
+        final ObjList<Column> writerColumns = extractLiveColumns(writer.getMetadata());
+        final TableReaderMetadata readerMetadata = reader.getMetadata();
+        for (int k = 0; k < readerMetadata.getColumnCount(); k++) {
+            assertEquals(writerColumns.get(k).name, readerMetadata.getColumnName(k));
+            assertEquals(writerColumns.get(k).type, readerMetadata.getColumnType(k));
+        }
+    }
+
+    private void changeTableStructure(int addFactor, int removeFactor, int renameFactor, TableWriter writer) {
+        final TableRecordMetadata writerMetadata = writer.getMetadata();
+        final int numOfStructureChanges = MIN_NUM_OF_STRUCTURE_CHANGES + random.nextInt(MAX_NUM_OF_STRUCTURE_CHANGES - MIN_NUM_OF_STRUCTURE_CHANGES);
+        for (int j = 0; j < numOfStructureChanges; j++) {
+            final int structureChangeType = selectStructureChange(addFactor, removeFactor, renameFactor);
+            switch (structureChangeType) {
+                case ADD:
+                    final int columnType = random.nextInt(12) + 1;
+                    writer.addColumn("col" + columNameGen.incrementAndGet(), columnType);
+                    break;
+                case REMOVE:
+                    final int removeIndex = selectColumn(writerMetadata);
+                    if (removeIndex > -1) {
+                        writer.removeColumn(writerMetadata.getColumnName(removeIndex));
+                    }
+                    break;
+                case RENAME:
+                    final int renameIndex = selectColumn(writerMetadata);
+                    if (renameIndex > -1) {
+                        writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columNameGen.incrementAndGet());
+                    }
+                    break;
+                default:
+                    throw new RuntimeException("Invalid structure change type value [type=" + structureChangeType + "]");
+            }
+        }
+    }
+
+    private void createTable() {
+        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
+            model.timestamp();
+            CairoTestUtils.create(model);
+        }
+    }
+
+    private ObjList<Column> extractLiveColumns(TableRecordMetadata metadata) {
         columns.clear();
         final int columnCount = metadata.getColumnCount();
         for (int i = 0; i < columnCount; i++) {
@@ -83,13 +132,23 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                 columns.add(new Column(metadata.getColumnName(i), type));
             }
         }
+        return columns;
+    }
+
+    private void ingest(TableWriter writer) {
+        final int numOfInserts = MIN_NUM_OF_INSERTS + random.nextInt(MAX_NUM_OF_INSERTS - MIN_NUM_OF_INSERTS);
+        for (int i = 0; i < numOfInserts; i++) {
+            final TableWriter.Row row = writer.newRow(random.nextLong(ONE_YEAR));
+            row.append();
+        }
+        writer.commit();
     }
 
     private int selectColumn(TableRecordMetadata metadata) {
         final int columnCount = metadata.getColumnCount();
         final int timestampIndex = metadata.getTimestampIndex();
 
-        final IntList removableColumns = new IntList();
+        removableColumns.clear();
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > -1 && i != timestampIndex) {
                 removableColumns.add(i);
@@ -115,49 +174,14 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor) {
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.DAY)) {
-            model.timestamp();
-            CairoTestUtils.create(model);
-        }
-
-        final int minNumOfStructureChanges = 5;
-        final int maxNumOfStructureChanges = 20;
+        createTable();
         try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
-            final TableRecordMetadata writerMetadata = writer.getMetadata();
             try (TableReader reader = new TableReader(configuration, "all")) {
                 for (int i = 0; i < numOfReloads; i++) {
-                    final int numOfStructureChanges = minNumOfStructureChanges + random.nextInt(maxNumOfStructureChanges - minNumOfStructureChanges);
-                    for (int j = 0; j < numOfStructureChanges; j++) {
-                        final int structureChangeType = selectStructureChange(addFactor, removeFactor, renameFactor);
-                        switch (structureChangeType) {
-                            case ADD:
-                                final int columnType = random.nextInt(12) + 1;
-                                writer.addColumn("col" + columNameGen.incrementAndGet(), columnType);
-                                break;
-                            case REMOVE:
-                                final int removeIndex = selectColumn(writerMetadata);
-                                if (removeIndex > -1) {
-                                    writer.removeColumn(writerMetadata.getColumnName(removeIndex));
-                                }
-                                break;
-                            case RENAME:
-                                final int renameIndex = selectColumn(writerMetadata);
-                                if (renameIndex > -1) {
-                                    writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columNameGen.incrementAndGet());
-                                }
-                                break;
-                            default:
-                                throw new RuntimeException("Invalid structure change type value [type=" + structureChangeType + "]");
-                        }
-                    }
-
+                    ingest(writer);
+                    changeTableStructure(addFactor, removeFactor, renameFactor, writer);
                     reader.reload();
-                    copyLiveColumns(writerMetadata, columns);
-                    final TableReaderMetadata readerMetadata = reader.getMetadata();
-                    for (int k = 0; k < readerMetadata.getColumnCount(); k++) {
-                        assertEquals(columns.get(k).name, readerMetadata.getColumnName(k));
-                        assertEquals(columns.get(k).type, readerMetadata.getColumnType(k));
-                    }
+                    assertReaderWriterMetadata(writer, reader);
                 }
             }
         }
