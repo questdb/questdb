@@ -49,13 +49,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private DirectByteCharSequence headerName;
     private long headerPtr;
     private boolean incomplete;
-    private boolean m = true;
+    private boolean isMethod = true;
+    private boolean isQueryParams = false;
+    private boolean isUrl = true;
     private DirectByteCharSequence method;
     private DirectByteCharSequence methodLine;
     private boolean needMethod;
-    private boolean q = false;
     private long statementTimeout = -1L;
-    private boolean u = true;
     private DirectByteCharSequence url;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
@@ -82,20 +82,19 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.contentDispositionName = null;
         this.contentDispositionFilename = null;
         this.urlParams.clear();
-        this.m = true;
-        this.u = true;
-        this.q = false;
+        this.isMethod = true;
+        this.isUrl = true;
+        this.isQueryParams = false;
         this.statementTimeout = -1L;
-        // do not clear pool
-//        this.pool.clear();
+        // do not clear the pool
+        // this.pool.clear();
     }
 
     @Override
     public void close() {
         if (this.headerPtr != 0) {
-            Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);
-            this.headerPtr = 0;
-            boundaryAugmenter.close();
+            this.headerPtr = Unsafe.free(this.headerPtr, this.hi - this.headerPtr, MemoryTag.NATIVE_HTTP_CONN);
+            this.boundaryAugmenter.close();
         }
     }
 
@@ -380,25 +379,25 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
             switch (b) {
                 case ' ':
-                    if (m) {
+                    if (isMethod) {
                         method = pool.next().of(_lo, _wptr);
                         _lo = _wptr + 1;
-                        m = false;
-                    } else if (u) {
+                        isMethod = false;
+                    } else if (isUrl) {
                         url = pool.next().of(_lo, _wptr);
-                        u = false;
+                        isUrl = false;
                         _lo = _wptr + 1;
-                    } else if (q) {
+                    } else if (isQueryParams) {
                         int o = urlDecode(_lo, _wptr, urlParams);
-                        q = false;
+                        isQueryParams = false;
                         _lo = _wptr;
                         _wptr -= o;
                     }
                     break;
                 case '?':
                     url = pool.next().of(_lo, _wptr);
-                    u = false;
-                    q = true;
+                    isUrl = false;
+                    isQueryParams = true;
                     _lo = _wptr + 1;
                     break;
                 case '\n':
@@ -499,8 +498,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         @Override
         public void close() {
             if (lo > 0) {
-                Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
-                this.lo = 0;
+                this.lo = this._wptr = Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
             }
         }
 
@@ -521,9 +519,9 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         }
 
         private void resize(int lim) {
-            Unsafe.free(this.lo, this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            final long prevLim = this.lim;
             this.lim = Numbers.ceilPow2(lim);
-            this.lo = _wptr = Unsafe.malloc(this.lim, MemoryTag.NATIVE_HTTP_CONN);
+            this.lo = this._wptr = Unsafe.realloc(this.lo, prevLim, this.lim, MemoryTag.NATIVE_HTTP_CONN);
             of0(BOUNDARY_PREFIX);
         }
     }
