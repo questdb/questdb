@@ -6710,14 +6710,14 @@ create table tab as (
 
     @Test
     public void testTimeoutIsPerSimpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 1000, (conn, binary) -> {
+        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, 200, (conn, binary) -> {
             compiler.compile("create table t1 as (select 's' || x as s from long_sequence(1000));", sqlExecutionContext);
             try (final Statement statement = conn.createStatement()) {
-                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+                statement.execute("insert into t1 select 's' || x from long_sequence(100)");
             }
-            Os.sleep(1000);
+            Os.sleep(200);
             try (final Statement statement = conn.createStatement()) {
-                statement.execute("insert into t1 select 's' || x from long_sequence(10000)");
+                statement.execute("insert into t1 select 's' || x from long_sequence(100)");
             }
         });
     }
