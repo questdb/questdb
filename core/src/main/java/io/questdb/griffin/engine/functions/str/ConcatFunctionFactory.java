@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
@@ -114,6 +115,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         sink.put(function.getTimestamp(record));
     }
 
+    private static void sinkUuid(CharSink sink, Function function, Record record) {
+        long hi = function.getUuidHi(record);
+        long lo = function.getUuidLo(record);
+        SqlUtil.implicitCastUuidAsStr(hi, lo, sink);
+    }
+
     @FunctionalInterface
     private interface TypeAdapter {
         void sink(CharSink sink, Function function, Record record);
@@ -177,6 +184,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
         adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);
         adapterReferences.extendAndSet(ColumnType.TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
+        adapterReferences.extendAndSet(ColumnType.UUID, ConcatFunctionFactory::sinkUuid);
         adapterReferences.extendAndSet(ColumnType.NULL, ConcatFunctionFactory::sinkNull);
     }
 }

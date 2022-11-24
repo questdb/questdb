@@ -84,6 +84,22 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testConcatFunction() throws Exception {
+        assertCompile("create table x (u1 UUID, u2 UUID, u3 UUID)");
+        assertCompile("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')");
+        assertCompile("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, null)");
+        assertCompile("insert into x values (null, null, null)");
+        assertCompile("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, '22222222-2222-2222-2222-222222222222')");
+
+        assertQuery("concat\n" +
+                        "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-22222222222233333333-3333-3333-3333-333333333333\n" +
+                        "11111111-1111-1111-1111-111111111111\n" +
+                        "\n" +
+                        "11111111-1111-1111-1111-11111111111122222222-2222-2222-2222-222222222222\n",
+                "select concat(u1, u2, u3) from x", null, null, true, true, false);
+    }
+
+    @Test
     public void testConstantComparison() throws Exception {
         assertQuery("column\n" +
                         "true\n",
