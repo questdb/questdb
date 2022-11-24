@@ -60,7 +60,7 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $(long x) {
+    public LogRecord $(long l) {
         return this;
     }
 

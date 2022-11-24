@@ -44,11 +44,11 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 public class TableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
-    private static final int o3MaxLagColumn;
     private static final int designatedTimestampColumn;
     private static final int idColumn;
     private static final int maxUncommittedRowsColumn;
     private static final int nameColumn;
+    private static final int o3MaxLagColumn;
     private static final int partitionByColumn;
     private static final int writeModeColumn;
 
@@ -171,8 +171,8 @@ public class TableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
-                private long o3MaxLag;
                 private int maxUncommittedRows;
+                private long o3MaxLag;
                 private int partitionBy;
                 private int tableId;
 

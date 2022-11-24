@@ -124,7 +124,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public void getTableMetadata(@NotNull TableRecordMetadataSink sink) {
+    public long getTableMetadata(@NotNull TableRecordMetadataSink sink) {
         int columnCount = metadata.getColumnCount();
         int timestampIndex = metadata.getTimestampIndex();
         int compressedTimestampIndex = -1;
@@ -158,6 +158,8 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.getStructureVersion(),
                 compressedColumnCount
         );
+
+        return tableTransactionLog.lastTxn();
     }
 
     public String getTableName() {

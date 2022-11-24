@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.wal.fuzz.FuzzTransaction;
 import io.questdb.griffin.wal.fuzz.FuzzTransactionGenerator;
@@ -108,10 +109,10 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetadataReshuffle() throws Exception {
+    public void testIntermediateCommitCreatesEmptyPartition() throws Exception {
         executeWithPool(
-                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
-                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
+                2, ((engine, compiler, sqlExecutionContext) -> testFuzz00(
+                        engine, compiler, sqlExecutionContext, new Rnd(473693170209L, 1669125220064L))
                 )
         );
     }
@@ -129,6 +130,15 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testLargeLagWithinPartitionParallel() throws Exception {
         executeWithPool(2, this::testLargeLagWithinPartition);
+    }
+
+    @Test
+    public void testMetadataReshuffle() throws Exception {
+        executeWithPool(
+                2, (engine, compiler, sqlExecutionContext) -> testFuzz00(
+                        engine, compiler, sqlExecutionContext, new Rnd(22306374689795L, 1669046069639L)
+                )
+        );
     }
 
     @Test
@@ -428,6 +438,83 @@ public class O3MaxLagTest extends AbstractO3Test {
         }
     }
 
+    private static void testFuzz00(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            Rnd rnd
+    ) throws SqlException, NumericException {
+        long microsBetweenRows = 1000000L;
+        int nTotalRows = 12000;
+        // create initial table "x"
+        String sql = "create table x as (" +
+                "select" +
+                " cast(x as int) i," +
+                " rnd_symbol('msft','ibm', 'googl') sym," +
+                " round(rnd_double(0)*100, 3) amt," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                " rnd_boolean() b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_double(2) d," +
+                " rnd_float(2) e," +
+                " rnd_short(10,1024) f," +
+                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                " rnd_symbol(4,4,4,2) ik," +
+                " rnd_long() j," +
+                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
+                " rnd_byte(2,50) l," +
+                " rnd_bin(10, 20, 2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_char() t" +
+                " from long_sequence(" + nTotalRows + ")" +
+                "), index(sym) timestamp (ts) partition by DAY";
+        compiler.compile(sql, sqlExecutionContext);
+
+        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
+        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
+
+        TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
+
+        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
+        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
+        int txCount = Math.max(1, rnd.nextInt(50));
+        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
+        try (
+                TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
+        ) {
+            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    w.getMetadata(),
+                    rnd,
+                    minTs,
+                    maxTs,
+                    rowCount,
+                    txCount,
+                    true,
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    rnd.nextDouble(),
+                    1, // insert only
+                    5,
+                    new String[]{"ABC", "CDE", "XYZ"}
+            );
+
+            Rnd rnd1 = new Rnd();
+            replayTransactions(rnd1, w, transactions, -1);
+            w.commit();
+
+            Rnd rnd2 = new Rnd();
+            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
+            w2.commit();
+
+            TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
+        }
+    }
+
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
         for (int i = 0; i < count; i++) {
             long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
@@ -559,6 +646,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         long start = IntervalUtils.parseFloorPartialTimestamp("2021-04-27T08:00:00");
         long[] testCounts = new long[]{2 * 1024 * 1024, 16 * 8 * 1024 * 5, 2_000_000};
+        //noinspection ForLoopReplaceableByForEach
         for (int c = 0; c < testCounts.length; c++) {
             long idCount = testCounts[c];
 
@@ -704,83 +792,6 @@ public class O3MaxLagTest extends AbstractO3Test {
         LOG.info().$("committed final state with ").$(nCommitsWithLag).$(" commits with lag").$();
 
         assertXY(compiler, sqlExecutionContext);
-    }
-
-    private static void testFuzz00(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            Rnd rnd
-    ) throws SqlException, NumericException {
-        long microsBetweenRows = 1000000L;
-        int nTotalRows = 12000;
-        // create initial table "x"
-        String sql = "create table x as (" +
-                "select" +
-                " cast(x as int) i," +
-                " rnd_symbol('msft','ibm', 'googl') sym," +
-                " round(rnd_double(0)*100, 3) amt," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                " rnd_boolean() b," +
-                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                " rnd_double(2) d," +
-                " rnd_float(2) e," +
-                " rnd_short(10,1024) f," +
-                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                " rnd_symbol(4,4,4,2) ik," +
-                " rnd_long() j," +
-                " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
-                " rnd_byte(2,50) l," +
-                " rnd_bin(10, 20, 2) m," +
-                " rnd_str(5,16,2) n," +
-                " rnd_char() t" +
-                " from long_sequence(" + nTotalRows + ")" +
-                "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
-
-        compiler.compile("create table y as (select * from x order by t)", sqlExecutionContext);
-        compiler.compile("create table z as (select * from x order by t)", sqlExecutionContext);
-
-        TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
-
-        long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
-        long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
-        int txCount = Math.max(1, rnd.nextInt(50));
-        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
-        try (
-                TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
-                TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "test")
-        ) {
-            ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
-                    w.getMetadata(),
-                    rnd,
-                    minTs,
-                    maxTs,
-                    rowCount,
-                    txCount,
-                    true,
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    rnd.nextDouble(),
-                    1, // insert only
-                    5,
-                    new String[]{"ABC", "CDE", "XYZ"}
-            );
-
-            Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, w, transactions, -1);
-            w.commit();
-
-            Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, w2, transactions, w.getMetadata().getTimestampIndex());
-            w2.commit();
-
-            TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
-        }
     }
 
     private void testFuzz0(
@@ -1364,13 +1375,10 @@ public class O3MaxLagTest extends AbstractO3Test {
     // moved to memory and only partition '1970-01-01' is committed to the disk.
     // If the partition '1970-01-02' is kept in the _txn partition tables then any rollback can wipe out records in '1970-01-01'.
     private void testRollbackCreatesEmptyPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Rnd rnd = new Rnd();
-        rnd.reset(5718667365331139914L, 1796199789846834231L);
-        Rnd r = sqlExecutionContext.getRandom();
-        r.reset(3417617481941903354L, 772640833522954936L);
-        final int nTotalRows = rnd.nextInt(79000);
-        final long microsBetweenRows = rnd.nextLong(3090985);
-        final double fraction = rnd.nextDouble();
+        final int nTotalRows = 74571;
+        final long microsBetweenRows = 1161956;
+        final double fraction = 0.8908162001320725;
+        SharedRandom.RANDOM.get().reset(3417617481941903354L, 772640833522954936L);
         testRollbackFuzz0(engine, compiler, sqlExecutionContext, nTotalRows, (int) (nTotalRows * fraction), microsBetweenRows);
     }
 

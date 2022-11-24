@@ -1520,11 +1520,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
         timestamp = getPartitionLo(timestamp);
-        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            LOG.error().$("partition is empty, folder does not exist [path=").$(path).I$();
-            return false;
-        }
-
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$(path).I$();
@@ -2519,6 +2514,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     if (txWriter.reconcileOptimisticPartitions()) {
                         this.lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
                         this.partitionTimestampHi = partitionCeilMethod.ceil(txWriter.getMaxTimestamp()) - 1;
+                        openLastPartition();
                     }
                 }
             }
@@ -3901,7 +3897,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             // Any more complicated case involve looking at what folders are present on disk before removing
             // do it async in O3PartitionPurgeJob
             if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
-                LOG.info().$("scheduled to purge partitions").$(", table=").utf8(tableName).I$();
+                LOG.info().$("scheduled to purge partitions [table=").utf8(tableName).I$();
             } else {
                 LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableName).I$();
             }

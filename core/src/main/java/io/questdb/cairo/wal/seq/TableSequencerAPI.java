@@ -175,10 +175,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
+    public long getTableMetadata(final CharSequence tableName, final TableRecordMetadataSink sink) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
             try {
-                tableSequencer.getTableMetadata(sink);
+                return tableSequencer.getTableMetadata(sink);
             } finally {
                 tableSequencer.unlockRead();
             }
