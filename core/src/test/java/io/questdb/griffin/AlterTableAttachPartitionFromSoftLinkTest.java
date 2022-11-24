@@ -34,14 +34,10 @@ import org.junit.*;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Consumer;
 
 
 public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTableAttachPartitionTest {
-
     private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
     private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
     private static final String partitionName = "2022-10-17";
@@ -140,15 +136,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .$();
                             Assert.assertFalse(ff.exists(other));
 
-                            // verify no copy was produced to hot space
-                            Assert.assertFalse(configuration.attachPartitionCopy());
-                            path.of(configuration.getRoot())
-                                    .concat(tableName)
-                                    .concat(partitionName)
-                                    .put(TableUtils.DETACHED_DIR_MARKER)
-                                    .$();
-                            Assert.assertFalse(ff.exists(path));
-
                             // insert a row at the end of the partition, the only row, which will create the partition
                             // at this point there is no longer information as to whether it was RO in the past, and
                             // no soft link creation is involved
@@ -217,7 +204,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropPartition() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -501,7 +487,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRemoveColumn() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS); // this test stresses isSoftLink, which does not work in windows
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -552,6 +537,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
 
                         // invoke colum purge task
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
                         try (
                                 ColumnPurgeOperator purgeOperator = new ColumnPurgeOperator(configuration);
                                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
@@ -685,7 +672,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testUpdate() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
@@ -711,15 +697,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
                                             "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n"
                             );
-
-                            // collect last modified timestamps for files in cold storage
-                            final Map<String, Long> lastModified = new HashMap<>();
-                            path.of(other);
-                            final int len = path.length();
-                            ff.walk(other, (file, type) -> {
-                                path.trimTo(len).concat(file).$();
-                                lastModified.put(path.toString(), ff.getLastModified(path));
-                            });
 
                             // execute an update directly on the cold storage partition, it will fail
                             assertUpdateFailsBecausePartitionIsReadOnly(
@@ -777,9 +754,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Runnable test) throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
-
             createTable(tableName);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
@@ -813,13 +788,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         });
     }
 
-    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(String tableName, CharSequence partitionName, String otherLocation) throws IOException {
+    private void copyToDifferentLocationAndMakeAttachableViaSoftLink(
+            String tableName,
+            CharSequence partitionName,
+            String otherLocation
+    ) {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 
         // copy .detached folder to the different location
-        // then remove the original .detached folder
-
         CharSequence tmp;
         try {
             tmp = temp.newFolder(otherLocation).getAbsolutePath();
@@ -837,15 +814,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 detachedPartitionName,
                 null
         );
-        Files.rmdir(path.of(configuration.getRoot())
-                .concat(tableName)
-                .concat(detachedPartitionName)
-                .$());
-        Assert.assertFalse(ff.exists(path));
 
         // create the .attachable link in the table's data folder
         // with target the .detached folder in the different location
-        other.of(s3Buckets) // <-- the copy of the now lost .detached folder
+        other.of(s3Buckets)
                 .concat(tableName)
                 .concat(detachedPartitionName)
                 .$();
@@ -855,8 +827,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 .put(configuration.getAttachPartitionSuffix())
                 .$();
         Assert.assertEquals(0, ff.softLink(other, path));
-        Assert.assertFalse(ff.isSoftLink(other));
-        Assert.assertTrue(Os.isWindows() || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
     }
 
     private void createTable(String tableName) throws NumericException, SqlException {
