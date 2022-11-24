@@ -30,9 +30,15 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
+import io.questdb.std.UuidUtil;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public abstract class UuidFunction implements ScalarFunction {
+    private final StringSink sinkA = new StringSink(UuidUtil.UUID_LENGTH);
+    private final StringSink sinkB = new StringSink(UuidUtil.UUID_LENGTH);
+
     @Override
     public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -130,25 +136,32 @@ public abstract class UuidFunction implements ScalarFunction {
 
     @Override
     public CharSequence getStr(Record rec) {
-        // todo: we could return String representation of UUID here ?
-        throw new UnsupportedOperationException();
+        long hi = getUuidHi(rec);
+        long lo = getUuidLo(rec);
+        sinkA.clear();
+        Numbers.appendUuid(hi, lo, sinkA);
+        return sinkA;
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        // todo: we could return String representation of UUID here ?
-        throw new UnsupportedOperationException();
+        long hi = getUuidHi(rec);
+        long lo = getUuidLo(rec);
+        Numbers.appendUuid(hi, lo, sink);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        // todo: we could return String representation of UUID here ?
-        throw new UnsupportedOperationException();
+        long hi = getUuidHi(rec);
+        long lo = getUuidLo(rec);
+        sinkB.clear();
+        Numbers.appendUuid(hi, lo, sinkB);
+        return sinkB;
     }
 
     @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return UuidUtil.UUID_LENGTH;
     }
 
     @Override

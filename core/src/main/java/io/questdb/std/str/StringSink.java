@@ -28,7 +28,15 @@ import io.questdb.std.Chars;
 import org.jetbrains.annotations.NotNull;
 
 public class StringSink extends AbstractCharSink implements MutableCharSink, CloneableMutable {
-    private final StringBuilder builder = new StringBuilder();
+    private final StringBuilder builder;
+
+    public StringSink() {
+        this.builder = new StringBuilder();
+    }
+
+    public StringSink(int initialCapacity) {
+        this.builder = new StringBuilder(initialCapacity);
+    }
 
     @Override
     public char charAt(int index) {

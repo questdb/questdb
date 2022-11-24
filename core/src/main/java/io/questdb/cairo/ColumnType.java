@@ -79,7 +79,7 @@ public final class ColumnType {
     public static final short TYPES_SIZE = MAX + 1;
     private static final int[] TYPE_SIZE_POW2 = new int[TYPES_SIZE];
     private static final int[] TYPE_SIZE = new int[TYPES_SIZE];
-    public static final short PARAMETER = 19;
+    public static final short PARAMETER = 28;
     public static final short RECORD = 22;
     // PG specific types to work with 3rd party software with canned catalogue queries
     public static final short REGCLASS = 25;
@@ -89,7 +89,7 @@ public final class ColumnType {
     public static final short SYMBOL = 12;
     public static final short TIMESTAMP = 8;
     public static final short UNDEFINED = 0;
-    public static final short UUID = 28;
+    public static final short UUID = 19;
     public static final short VAR_ARG = 21;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
@@ -121,7 +121,7 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
-            /* 19 UUID      */, {UUID}
+            /* 19 UUID      */, {UUID, STRING}
     };
     private static final int[] overloadPriorityMatrix;
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();

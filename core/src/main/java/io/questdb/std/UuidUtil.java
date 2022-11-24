@@ -27,6 +27,8 @@ package io.questdb.std;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 
 public final class UuidUtil {
+    public static final int UUID_LENGTH = 36;
+
     private UuidUtil() {
     }
 
