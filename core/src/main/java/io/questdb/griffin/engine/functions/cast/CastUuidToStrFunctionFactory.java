@@ -25,15 +25,16 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -49,21 +50,13 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalBuilder();
-            if (uuidToSink(func.getUuidHi(null), func.getUuidLo(null), sink)) {
+            if (SqlUtil.implicitCastUuidAsStr(func.getUuidHi(null), func.getUuidLo(null), sink)) {
                 return new StrConstant(Chars.toString(sink));
             } else {
                 return StrConstant.NULL;
             }
         }
         return new Func(func);
-    }
-
-    private static boolean uuidToSink(long hi, long lo, CharSink sink) {
-        if (hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO) {
-            return false;
-        }
-        Numbers.appendUuid(hi, lo, sink);
-        return true;
     }
 
     public static class Func extends StrFunction implements UnaryFunction {
@@ -83,18 +76,25 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStr(Record rec) {
             sinkA.clear();
-            return uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkA) ? sinkA : null;
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkA) ? sinkA : null;
         }
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sink);
+            SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sink);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            return uuidToSink(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkB) ? sinkB : null;
+            return SqlUtil.implicitCastUuidAsStr(arg.getUuidHi(rec), arg.getUuidLo(rec), sinkB) ? sinkB : null;
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            long hi = arg.getUuidHi(rec);
+            long lo = arg.getUuidLo(rec);
+            return UuidUtil.isNull(hi, lo) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
         }
     }
 }

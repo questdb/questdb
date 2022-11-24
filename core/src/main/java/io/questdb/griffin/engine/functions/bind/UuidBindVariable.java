@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.Mutable;
 import io.questdb.std.MutableUuid;
 
@@ -36,7 +35,7 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
 
     @Override
     public void clear() {
-        value.of(UuidConstant.NULL_HI_AND_LO, UuidConstant.NULL_HI_AND_LO);
+        value.ofNull();
     }
 
     @Override

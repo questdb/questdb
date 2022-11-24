@@ -96,6 +96,10 @@ public final class MutableUuid implements Sinkable {
         this.lo = (lo1 << 48) | lo2;
     }
 
+    public void ofNull() {
+        this.hi = UuidConstant.NULL_HI_AND_LO;
+        this.lo = UuidConstant.NULL_HI_AND_LO;
+    }
 
     @Override
     public void toSink(CharSink sink) {

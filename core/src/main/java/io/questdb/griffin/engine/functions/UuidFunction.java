@@ -25,12 +25,13 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
 import io.questdb.std.UuidUtil;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -139,15 +140,17 @@ public abstract class UuidFunction implements ScalarFunction {
         long hi = getUuidHi(rec);
         long lo = getUuidLo(rec);
         sinkA.clear();
-        Numbers.appendUuid(hi, lo, sinkA);
-        return sinkA;
+        if (SqlUtil.implicitCastUuidAsStr(hi, lo, sinkA)) {
+            return sinkA;
+        }
+        return null;
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
         long hi = getUuidHi(rec);
         long lo = getUuidLo(rec);
-        Numbers.appendUuid(hi, lo, sink);
+        SqlUtil.implicitCastUuidAsStr(hi, lo, sink);
     }
 
     @Override
@@ -155,13 +158,17 @@ public abstract class UuidFunction implements ScalarFunction {
         long hi = getUuidHi(rec);
         long lo = getUuidLo(rec);
         sinkB.clear();
-        Numbers.appendUuid(hi, lo, sinkB);
-        return sinkB;
+        if (SqlUtil.implicitCastUuidAsStr(hi, lo, sinkB)) {
+            return sinkB;
+        }
+        return null;
     }
 
     @Override
     public int getStrLen(Record rec) {
-        return UuidUtil.UUID_LENGTH;
+        long hi = getUuidHi(rec);
+        long lo = getUuidLo(rec);
+        return UuidUtil.isNull(hi, lo) ? TableUtils.NULL_LEN : UuidUtil.UUID_LENGTH;
     }
 
     @Override

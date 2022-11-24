@@ -490,6 +490,17 @@ public class UuidTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStringOverloadFunctionWithNull() throws Exception {
+        assertCompile("create table x (u uuid)");
+
+        assertCompile("insert into x values (null)");
+
+        assertQuery("length\n" +
+                        "-1\n",
+                "select length(u) from x", null, null, true, true, true);
+    }
+
+    @Test
     public void testTwoVarComparison() throws Exception {
         assertCompile("create table x (u1 UUID, u2 UUID)");
         assertCompile("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");

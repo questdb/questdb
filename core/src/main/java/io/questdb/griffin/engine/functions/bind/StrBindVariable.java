@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -88,6 +89,13 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
         }
     }
 
+    public void setUuidValue(long hi, long lo) {
+        sink.clear();
+        if (!SqlUtil.implicitCastUuidAsStr(hi, lo, sink)) {
+            isNull = false;
+        }
+    }
+
     public void setValue(char value) {
         sink.clear();
         isNull = false;
@@ -98,12 +106,6 @@ class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
         sink.clear();
         isNull = false;
         Numbers.appendLong256(l0, l1, l2, l3, sink);
-    }
-
-    public void setValue(long hi, long lo) {
-        sink.clear();
-        isNull = false;
-        Numbers.appendUuid(hi, lo, sink);
     }
 
     public void setValue(short value) {

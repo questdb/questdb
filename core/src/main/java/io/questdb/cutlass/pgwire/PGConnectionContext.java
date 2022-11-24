@@ -34,7 +34,6 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -931,7 +930,7 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void appendUuidColumn(Record record, int columnIndex) {
         final long hi = record.getUuidHi(columnIndex);
         final long lo = record.getUuidLo(columnIndex);
-        if (hi == UuidConstant.NULL_HI_AND_LO && lo == UuidConstant.NULL_HI_AND_LO) {
+        if (UuidUtil.isNull(hi, lo)) {
             responseAsciiSink.setNullValue();
         } else {
             final long a = responseAsciiSink.skip();
@@ -943,12 +942,12 @@ public class PGConnectionContext extends AbstractMutableIOContext<PGConnectionCo
     private void appendUuidColumnBin(Record record, int columnIndex) {
         final long hi = record.getUuidHi(columnIndex);
         final long lo = record.getUuidLo(columnIndex);
-        if (hi != UuidConstant.NULL_HI_AND_LO || lo != UuidConstant.NULL_HI_AND_LO) {
+        if (UuidUtil.isNull(hi, lo)) {
+            responseAsciiSink.setNullValue();
+        } else {
             responseAsciiSink.putNetworkInt(Long.BYTES * 2);
             responseAsciiSink.putNetworkLong(hi);
             responseAsciiSink.putNetworkLong(lo);
-        } else {
-            responseAsciiSink.setNullValue();
         }
     }
 

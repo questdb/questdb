@@ -1073,7 +1073,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((UuidBindVariable) function).set(hi, lo);
                 break;
             case ColumnType.STRING:
-                ((StrBindVariable) function).setValue(hi, lo);
+                ((StrBindVariable) function).setUuidValue(hi, lo);
                 break;
             default:
                 reportError(function, ColumnType.UUID, index, name);
