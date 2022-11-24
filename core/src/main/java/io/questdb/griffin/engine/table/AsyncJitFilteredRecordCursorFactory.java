@@ -39,7 +39,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -106,7 +105,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, filterAtom, order);
     }
 
