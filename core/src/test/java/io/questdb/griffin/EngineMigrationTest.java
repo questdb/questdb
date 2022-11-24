@@ -35,7 +35,6 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -119,7 +118,6 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     public void test426() throws IOException, SqlException {
-        Assume.assumeTrue(Os.type != Os.WINDOWS); // the zip file is not ok with windows, it was created in a mac
         doMigration("/migration/data_426.zip", false, false, false, false);
     }
 
