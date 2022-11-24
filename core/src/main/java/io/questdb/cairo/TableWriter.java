@@ -128,7 +128,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final long[] o3LastTimestampSpreads = new long[WINDOW_SIZE];
-    private final LongList o3PartitionRemoveCandidates = new LongList();
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final boolean o3QuickSortEnabled;
@@ -139,6 +138,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final DateFormat partitionDirFmt;
     private final PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final int rootLen;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -1421,7 +1421,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
-        o3ProcessPartitionRemoveCandidates();
+        processPartitionRemoveCandidates();
 
         metrics.tableWriter().incrementCommits();
         metrics.tableWriter().addCommittedRows(rowsAdded);
@@ -1440,6 +1440,41 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             }
             Os.pause();
         }
+    }
+
+    /**
+     * Truncates table partitions leaving symbol files.
+     * Used for truncate without holding Read lock on the table like in case of WAL tables.
+     * This method leaves symbol files intact.
+     */
+    public final void removeAllPartitions() {
+        if (size() == 0) {
+            return;
+        }
+
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.critical(0).put("cannot remove partitions from non-partitioned table");
+        }
+
+        // Remove all partition from txn file, column version file.
+        txWriter.beginPartitionSizeUpdate();
+
+        for (int i = txWriter.getPartitionCount(); i > -1L; i--) {
+            long timestamp = txWriter.getPartitionTimestamp(i);
+            long partitionTxn = txWriter.getPartitionNameTxn(i);
+            partitionRemoveCandidates.add(timestamp, partitionTxn);
+        }
+
+        columnVersionWriter.truncate(true);
+        txWriter.removeAllPartitions();
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+        rowAction = ROW_ACTION_OPEN_PARTITION;
+
+        processPartitionRemoveCandidates();
+
+        LOG.info().$("removed all partitions (soft truncated) [name=").utf8(tableName).I$();
     }
 
     @Override
@@ -1669,7 +1704,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         if (o3InError || inTransaction()) {
             try {
                 LOG.info().$("tx rollback [name=").utf8(tableName).I$();
-                o3PartitionRemoveCandidates.clear();
+                partitionRemoveCandidates.clear();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
                     masterRef++;
@@ -2541,7 +2576,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
             // Bookmark masterRef to track how many rows is in uncommitted state
             this.committedMasterRef = masterRef;
-            o3ProcessPartitionRemoveCandidates();
+            processPartitionRemoveCandidates();
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
@@ -3832,82 +3867,13 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                     .$("`, ts=").$ts(partitionTimestamp)
                     .$(", txn=").$(txWriter.txn).I$();
             txWriter.updatePartitionSizeAndTxnByIndex(partitionIndex, partitionSize);
-            o3PartitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
+            partitionRemoveCandidates.add(partitionTimestamp, srcDataTxn);
             txWriter.bumpPartitionTableVersion();
         } else {
             if (partitionTimestamp != lastPartitionTimestamp) {
                 txWriter.bumpPartitionTableVersion();
             }
             txWriter.updatePartitionSizeByIndex(partitionIndex, partitionTimestamp, partitionSize);
-        }
-    }
-
-    private void o3ProcessPartitionRemoveCandidates() {
-        try {
-            final int n = o3PartitionRemoveCandidates.size();
-            if (n > 0) {
-                o3ProcessPartitionRemoveCandidates0(n);
-            }
-        } finally {
-            o3PartitionRemoveCandidates.clear();
-        }
-    }
-
-    private void o3ProcessPartitionRemoveCandidates0(int n) {
-        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
-        // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
-        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
-
-        if (!anyReadersBeforeCommittedTxn) {
-            for (int i = 0; i < n; i += 2) {
-                try {
-                    final long timestamp = o3PartitionRemoveCandidates.getQuick(i);
-                    final long txn = o3PartitionRemoveCandidates.getQuick(i + 1);
-                    setPathForPartition(
-                            other,
-                            partitionBy,
-                            timestamp,
-                            false
-                    );
-                    TableUtils.txnPartitionConditionally(other, txn);
-                    other.$();
-                    if (ff.isSoftLink(other)) {
-                        // in windows ^ ^ will return false, but that is ok as the behaviour
-                        // is to delete the link, not the contents of the target. in *nix
-                        // systems we can simply unlink, which deletes the link and leaves
-                        // the contents of the target intact
-                        if (ff.unlink(other) == 0) {
-                            LOG.info().$("purged by unlink [path=").$(other).I$();
-                            return;
-                        } else {
-                            LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
-                        }
-                    }
-                    long errno = ff.rmdir(other);
-                    if (errno == 0 || errno == -1) {
-                        // Successfully deleted or async purge has already swept it up
-                        LOG.info().$("purged [path=").$(other).I$();
-                    } else {
-                        LOG.info()
-                                .$("could not purge partition version, async purge will be scheduled [path=")
-                                .$(other)
-                                .$(", errno=").$(errno).I$();
-                        scheduleAsyncPurge = true;
-                    }
-                } finally {
-                    other.trimTo(rootLen);
-                }
-            }
-        }
-
-        if (scheduleAsyncPurge) {
-            // Any more complicated case involve looking at what folders are present on disk before removing
-            // do it async in O3PartitionPurgeJob
-            if (schedulePurgeO3Partitions(messageBus, systemTableName, partitionBy)) {
-                LOG.info().$("scheduled to purge partitions [table=").utf8(tableName).I$();
-            } else {
-                LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableName).I$();
-            }
         }
     }
 
@@ -4447,7 +4413,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             long rowLo
     ) {
         o3ErrorCount.set(0);
-        o3PartitionRemoveCandidates.clear();
+        partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
         o3BasketPool.clear();
 
@@ -4726,6 +4692,75 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
         if (o3LagRowCount > 0) {
             o3ShiftLagRowsUp(timestampIndex, o3LagRowCount, srcOooMax);
+        }
+    }
+
+    private void processPartitionRemoveCandidates() {
+        try {
+            final int n = partitionRemoveCandidates.size();
+            if (n > 0) {
+                processPartitionRemoveCandidates0(n);
+            }
+        } finally {
+            partitionRemoveCandidates.clear();
+        }
+    }
+
+    private void processPartitionRemoveCandidates0(int n) {
+        boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
+        // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
+        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+
+        if (!anyReadersBeforeCommittedTxn) {
+            for (int i = 0; i < n; i += 2) {
+                try {
+                    final long timestamp = partitionRemoveCandidates.getQuick(i);
+                    final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                    setPathForPartition(
+                            other,
+                            partitionBy,
+                            timestamp,
+                            false
+                    );
+                    TableUtils.txnPartitionConditionally(other, txn);
+                    other.$();
+                    if (ff.isSoftLink(other)) {
+                        // in windows ^ ^ will return false, but that is ok as the behaviour
+                        // is to delete the link, not the contents of the target. in *nix
+                        // systems we can simply unlink, which deletes the link and leaves
+                        // the contents of the target intact
+                        if (ff.unlink(other) == 0) {
+                            LOG.info().$("purged by unlink [path=").$(other).I$();
+                            return;
+                        } else {
+                            LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
+                        }
+                    }
+                    long errno = ff.rmdir(other);
+                    if (errno == 0 || errno == -1) {
+                        // Successfully deleted or async purge has already swept it up
+                        LOG.info().$("purged [path=").$(other).I$();
+                    } else {
+                        LOG.info()
+                                .$("could not purge partition version, async purge will be scheduled [path=")
+                                .$(other)
+                                .$(", errno=").$(errno).I$();
+                        scheduleAsyncPurge = true;
+                    }
+                } finally {
+                    other.trimTo(rootLen);
+                }
+            }
+        }
+
+        if (scheduleAsyncPurge) {
+            // Any more complicated case involve looking at what folders are present on disk before removing
+            // do it async in O3PartitionPurgeJob
+            if (schedulePurgeO3Partitions(messageBus, systemTableName, partitionBy)) {
+                LOG.info().$("scheduled to purge partitions [table=").utf8(tableName).I$();
+            } else {
+                LOG.error().$("could not queue for purge, queue is full [table=").utf8(tableName).I$();
+            }
         }
     }
 
@@ -5635,9 +5670,9 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
 
     private void safeDeletePartitionDir(long timestamp, long partitionNameTxn) {
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        o3PartitionRemoveCandidates.clear();
-        o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
-        o3ProcessPartitionRemoveCandidates();
+        partitionRemoveCandidates.clear();
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        processPartitionRemoveCandidates();
     }
 
     private void setAppendPosition(final long position, boolean doubleAllocate) {

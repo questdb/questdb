@@ -359,10 +359,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     processWalSql(writer, sqlInfo, sqlToOperation, seqTxn);
                     break;
                 case TRUNCATE:
-                    // TODO(puzpuzpuz): this implementation is broken because of ILP I/O threads' symbol cache
-                    //                  and also concurrent table readers
                     writer.setSeqTxn(seqTxn);
-                    writer.truncate();
+                    writer.removeAllPartitions();
                     break;
                 default:
                     throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
