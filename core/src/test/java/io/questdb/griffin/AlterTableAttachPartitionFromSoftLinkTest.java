@@ -42,6 +42,11 @@ import java.util.function.Consumer;
 
 public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTableAttachPartitionTest {
 
+    private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
+    private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
+    private static final String partitionName = "2022-10-17";
+    private static final long partitionTimestamp;
+
     @Override
     @Before
     public void setUp() {
@@ -52,23 +57,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testAddColumn() throws Exception {
-
-        // TODO: this test, as all others that assume the same, need revisiting in WINDOWS
-        //  as in WINDOWS CI needs to run in administrator mode, and then possibly a few
-        //  release readers/writers might be needed to release file handles
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
-
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
-            final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "TUNGSTEN",
-                    txn -> {
+            setupTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -117,14 +108,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "SNOW",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "SNOW", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -188,18 +172,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testDropIndex() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
-            final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "BILBAO",
-                    txn -> {
+            setupTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -246,14 +221,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "IGLOO",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "IGLOO", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -295,14 +263,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "FINLAND",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "FINLAND", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -355,18 +316,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testInsertUpdate() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
-            final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "S3",
-                    txn -> {
+            setupTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -397,20 +349,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     tableName,
                                     partitionName
                             );
-
-                            // verify that the link does still exist
-                            Assert.assertTrue(Files.exists(path));
-
-                            // verify that a new partition folder has been created in the table data space (hot)
-                            path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
-                            TableUtils.txnPartitionConditionally(path, txn - 1);
-                            Assert.assertTrue(Files.exists(path.$()));
-
-                            // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
-                            AtomicInteger fileCount = new AtomicInteger();
-                            ff.walk(other, (file, type) -> fileCount.incrementAndGet());
-                            Assert.assertTrue(fileCount.get() > 0);
 
                             // update a row toward the beginning of the partition, will fail
                             assertUpdateFailsBecausePartitionIsReadOnly(
@@ -563,18 +501,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRemoveColumn() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        Assume.assumeTrue(Os.type != Os.WINDOWS); // this test stresses isSoftLink, which does not work in windows
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "REFRIGERATOR",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "REFRIGERATOR", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -658,18 +589,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testRenameColumn() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "ESPAÑA",
-                    txn -> {
+            setupTableWithReadOnlyPartition(tableName, () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -721,18 +644,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     @Test
     public void testTruncateTable() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "FRIO_DEL_15",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "FRIO_DEL_15", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -774,14 +689,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
             final String partitionName = "2022-10-17";
-            attachPartitionFromSoftLink(
-                    tableName,
-                    partitionName,
-                    2,
-                    "2022-10-17T00:00:17.279900Z",
-                    "2022-10-18T23:59:59.000000Z",
-                    "LEGEND",
-                    txn -> {
+            attachPartitionFromSoftLink(tableName, "LEGEND", () -> {
                         try {
                             assertSql("SELECT * FROM " + tableName + " WHERE ts in '" + partitionName + "' LIMIT -5",
                                     "l\ti\ts\tts\n" +
@@ -830,25 +738,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                             "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
                                             "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n"
                             );
-
-                            // verify that no new partition folder has been created in the table data space (hot)
-                            // but rather the files in cold storage have been modified
-                            path.of(configuration.getRoot())
-                                    .concat(tableName)
-                                    .concat(partitionName);
-                            TableUtils.txnPartitionConditionally(path, txn - 1);
-                            Assert.assertTrue(Files.exists(path.$()));
-                            Assert.assertTrue(Files.isSoftLink(path));
-                            // in windows, detecting a soft link is tricky, and unnecessary. Removing
-                            // a soft link does not remove the target's content, so we do not need to
-                            // call unlink, thus we do not need isSoftLink. It has been implemented however
-                            // and it does not seem to work.
-                            path.of(other);
-                            ff.walk(other, (file, type) -> {
-                                path.trimTo(len).concat(file).$();
-                                Long lm = lastModified.get(path.toString());
-                                Assert.assertTrue(lm == null || lm == ff.getLastModified(path));
-                            });
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -864,12 +753,6 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             executeInsert(insertStmt);
             Assert.fail();
         } catch (CairoException e) {
-            long timestamp = -1L;
-            try {
-                timestamp = TimestampFormatUtils.parseTimestamp(partitionName + "T00:00:00.000000Z");
-            } catch (NumericException ne) {
-                Assert.fail("expected a partition name, got: " + partitionName);
-            }
             TestUtils.assertContains(
                     "cannot insert into read-only partition [table=" + tableName + ", partitionIndex=0, partitionTs=" + partitionName + "T00:00:00.000Z]",
                     e.getFlyweightMessage());
@@ -893,47 +776,24 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         }
     }
 
-    private void attachPartitionFromSoftLink(
-            String tableName,
-            String partitionName,
-            int partitionCount,
-            String expectedMinTimestamp,
-            String expectedMaxTimestamp,
-            String otherLocation,
-            Consumer<Integer> test
-    ) throws Exception {
+    private void attachPartitionFromSoftLink(String tableName, String otherLocation, Runnable test) throws Exception {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
 
-            int txn = 0;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName,
-                        partitionCount
-                );
-            }
-            txn++;
+            createTable(tableName);
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
 
             // detach partition and attach it from soft link
             compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            txn++;
             copyToDifferentLocationAndMakeAttachableViaSoftLink(tableName, partitionName, otherLocation);
             compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
-            txn++;
 
             // verify that the link has been renamed to what we expect
             // note that the default value for server.conf
             path.of(configuration.getRoot()).concat(tableName).concat(partitionName);
-            TableUtils.txnPartitionConditionally(path, txn - 1);
+            TableUtils.txnPartitionConditionally(path, 2);
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag
@@ -947,8 +807,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
                     "min\tmax\tcount\n" +
                             expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
+
             // handover to actual test
-            test.accept(txn);
+            test.run();
         });
     }
 
@@ -996,5 +857,58 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         Assert.assertEquals(0, ff.softLink(other, path));
         Assert.assertFalse(ff.isSoftLink(other));
         Assert.assertTrue(Os.isWindows() || ff.isSoftLink(path)); // TODO: isSoftLink does not work for windows
+    }
+
+    private void createTable(String tableName) throws NumericException, SqlException {
+        try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+            createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                            .timestamp("ts"),
+                    10000,
+                    "2022-10-17",
+                    2
+            );
+        }
+    }
+
+    private void setupTableWithReadOnlyPartition(String tableName, Runnable test) throws Exception {
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            createTable(tableName);
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
+
+            // set partition read-only
+            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "read-only-flag")) {
+                Assert.assertTrue(writer.commitPartitionReadOnly(partitionTimestamp, true));
+            }
+
+            // verify read-only flag
+            engine.releaseAllReaders();
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TxReader txFile = reader.getTxFile();
+                Assert.assertTrue(txFile.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp));
+                Assert.assertTrue(txFile.isPartitionReadOnly(0));
+                Assert.assertFalse(txFile.isPartitionReadOnly(1));
+            }
+
+            // verify content
+            assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
+                    "min\tmax\tcount\n" +
+                            expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n");
+            // handover to actual test
+            test.run();
+        });
+    }
+
+    static {
+        try {
+            partitionTimestamp = TimestampFormatUtils.parseTimestamp(partitionName + "T00:00:00.000Z");
+        } catch (NumericException impossible) {
+            throw new RuntimeException(impossible);
+        }
     }
 }

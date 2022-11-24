@@ -820,6 +820,18 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return commit(commitMode, 0);
     }
 
+    @TestOnly
+    public boolean commitPartitionReadOnly(long partitionTimestamp, boolean isRO) {
+        // the read-only flag is only set when a partition is attached from soft link
+        // this method exists for testing purposes only.
+        boolean changed = txWriter.setPartitionReadOnly(partitionTimestamp, isRO);
+        if (changed) {
+            txWriter.bumpTruncateVersion();
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+        }
+        return changed;
+    }
+
     @Override
     public AttachDetachStatus detachPartition(long timestamp) {
         // Should be checked by SQL compiler
@@ -1742,18 +1754,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         } finally {
             ddlMem.close();
         }
-    }
-
-    @TestOnly
-    public boolean setPartitionReadOnly(long partitionTimestamp, boolean isRO) {
-        // the read-only flag is only set when a partition is attached from soft link
-        // this method exists for testing purposes only.
-        boolean changed = txWriter.setPartitionReadOnly(partitionTimestamp, isRO);
-        if (changed) {
-            txWriter.bumpTruncateVersion();
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-        }
-        return changed;
     }
 
     public void setSeqTxn(long seqTxn) {
