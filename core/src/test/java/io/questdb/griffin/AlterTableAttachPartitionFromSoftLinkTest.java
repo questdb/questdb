@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 
-public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachPartitionBase {
+public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTableAttachPartitionTest {
 
     @Override
     @Before
@@ -83,8 +83,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             executeOperation("ALTER TABLE " + tableName + " ADD COLUMN ss SYMBOL", CompiledQuery.ALTER);
 
                             // insert a row at the end of the partition, which will fail because it is RO
-                            assertInsertFailsBecausePartitionIsRO(
+                            assertInsertFailsBecausePartitionIsReadOnly(
                                     "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z', '¶')",
+                                    tableName,
                                     partitionName);
 
                             // add index on symbol column ss
@@ -377,20 +378,23 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             );
 
                             // insert a row at the end of the partition, which will fail as the partition is RO
-                            assertInsertFailsBecausePartitionIsRO(
+                            assertInsertFailsBecausePartitionIsReadOnly(
                                     "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(0, 0, 'ø','" + partitionName + "T23:59:59.500001Z')",
+                                    tableName,
                                     partitionName
                             );
 
                             // update a row toward the end of the partition, which will fail as the partition is RO
-                            assertUpdateFailsBecausePartitionIsRO(
+                            assertUpdateFailsBecausePartitionIsReadOnly(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T23:59:42.220100Z'",
+                                    tableName,
                                     partitionName
                             );
 
                             // insert a row at the beginning of the partition, this will fail
-                            assertInsertFailsBecausePartitionIsRO(
+                            assertInsertFailsBecausePartitionIsReadOnly(
                                     "INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + partitionName + "T00:00:00.100005Z')",
+                                    tableName,
                                     partitionName
                             );
 
@@ -409,8 +413,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             Assert.assertTrue(fileCount.get() > 0);
 
                             // update a row toward the beginning of the partition, will fail
-                            assertUpdateFailsBecausePartitionIsRO(
+                            assertUpdateFailsBecausePartitionIsReadOnly(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '2022-10-17T00:00:34.559800Z'",
+                                    tableName,
                                     partitionName
                             );
 
@@ -498,10 +503,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TxReader txFile = reader.getTxFile();
                 for (int i = 0; i < partitionCount - 2; i++) {
-                    Assert.assertTrue(txFile.getPartitionIsRO(i));
+                    Assert.assertTrue(txFile.isPartitionReadOnly(i));
                 }
-                Assert.assertFalse(txFile.getPartitionIsRO(partitionCount - 2));
-                Assert.assertFalse(txFile.getPartitionIsRO(partitionCount - 1));
+                Assert.assertFalse(txFile.isPartitionReadOnly(partitionCount - 2));
+                Assert.assertFalse(txFile.isPartitionReadOnly(partitionCount - 1));
             }
 
             // verify content
@@ -587,8 +592,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             );
 
                             // insert a row at the end of the partition, which will fail as the partition is RO
-                            assertInsertFailsBecausePartitionIsRO(
+                            assertInsertFailsBecausePartitionIsReadOnly(
                                     "INSERT INTO " + tableName + " VALUES(666, 666, '" + partitionName + "T23:59:59.999999Z')",
+                                    tableName,
                                     partitionName
                             );
 
@@ -620,8 +626,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                                 TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)
                         ) {
                             TxReader txReader = reader.getTxFile();
-                            Assert.assertTrue(txReader.getPartitionIsROByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
-                            Assert.assertFalse(txReader.getPartitionIsROByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
+                            Assert.assertTrue(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(0)));
+                            Assert.assertFalse(txReader.isPartitionReadOnlyByPartitionTimestamp(txReader.getPartitionTimestamp(1)));
 
                             ColumnPurgeTask purgeTask = new ColumnPurgeTask();
                             LongList updatedColumnInfo = new LongList(2 * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION);
@@ -687,8 +693,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             );
 
                             // insert a row at the end of the partition, which will fail as the partition is RO
-                            assertInsertFailsBecausePartitionIsRO(
+                            assertInsertFailsBecausePartitionIsReadOnly(
                                     "INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + partitionName + "T23:59:59.999999Z')",
+                                    tableName,
                                     partitionName
                             );
 
@@ -807,8 +814,9 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                             });
 
                             // execute an update directly on the cold storage partition, it will fail
-                            assertUpdateFailsBecausePartitionIsRO(
+                            assertUpdateFailsBecausePartitionIsReadOnly(
                                     "UPDATE " + tableName + " SET l = 13 WHERE ts = '" + partitionName + "T00:00:17.279900Z'",
+                                    tableName,
                                     partitionName
                             );
                             assertSql("SELECT min(ts), max(ts), count() FROM " + tableName,
@@ -849,7 +857,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
         });
     }
 
-    private void assertInsertFailsBecausePartitionIsRO(String insertStmt, String partitionName) {
+    private void assertInsertFailsBecausePartitionIsReadOnly(String insertStmt, String tableName, String partitionName) {
         // insert a row at the end of the partition
         // insert a row at the end of the partition, which will fail as the partition is RO
         try {
@@ -863,28 +871,22 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
                 Assert.fail("expected a partition name, got: " + partitionName);
             }
             TestUtils.assertContains(
-                    "cannot insert rows in a RO partition [partitionIndex=0, partitionTs=" + timestamp + ']',
+                    "cannot insert into read-only partition [table=" + tableName + ", partitionIndex=0, partitionTs=" + partitionName + "T00:00:00.000Z]",
                     e.getFlyweightMessage());
         } catch (SqlException e) {
             Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
         }
     }
 
-    private void assertUpdateFailsBecausePartitionIsRO(String updateStmt, String partitionName) {
+    private void assertUpdateFailsBecausePartitionIsReadOnly(String updateStmt, String tableName, String partitionName) {
         // insert a row at the end of the partition
         // insert a row at the end of the partition, which will fail as the partition is RO
         try {
             executeOperation(updateStmt, CompiledQuery.UPDATE);
             Assert.fail();
         } catch (CairoException e) {
-            long timestamp = -1L;
-            try {
-                timestamp = TimestampFormatUtils.parseTimestamp(partitionName + "T00:00:00.000000Z");
-            } catch (NumericException ne) {
-                Assert.fail("expected a partition name, got: " + partitionName);
-            }
             TestUtils.assertContains(
-                    "cannot update rows in a RO partition [partitionIndex=0, rowPartitionTs=" + timestamp + ']',
+                    "cannot update read-only partition [table=" + tableName + ", partitionIndex=0, partitionTs=" + partitionName + "T00:00:00.000Z]",
                     e.getFlyweightMessage());
         } catch (SqlException e) {
             Assert.fail("not expecting any SqlExceptions: " + e.getFlyweightMessage());
@@ -937,8 +939,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AlterTableAttachP
             // verify RO flag
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TxReader txFile = reader.getTxFile();
-                Assert.assertTrue(txFile.getPartitionIsRO(0));
-                Assert.assertFalse(txFile.getPartitionIsRO(1));
+                Assert.assertTrue(txFile.isPartitionReadOnly(0));
+                Assert.assertFalse(txFile.isPartitionReadOnly(1));
             }
 
             // verify content

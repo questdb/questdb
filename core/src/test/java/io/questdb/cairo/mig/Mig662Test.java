@@ -45,15 +45,16 @@ import java.util.List;
 import static io.questdb.cairo.TableUtils.META_OFFSET_VERSION;
 import static io.questdb.cairo.TableUtils.openFileRWOrFail;
 
-public class Mig656Test {
+public class Mig662Test {
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void testMigrate() throws IOException {
+        // tests migration from metadata file at version 426 to 427
 
-        final String dbRoot = temp.newFolder("Mig656").getAbsolutePath();
+        final String dbRoot = temp.newFolder("Mig662").getAbsolutePath();
         final FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
         final int currentVersion;
@@ -78,7 +79,7 @@ public class Mig656Test {
 
             // perform migration 426 -> 427
             try {
-                Mig656.migrate(new MigrationContext(null, metaVersionMem, Long.BYTES, virtualMem, rwMemory) {
+                Mig662.migrate(new MigrationContext(null, metaVersionMem, Long.BYTES, virtualMem, rwMemory) {
                     @Override
                     public FilesFacade getFf() {
                         return ff;
@@ -158,7 +159,7 @@ public class Mig656Test {
                 Assert.assertEquals(expected[i][2], txReader.getPartitionNameTxn(i));
                 Assert.assertEquals(expected[i][3], txReader.getPartitionColumnVersion(i));
                 Assert.assertEquals(0L, txReader.getPartitionMask(i));
-                Assert.assertFalse(txReader.getPartitionIsRO(i));
+                Assert.assertFalse(txReader.isPartitionReadOnly(i));
                 Assert.assertEquals(0L, txReader.getPartitionAvailable0(i));
                 Assert.assertEquals(0L, txReader.getPartitionAvailable1(i));
                 Assert.assertEquals(0L, txReader.getPartitionAvailable2(i));
@@ -179,8 +180,8 @@ public class Mig656Test {
 
     private static void loadRequiredFiles(String dbRoot) throws IOException {
         try (
-                final InputStream txnIs = Mig656Test.class.getResourceAsStream("/migration/txn_v426/_txn");
-                final InputStream metaIs = Mig656Test.class.getResourceAsStream("/migration/txn_v426/_meta")
+                final InputStream txnIs = Mig662Test.class.getResourceAsStream("/migration/txn_v426/_txn");
+                final InputStream metaIs = Mig662Test.class.getResourceAsStream("/migration/txn_v426/_meta")
         ) {
             Assert.assertNotNull(txnIs);
             Assert.assertNotNull(metaIs);

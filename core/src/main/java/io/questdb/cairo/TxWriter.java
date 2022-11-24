@@ -285,7 +285,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionIsRO(long timestamp, boolean isRO) {
+    public void setPartitionReadOnly(long timestamp, boolean isRO) {
         int index = findAttachedPartitionIndex(timestamp);
         if (index > -1) {
             int offset = index + PARTITION_MASK_OFFSET;

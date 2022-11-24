@@ -228,7 +228,7 @@ public class ColumnPurgeOperator implements Closeable {
                 final long partitionTxnName = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN);
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
 
-                if (txReader.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+                if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     // partition is read only
                     LOG.info().$("skipping purge of RO partition [table=").$(task.getTableName())
                             .$(", column=").$(task.getColumnName())

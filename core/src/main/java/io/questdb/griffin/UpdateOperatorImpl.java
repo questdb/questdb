@@ -144,11 +144,11 @@ public class UpdateOperatorImpl extends PurgingOperator implements QuietCloseabl
                     final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
                     final long currentRow = Rows.toLocalRowID(rowId);
 
-                    if (rowPartitionIndex >= 0 && tableWriter.getPartitionIsRO(rowPartitionIndex)) {
+                    if (rowPartitionIndex >= 0 && tableWriter.isPartitionReadOnly(rowPartitionIndex)) {
                         throw CairoException.nonCritical()
-                                .put("cannot update rows in a RO partition [partitionIndex=")
-                                .put(rowPartitionIndex)
-                                .put(", rowPartitionTs=").put(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                .put("cannot update read-only partition [table=").put(tableName)
+                                .put(", partitionIndex=").put(rowPartitionIndex)
+                                .put(", partitionTs=").ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
                                 .put(']');
                     }
 

@@ -742,7 +742,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
             txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
             if (isSoftLink) {
-                txWriter.setPartitionIsRO(timestamp, true);
+                txWriter.setPartitionReadOnly(timestamp, true);
             }
             txWriter.bumpTruncateVersion();
 
@@ -1101,10 +1101,6 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return txWriter.getPartitionCount();
     }
 
-    public boolean getPartitionIsRO(int partitionIndex) {
-        return partitionIndex > -1 && txWriter.getPartitionIsRO(partitionIndex);
-    }
-
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
@@ -1207,6 +1203,10 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         return tempMem16b != 0;
     }
 
+    public boolean isPartitionReadOnly(int partitionIndex) {
+        return partitionIndex > -1 && txWriter.isPartitionReadOnly(partitionIndex);
+    }
+
     @Override
     public Row newRow() {
         return newRow(0L);
@@ -1216,11 +1216,11 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     public Row newRow(long timestamp) {
 
         // check partition RO flag
-        if (txWriter.getPartitionIsROByPartitionTimestamp(timestamp)) {
+        if (txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
             throw CairoException.nonCritical()
-                    .put("cannot insert rows in a RO partition [partitionIndex=")
-                    .put(txWriter.getPartitionIndex(timestamp))
-                    .put(", partitionTs=").put(partitionFloorMethod.floor(timestamp))
+                    .put("cannot insert into read-only partition [table=").put(tableName)
+                    .put(", partitionIndex=").put(txWriter.getPartitionIndex(timestamp))
+                    .put(", partitionTs=").ts(partitionFloorMethod.floor(timestamp))
                     .put(']');
         }
 
@@ -1444,7 +1444,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
 
-        LOG.info().$("removing column '").utf8(name).$("' from ").utf8(path).$();
+        LOG.info().$("removing [column=").utf8(name).$(", path=").utf8(path).I$();
 
         // check if we are moving timestamp from a partitioned table
         final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -3874,7 +3874,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                             LOG.error().$("failed to unlink, will delete [path=").$(other).I$();
                         }
                     }
-                    if (!txWriter.getPartitionIsROByPartitionTimestamp(timestamp)) {
+                    if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(timestamp)) {
                         long errno = ff.rmdir(other);
                         if (errno == 0 || errno == -1) {
                             // Successfully deleted or async purge has already swept it up
@@ -5061,7 +5061,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
         try {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestamp(i);
-                if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+                if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     removeColumnFilesInPartition(columnName, columnIndex, partitionTimestamp, partitionNameTxn);
                 }
@@ -5084,7 +5084,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
     }
 
     private void removeColumnFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
-        if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionTimestamp)) {
+        if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
             setPathForPartition(path, partitionBy, partitionTimestamp, false);
             txnPartitionConditionally(path, partitionNameTxn);
             int plen = path.length();
@@ -5218,7 +5218,7 @@ public class TableWriter implements TableWriterAPI, MetadataChangeSPI, Closeable
                 }
                 try {
                     long timestamp = IntervalUtils.parseFloorPartialTimestamp(fileNameSink);
-                    if (!txWriter.getPartitionIsROByPartitionTimestamp(partitionFloorMethod.floor(timestamp))) {
+                    if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionFloorMethod.floor(timestamp))) {
                         if (ff.rmdir(path) != 0) {
                             LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).I$();
                         }

@@ -33,7 +33,7 @@ import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class Mig656 {
+public class Mig662 {
 
     static void migrate(MigrationContext context) {
         // Update transaction file
@@ -83,7 +83,7 @@ public class Mig656 {
                 final int symbolsSize = txFile.getInt(isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
                 final int baseOffset = txFile.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
                 final long partitionSegmentOffset = baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES + symbolsSize + Integer.BYTES;
-                for (int i = 0, limit = partitionSegmentSize; i < limit; i += Long.BYTES) { // for each long
+                for (int i = 0; i < partitionSegmentSize; i += Long.BYTES) { // for each long
                     txFileUpdate.putLong(txFile.getLong(partitionSegmentOffset + i));
                     if ((i + Long.BYTES) % (4 * Long.BYTES) == 0) {
                         txFileUpdate.putLong(0L); // mask

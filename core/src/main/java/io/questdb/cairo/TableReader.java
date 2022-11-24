@@ -1207,8 +1207,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_SIZE_OFFSET);
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base, path)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
-                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * Long.BYTES);
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * Long.BYTES + Integer.BYTES);
+                        final int action = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L);
+                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8L + 4L);
 
                         if (action == -1) {
                             // This column is deleted (not moved).

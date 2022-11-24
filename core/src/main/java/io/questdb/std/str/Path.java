@@ -225,7 +225,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public Path put(CharSequence str) {
         int l = str.length();
         int requiredCapacity = length() + l;
-        if (requiredCapacity >= capacity) {
+        if (requiredCapacity > capacity) {
             extend(requiredCapacity);
         }
         Chars.asciiStrCpy(str, l, tailPtr);
@@ -237,7 +237,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     public CharSink put(CharSequence cs, int lo, int hi) {
         int l = hi - lo;
         int requiredCapacity = length() + l;
-        if (requiredCapacity >= capacity) {
+        if (requiredCapacity > capacity) {
             extend(requiredCapacity);
         }
         Chars.asciiStrCpy(cs, lo, l, tailPtr);

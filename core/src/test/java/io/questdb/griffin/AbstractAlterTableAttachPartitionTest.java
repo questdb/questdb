@@ -33,7 +33,7 @@ import org.junit.*;
 import org.junit.rules.TestName;
 
 
-class AlterTableAttachPartitionBase extends AbstractGriffinTest {
+abstract class AbstractAlterTableAttachPartitionTest extends AbstractGriffinTest {
     final static StringSink partitions = new StringSink();
     @Rule
     public TestName testName = new TestName();

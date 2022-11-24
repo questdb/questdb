@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
 
 
-public class AlterTableAttachPartitionTest extends AlterTableAttachPartitionBase {
+public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachPartitionTest {
 
     @Test
     public void testAttach2Partitions() throws Exception {
@@ -1292,8 +1292,8 @@ public class AlterTableAttachPartitionTest extends AlterTableAttachPartitionBase
         // verify RO flag, only partitions attached via soft link become RO
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, dst.getName())) {
             TxReader txFile = reader.getTxFile();
-            Assert.assertFalse(txFile.getPartitionIsRO(0));
-            Assert.assertFalse(txFile.getPartitionIsRO(1));
+            Assert.assertFalse(txFile.isPartitionReadOnly(0));
+            Assert.assertFalse(txFile.isPartitionReadOnly(1));
         }
 
         // Check table is writable after partition attach
