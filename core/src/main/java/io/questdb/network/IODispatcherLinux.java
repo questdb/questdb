@@ -54,7 +54,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                             pending.get(i, M_ID),
                             EpollAccessor.EPOLL_CTL_ADD,
                             initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
-                    ) < 0) {
+                    ) < 0
+            ) {
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
         }

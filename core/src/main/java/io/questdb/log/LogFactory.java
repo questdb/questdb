@@ -845,7 +845,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(long x) {
+        public LogRecord $(long l) {
             return this;
         }
 
