@@ -100,8 +100,17 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (!done) {
+            if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
+                // We know that all frames were collected. We're almost done.
+                if (!done) {
+                    // Looks like not all the frames were dispatched, so no one reached the very last frame and
+                    // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
+                    reset();
+                }
+                break;
+            }
+
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
-            final boolean allFramesReduced = (reduceCounter.get() == dispatchStartFrameIndex);
             boolean nothingProcessed = true;
             try {
                 nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this);
@@ -118,17 +127,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // Discard collected items.
                     final PageFrameReduceTask task = reduceQueue.get(cursor);
                     if (task.getFrameSequence() == this) {
+                        assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
+                        collectedFrameIndex = task.getFrameIndex();
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                } else if (cursor == -1 && allFramesReduced) {
-                    // The collect queue is empty while we know that all frames were reduced. We're almost done.
-                    if (!done) {
-                        // Looks like not all the frames were dispatched, so no one reached the very last frame and
-                        // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
-                        reset();
-                    }
-                    break;
                 } else {
                     Os.pause();
                 }
@@ -176,6 +179,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public void collect(long cursor, boolean forceCollect) {
         assert cursor > -1;
+        LOG.debug()
+                .$("collecting [shard=").$(shard)
+                .$(", id=").$(id)
+                .$(", cursor=").$(cursor)
+                .I$();
         if (cursor == LOCAL_TASK_CURSOR) {
             collectedFrameIndex = localTask.getFrameIndex();
             localTask.collected();
@@ -256,8 +264,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * instead, should use getTask and collect methods. <code>Long.MAX_VALUE</code> is the
      * reserved cursor value for the local reduce task case.
      *
-     * @return the next cursor value or one of -1 and -2 values if the cursor failed and the
-     * caller should retry
+     * @return the next cursor value or -1 value if the cursor failed and the caller
+     * should retry
      */
     public long next() {
         assert collectedFrameIndex < frameCount - 1;
@@ -267,6 +275,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this) {
+                    assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
                     return cursor;
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
@@ -368,7 +377,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     /**
-     * This method is re enterable. It has to be in case queue capacity is smaller than number of frames to
+     * This method is re-enterable. It has to be in case queue capacity is smaller than number of frames to
      * be dispatched. When it is the case, frame count published so far is stored in the `frameSequence`.
      * This method has no responsibility to deal with "collect" stage hence it deals with everything to
      * unblock the collect stage.

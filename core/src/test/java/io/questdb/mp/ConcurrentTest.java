@@ -80,15 +80,15 @@ public class ConcurrentTest {
 
     @Test
     public void testConcurrentFanOutAsyncOffloadPattern() {
-        // This test aims to reproduce async offload inter-thread communication pattern.
+        // This test aims to reproduce a simplified variant of async offload inter-thread communication pattern.
 
         class Item {
             int owner;
-            AtomicInteger reduceCounter;
         }
 
         final int capacity = 2;
-        final int collectorThreads = 4;
+        final int collectorThreads = 2;
+        final int reducerThreads = 2;
         final int itemsToDispatch = 8;
         final int iterations = 100;
 
@@ -99,45 +99,44 @@ public class ConcurrentTest {
 
         reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
 
-        final CyclicBarrier start = new CyclicBarrier(collectorThreads + 1);
-        final SOCountDownLatch latch = new SOCountDownLatch(collectorThreads + 1);
+        final CyclicBarrier start = new CyclicBarrier(collectorThreads + reducerThreads);
+        final SOCountDownLatch latch = new SOCountDownLatch(collectorThreads + reducerThreads);
         final AtomicInteger doneCollectors = new AtomicInteger();
         final AtomicInteger anomalies = new AtomicInteger();
 
-        // Start reducer thread.
-        new Thread(() -> {
-            try {
-                start.await();
+        // Start reducer threads.
+        for (int i = 0; i < reducerThreads; i++) {
+            new Thread(() -> {
+                try {
+                    start.await();
 
-                while (doneCollectors.get() != collectorThreads) {
-                    long cursor = reduceSubSeq.next();
-                    if (cursor > -1) {
-                        AtomicInteger reduceCounter = queue.get(cursor).reduceCounter;
-                        reduceSubSeq.done(cursor);
-                        reduceCounter.incrementAndGet();
-                    } else {
-                        Os.pause();
+                    while (doneCollectors.get() != collectorThreads) {
+                        long cursor = reduceSubSeq.next();
+                        if (cursor > -1) {
+                            reduceSubSeq.done(cursor);
+                        } else {
+                            Os.pause();
+                        }
                     }
+                } catch (InterruptedException | BrokenBarrierException e) {
+                    e.printStackTrace();
+                    anomalies.incrementAndGet();
+                } finally {
+                    latch.countDown();
                 }
-            } catch (InterruptedException | BrokenBarrierException e) {
-                e.printStackTrace();
-                anomalies.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }).start();
+            }).start();
+        }
 
         // Start collector threads.
         for (int i = 0; i < collectorThreads; i++) {
             final int threadI = i;
             new Thread(() -> {
                 final SCSequence collectSubSeq = new SCSequence();
-                final AtomicInteger reduceCounter = new AtomicInteger();
+
                 try {
                     start.await();
 
                     for (int j = 0; j < iterations; j++) {
-                        reduceCounter.set(0);
                         collectFanOut.and(collectSubSeq);
 
                         int collected = 0;
@@ -148,7 +147,6 @@ public class ConcurrentTest {
                                 long dispatchCursor = reducePubSeq.next();
                                 if (dispatchCursor > -1) {
                                     queue.get(dispatchCursor).owner = threadI;
-                                    queue.get(dispatchCursor).reduceCounter = reduceCounter;
                                     reducePubSeq.done(dispatchCursor);
                                     break;
                                 } else if (dispatchCursor == -1) {
@@ -157,7 +155,6 @@ public class ConcurrentTest {
                                     while ((collectCursor = collectSubSeq.next()) > -1) {
                                         if (queue.get(collectCursor).owner == threadI) {
                                             queue.get(collectCursor).owner = -1;
-                                            queue.get(collectCursor).reduceCounter = null;
                                             collected++;
                                         }
                                         collectSubSeq.done(collectCursor);
@@ -169,23 +166,18 @@ public class ConcurrentTest {
                             }
                         }
 
-                        while (reduceCounter.get() != itemsToDispatch) {
-                            Os.pause();
-                        }
-
-                        // Collect all remaining items.
-                        long collectCursor;
-                        while ((collectCursor = collectSubSeq.next()) > -1) {
-                            if (queue.get(collectCursor).owner == threadI) {
-                                queue.get(collectCursor).owner = -1;
-                                queue.get(collectCursor).reduceCounter = null;
-                                collected++;
+                        // Await for all remaining items.
+                        while (collected != itemsToDispatch) {
+                            long collectCursor = collectSubSeq.next();
+                            if (collectCursor > -1) {
+                                if (queue.get(collectCursor).owner == threadI) {
+                                    queue.get(collectCursor).owner = -1;
+                                    collected++;
+                                }
+                                collectSubSeq.done(collectCursor);
+                            } else {
+                                Os.pause();
                             }
-                            collectSubSeq.done(collectCursor);
-                        }
-
-                        if (collected != itemsToDispatch) {
-                            anomalies.incrementAndGet();
                         }
 
                         collectFanOut.remove(collectSubSeq);
