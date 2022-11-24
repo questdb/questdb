@@ -6745,7 +6745,12 @@ public class IODispatcherTest {
             final AtomicBoolean finished = new AtomicBoolean(false);
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration(),
+                    new DefaultIODispatcherConfiguration() {
+                        @Override
+                        public boolean getPeerNoLinger() {
+                            return true;
+                        }
+                    },
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration(), metrics).of(fd, dispatcher1)
             )) {
 
