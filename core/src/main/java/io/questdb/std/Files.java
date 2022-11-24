@@ -28,6 +28,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
+import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
@@ -479,7 +480,7 @@ public final class Files {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.isWindows() ? '\\' : '/';
+        SEPARATOR = File.separatorChar;
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             POSIX_FADV_RANDOM = getPosixFadvRandom();
             POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
