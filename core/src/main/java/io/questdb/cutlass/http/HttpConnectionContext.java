@@ -97,7 +97,7 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         this.csPool.clear();
         this.localValueMap.clear();
         if (this.pendingRetry) {
-            LOG.error().$("Reused context with retry pending.").$();
+            LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
         this.multipartParserState.multipartRetry = false;
@@ -219,7 +219,6 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
     @Override
     public HttpConnectionContext of(long fd, IODispatcher<HttpConnectionContext> dispatcher) {
         HttpConnectionContext r = super.of(fd, dispatcher);
-        this.responseSink.of(fd);
         if (fd == -1) {
             // The context is about to be returned to the pool, so we should release the memory.
             this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -632,9 +631,14 @@ public class HttpConnectionContext extends AbstractMutableIOContext<HttpConnecti
         onPeerDisconnect.run();
     }
 
-    private boolean parseMultipartResult(long start, long buf, int bufRemaining, HttpMultipartContentListener
-            multipartListener, HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws
-            PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
+    private boolean parseMultipartResult(
+            long start,
+            long buf,
+            int bufRemaining,
+            HttpMultipartContentListener multipartListener,
+            HttpRequestProcessor processor,
+            RescheduleContext rescheduleContext
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, TooFewBytesReceivedException {
         boolean parseResult;
         try {
             parseResult = multipartContentParser.parse(start, buf, multipartListener);
