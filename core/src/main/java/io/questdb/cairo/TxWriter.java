@@ -285,7 +285,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionReadOnly(long timestamp, boolean isRO) {
+    public boolean setPartitionReadOnly(long timestamp, boolean isRO) {
         int index = findAttachedPartitionIndex(timestamp);
         if (index > -1) {
             int offset = index + PARTITION_MASK_OFFSET;
@@ -295,8 +295,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             } else {
                 mask &= ~(1L << PARTITION_MASK_RO_BIT_OFFSET);
             }
-            attachedPartitions.setQuick(offset, mask);
+            if (attachedPartitions.getQuick(offset) != mask) {
+                attachedPartitions.setQuick(offset, mask);
+                return true;
+            }
         }
+        return false;
     }
 
     public void setSeqTxn(long seqTxn) {
