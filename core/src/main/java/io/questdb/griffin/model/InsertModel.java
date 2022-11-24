@@ -97,13 +97,13 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return endOfRowTupleValuesPositions.get(index);
     }
 
-    public long getO3MaxLag() {
-        return o3MaxLag;
-    }
-
     @Override
     public int getModelType() {
         return INSERT;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public QueryModel getQueryModel() {

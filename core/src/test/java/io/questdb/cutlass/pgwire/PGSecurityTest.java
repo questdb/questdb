@@ -258,8 +258,8 @@ public class PGSecurityTest extends BasePGTest {
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                        // Postgres JDBC clients ignores unknown properties and does not send them to a server
-                        // so have to use a property which actually exists
+                // Postgres JDBC clients ignores unknown properties and does not send them to a server
+                // so have to use a property which actually exists
                 getConnectionWithCustomProperty(server.getPort(), PGProperty.OPTIONS.getName()).close();
             }
         });
