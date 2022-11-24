@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
@@ -38,13 +40,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 
-public class TableReaderReloadFuzzTest extends AbstractCairoTest {
+public class TableReaderReloadFuzzTest extends AbstractGriffinTest {
     private static final int ADD = 0;
     private static final Log LOG = LogFactory.getLog(TableReaderReloadFuzzTest.class);
     private static final int MAX_NUM_OF_INSERTS = 10;
     private static final int MAX_NUM_OF_STRUCTURE_CHANGES = 10;
     private static final int MIN_NUM_OF_INSERTS = 1;
     private static final int MIN_NUM_OF_STRUCTURE_CHANGES = 5;
+    private static final long ONE_DAY = 24 * 60 * 60 * 1000L * 1000L;
     private static final long ONE_YEAR = 365 * 24 * 60 * 60 * 1000L * 1000L;
     private static final int REMOVE = 1;
     private static final int RENAME = 2;
@@ -70,8 +73,41 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplosion() throws SqlException {
+        final String tableName = "exploding";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+            TableWriter.Row row = writer.newRow(0L);
+            row.append();
+            writer.commit();
+
+            try (TableReader reader = new TableReader(configuration, tableName)) {
+                TestUtils.printSql(compiler, sqlExecutionContext, tableName, sink);
+
+                for (int i = 0; i < 64; i++) {
+                    writer.addColumn("col" + i, ColumnType.INT);
+                    row = writer.newRow(i * ONE_DAY);
+                    row.append();
+                }
+                writer.commit();
+
+                reader.reload();
+                assertReaderWriterMetadata(writer, reader);
+            }
+        }
+    }
+
+    @Test
     public void testMostlyAdd() {
-        testFuzzReload(15, 2, 1, 1);
+        testFuzzReload(10, 3, 1, 1);
+    }
+
+    @Test
+    public void testMostlyDelete() {
+        testFuzzReload(5, 1, 4, 0);
     }
 
     @Test
