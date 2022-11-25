@@ -38,18 +38,26 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
     private final boolean restrictedByValues;
     private final int shrinkToCapacity;
     private int currentRow;
+    private IntHashSet excludedSymbolKeys;
     private IntHashSet foundKeys;
+    private IntHashSet includedSymbolKeys;
     private DirectLongList rowIds;
-    private IntHashSet symbolKeys;
 
-    public LatestByValueListRecordCursor(int columnIndex, @Nullable Function filter, @NotNull IntList columnIndexes, int shrinkToCapacity, boolean restrictedByValues) {
+    public LatestByValueListRecordCursor(
+            int columnIndex,
+            @Nullable Function filter,
+            @NotNull IntList columnIndexes,
+            int shrinkToCapacity,
+            boolean restrictedByValues
+    ) {
         super(columnIndexes);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
         this.restrictedByValues = restrictedByValues;
         if (restrictedByValues) {
-            this.symbolKeys = new IntHashSet(shrinkToCapacity);
+            this.includedSymbolKeys = new IntHashSet(shrinkToCapacity);
+            this.excludedSymbolKeys = new IntHashSet(shrinkToCapacity);
         }
         this.foundKeys = new IntHashSet(shrinkToCapacity);
         this.rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
@@ -140,9 +148,13 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private void findRestrictedNoFilter(IntHashSet symbolKeys, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void findRestrictedNoFilter(
+            IntHashSet inSymbolKeys,
+            IntHashSet notInSymbolKeys,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         DataFrame frame = dataFrameCursor.next();
-        int searchSize = symbolKeys.size();
+        int searchSize = inSymbolKeys.size();
         int foundSize = 0;
         while (frame != null) {
             long rowLo = frame.getRowLo();
@@ -153,7 +165,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
-                if (symbolKeys.contains(key) && foundKeys.add(key)) {
+                if (inSymbolKeys.contains(key) && notInSymbolKeys.excludes(key) && foundKeys.add(key)) {
                     rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
                     if (++foundSize == searchSize) {
                         return;
@@ -164,9 +176,14 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    private void findRestrictedWithFilter(Function filter, IntHashSet symbolKeys, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void findRestrictedWithFilter(
+            Function filter,
+            IntHashSet inSymbolKeys,
+            IntHashSet notInSymbolKeys,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         DataFrame frame = dataFrameCursor.next();
-        int searchSize = symbolKeys.size();
+        int searchSize = inSymbolKeys.size();
         int foundSize = 0;
         while (frame != null) {
             long rowLo = frame.getRowLo();
@@ -177,7 +194,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 recordA.setRecordIndex(row);
                 int key = recordA.getInt(columnIndex);
-                if (filter.getBool(recordA) && symbolKeys.contains(key) && foundKeys.add(key)) {
+                if (filter.getBool(recordA) && inSymbolKeys.contains(key) && notInSymbolKeys.excludes(key) && foundKeys.add(key)) {
                     rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
                     if (++foundSize == searchSize) {
                         return;
@@ -188,8 +205,12 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         }
     }
 
-    IntHashSet getSymbolKeys() {
-        return symbolKeys;
+    IntHashSet getExcludedSymbolKeys() {
+        return excludedSymbolKeys;
+    }
+
+    IntHashSet getIncludedSymbolKeys() {
+        return includedSymbolKeys;
     }
 
     @Override
@@ -207,15 +228,15 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         // since most of the time factory is supposed to return in ASC timestamp order
         // It can be optimised later on to not buffer row IDs and return in desc order.
         if (restrictedByValues) {
-            if (symbolKeys.size() > 0) {
+            if (includedSymbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
-                rowIds.setCapacity(symbolKeys.size());
+                rowIds.setCapacity(includedSymbolKeys.size());
                 if (filter != null) {
                     filter.init(this, executionContext);
                     filter.toTop();
-                    findRestrictedWithFilter(filter, symbolKeys, circuitBreaker);
+                    findRestrictedWithFilter(filter, includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
                 } else {
-                    findRestrictedNoFilter(symbolKeys, circuitBreaker);
+                    findRestrictedNoFilter(includedSymbolKeys, excludedSymbolKeys, circuitBreaker);
                 }
             }
         } else {

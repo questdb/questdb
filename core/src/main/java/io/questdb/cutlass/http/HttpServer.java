@@ -90,7 +90,10 @@ public class HttpServer implements Closeable {
                     if (seq > -1) {
                         // Queue is not empty, so flush query cache.
                         LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
-                        QueryCache.getThreadLocalInstance().clear();
+                        QueryCache queryCache = QueryCache.getWeakThreadLocalInstance();
+                        if (queryCache != null) {
+                            queryCache.clear();
+                        }
                         queryCacheEventSubSeq.done(seq);
                     }
 
@@ -105,7 +108,7 @@ public class HttpServer implements Closeable {
             // therefore we need each thread to clean their thread locals individually
             pool.assignThreadLocalCleaner(i, () -> {
                 httpContextFactory.freeThreadLocal();
-                Misc.free(QueryCache.getThreadLocalInstance());
+                Misc.free(QueryCache.getWeakThreadLocalInstance());
             });
 
             pool.freeOnExit(() -> {
@@ -219,6 +222,7 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
+        Misc.free(httpContextFactory);
     }
 
     @FunctionalInterface

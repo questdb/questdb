@@ -40,10 +40,6 @@ public interface TableWriterAPI extends Closeable {
 
     long commit();
 
-    long commitWithLag();
-
-    long commitWithLag(long commitLag);
-
     TableRecordMetadata getMetadata();
 
     /**
@@ -65,9 +61,20 @@ public interface TableWriterAPI extends Closeable {
      */
     int getSymbolCountWatermark(int columnIndex);
 
-    CharSequence getTableName();
+    String getTableName();
 
     long getUncommittedRowCount();
+
+    /**
+     * Intermediate commit. It provides the best effort guarantee to commit as much data from the RSS to storage.
+     * However, it also takes into account O3 data overlap from the previous intermediate commits and adjust
+     * the internal "lag" to absorb merges while data is in RSS rather than disk.
+     * <p>
+     * When data is in order and O3 area is empty, ic() equals to commit().
+     */
+    void ic();
+
+    void ic(long o3MaxLag);
 
     TableWriter.Row newRow();
 

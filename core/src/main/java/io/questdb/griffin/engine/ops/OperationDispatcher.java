@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
@@ -52,7 +51,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             SqlExecutionContext sqlExecutionContext,
             @Nullable SCSequence eventSubSeq,
             boolean closeOnDone
-    ) throws SqlException {
+    ) {
         // storing execution context for UPDATE, DROP INDEX execution
         // writer thread will call `apply()` when thread is ready to do so
         // `apply()` will use context stored in the operation

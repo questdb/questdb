@@ -36,7 +36,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private final IntList endOfRowTupleValuesPositions = new IntList();
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
-    private long commitLag = 0;
+    private long o3MaxLag = 0;
     private QueryModel queryModel;
     private int selectKeywordPosition;
     private ExpressionNode tableName;
@@ -78,7 +78,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.selectKeywordPosition = 0;
         this.endOfRowTupleValuesPositions.clear();
         this.batchSize = -1;
-        this.commitLag = 0;
+        this.o3MaxLag = 0;
     }
 
     public long getBatchSize() {
@@ -93,10 +93,6 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnPositions.getQuick(columnIndex);
     }
 
-    public long getCommitLag() {
-        return commitLag;
-    }
-
     public int getEndOfRowTupleValuesPosition(int index) {
         return endOfRowTupleValuesPositions.get(index);
     }
@@ -104,6 +100,10 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public int getModelType() {
         return INSERT;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public QueryModel getQueryModel() {
@@ -130,8 +130,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.batchSize = batchSize;
     }
 
-    public void setCommitLag(long lag) {
-        this.commitLag = lag;
+    public void setO3MaxLag(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
     }
 
     public void setQueryModel(QueryModel queryModel) {
@@ -153,8 +153,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
             sink.put(" batch ").put(batchSize);
         }
 
-        if (commitLag != 0) {
-            sink.put(" lag ").put(commitLag);
+        if (o3MaxLag != 0) {
+            sink.put(" lag ").put(o3MaxLag);
         }
 
         sink.put(" into ").put(tableName.token).put(' ');

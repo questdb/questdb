@@ -46,7 +46,7 @@ public class IntrinsicModel implements Mutable {
     private final RuntimeIntervalModelBuilder runtimeIntervalBuilder = new RuntimeIntervalModelBuilder();
     public ExpressionNode filter;
     public int intrinsicValue = UNDEFINED;
-    /* Indexed symbol column used as the initial "efficient" filter for the query */
+    // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
     public QueryModel keySubQuery;
 

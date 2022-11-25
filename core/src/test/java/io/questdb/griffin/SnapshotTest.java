@@ -25,12 +25,20 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.wal.WalPurgeJobTest;
+import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+
+import java.util.concurrent.CountDownLatch;
 
 public class SnapshotTest extends AbstractGriffinTest {
 
@@ -42,6 +50,30 @@ public class SnapshotTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         path = new Path();
         ff = testFilesFacade;
+
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 0;
+            }
+
+            @Override
+            public long getTimeout() {
+                return 100;
+            }
+        };
+
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+            @Override
+            protected boolean testConnection(long fd) {
+                return false;
+            }
+
+            {
+                setTimeout(-100);//trigger timeout on first check
+            }
+
+        };
         AbstractGriffinTest.setUpStatic();
     }
 
@@ -60,6 +92,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
+        ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(Long.MAX_VALUE);
     }
 
     @After
@@ -67,6 +100,12 @@ public class SnapshotTest extends AbstractGriffinTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
+        try {
+            // reset activePrepareFlag for all tests
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Test
@@ -175,6 +214,48 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRunWalPurgeJobLockTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+            CountDownLatch latch1 = new CountDownLatch(1);
+            CountDownLatch latch2 = new CountDownLatch(1);
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+
+            Thread t = new Thread(() -> {
+                lock.lock(); //emulate WalPurgeJob running with lock
+                latch2.countDown();
+                try {
+                    latch1.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    lock.unlock();
+                }
+            });
+
+            try {
+                t.start();
+                latch2.await();
+                ((NetworkSqlExecutionCircuitBreaker) circuitBreaker).setTimeout(-100);
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException ex) {
+                latch1.countDown();
+                t.join();
+                Assert.assertFalse(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+                circuitBreakerConfiguration = null;
+                snapshotAgent.setWalPurgeJobRunLock(null);
+            }
+        });
+    }
+
+    @Test
     public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
@@ -196,9 +277,25 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotDbWithWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            for (char i = 'a'; i < 'd'; i++) {
+                compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
+            }
+
+            for (char i = 'd'; i < 'f'; i++) {
+                compile("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+            }
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            compiler.compile("snapshot complete", sqlExecutionContext);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepare() throws Exception {
         assertMemoryLeak(() -> {
-            for (int i = 'a'; i < 'f'; i++) {
+            for (char i = 'a'; i < 'f'; i++) {
                 compile("create table " + i + " (ts timestamp, name symbol, val int)", sqlExecutionContext);
             }
 
@@ -227,8 +324,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
-                null,
-                tableName
+                null
         );
     }
 
@@ -238,8 +334,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
-                null,
-                tableName
+                null
         );
     }
 
@@ -248,8 +343,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                "alter table " + tableName + " drop column c",
-                tableName
+                "alter table " + tableName + " drop column c"
         );
     }
 
@@ -258,8 +352,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
+                null
         );
     }
 
@@ -268,9 +361,8 @@ public class SnapshotTest extends AbstractGriffinTest {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, commitLag = 240s",
-                null,
-                tableName
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
+                null
         );
     }
 
@@ -319,8 +411,7 @@ public class SnapshotTest extends AbstractGriffinTest {
 
         testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
+                null
         );
 
         // Assert snapshot folder exists
@@ -381,7 +472,82 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareOnEmptyDatabaseWithLock() throws Exception {
+        assertMemoryLeak(() -> {
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+            Assert.assertFalse(lock.isLocked());
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Assert.assertTrue(lock.isLocked());
+            try {
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+            }
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+
+
+            //DB is empty
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+            lock.lock();
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Assert.assertFalse(lock.isLocked());
+
+            circuitBreakerConfiguration = null;
+            snapshotAgent.setWalPurgeJobRunLock(null);
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareSubsequentCallFails() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
+
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getTimeout() {
+                    return 10;
+                }
+            };
+
+            snapshotAgent.setWalPurgeJobRunLock(lock);
+            try {
+
+                Assert.assertFalse(lock.isLocked());
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.assertTrue(lock.isLocked());
+                compiler.compile("snapshot prepare", sqlExecutionContext);
+                Assert.assertTrue(lock.isLocked());
+                Assert.fail();
+            } catch (SqlException ex) {
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+            } finally {
+                Assert.assertTrue(lock.isLocked());
+                compiler.compile("snapshot complete", sqlExecutionContext);
+                Assert.assertFalse(lock.isLocked());
+
+                circuitBreakerConfiguration = null;
+                snapshotAgent.setWalPurgeJobRunLock(null);
+            }
+        });
+    }
+
+    @Test
+    public void testSnapshotPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (ts timestamp, name symbol, val int)", sqlExecutionContext);
             try {
@@ -406,6 +572,213 @@ public class SnapshotTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[9] 'prepare' or 'complete' expected"));
             }
+        });
+    }
+
+    @Test
+    public void testSuspendResumeWalPurgeJob() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+
+            drainWalQueue();
+
+            assertWalExistence(true, tableName, 1);
+
+            assertSql(tableName, "x\tts\n" +
+                    "1\t2022-02-24T00:00:00.000000Z\n" +
+                    "2\t2022-02-24T00:00:01.000000Z\n" +
+                    "3\t2022-02-24T00:00:02.000000Z\n" +
+                    "4\t2022-02-24T00:00:03.000000Z\n" +
+                    "5\t2022-02-24T00:00:04.000000Z\n");
+
+            WalPurgeJobTest.MicrosecondClockMock clock = new WalPurgeJobTest.MicrosecondClockMock();
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
+            FilesFacade ff = configuration.getFilesFacade();
+            WalPurgeJob job = new WalPurgeJob(engine, ff, clock);
+            snapshotAgent.setWalPurgeJobRunLock(job.getRunLock());
+
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            Thread controlThread1 = new Thread(() -> {
+                clock.timestamp = interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread1.start();
+            controlThread1.join();
+
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertWalExistence(true, tableName, 1);
+
+            engine.releaseInactive();
+
+            compiler.compile("snapshot complete", sqlExecutionContext);
+            Thread controlThread2 = new Thread(() -> {
+                clock.timestamp = 2 * interval;
+                while (job.run(0)) {
+                    // run until empty
+                }
+                Path.clearThreadLocals();
+            });
+
+            controlThread2.start();
+            controlThread2.join();
+
+            job.close();
+            snapshotAgent.setWalPurgeJobRunLock(null);
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    @Test
+    public void testWalMetadataRecovery() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            snapshotInstanceId = snapshotId;
+            String tableName = testName.getMethodName() + "_abc";
+            compile("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts, " +
+                    " rnd_symbol('DE', null, 'EF', 'FG') sym2 " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            executeOperation("alter table " + tableName + " add column iii int", CompiledQuery.ALTER);
+            executeInsert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 41)");
+
+            executeOperation("alter table " + tableName + " add column jjj int", CompiledQuery.ALTER);
+
+            executeInsert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T02', 'asd', 41, 42)");
+
+            executeOperation("UPDATE " + tableName + " SET iii = 0 where iii = null", CompiledQuery.UPDATE);
+            executeOperation("UPDATE " + tableName + " SET jjj = 0 where iii = null", CompiledQuery.UPDATE);
+
+            drainWalQueue();
+
+            // all updates above should be applied to table
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\n");
+
+
+            executeOperation("alter table " + tableName + " add column kkk int", CompiledQuery.ALTER);
+            executeInsert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
+
+            // updates above should apply to WAL, not table
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+
+            // these updates are lost during the snapshotting
+            executeOperation("alter table " + tableName + " add column lll int", CompiledQuery.ALTER);
+            executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
+
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            snapshotAgent.clear();
+            engine.releaseInactive();
+
+            snapshotInstanceId = restartedId;
+            DatabaseSnapshotAgent.recoverSnapshot(engine);
+
+            // apply updates from WAL
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\n");
+
+            // check for updates to the restored table
+            executeOperation("alter table " + tableName + " add column lll int", CompiledQuery.ALTER);
+            executeInsert("insert into " + tableName + " values (104, 'dfd', '2022-02-24T04', 'asdf', 1, 2, 3, 4)");
+            executeInsert("insert into " + tableName + " values (105, 'dfd', '2022-02-24T05', 'asdf', 5, 6, 7, 8)");
+            executeOperation("UPDATE " + tableName + " SET jjj = 0 where iii = 0", CompiledQuery.UPDATE);
+
+            drainWalQueue();
+
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\n");
+
+            // WalWriter.applyMetadataChangeLog should be triggered
+            try (WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                try (WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, Chars.toString(walWriter1.getTableName()), 0);
+                    addColumnC.addColumnToList("C", 8, ColumnType.INT, 0, false, false, 0);
+                    walWriter1.apply(addColumnC.build(), true);
+                    walWriter1.commit();
+
+                    TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
+
+                    row.putLong(0, 777L);
+                    row.putSym(1, "XXX");
+                    row.putSym(3, "YYY");
+                    row.putInt(4, 0);
+                    row.putInt(5, 1);
+                    row.putInt(6, 2);
+                    row.putInt(7, 3);
+                    row.putInt(8, 42);
+                    row.append();
+                    walWriter1.commit();
+
+                    TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
+                    row2.putLong(0, 999L);
+                    row2.putSym(1, "AAA");
+                    row2.putSym(3, "BBB");
+                    row2.putInt(4, 10);
+                    row2.putInt(5, 11);
+                    row2.putInt(6, 12);
+                    row2.putInt(7, 13);
+                    row2.append();
+                    walWriter2.commit();
+                }
+            }
+            drainWalQueue();
+            assertSql(tableName, "x\tsym\tts\tsym2\tiii\tjjj\tkkk\tlll\tC\n" +
+                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "3\tCD\t2022-02-24T00:00:02.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "4\tCD\t2022-02-24T00:00:03.000000Z\tFG\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "5\tAB\t2022-02-24T00:00:04.000000Z\tDE\t0\t0\tNaN\tNaN\tNaN\n" +
+                    "101\tdfd\t2022-02-24T01:00:00.000000Z\tasd\t41\tNaN\tNaN\tNaN\tNaN\n" +
+                    "102\tdfd\t2022-02-24T02:00:00.000000Z\tasd\t41\t42\tNaN\tNaN\tNaN\n" +
+                    "103\tdfd\t2022-02-24T03:00:00.000000Z\txyz\t41\t42\t43\tNaN\tNaN\n" +
+                    "104\tdfd\t2022-02-24T04:00:00.000000Z\tasdf\t1\t2\t3\t4\tNaN\n" +
+                    "105\tdfd\t2022-02-24T05:00:00.000000Z\tasdf\t5\t6\t7\t8\tNaN\n" +
+                    "777\tXXX\t2022-02-24T06:00:00.000000Z\tYYY\t0\t1\t2\t3\t42\n" +
+                    "999\tAAA\t2022-02-24T06:01:00.000000Z\tBBB\t10\t11\t12\t13\tNaN\n");
         });
     }
 
@@ -512,7 +885,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             Assert.assertEquals(metadata0.getTimestampIndex(), metadata.getTimestampIndex());
                             Assert.assertEquals(metadata0.getTableId(), metadata.getTableId());
                             Assert.assertEquals(metadata0.getMaxUncommittedRows(), metadata.getMaxUncommittedRows());
-                            Assert.assertEquals(metadata0.getCommitLag(), metadata.getCommitLag());
+                            Assert.assertEquals(metadata0.getO3MaxLag(), metadata.getO3MaxLag());
                             Assert.assertEquals(metadata0.getStructureVersion(), metadata.getStructureVersion());
 
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
@@ -572,7 +945,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         });
     }
 
-    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
+    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path(); Path copyPath = new Path()) {
                 path.of(configuration.getRoot());
@@ -585,9 +958,9 @@ public class SnapshotTest extends AbstractGriffinTest {
 
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.concat(tableName);
+                path.concat("test");
                 int tableNameLen = path.length();
-                copyPath.concat(tableName);
+                copyPath.concat("test");
                 int copyTableNameLen = copyPath.length();
 
                 // _meta
