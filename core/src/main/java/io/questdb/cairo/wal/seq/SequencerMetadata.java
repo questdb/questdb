@@ -35,7 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -46,7 +46,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private final boolean readonly;
     private final MemoryMR roMetaMem;
 
-    private final AtomicLong structureVersion = new AtomicLong(-1);
+    private final AtomicInteger structureVersion = new AtomicInteger(-1);
     private volatile boolean suspended;
     private int tableId;
     private String tableName;
@@ -80,7 +80,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         Misc.free(roMetaMem);
     }
 
-    public void copyFrom(TableDescriptor model, String tableName, int tableId, long structureVersion, boolean suspended) {
+    public void copyFrom(TableDescriptor model, String tableName, int tableId, int structureVersion, boolean suspended) {
         reset();
         this.tableName = tableName;
         timestampIndex = model.getTimestampIndex();
@@ -139,7 +139,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
 
         loadSequencerMetadata(roMetaMem);
-        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
+        structureVersion.set(roMetaMem.getInt(SEQ_META_OFFSET_STRUCTURE_VERSION));
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
         tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
@@ -182,6 +182,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         assert metaMem.getFd() == -1;
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
         syncToMetaFile();
+    }
+
+    public void syncToDisk() {
+        metaMem.sync(true);
     }
 
     private void addColumn0(CharSequence columnName, int columnType) {
@@ -271,7 +275,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         // Size of metadata
         metaMem.putInt(0);
         metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion.get());
+        metaMem.putInt(structureVersion.get());
         metaMem.putInt(columnCount);
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
