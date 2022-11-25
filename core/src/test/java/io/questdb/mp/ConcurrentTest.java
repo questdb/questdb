@@ -193,7 +193,7 @@ public class ConcurrentTest {
             }).start();
         }
 
-        if (!latch.await(TimeUnit.SECONDS.toNanos(10))) {
+        if (!latch.await(TimeUnit.SECONDS.toNanos(60))) {
             Assert.fail("Wait limit exceeded");
         }
         Assert.assertEquals(0, anomalies.get());
