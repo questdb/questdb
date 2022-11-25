@@ -179,11 +179,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public void collect(long cursor, boolean forceCollect) {
         assert cursor > -1;
-        LOG.debug()
-                .$("collecting [shard=").$(shard)
-                .$(", id=").$(id)
-                .$(", cursor=").$(cursor)
-                .I$();
         if (cursor == LOCAL_TASK_CURSOR) {
             collectedFrameIndex = localTask.getFrameIndex();
             localTask.collected();
