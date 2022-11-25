@@ -90,6 +90,8 @@ public abstract class AbstractCairoTest {
     protected static int columnVersionTaskPoolCapacity = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static long configOverrideO3MaxLag = -1;
+    protected static int sqlJoinMetadataPageSize = -1;
+    protected static int sqlJoinMetadataMaxResizes = -1;
     protected static CairoConfiguration configuration;
     protected static Boolean copyPartitionOnAttach = null;
     protected static long currentMicros = -1;
@@ -275,6 +277,8 @@ public abstract class AbstractCairoTest {
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
         sqlCopyBufferSize = 1024 * 1024;
+        sqlJoinMetadataPageSize = -1;
+        sqlJoinMetadataMaxResizes = -1;
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
@@ -527,6 +531,16 @@ public abstract class AbstractCairoTest {
         @Override
         public int getColumnPurgeTaskPoolCapacity() {
             return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
+        }
+
+        @Override
+        public int getSqlJoinMetadataPageSize() {
+            return sqlJoinMetadataPageSize > -1 ? sqlJoinMetadataPageSize : super.getSqlJoinMetadataPageSize();
+        }
+
+        @Override
+        public int getSqlJoinMetadataMaxResizes() {
+            return sqlJoinMetadataMaxResizes > -1 ? sqlJoinMetadataMaxResizes : super.getSqlJoinMetadataMaxResizes();
         }
 
         @Override

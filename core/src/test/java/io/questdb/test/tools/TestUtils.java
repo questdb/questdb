@@ -1183,8 +1183,9 @@ public final class TestUtils {
     }
 
     public static void removeTestPath(CharSequence root) {
-        Path path = Path.getThreadLocal(root);
-        MatcherAssert.assertThat("Test dir cleanup", Files.rmdir(path.slash$()), is(lessThanOrEqualTo(0)));
+        final Path path = Path.getThreadLocal(root);
+        final int rc = Files.rmdir(path.slash$());
+        MatcherAssert.assertThat("Test dir cleanup error, rc=" + rc, rc, is(lessThanOrEqualTo(0)));
     }
 
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
