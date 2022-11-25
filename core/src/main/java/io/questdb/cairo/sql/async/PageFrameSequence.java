@@ -31,7 +31,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
@@ -45,7 +48,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
-    public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final MillisecondClock clock;
     private final LongList frameRowCounts = new LongList();
     private final WeakClosableObjectPool<PageFrameReduceTask> localTaskPool;
@@ -54,10 +56,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final AtomicInteger reduceCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
     private final AtomicBoolean valid = new AtomicBoolean(true);
+    public volatile boolean done;
     private T atom;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long circuitBreakerFd;
-    private Sequence collectSubSeq;
+    private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
     private int frameCount;
@@ -96,9 +99,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .I$();
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
-        while (doneLatch.getCount() == 0) {
+        while (!done) {
+            if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
+                // We know that all frames were collected. We're almost done.
+                if (!done) {
+                    // Looks like not all the frames were dispatched, so no one reached the very last frame and
+                    // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
+                    reset();
+                }
+                break;
+            }
+
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
-            final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
             boolean nothingProcessed = true;
             try {
                 nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker, this);
@@ -112,20 +124,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             if (nothingProcessed) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
-                    // Discard collect items.
-                    final PageFrameReduceTask tsk = reduceQueue.get(cursor);
-                    if (tsk.getFrameSequence() == this) {
-                        tsk.collected(true);
+                    // Discard collected items.
+                    final PageFrameReduceTask task = reduceQueue.get(cursor);
+                    if (task.getFrameSequence() == this) {
+                        assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
+                        collectedFrameIndex = task.getFrameIndex();
+                        task.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                } else if (cursor == -1 && allFramesReduced) {
-                    // The collect queue is empty while we know that all frames were reduced. We're almost done.
-                    if (doneLatch.getCount() == 0) {
-                        // Looks like not all the frames were dispatched, so no one reached the very last frame and
-                        // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
-                        reset();
-                    }
-                    break;
                 } else {
                     Os.pause();
                 }
@@ -253,8 +259,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * instead, should use getTask and collect methods. <code>Long.MAX_VALUE</code> is the
      * reserved cursor value for the local reduce task case.
      *
-     * @return the next cursor value or one of -1 and -2 values if the cursor failed and the
-     * caller should retry
+     * @return the next cursor value or -1 value if the cursor failed and the caller
+     * should retry
      */
     public long next() {
         assert collectedFrameIndex < frameCount - 1;
@@ -264,6 +270,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this) {
+                    assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
                     return cursor;
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
@@ -291,11 +298,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public PageFrameSequence<T> of(
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
-            Sequence collectSubSeq,
+            SCSequence collectSubSeq,
             T atom,
             int order
     ) throws SqlException {
-
         this.sqlExecutionContext = executionContext;
         this.startTime = clock.getTicks();
         this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
@@ -337,8 +343,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void reset() {
         // prepare to resend the same sequence as it might be required by toTop()
         frameRowCounts.clear();
-        assert doneLatch.getCount() == 0;
-        doneLatch.countDown();
+        assert !done;
+        done = true;
     }
 
     /**
@@ -347,15 +353,17 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void toTop() {
         if (frameCount > 0) {
+            long newId = ID_SEQ.incrementAndGet();
             LOG.debug().$("toTop [shard=").$(shard)
                     .$(", id=").$(id)
+                    .$(", newId=").$(newId)
                     .I$();
 
             await();
 
-            // done latch is reset by method call above
-            doneLatch.reset();
-            id = ID_SEQ.incrementAndGet();
+            // done is reset by method call above
+            done = false;
+            id = newId;
             dispatchStartFrameIndex = 0;
             collectedFrameIndex = -1;
             reduceCounter.set(0);
@@ -364,7 +372,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     /**
-     * This method is re enterable. It has to be in case queue capacity is smaller than number of frames to
+     * This method is re-enterable. It has to be in case queue capacity is smaller than number of frames to
      * be dispatched. When it is the case, frame count published so far is stored in the `frameSequence`.
      * This method has no responsibility to deal with "collect" stage hence it deals with everything to
      * unblock the collect stage.
@@ -458,10 +466,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             int frameCount,
             SymbolTableSource symbolTableSource,
             T atom,
-            Sequence collectSubSeq
+            SCSequence collectSubSeq
     ) {
         this.id = ID_SEQ.incrementAndGet();
-        this.doneLatch.reset();
+        this.done = false;
         this.valid.set(true);
         this.reduceCounter.set(0);
         this.shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
@@ -510,6 +518,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         localTask.of(this, dispatchStartFrameIndex++);
 
         try {
+            LOG.debug()
+                    .$("reducing locally [shard=").$(shard)
+                    .$(", id=").$(id)
+                    .$(", frameIndex=").$(localTask.getFrameIndex())
+                    .$(", frameCount=").$(frameCount)
+                    .$(", active=").$(isActive())
+                    .I$();
             if (isActive()) {
                 PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this, this);
             }
