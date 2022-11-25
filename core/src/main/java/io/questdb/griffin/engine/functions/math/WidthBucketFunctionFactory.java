@@ -39,76 +39,76 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class WidthBucketFunctionFactory implements FunctionFactory {
-	@Override
-	public String getSignature() {
-		return "width_bucket(DDDI)";
-	}
+    @Override
+    public String getSignature() {
+        return "width_bucket(DDDI)";
+    }
 
-	@Override
-	public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-			CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-		return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
-	}
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
+    }
 
-	private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
-		private final Function operandFunc;
-		private final Function low_func;
-		private final Function high_func;
-		private final Function count_func;
+    private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
+        private final Function operandFunc;
+        private final Function lowFunc;
+        private final Function highFunc;
+        private final Function countFunc;
 
-		public WidthBucketFunction(Function operandFunc, Function low_func, Function high_func, Function count_func) {
-			this.operandFunc = operandFunc;
-			this.low_func = low_func;
-			this.high_func = high_func;
-			this.count_func = count_func;
-		}
+        public WidthBucketFunction(Function operandFunc, Function lowFunc, Function highFunc, Function countFunc) {
+            this.operandFunc = operandFunc;
+            this.lowFunc = lowFunc;
+            this.highFunc = highFunc;
+            this.countFunc = countFunc;
+        }
 
-		@Override
-		public Function getLeftEnd() {
-			return operandFunc;
-		}
+        @Override
+        public Function getLeftEnd() {
+            return operandFunc;
+        }
 
-		@Override
-		public Function getCenterLeft() {
-			return low_func;
-		}
+        @Override
+        public Function getCenterLeft() {
+            return lowFunc;
+        }
 
-		@Override
-		public Function getCenterRight() {
-			return high_func;
-		}
+        @Override
+        public Function getCenterRight() {
+            return highFunc;
+        }
 
-		@Override
-		public Function getRightEnd() {
-			return count_func;
-		}
+        @Override
+        public Function getRightEnd() {
+            return countFunc;
+        }
 
-		@Override
-		public int getInt(Record rec) {
-			double operand = operandFunc.getDouble(rec);
-			double low = low_func.getDouble(rec);
-			double high = high_func.getDouble(rec);
-			int count = count_func.getInt(rec);
+        @Override
+        public int getInt(Record rec) {
+            double operand = operandFunc.getDouble(rec);
+            double low = lowFunc.getDouble(rec);
+            double high = highFunc.getDouble(rec);
+            int count = countFunc.getInt(rec);
 
-			if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
-				return Numbers.INT_NaN;
-			} else if (!(count > 0)) {
-				throw SqlException.$(count_func, "count must be greater than 0");
-			} else if (low == high) {
-				throw SqlException.$(count_func, "low must not be equal to high");
-			}
+            if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            } else if (!(count > 0)) {
+                throw SqlException.$(countFunc, "count must be greater than 0");
+            } else if (low == high) {
+                throw SqlException.$(countFunc, "low must not be equal to high");
+            }
 
-			if (low > high) {
-				return 0;
-			}
-			if (operand < low) {
-				return 0;
-			} else if (operand > high) {
-				return (count + 1);
-			} else {
-				return (int) ((operand - low) / (high - low) * count) + 1;
-			}
+            if (low > high) {
+                return 0;
+            }
+            if (operand < low) {
+                return 0;
+            } else if (operand > high) {
+                return (count + 1);
+            } else {
+                return (int) ((operand - low) / (high - low) * count) + 1;
+            }
 
-		}
-	}
+        }
+    }
 }
