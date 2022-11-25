@@ -776,15 +776,6 @@ public abstract class AbstractCairoTest {
         }
     }
 
-    public static class MicrosecondClockMock implements MicrosecondClock {
-        public long timestamp = 0;
-
-        @Override
-        public long getTicks() {
-            return timestamp;
-        }
-    }
-
     static {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             FACTORY_TAGS[i] = !Chars.startsWith(MemoryTag.nameOf(i), "MMAP");
