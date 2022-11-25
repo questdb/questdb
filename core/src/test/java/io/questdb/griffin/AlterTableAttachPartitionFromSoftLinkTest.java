@@ -772,8 +772,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             Assert.assertTrue(Files.exists(path.$()));
 
             // verify RO flag
+            engine.releaseAllReaders();
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TxReader txFile = reader.getTxFile();
+                Assert.assertNotNull(txFile);
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));
                 Assert.assertFalse(txFile.isPartitionReadOnly(1));
             }
