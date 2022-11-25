@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,13 +51,14 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
         return new WidthBucketFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 
-    private static class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
+    private static abstract class WidthBucketFunction extends IntFunction implements QuarternaryFunction {
         private final Function operandFunc;
         private final Function lowFunc;
         private final Function highFunc;
         private final Function countFunc;
 
-        public WidthBucketFunction(Function operandFunc, Function lowFunc, Function highFunc, Function countFunc) {
+        public WidthBucketFunction(Function operandFunc, Function lowFunc, Function highFunc,
+                Function countFunc) {
             this.operandFunc = operandFunc;
             this.lowFunc = lowFunc;
             this.highFunc = highFunc;
@@ -84,6 +86,25 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext)
+                throws SqlException {
+            QuarternaryFunction.super.init(symbolTableSource, executionContext);
+            if (countFunc.isRuntimeConstant()) {
+                int count = countFunc.getInt(null);
+                if (count == 0) {
+                    throw SqlException.$(countValue, "field position must not be zero");
+                }
+            }
+            if (lowFunc.isRuntimeConstant() && highFunc.isRuntimeConstant()) {
+                double low = lowFunc.getDouble(null);
+                double high = highFunc.getDouble(null);
+                if (low >= high) {
+                    throw SqlException.$({lowValue, highValue}, "low must be less than high");
+                }
+            }
+        }
+
+        @Override
         public int getInt(Record rec) {
             double operand = operandFunc.getDouble(rec);
             double low = lowFunc.getDouble(rec);
@@ -92,14 +113,9 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
 
             if (Double.isNaN(operand) || Double.isNaN(low) || Double.isNaN(high) || count == Numbers.INT_NaN) {
                 return Numbers.INT_NaN;
-            } else if (!(count > 0)) {
-                throw SqlException.$(countFunc, "count must be greater than 0");
-            } else if (low == high) {
-                throw SqlException.$(countFunc, "low must not be equal to high");
             }
-
-            if (low > high) {
-                return 0;
+            if (low >= high) {
+                return Numbers.INT_NaN;
             }
             if (operand < low) {
                 return 0;
@@ -108,7 +124,6 @@ public class WidthBucketFunctionFactory implements FunctionFactory {
             } else {
                 return (int) ((operand - low) / (high - low) * count) + 1;
             }
-
         }
     }
 }
