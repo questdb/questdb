@@ -4006,7 +4006,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testMultistatement() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -4034,7 +4033,7 @@ nodejs code:
                         assertEquals(count, rs.getInt(1));
                         ++count;
                     }
-                    assertEquals(totalRows + 1, count);
+                    assertEquals(totalRows, count);
                 }
             }
         });

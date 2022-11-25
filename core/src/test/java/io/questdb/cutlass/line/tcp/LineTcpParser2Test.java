@@ -432,7 +432,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
     private void assembleLine() {
         int nEntities = lineTcpParser.getEntityCount();
-        Chars.utf8Decode(lineTcpParser.getMeasurementName().getLo(), lineTcpParser.getMeasurementName().getHi(), sink);
+        Chars.utf8Decode(lineTcpParser.getUtf8TableName(), sink);
         int n = 0;
         boolean tagsComplete = false;
         while (n < nEntities) {
@@ -443,20 +443,20 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             } else {
                 sink.put(',');
             }
-            Chars.utf8Decode(entity.getName().getLo(), entity.getName().getHi(), sink);
+            Chars.utf8Decode(entity.getUtf8Name(), sink);
             sink.put('=');
             switch (entity.getType()) {
                 case LineTcpParser.ENTITY_TYPE_STRING:
                     sink.put('"');
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Chars.utf8Decode(entity.getUtf8Value(), sink);
                     sink.put('"');
                     break;
                 case LineTcpParser.ENTITY_TYPE_INTEGER:
                 case LineTcpParser.ENTITY_TYPE_LONG256:
-                    sink.put(entity.getValue()).put('i');
+                    sink.put(entity.getUtf8Value()).put('i');
                     break;
                 default:
-                    Chars.utf8Decode(entity.getValue().getLo(), entity.getValue().getHi(), sink);
+                    Chars.utf8Decode(entity.getUtf8Value(), sink);
                     break;
             }
         }
@@ -487,7 +487,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                     } else {
                         final StringSink tmpSink = new StringSink();
                         if (Chars.utf8Decode(startOfLineAddr, lineTcpParser.getBufferAddress(), tmpSink)) {
-                            sink.put(tmpSink.toString());
+                            sink.put(tmpSink);
                         }
                         sink.put("--ERROR=");
                         sink.put(lineTcpParser.getErrorCode().toString());

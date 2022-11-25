@@ -31,9 +31,9 @@ import io.questdb.std.str.MutableCharSink;
 
 final class LineTcpUtils {
 
-    public static void utf8ToUtf16Unchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
+    public static void utf8DecodeUnchecked(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink) {
         tempSink.clear();
-        if (!Chars.utf8Decode(utf8CharSeq.getLo(), utf8CharSeq.getHi(), tempSink)) {
+        if (!Chars.utf8Decode(utf8CharSeq, tempSink)) {
             throw CairoException.nonCritical().put("invalid UTF8 in value for ").put(utf8CharSeq);
         }
     }
@@ -46,9 +46,9 @@ final class LineTcpUtils {
         return tempSink.toString();
     }
 
-    static CharSequence utf8ToUtf16(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
+    static CharSequence utf8Decode(DirectByteCharSequence utf8CharSeq, MutableCharSink tempSink, boolean hasNonAsciiChars) {
         if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
+            utf8DecodeUnchecked(utf8CharSeq, tempSink);
             return tempSink;
         }
         return utf8CharSeq;

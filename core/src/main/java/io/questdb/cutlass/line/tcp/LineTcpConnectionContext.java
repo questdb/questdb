@@ -212,7 +212,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                 }
             } catch (CairoException ex) {
                 LOG.error()
-                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$('[').$(fd).$("] could not process line data [table=").utf8(parser.getUtf8TableName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
@@ -223,7 +223,7 @@ class LineTcpConnectionContext extends AbstractMutableIOContext<LineTcpConnectio
                 goodMeasurement = false;
             } catch (Throwable ex) {
                 LOG.critical()
-                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$('[').$(fd).$("] could not process line data [table=").utf8(parser.getUtf8TableName())
                         .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.

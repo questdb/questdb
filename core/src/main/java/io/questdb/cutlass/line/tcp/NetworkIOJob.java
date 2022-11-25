@@ -35,7 +35,7 @@ interface NetworkIOJob extends Job, Closeable {
 
     void close();
 
-    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence tableName);
+    TableUpdateDetails getLocalTableDetails(DirectByteCharSequence utf8TableName);
 
     ObjList<SymbolCache> getUnusedSymbolCaches();
 

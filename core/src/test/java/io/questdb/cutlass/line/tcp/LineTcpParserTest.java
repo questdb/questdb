@@ -134,18 +134,18 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                 Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));
                 LineTcpParser.ProtoEntity entity = lineTcpParser.getEntity(0);
                 Assert.assertEquals(type, entity.getType());
-                Assert.assertEquals("v", entity.getName().toString());
+                Assert.assertEquals("v", entity.getUtf8Name().toString());
                 if (expectedParseResult == LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
                     switch (type) {
                         case LineTcpParser.ENTITY_TYPE_STRING:
-                            Assert.assertEquals(expectedValue, "\"" + entity.getValue().toString() + "\"");
+                            Assert.assertEquals(expectedValue, "\"" + entity.getUtf8Value().toString() + "\"");
                             break;
                         case LineTcpParser.ENTITY_TYPE_INTEGER:
                         case LineTcpParser.ENTITY_TYPE_LONG256:
-                            Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
+                            Assert.assertEquals(expectedValue, entity.getUtf8Value().toString() + "i");
                             break;
                         default:
-                            Assert.assertEquals(expectedValue, entity.getValue().toString());
+                            Assert.assertEquals(expectedValue, entity.getUtf8Value().toString());
                     }
                 }
             } finally {

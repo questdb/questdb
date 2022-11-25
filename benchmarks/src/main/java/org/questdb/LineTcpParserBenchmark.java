@@ -108,14 +108,14 @@ public class LineTcpParserBenchmark {
             if (parser.parseMeasurement(bufHi) != LineTcpParser.ParseResult.MEASUREMENT_COMPLETE) {
                 break;
             }
-            bh.consume(parser.getMeasurementName());
+            bh.consume(parser.getUtf8TableName());
             bh.consume(parser.getTimestamp());
             for (int nEntity = 0, n = parser.getEntityCount(); nEntity < n; nEntity++) {
                 LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
                 byte entityType = entity.getType();
                 switch (entityType) {
                     case LineTcpParser.ENTITY_TYPE_TAG:
-                        bh.consume(entity.getValue());
+                        bh.consume(entity.getUtf8Value());
                         break;
                     case LineTcpParser.ENTITY_TYPE_INTEGER:
                         bh.consume(entity.getLongValue());

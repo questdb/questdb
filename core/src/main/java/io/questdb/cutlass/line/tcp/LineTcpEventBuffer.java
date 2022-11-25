@@ -37,8 +37,8 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.FloatingDirectCharSink;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
-import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16Unchecked;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8Decode;
+import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8DecodeUnchecked;
 
 public class LineTcpEventBuffer {
     private final long bufLo;
@@ -203,7 +203,7 @@ public class LineTcpEventBuffer {
 
         // this method will write column name to the buffer if it has to be utf8 decoded
         // otherwise it will write nothing.
-        CharSequence columnValue = utf8ToUtf16(value, tempSink, hasNonAsciiChars);
+        CharSequence columnValue = utf8Decode(value, tempSink, hasNonAsciiChars);
         final int symIndex = symbolLookup.keyOf(columnValue);
         if (symIndex != SymbolTable.VALUE_NOT_FOUND) {
             // We know the symbol int value
@@ -321,7 +321,7 @@ public class LineTcpEventBuffer {
         long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
         tempSink.of(strPos, strPos + maxLen);
         if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(value, tempSink);
+            utf8DecodeUnchecked(value, tempSink);
         } else {
             tempSink.put(value);
         }

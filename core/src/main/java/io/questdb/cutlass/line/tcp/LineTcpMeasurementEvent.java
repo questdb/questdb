@@ -118,14 +118,14 @@ class LineTcpMeasurementEvent implements Closeable {
 
     private CairoException invalidColNameError(CharSequence colName) {
         return CairoException.critical(0)
-                .put("invalid column name [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put("invalid column name [table=").put(tableUpdateDetails.getUtf16TableName())
                 .put(", columnName=").put(colName)
                 .put(']');
     }
 
     private CairoException newColumnsNotAllowed(String colName) {
         return CairoException.critical(0)
-                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getUtf16TableName())
                 .put(", columnName=").put(colName)
                 .put(']');
     }
@@ -191,7 +191,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         try {
                             alterOperationBuilder.clear();
                             alterOperationBuilder
-                                    .ofAddColumn(0, tableUpdateDetails.getTableNameUtf16(), 0)
+                                    .ofAddColumn(0, tableUpdateDetails.getUtf16TableName(), 0)
                                     .addColumnToList(columnName, 0, colType, defaultSymbolCapacity, defaultSymbolCacheFlag, false, 0);
                             writer.apply(alterOperationBuilder.build(), true);
                         } catch (CairoException e) {
@@ -289,7 +289,7 @@ class LineTcpMeasurementEvent implements Closeable {
             throw commitFailedException;
         } catch (Throwable th) {
             LOG.error()
-                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getTableNameUtf16())
+                    .$("could not write line protocol measurement [tableName=").$(tableUpdateDetails.getUtf16TableName())
                     .$(", message=").$(th.getMessage())
                     .$(th)
                     .I$();
@@ -299,15 +299,11 @@ class LineTcpMeasurementEvent implements Closeable {
         }
     }
 
-    void createMeasurementEvent(
-            TableUpdateDetails tableUpdateDetails,
-            LineTcpParser parser,
-            int workerId
-    ) {
+    void createMeasurementEvent(TableUpdateDetails tud, LineTcpParser parser, int workerId) {
         writerWorkerId = LineTcpMeasurementEventType.ALL_WRITERS_INCOMPLETE_EVENT;
-        final TableUpdateDetails.ThreadLocalDetails localDetails = tableUpdateDetails.getThreadLocalDetails(workerId);
+        final TableUpdateDetails.ThreadLocalDetails localDetails = tud.getThreadLocalDetails(workerId);
         localDetails.resetStateIfNecessary();
-        this.tableUpdateDetails = tableUpdateDetails;
+        this.tableUpdateDetails = tud;
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
             timestamp = timestampAdapter.getMicros(timestamp);
@@ -321,10 +317,10 @@ class LineTcpMeasurementEvent implements Closeable {
             LineTcpParser.ProtoEntity entity = parser.getEntity(nEntity);
             byte entityType = entity.getType();
             int colType;
-            int columnWriterIndex = localDetails.getColumnIndex(entity.getName(), parser.hasNonAsciiChars());
+            int columnWriterIndex = localDetails.getColumnIndex(entity.getUtf8Name(), parser.hasNonAsciiChars());
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
-                if (columnWriterIndex == tableUpdateDetails.getTimestampIndex()) {
+                if (columnWriterIndex == tud.getTimestampIndex()) {
                     timestamp = timestampAdapter.getMicros(entity.getLongValue());
                     continue;
                 }
@@ -352,9 +348,9 @@ class LineTcpMeasurementEvent implements Closeable {
             switch (entityType) {
                 case LineTcpParser.ENTITY_TYPE_TAG: {
                     if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                        offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                     } else {
-                        throw castError("tag", columnWriterIndex, colType, entity.getName());
+                        throw castError("tag", columnWriterIndex, colType, entity.getUtf8Name());
                     }
                     break;
                 }
@@ -415,9 +411,9 @@ class LineTcpMeasurementEvent implements Closeable {
 
                         default:
                             if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
-                                offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                                offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                             } else {
-                                throw castError("integer", columnWriterIndex, colType, entity.getName());
+                                throw castError("integer", columnWriterIndex, colType, entity.getUtf8Name());
                             }
                             break;
                     }
@@ -435,9 +431,9 @@ class LineTcpMeasurementEvent implements Closeable {
 
                         default:
                             if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
-                                offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                                offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                             } else {
-                                throw castError("float", columnWriterIndex, colType, entity.getName());
+                                throw castError("float", columnWriterIndex, colType, entity.getUtf8Name());
                             }
                             break;
                     }
@@ -445,7 +441,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
                     final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
-                    final DirectByteCharSequence entityValue = entity.getValue();
+                    final DirectByteCharSequence entityValue = entity.getUtf8Value();
                     if (colTypeMeta == 0) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.STRING:
@@ -456,7 +452,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 if (stringToCharCastAllowed || entityValue.length() == 1) {
                                     offset = buffer.addChar(offset, entityValue.charAt(0));
                                 } else {
-                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    throw castError("string", columnWriterIndex, colType, entity.getUtf8Name());
                                 }
                                 break;
 
@@ -464,7 +460,7 @@ class LineTcpMeasurementEvent implements Closeable {
                                 if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
                                     offset = buffer.addSymbol(offset, entityValue, parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                                 } else {
-                                    throw castError("string", columnWriterIndex, colType, entity.getName());
+                                    throw castError("string", columnWriterIndex, colType, entity.getUtf8Name());
                                 }
                         }
                     } else {
@@ -474,12 +470,12 @@ class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_LONG256: {
                     if (ColumnType.tagOf(colType) == ColumnType.LONG256) {
-                        offset = buffer.addLong256(offset, entity.getValue(), parser.hasNonAsciiChars());
+                        offset = buffer.addLong256(offset, entity.getUtf8Value(), parser.hasNonAsciiChars());
                     } else if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
                         // todo: was someone doing this?
-                        offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                        offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                     } else {
-                        throw castError("long256", columnWriterIndex, colType, entity.getName());
+                        throw castError("long256", columnWriterIndex, colType, entity.getUtf8Name());
                     }
                     break;
                 }
@@ -516,9 +512,9 @@ class LineTcpMeasurementEvent implements Closeable {
 
                         default:
                             if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
-                                offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                                offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                             } else {
-                                throw castError("boolean", columnWriterIndex, colType, entity.getName());
+                                throw castError("boolean", columnWriterIndex, colType, entity.getUtf8Name());
                             }
                     }
                     break;
@@ -528,22 +524,22 @@ class LineTcpMeasurementEvent implements Closeable {
                         offset = buffer.addTimestamp(offset, entity.getLongValue());
                     } else if (symbolAsFieldSupported && colType == ColumnType.SYMBOL) {
                         // todo: this makes no sense
-                        offset = buffer.addSymbol(offset, entity.getValue(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
+                        offset = buffer.addSymbol(offset, entity.getUtf8Value(), parser.hasNonAsciiChars(), localDetails.getSymbolLookup(columnWriterIndex));
                     } else {
-                        throw castError("timestamp", columnWriterIndex, colType, entity.getName());
+                        throw castError("timestamp", columnWriterIndex, colType, entity.getUtf8Name());
                     }
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
                     if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
                         offset = buffer.addSymbol(
-                                offset,
-                                entity.getValue(),
-                                parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex)
+                            offset,
+                            entity.getUtf8Value(),
+                            parser.hasNonAsciiChars(),
+                            localDetails.getSymbolLookup(columnWriterIndex)
                         );
                     } else {
-                        throw castError("symbol", columnWriterIndex, colType, entity.getName());
+                        throw castError("symbol", columnWriterIndex, colType, entity.getUtf8Name());
                     }
                     break;
                 }
@@ -557,7 +553,7 @@ class LineTcpMeasurementEvent implements Closeable {
         }
         buffer.addDesignatedTimestamp(buffer.getAddress() + Long.BYTES, timestamp);
         buffer.addNumOfColumns(buffer.getAddress() + 2 * Long.BYTES, entitiesWritten);
-        writerWorkerId = tableUpdateDetails.getWriterThreadId();
+        writerWorkerId = tud.getWriterThreadId();
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {
